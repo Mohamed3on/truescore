@@ -9,6 +9,7 @@
     <h1>TrueScore</h1>
     <p class="tagline">The real score, everywhere.</p>
   </div>
+
   <ul class="sites">
     <li><span class="dot" style="background:#FF5A5F"></span><span class="name">Airbnb</span><span class="what">listing score</span></li>
     <li><span class="dot" style="background:#FF9900"></span><span class="name">Amazon</span><span class="what">sort + AI reviews</span></li>
@@ -23,5 +24,23 @@
     <li><span class="dot" style="background:#00E054"></span><span class="name">Letterboxd</span><span class="what">combined + picks</span></li>
     <li><span class="dot" style="background:#1a73e8"></span><span class="name">Transfermarkt</span><span class="what">table sort</span></li>
   </ul>
+
+  <div class="divider"></div>
+
+  <div class="settings">
+    <label class="field">
+      <span class="field-label">Gemini API Key</span>
+      <span class="field-hint">For AI summaries on Amazon &amp; Google Maps. <a href="https://aistudio.google.com/apikey" target="_blank">Get one free</a></span>
+      <div class="input-row">
+        <input type="password" id="apikey" placeholder="AIza..." spellcheck="false" autocomplete="off">
+        <button id="toggle-vis" title="Show/hide">
+          <svg id="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </label>
+    <div id="status"></div>
+  </div>
+
+  <script src="popup.js"></script>
 </body>
 </html>

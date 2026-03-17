@@ -50,6 +50,16 @@ await esbuild.build({
   minify: false,
 });
 
+// Bundle popup
+await esbuild.build({
+  entryPoints: ['src/popup/popup.ts'],
+  bundle: true,
+  outdir: `${OUT}/popup`,
+  format: 'iife',
+  target: ['chrome120'],
+  minify: false,
+});
+
 // Static assets
 cpSync('src/manifest.json', `${OUT}/manifest.json`);
 cpSync('src/popup/popup.html', `${OUT}/popup/popup.html`);

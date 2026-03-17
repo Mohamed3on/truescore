@@ -1,4 +1,4 @@
-import { GEMINI_API_KEY } from '../shared/config';
+import { getGeminiApiKey } from '../shared/config';
 import { addCommas } from '../shared/utils';
 
 const numberWithCommas = addCommas;
@@ -431,9 +431,11 @@ Reviews:\n\n${freshReviews.join('\n---\n')}`;
         const promptBytes = new Blob([prompt]).size;
         console.log(`[ARS] Gemini request: ${freshReviews.length} reviews, prompt ${(promptBytes / 1024).toFixed(1)} KB`);
 
+        const apiKey = await getGeminiApiKey();
+        if (!apiKey) { throw new Error('No Gemini API key — set one in the TrueScore popup'); }
         const tFetch = performance.now();
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
