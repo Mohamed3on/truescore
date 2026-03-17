@@ -1,0 +1,295 @@
+/* === Amazon Review Scores — Review Intelligence === */
+
+@keyframes ars-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes ars-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+/* Card wrapper */
+.ars-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 14px 0 6px;
+  padding: 14px 16px;
+  background: #FAFAF9;
+  border: 1px solid #E7E5E4;
+  border-left: 3px solid #0F766E;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  animation: ars-enter 0.35s ease-out;
+}
+
+/* Header */
+.ars-header {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #78716C;
+}
+.ars-header-accent {
+  color: #0F766E;
+  margin-right: 2px;
+}
+
+/* Gauge */
+.ars-gauge {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-decoration: none !important;
+  cursor: pointer;
+}
+.ars-gauge:hover .ars-gauge-fill { filter: brightness(1.1); }
+.ars-gauge-label {
+  font-size: 13px;
+  color: #57534E;
+  line-height: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.ars-gauge-pct {
+  font-size: 26px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.ars-gauge-track {
+  height: 5px;
+  background: #E7E5E4;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.ars-gauge-fill {
+  height: 100%;
+  border-radius: 3px;
+  transform-origin: left;
+  animation: ars-fill 0.7s ease-out;
+  transition: filter 0.15s;
+}
+
+/* Stats */
+.ars-stats {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.ars-stat { display: flex; flex-direction: column; gap: 1px; }
+.ars-stat-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1C1917;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.ars-stat-lbl {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #A8A29E;
+  font-weight: 600;
+}
+.ars-stat-div {
+  width: 1px;
+  height: 22px;
+  background: #E7E5E4;
+}
+
+/* Loading state */
+.ars-loading {
+  font-size: 12px;
+  color: #A8A29E;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ars-loading::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border: 2px solid #E7E5E4;
+  border-top-color: #0F766E;
+  border-radius: 50%;
+  animation: ars-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes ars-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Empty state */
+.ars-empty {
+  font-size: 12px;
+  color: #A8A29E;
+  font-style: italic;
+  padding: 4px 0;
+}
+
+/* Summarize button */
+.ars-summarize-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  margin: 2px 0 0;
+  padding: 7px 14px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0F766E;
+  background: #F0FDFA;
+  border: 1px solid #99F6E4;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ars-summarize-btn:hover {
+  background: #CCFBF1;
+  border-color: #5EEAD4;
+  box-shadow: 0 1px 3px rgba(15, 118, 110, 0.12);
+}
+.ars-summarize-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+/* Summary meta row */
+.ars-summary-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ars-summary-date {
+  font-size: 10px;
+  color: #A8A29E;
+  letter-spacing: 0.02em;
+}
+.ars-resummarize-btn {
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  color: #78716C;
+  background: none;
+  border: 1px solid #D6D3D1;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ars-resummarize-btn:hover {
+  color: #0F766E;
+  border-color: #0F766E;
+}
+.ars-resummarize-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+/* Summary panel */
+.ars-summary-panel {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #1C1917;
+}
+
+/* Sections */
+.ars-section {
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid;
+}
+.ars-section + .ars-section { margin-top: 8px; }
+
+.ars-section--praised {
+  background: #F0FDF4;
+  border-left-color: #16A34A;
+}
+.ars-section--complaints {
+  background: #FFF7ED;
+  border-left-color: #EA580C;
+}
+
+.ars-section-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+  color: #57534E;
+}
+.ars-section--praised .ars-section-title { color: #15803D; }
+.ars-section--complaints .ars-section-title { color: #C2410C; }
+
+.ars-section-item {
+  font-size: 12.5px;
+  padding-left: 14px;
+  position: relative;
+  margin: 3px 0;
+  color: #44403C;
+  line-height: 1.5;
+}
+.ars-section-item::before {
+  content: "\2022";
+  position: absolute;
+  left: 3px;
+  font-weight: 700;
+  color: #A8A29E;
+}
+.ars-section--praised .ars-section-item::before { color: #16A34A; }
+.ars-section--complaints .ars-section-item::before { color: #EA580C; }
+
+/* Conclusion */
+.ars-conclusion {
+  margin-top: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  font-style: italic;
+  color: #57534E;
+  background: #F5F5F4;
+  border-radius: 6px;
+  line-height: 1.5;
+}
+
+/* Format table */
+.format-table {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: 12px;
+  width: 100%;
+  max-width: 340px;
+  border: 1px solid #E7E5E4;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.format-table thead {
+  background: #F5F5F4;
+  font-weight: 700;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #78716C;
+}
+.format-table td,
+.format-table th {
+  padding: 7px 12px !important;
+  border: none;
+  border-bottom: 1px solid #F5F5F4;
+  text-align: left;
+}
+.format-table tbody tr:last-child td { border-bottom: none; }
+.format-table tbody tr:hover { background: #FAFAF9; }
+.format-table tbody td:last-child {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: right;
+}
+.ars-fmt-pos { color: #15803D; }
+.ars-fmt-neg { color: #DC2626; }

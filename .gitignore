@@ -1,0 +1,4 @@
+node_modules/
+truescore/
+*.zip
+.DS_Store

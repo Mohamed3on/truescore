@@ -1,0 +1,153 @@
+{
+  "manifest_version": 3,
+  "name": "TrueScore",
+  "version": "1.0",
+  "description": "Cut through inflated ratings. See what's actually good on Amazon, Airbnb, Booking, IMDB, Letterboxd, Google Maps, Goodreads, and more.",
+  "author": "Mohamed Oun",
+  "permissions": ["tabs", "scripting", "webNavigation", "storage"],
+  "host_permissions": [
+    "*://www.airbnb.com/rooms/*",
+    "*://*.amazon.fr/*",
+    "*://*.amazon.com/*",
+    "*://*.amazon.co.uk/*",
+    "*://*.amazon.com.mx/*",
+    "*://*.amazon.co.jp/*",
+    "*://*.amazon.it/*",
+    "*://*.amazon.in/*",
+    "*://*.amazon.eg/*",
+    "*://*.amazon.es/*",
+    "*://*.amazon.cn/*",
+    "*://*.amazon.ca/*",
+    "*://*.amazon.com.br/*",
+    "*://*.amazon.de/*",
+    "*://*.amazon.com.au/*",
+    "*://*.booking.com/*",
+    "*://*.decathlon.de/*",
+    "*://*.decathlon.co.uk/*",
+    "*://*.uniqlo.com/*",
+    "*://*.ikea.com/*",
+    "*://*.dm.de/*",
+    "*://apps.bazaarvoice.com/*",
+    "*://*.goodreads.com/book/show/*",
+    "*://*.appsync-api.us-east-1.amazonaws.com/*",
+    "*://*.google.com/maps/*",
+    "*://*.imdb.com/title/*/*",
+    "*://*.letterboxd.com/film/*/",
+    "https://generativelanguage.googleapis.com/*",
+    "*://www.transfermarkt.com/*",
+    "*://www.transfermarkt.de/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://www.airbnb.com/rooms/*"],
+      "js": ["sites/airbnb.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.amazon.fr/*", "*://*.amazon.com/*", "*://*.amazon.co.uk/*",
+        "*://*.amazon.com.mx/*", "*://*.amazon.co.jp/*", "*://*.amazon.it/*",
+        "*://*.amazon.in/*", "*://*.amazon.eg/*", "*://*.amazon.es/*",
+        "*://*.amazon.cn/*", "*://*.amazon.ca/*", "*://*.amazon.com.br/*",
+        "*://*.amazon.de/*", "*://*.amazon.com.au/*"
+      ],
+      "js": ["sites/amazon-search.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.amazon.fr/*", "*://*.amazon.com/*", "*://*.amazon.co.uk/*",
+        "*://*.amazon.com.mx/*", "*://*.amazon.co.jp/*", "*://*.amazon.it/*",
+        "*://*.amazon.in/*", "*://*.amazon.eg/*", "*://*.amazon.es/*",
+        "*://*.amazon.cn/*", "*://*.amazon.ca/*", "*://*.amazon.com.br/*",
+        "*://*.amazon.de/*", "*://*.amazon.com.au/*"
+      ],
+      "js": ["sites/amazon-product.js"],
+      "css": ["sites/amazon-product.css"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.booking.com/*"],
+      "js": ["sites/booking-search.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.booking.com/hotel/*"],
+      "js": ["sites/booking-hotel.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.decathlon.de/p/*", "*://*.decathlon.co.uk/p/*"],
+      "js": ["sites/decathlon-pdp.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.decathlon.de/*", "*://*.decathlon.co.uk/*"],
+      "js": ["sites/decathlon-plp.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.uniqlo.com/*/products/*"],
+      "js": ["sites/uniqlo-pdp.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.uniqlo.com/*"],
+      "js": ["sites/uniqlo-plp.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.ikea.com/*/p/*"],
+      "js": ["sites/ikea-pdp.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.ikea.com/*"],
+      "js": ["sites/ikea-plp.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.dm.de/*"],
+      "js": ["sites/dm-pdp.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.dm.de/*"],
+      "js": ["sites/dm-plp.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.goodreads.com/book/show/*"],
+      "js": ["sites/goodreads.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.google.com/maps/*", "*://*.google.com/maps*"],
+      "js": ["sites/gmaps.js"],
+      "css": ["sites/gmaps.css"],
+      "world": "MAIN",
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.imdb.com/title/*/*"],
+      "js": ["sites/imdb.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.letterboxd.com/film/*/"],
+      "js": ["sites/letterboxd.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://www.transfermarkt.com/*", "*://www.transfermarkt.de/*"],
+      "js": ["sites/transfermarkt.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html"
+  }
+}
