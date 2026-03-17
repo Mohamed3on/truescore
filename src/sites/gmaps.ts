@@ -257,7 +257,7 @@ For the verdict: write 2-3 sentences as if texting a friend who asked "should I 
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0,
-        maxOutputTokens: 8192,
+        maxOutputTokens: 4096,
         responseMimeType: 'application/json',
         responseSchema: {
           type: 'OBJECT',
