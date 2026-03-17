@@ -26,6 +26,7 @@ await esbuild.build({
     'src/sites/dm-plp.ts',
     'src/sites/goodreads.ts',
     'src/sites/gmaps.ts',
+    'src/sites/gmaps-bridge.ts',
     'src/sites/imdb.ts',
     'src/sites/letterboxd.ts',
     'src/sites/transfermarkt.ts',

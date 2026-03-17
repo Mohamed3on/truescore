@@ -126,6 +126,11 @@
     },
     {
       "matches": ["*://*.google.com/maps/*", "*://*.google.com/maps*"],
+      "js": ["sites/gmaps-bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["*://*.google.com/maps/*", "*://*.google.com/maps*"],
       "js": ["sites/gmaps.js"],
       "css": ["sites/gmaps.css"],
       "world": "MAIN",

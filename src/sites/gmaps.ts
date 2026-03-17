@@ -6,7 +6,8 @@ const SORT_KEYS = ['relevant', 'newest'];
 const PAGE_SIZE = 20;
 const MIN_PAGES_BEFORE_STABILIZE = 2;
 const GEMINI_MODEL = 'gemini-3-flash-preview';
-const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+const getGeminiKey = () => document.documentElement.dataset.tsGeminiKey || GEMINI_API_KEY;
+const getGeminiEndpoint = () => `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${getGeminiKey()}`;
 
 // State
 let currentOption = 'total';
@@ -249,7 +250,7 @@ For the verdict: write 2-3 sentences as if texting a friend who asked "should I 
   }
 
   const prompt = `${reviewBlock}\n\n---\n\n${instructions}`;
-  const resp = await fetch(GEMINI_ENDPOINT, {
+  const resp = await fetch(getGeminiEndpoint(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
