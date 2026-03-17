@@ -246,6 +246,8 @@ What to extract:
 
 Don't be generic. "Great atmosphere" tells me nothing. "Rooftop terrace gets packed after 8pm but the ground floor bar is underrated" tells me everything.
 
+Be concise. Keep the entire response under 200 words.
+
 For the verdict: write 2-3 sentences as if texting a friend who asked "should I go?" — be direct, opinionated, and include who this place is and isn't for. Rate value for money 1-5.`;
   }
 
