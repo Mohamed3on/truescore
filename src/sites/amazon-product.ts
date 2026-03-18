@@ -1,18 +1,11 @@
 import { getGeminiApiKey } from '../shared/config';
+import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas } from '../shared/utils';
-
-const numberWithCommas = addCommas;
 
 const NUMBER_OF_PAGES_TO_PARSE = 10;
 
-function getColor(value: number) {
-  //value from 0 to 1
-  var hue = (value * 120).toString(10);
-  return ['hsl(', hue, ',100%,50%)'].join('');
-}
-
 // 0 → red (hue 0), 1 → vivid green (hue 145)
-var getColorForPercentage = function (pct: number) {
+const getColorForPercentage = function (pct: number) {
   pct = Math.max(0, Math.min(1, pct));
   var hue = pct * 145;
   return { backgroundColor: `hsl(${hue}, 85%, 40%)` };
@@ -72,33 +65,17 @@ const renderSummary = (container: HTMLElement, text: string) => {
   }
 };
 
-const getRatingPercentages = (htmlText: string) => {
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(htmlText || '', 'text/html');
-    const nodes = doc.querySelectorAll('[role="progressbar"][aria-valuenow]');
-    const values = Array.from(nodes)
-      .map((el) => el.getAttribute('aria-valuenow'))
-      .filter(Boolean)
-      .map((v) => parseInt(String(v).replace('%', ''), 10))
-      .filter((n) => Number.isFinite(n));
+const getRatingPercentages = (root: Document | HTMLElement = document) => {
+  const nodes = root.querySelectorAll('[role="progressbar"][aria-valuenow]');
+  const values = Array.from(nodes)
+    .map((el) => parseInt(el.getAttribute('aria-valuenow')!.replace('%', ''), 10))
+    .filter((n) => Number.isFinite(n));
 
-    if (values.length < 2) {
-      return { fiveStars: 0, oneStars: 0 };
-    }
-
-    const fiveStars = values[0];
-    const oneStars = values[values.length - 1];
-
-    return { fiveStars, oneStars };
-  } catch (_) {
-    return { fiveStars: 0, oneStars: 0 };
-  }
+  if (values.length < 2) return { fiveStars: 0, oneStars: 0 };
+  return { fiveStars: values[0], oneStars: values[values.length - 1] };
 };
 
 const injectBestFormats = (formatRatings: Record<string, number>) => {
-  if (!Object.keys(formatRatings).length) return;
-
   const sortedFormats = Object.entries(formatRatings)
     .sort((a, b) => b[1] - a[1]);
 
@@ -131,7 +108,7 @@ const setTotalRatingsScore = (totalRatingPercentages: { fiveStars: number; oneSt
 
   const calculatedScore = Math.round(scoreAbsolute * (scorePercentage / 100));
 
-  elementToReplace.innerHTML = ` ${numberWithCommas(calculatedScore)} ratio: (${scorePercentage}%)`;
+  elementToReplace.textContent = ` ${addCommas(calculatedScore)} ratio: (${scorePercentage}%)`;
 
   return { calculatedScore, totalScorePercentage: scorePercentage / 100 };
 };
@@ -147,25 +124,17 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   };
   const formatRatings: Record<string, number> = {};
 
-  // Check scores cache
   const scoresCacheKey = `ars-scores-${cacheASIN}`;
-  const rawScoresCache = localStorage.getItem(scoresCacheKey);
+  const cachedScores = cacheGet(scoresCacheKey, THREE_DAYS);
   let usedCache = false;
 
-  if (rawScoresCache) {
-    try {
-      const cached = JSON.parse(rawScoresCache);
-      if (Date.now() - cached.ts < THREE_DAYS) {
-        numberOfParsedReviews = cached.numberOfParsedReviews;
-        scores.recent = cached.scores.recent;
-        scores.total = cached.scores.total;
-        Object.assign(formatRatings, cached.formatRatings);
-        numOfRatingsElement.innerHTML = ` ${numberWithCommas(scores.total.calculated)} ratio: (${Math.round(scores.total.percentage * 100)}%)`;
-        usedCache = true;
-      } else {
-        localStorage.removeItem(scoresCacheKey);
-      }
-    } catch (_) {}
+  if (cachedScores) {
+    numberOfParsedReviews = cachedScores.numberOfParsedReviews;
+    scores.recent = cachedScores.scores.recent;
+    scores.total = cachedScores.scores.total;
+    Object.assign(formatRatings, cachedScores.formatRatings);
+    numOfRatingsElement.textContent = ` ${addCommas(scores.total.calculated)} ratio: (${Math.round(scores.total.percentage * 100)}%)`;
+    usedCache = true;
   }
 
   const numberOfReviewsPerPage = 10;
@@ -246,10 +215,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   const ONE_DAY = 86400000;
   const fetchFreshReviewTexts = async () => {
     const reviewsCacheKey = `ars-reviews-${cacheASIN}`;
-    try {
-      const cached = JSON.parse(localStorage.getItem(reviewsCacheKey)!);
-      if (cached && Date.now() - cached.ts < ONE_DAY) return cached.texts;
-    } catch (_) {}
+    const cachedTexts = cacheGet(reviewsCacheKey, ONE_DAY);
+    if (cachedTexts) return cachedTexts;
 
     const pagePromises = Array.from({ length: NUMBER_OF_PAGES_TO_PARSE }, (_, i) =>
       fetchReviewPage(i + 1)
@@ -268,7 +235,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         }
       }
     }
-    try { localStorage.setItem(reviewsCacheKey, JSON.stringify({ ts: Date.now(), texts })); } catch (_) {}
+    cacheSet(reviewsCacheKey, texts);
     return texts;
   };
 
@@ -278,8 +245,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     const parser = new DOMParser();
 
     try {
-      const pageHTML = document.documentElement.innerHTML;
-      const totals = getRatingPercentages(pageHTML);
+      const totals = getRatingPercentages();
       if (totals.fiveStars || totals.oneStars) {
         totalRatingPercentages = totals;
         const { calculatedScore, totalScorePercentage } = setTotalRatingsScore(
@@ -306,15 +272,16 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     for (const recentRatingsHTML of reviewPages) {
       if (!recentRatingsHTML) continue;
 
+      const syntheticDocument = parser.parseFromString(recentRatingsHTML, 'text/html');
+
       if (!totalRatingPercentages) {
-        totalRatingPercentages = getRatingPercentages(recentRatingsHTML);
+        totalRatingPercentages = getRatingPercentages(syntheticDocument);
         const { calculatedScore, totalScorePercentage } = setTotalRatingsScore(
           totalRatingPercentages, numOfRatingsElement, numOfRatings
         );
         scores.total = { calculated: calculatedScore, percentage: totalScorePercentage };
       }
 
-      const syntheticDocument = parser.parseFromString(recentRatingsHTML, 'text/html');
       const reviews = syntheticDocument.querySelectorAll('[data-hook="review"]');
 
       for (const review of reviews) {
@@ -332,9 +299,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         if (rating === 5 || rating === 1) {
           if (format) {
             const cleanedFormat = format.innerHTML.replaceAll(' Name:', ':');
-            formatRatings[cleanedFormat] = formatRatings[cleanedFormat]
-              ? formatRatings[cleanedFormat] + starRatingsToLikeDislikeMapping[rating]
-              : starRatingsToLikeDislikeMapping[rating];
+            formatRatings[cleanedFormat] = (formatRatings[cleanedFormat] ?? 0) + starRatingsToLikeDislikeMapping[rating];
           }
           scores.recent.absolute += starRatingsToLikeDislikeMapping[rating];
         }
@@ -342,14 +307,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     }
 
     if (numberOfParsedReviews > 0) {
-      try {
-        localStorage.setItem(scoresCacheKey, JSON.stringify({
-          ts: Date.now(),
-          numberOfParsedReviews,
-          scores,
-          formatRatings,
-        }));
-      } catch (_) {}
+      cacheSet(scoresCacheKey, { numberOfParsedReviews, scores, formatRatings });
     }
     loadingEl.remove();
   }
@@ -382,7 +340,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     const stats = document.createElement('div');
     stats.className = 'ars-stats';
     stats.innerHTML = `
-      <div class="ars-stat"><span class="ars-stat-val">${numberWithCommas(trendingScore)}</span><span class="ars-stat-lbl">trending</span></div>
+      <div class="ars-stat"><span class="ars-stat-val">${addCommas(trendingScore)}</span><span class="ars-stat-lbl">trending</span></div>
       <div class="ars-stat-div"></div>
       <div class="ars-stat"><span class="ars-stat-val">${numberOfParsedReviews}</span><span class="ars-stat-lbl">analyzed</span></div>
     `;
