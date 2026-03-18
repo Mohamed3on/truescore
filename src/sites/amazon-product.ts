@@ -182,9 +182,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         if (
           Array.isArray(payload) &&
           payload.length >= 3 &&
-          payload[0] === 'append' &&
-          payload[1] === '#cm_cr-review_list' &&
-          typeof payload[2] === 'string'
+          typeof payload[2] === 'string' &&
+          payload[2].includes('data-hook="review"')
         ) {
           html += payload[2];
         }
@@ -193,47 +192,27 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     return html;
   };
 
-  const getAntiCsrfToken = () => {
-    const stateElement = document.querySelector('#cr-state-object') as HTMLElement | null;
-    if (stateElement && stateElement.dataset.state) {
-      try {
-        const stateData = JSON.parse(stateElement.dataset.state);
-        return stateData.reviewsCsrfToken;
-      } catch (_) {}
+  const getCrState = () => {
+    const el = document.querySelector('#cr-state-object') as HTMLElement | null;
+    if (el?.dataset?.state) {
+      try { return JSON.parse(el.dataset.state); } catch (_) {}
     }
-    return undefined;
+    return null;
   };
 
-  const getReviewsAjaxScopeFromDOM = () => {
-    try {
-      const html = document.documentElement.innerHTML;
-      const matches = [...html.matchAll(/reviewsAjax(\d+)/g)];
-      if (matches.length) {
-        const maxIdx = matches
-          .map((m) => parseInt(m[1], 10))
-          .filter((n) => Number.isFinite(n))
-          .reduce((a, b) => Math.max(a, b), 0);
-        return `reviewsAjax${maxIdx}`;
-      }
-    } catch (_) {}
-    return 'reviewsAjax0';
-  };
+  const crState = getCrState();
+  const antiCsrf = crState?.reviewsCsrfToken;
+  const ajaxUrl = crState?.reviewsAjaxUrl || '/hz/reviews-render/ajax/medley-filtered-reviews/get/';
 
-  const scope = getReviewsAjaxScopeFromDOM();
-  const antiCsrf = getAntiCsrfToken();
-
-  const fetchReviewPage = async (pageNumber: number) => {
-    const endpoint = `/hz/reviews-render/ajax/reviews/get/ref=cm_cr_getr_d_paging_btm_next_${pageNumber}`;
+  const fetchReviewPageAjax = async (pageNumber: number) => {
     const form = new URLSearchParams({
       sortBy: 'recent',
       pageNumber: String(pageNumber),
       pageSize: String(numberOfReviewsPerPage),
       asin: productSIN,
-      scope,
-      reftag: `cm_cr_getr_d_paging_btm_next_${pageNumber}`
     });
 
-    const res = await fetch(endpoint, {
+    const res = await fetch(ajaxUrl, {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -242,8 +221,26 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       },
       body: form,
     });
+    if (!res.ok) return '';
     const raw = await res.text();
     return extractReviewListHTMLFromAjaxResponse(raw);
+  };
+
+  const fetchReviewPageHTML = async (pageNumber: number) => {
+    const res = await fetch(
+      `/product-reviews/${productSIN}/?sortBy=recent&pageNumber=${pageNumber}`,
+      { credentials: 'include' }
+    );
+    if (!res.ok) return '';
+    return res.text();
+  };
+
+  const fetchReviewPage = async (pageNumber: number) => {
+    if (crState) {
+      const ajax = await fetchReviewPageAjax(pageNumber);
+      if (ajax) return ajax;
+    }
+    return fetchReviewPageHTML(pageNumber);
   };
 
   const ONE_DAY = 86400000;
@@ -321,14 +318,16 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       const reviews = syntheticDocument.querySelectorAll('[data-hook="review"]');
 
       for (const review of reviews) {
-        const ratingElement = review.querySelector('[data-hook="review-star-rating"]');
-        if (!ratingElement) break;
+        const ratingElement = review.querySelector('[data-hook="review-star-rating"], [data-hook="cmps-review-star-rating"]');
+        if (!ratingElement) continue;
 
         numberOfParsedReviews++;
         const format = review.querySelector('a[data-hook="format-strip"]');
 
-        const ratingText = (ratingElement as HTMLElement).innerText;
-        const rating = parseInt(ratingText.match(/\d(?=\.)/g)![0]);
+        const ratingText = (ratingElement as HTMLElement).textContent || '';
+        const ratingMatch = ratingText.match(/(\d)(?:\.\d)?/);
+        if (!ratingMatch) continue;
+        const rating = parseInt(ratingMatch[1]);
 
         if (rating === 5 || rating === 1) {
           if (format) {
