@@ -363,7 +363,24 @@ function updateProgress(element: HTMLElement, step: number, detail = '') {
  */
 async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ score: number; ratio: number }>, currentRuntime: number, statusElement: HTMLElement) {
   const cached = getCachedSimilarPicks(currentSlug);
-  if (cached) return cached;
+  if (cached && cached.listLink) {
+    // Re-fetch list with cookies to exclude newly watched films
+    const listUrl = `https://letterboxd.com${cached.listLink}by/rating/`;
+    debug('Re-validating cached similar picks from', listUrl);
+    const res = await throttledFetch(listUrl, { credentials: 'include' });
+    const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+    const visible = new Set(
+      Array.from(doc.querySelectorAll('[data-item-slug]')).map(el => el.getAttribute('data-item-slug'))
+    );
+    debug(`List has ${visible.size} visible films, cache has ${cached.films.length}`);
+    const films = cached.films.filter((f: any) => visible.has(f.slug));
+    const removed = cached.films.length - films.length;
+    if (removed) {
+      debug(`Filtered out ${removed} watched films:`, cached.films.filter((f: any) => !visible.has(f.slug)).map((f: any) => f.name));
+      setCachedSimilarPicks(currentSlug, { ...cached, films });
+    }
+    return { ...cached, films };
+  }
 
   try {
     // Step 1: Fetch popular lists
