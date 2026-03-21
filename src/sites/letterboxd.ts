@@ -16,7 +16,13 @@ const CONFIG = {
 // Styles (injected once)
 // =============================================================================
 const STYLES = `
-  .lbx-score { margin-top: 0.5rem; }
+  .lbx-score {
+    float: left;
+    font-size: 1.15384615rem;
+    color: #9ab;
+    line-height: 1;
+    padding-top: .3rem;
+  }
   .lbx-trending {
     margin-top: 1rem;
     font-size: 1.1rem;
@@ -562,18 +568,18 @@ async function run(ratings: number[]) {
   const cachedFilm = currentSlug ? getCachedFilmData(currentSlug) : null;
   const recentRatingsRaw = getRecentRatingsSummary();
 
-  const headline = document.querySelector('.ratings-histogram-chart h2 a');
+  const avgRating = document.querySelector('.ratings-histogram-chart .average-rating');
   const trendingElement = el('div', 'lbx-trending', 'Calculating...');
   document.querySelector('.review.body-text')!.after(trendingElement);
 
   let scorePromise: Promise<{ score: number; ratio: number }>;
   if (cachedFilm) {
-    const scoreElement = el('div', 'lbx-score', `${addCommas(cachedFilm.score)} (${Math.round(cachedFilm.ratio * 100)}%)`);
-    headline!.after(scoreElement);
+    const scoreElement = el('span', 'lbx-score', `${addCommas(cachedFilm.score)} (${Math.round(cachedFilm.ratio * 100)}%)`);
+    avgRating!.parentElement!.insertBefore(scoreElement, avgRating);
     scorePromise = Promise.resolve({ score: cachedFilm.score, ratio: cachedFilm.ratio });
   } else {
-    const scoreElement = el('div', 'lbx-score', 'Calculating...');
-    headline!.after(scoreElement);
+    const scoreElement = el('span', 'lbx-score', 'Calculating...');
+    avgRating!.parentElement!.insertBefore(scoreElement, avgRating);
     scorePromise = fetchImdbRatings(document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null)
       .then(({ imdbScore, imdbTotal }) => {
         const { score, ratio } = calculateCombinedScore(ratings, imdbScore, imdbTotal);
