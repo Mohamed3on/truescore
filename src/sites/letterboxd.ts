@@ -1,3 +1,4 @@
+import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas } from '../shared/utils';
 
 // =============================================================================
@@ -5,7 +6,7 @@ import { addCommas } from '../shared/utils';
 // =============================================================================
 const CONFIG = {
   CACHE_EXPIRY_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
-  RECENT_RATINGS_CACHE_MS: 24 * 60 * 60 * 1000, // 1 day
+  RECENT_RATINGS_CACHE_MS: 12 * 60 * 60 * 1000, // 12 hours
   SIMILAR_PICKS_CACHE_MS: 7 * 24 * 60 * 60 * 1000, // 1 week
   RUNTIME_TOLERANCE: 10, // ±10 minutes
   MAX_CONCURRENCY: 10,
@@ -77,11 +78,20 @@ const STYLES = `
   }
   .lbx-winner {
     display: flex;
-    align-items: center;
-    gap: .5rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: .25rem .5rem;
     color: #00e054;
     font-weight: 600;
   }
+  .lbx-winner-source {
+    color: #678;
+    font-weight: 400;
+    font-size: .85em;
+    text-decoration: none;
+  }
+  .lbx-winner-source::before { content: '· '; }
+  .lbx-winner-source:hover { color: #9ab; }
   .lbx-progress { color: #678; font-size: .9rem; }
   .lbx-progress-dots { display: flex; gap: .25rem; margin-bottom: .35rem; }
   .lbx-dot { width: 6px; height: 6px; border-radius: 50%; }
@@ -133,37 +143,31 @@ function extractSlugFromUrl(url: string) {
   return match ? match[1] : null;
 }
 
+function filmMeta(film: any, recentText = '...') {
+  const scoreText = film.fetchFailed ? '?' : addCommas(film.score);
+  return `${film.year ? film.year + ' · ' : ''}${film.runtime}m · ${scoreText} · ${recentText}`;
+}
+
+function winnerBanner(message: string, listName?: string | null, listLink?: string | null) {
+  const winner = el('div', 'lbx-winner', message);
+  if (listName && listLink) {
+    const src = el('a', 'lbx-winner-source', listName) as HTMLAnchorElement;
+    src.href = listLink;
+    winner.append(' ', src);
+  }
+  return winner;
+}
+
 // =============================================================================
 // Cache
 // =============================================================================
 
-function getCache(prefix: string, ttl: number, slug: string) {
-  try {
-    const raw = localStorage.getItem(`lbx_${prefix}_${slug}`);
-    if (!raw) return null;
-    const { data, timestamp } = JSON.parse(raw);
-    if (Date.now() - timestamp > ttl) {
-      localStorage.removeItem(`lbx_${prefix}_${slug}`);
-      return null;
-    }
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-function setCache(prefix: string, slug: string, data: any) {
-  try {
-    localStorage.setItem(`lbx_${prefix}_${slug}`, JSON.stringify({ data, timestamp: Date.now() }));
-  } catch {}
-}
-
-const getCachedFilmData = (slug: string) => getCache('film', CONFIG.CACHE_EXPIRY_MS, slug);
-const setCachedFilmData = (slug: string, data: any) => setCache('film', slug, data);
-const getCachedRecentRatings = (slug: string) => getCache('recent', CONFIG.RECENT_RATINGS_CACHE_MS, slug);
-const setCachedRecentRatings = (slug: string, data: any) => setCache('recent', slug, data);
-const getCachedSimilarPicks = (slug: string) => getCache('similar', CONFIG.SIMILAR_PICKS_CACHE_MS, slug);
-const setCachedSimilarPicks = (slug: string, data: any) => setCache('similar', slug, data);
+const getCachedFilmData = (slug: string) => cacheGet(`lbx_film_${slug}`, CONFIG.CACHE_EXPIRY_MS);
+const setCachedFilmData = (slug: string, data: any) => cacheSet(`lbx_film_${slug}`, data);
+const getCachedRecentRatings = (slug: string) => cacheGet(`lbx_recent_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
+const setCachedRecentRatings = (slug: string, data: any) => cacheSet(`lbx_recent_${slug}`, data);
+const getCachedSimilarPicks = (slug: string) => cacheGet(`lbx_similar_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
+const setCachedSimilarPicks = (slug: string, data: any) => cacheSet(`lbx_similar_${slug}`, data);
 
 // =============================================================================
 // Fetching
@@ -256,22 +260,24 @@ async function getFilmBasicData(slug: string) {
 
   const [pageResponse, statsResponse] = await Promise.all([
     throttledFetch(filmUrl),
-    throttledFetch(statsUrl, { credentials: 'include' }),
+    throttledFetch(statsUrl, { credentials: 'include', headers: { 'Referer': filmUrl } }).catch(() => null),
   ]);
 
-  const [html, statsHtml] = await Promise.all([pageResponse.text(), statsResponse.text()]);
-
+  const html = await pageResponse.text();
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const runtime = extractRuntime(doc);
   const year = extractYear(doc);
   const filmName = doc.querySelector('h1.headline-1')?.textContent?.trim() || slug;
   const imdbLink = doc.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null;
 
-  const statsDoc = new DOMParser().parseFromString(statsHtml, 'text/html');
-  const ratingBars = statsDoc.querySelectorAll('.rating-histogram-bar');
-  const ratings = ratingBars.length
-    ? Array.from(ratingBars).map((el) => parseInt(el.textContent!.replace(/,/g, '').split('&')[0]) || 0)
-    : [];
+  let ratings: number[] = [];
+  if (statsResponse) {
+    const statsDoc = new DOMParser().parseFromString(await statsResponse.text(), 'text/html');
+    const ratingBars = statsDoc.querySelectorAll('.rating-histogram-bar');
+    if (ratingBars.length) {
+      ratings = Array.from(ratingBars).map((el) => parseInt(el.textContent!.replace(/,/g, '').split('&')[0]) || 0);
+    }
+  }
 
   debug(`${slug}: runtime=${runtime}, year=${year}, ratings=${ratings.join(',') || 'none'}`);
   return { runtime, year, filmName, imdbLink, ratings };
@@ -340,7 +346,7 @@ async function getRecentRatingsSummary(slug: string | null = null) {
     ? Math.round((recentRatings.scoreAbsolute / recentRatings.totalNumberOfRatings) * 100)
     : 0;
 
-  if (recentRatings.totalNumberOfRatings > 0) setCachedRecentRatings(effectiveSlug, recentRatings);
+  setCachedRecentRatings(effectiveSlug, recentRatings);
   return recentRatings;
 }
 
@@ -389,7 +395,6 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
   }
 
   try {
-    // Step 1: Fetch popular lists
     updateProgress(statusElement, 0);
     const listsUrl = `https://letterboxd.com/film/${currentSlug}/lists/by/popular/`;
     const listsResponse = await throttledFetch(listsUrl, { credentials: 'include' });
@@ -403,7 +408,6 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
 
     const listName = firstList.querySelector('h2.name a')?.textContent?.trim() || 'Unknown List';
 
-    // Step 2: Fetch list sorted by rating
     updateProgress(statusElement, 1, `Loading "${listName}"...`);
     const listByRatingUrl = `https://letterboxd.com${listLink}by/rating/`;
     const listResponse = await throttledFetch(listByRatingUrl, { credentials: 'include' });
@@ -420,19 +424,22 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
 
     debug(`Found ${filmSlugs.length} films in "${listName}"`);
 
-    // Step 3: Fetch all film data in parallel
     updateProgress(statusElement, 2, `Fetching ${filmSlugs.length} films...`);
 
     const allBasicData = await Promise.all(
       filmSlugs.map(async ({ slug, link }) => {
-        const cached = getCachedFilmData(slug);
-        if (cached) return { slug, link, ...cached, fromCache: true };
-        const basic = await getFilmBasicData(slug);
-        return { slug, link, ...basic, fromCache: false };
+        try {
+          const cached = getCachedFilmData(slug);
+          if (cached) return { slug, link, ...cached, fromCache: true };
+          const basic = await getFilmBasicData(slug);
+          return { slug, link, ...basic, fromCache: false };
+        } catch (e: any) {
+          debug(`Failed to fetch ${slug}: ${e.message}, keeping as fetchFailed`);
+          return { slug, link, runtime: currentRuntime, year: null, filmName: slug, imdbLink: null, ratings: [], fromCache: false, fetchFailed: true };
+        }
       })
     );
 
-    // Filter by runtime
     const runtimeMatches = allBasicData.filter(
       (f: any) => f.runtime && Math.abs(f.runtime - currentRuntime) <= CONFIG.RUNTIME_TOLERANCE
     );
@@ -440,38 +447,38 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
     debug(`Runtime matches (±${CONFIG.RUNTIME_TOLERANCE}min): ${runtimeMatches.length}`);
     if (!runtimeMatches.length) return { films: [], listName, listLink };
 
-    // Step 4: Score all runtime matches
     const uncached = runtimeMatches.filter((f: any) => !f.fromCache).length;
     updateProgress(statusElement, 3, `Scoring ${runtimeMatches.length} matches${uncached ? ` (${uncached} new)` : ''}...`);
 
     const scoredFilms = await Promise.all(
       runtimeMatches.map(async (film: any) => {
         if (film.fromCache) return film;
+        if (film.fetchFailed) return { ...film, score: 0, ratio: 0 };
 
         const { imdbScore, imdbTotal } = await fetchImdbRatings(film.imdbLink);
         const { score, ratio } = calculateCombinedScore(film.ratings, imdbScore, imdbTotal);
 
-        if (score > 0) {
-          setCachedFilmData(film.slug, { score, ratio, runtime: film.runtime, year: film.year, filmName: film.filmName });
-        }
+        setCachedFilmData(film.slug, { score, ratio, runtime: film.runtime, year: film.year, filmName: film.filmName });
         return { ...film, score, ratio };
       })
     );
 
-    // Filter by score, sorted descending
     const currentScore = (await scorePromise).score;
     const qualifying = scoredFilms
-      .filter((f: any) => f.score >= currentScore)
+      .filter((f: any) => f.fetchFailed || f.score >= currentScore)
       .sort((a: any, b: any) => b.score - a.score)
-      .map((f: any) => ({ slug: f.slug, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year }));
+      .map((f: any) => ({ slug: f.slug, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year, fetchFailed: f.fetchFailed }));
 
     debug(`Qualifying films: ${qualifying.length}`);
     const result = { films: qualifying, listName, listLink };
-    if (qualifying.length) setCachedSimilarPicks(currentSlug, result);
+    const cacheable = qualifying.filter((f: any) => !f.fetchFailed);
+    if (cacheable.length) {
+      setCachedSimilarPicks(currentSlug, { films: cacheable, listName, listLink });
+    }
     return result;
   } catch (error) {
     console.error('findSimilarPicks error:', error);
-    return { films: [], listName: null, listLink: null };
+    return { films: [], listName: null, listLink: null, error: true };
   }
 }
 
@@ -492,7 +499,12 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
   similarSection.textContent = '';
 
   if (result.films.length === 0) {
-    similarSection.append(el('div', 'lbx-winner', '★ Winner! No similar film with equal or higher score found.'));
+    if (result.error) {
+      similarSection.remove();
+      return;
+    }
+    await currentRecentPromise;
+    similarSection.append(winnerBanner('★ Winner! No similar film with equal or higher score found.', result.listName, result.listLink));
     return;
   }
 
@@ -509,15 +521,13 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
     const item = el('li', 'lbx-similar-item');
     const link = el('a', 'lbx-similar-link', film.name) as HTMLAnchorElement;
     link.href = film.link;
-    const meta = el('span', 'lbx-similar-meta',
-      `${film.year ? film.year + ' · ' : ''}${film.runtime}m · ${addCommas(film.score)} · ...`);
+    const meta = el('span', 'lbx-similar-meta', filmMeta(film));
     item.append(link, meta);
     list.append(item);
     items.set(film.slug, { element: item, meta, film });
   });
   similarSection.append(list);
 
-  // Start all recent % fetches in parallel immediately
   const recentPromises = result.films.map((film: any) =>
     getRecentRatingsSummary(film.slug)
       .then((recent: any) => ({ slug: film.slug, recent }))
@@ -532,10 +542,9 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
       p.then(({ slug, recent }: { slug: string; recent: any }) => {
         const entry = items.get(slug);
         if (!entry) return;
-        if (recent && recent.scorePercentage >= threshold) {
-          const { film } = entry;
-          entry.meta.textContent =
-            `${film.year ? film.year + ' · ' : ''}${film.runtime}m · ${addCommas(film.score)} · ${recent.scorePercentage}%`;
+        const { film } = entry;
+        if (film.fetchFailed || (recent && recent.scorePercentage >= threshold)) {
+          entry.meta.textContent = filmMeta(film, recent ? `${recent.scorePercentage}%` : '?');
         } else {
           entry.element.remove();
           items.delete(slug);
@@ -546,7 +555,7 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
 
   if (items.size === 0) {
     similarSection.textContent = '';
-    similarSection.append(el('div', 'lbx-winner', '★ Winner! No similar film matches score and recent reviews.'));
+    similarSection.append(winnerBanner('★ Winner! No similar film matches score and recent reviews.', result.listName, result.listLink));
   }
 }
 
@@ -566,20 +575,23 @@ async function run(ratings: number[]) {
   const currentFilmName = document.querySelector('h1.headline-1')?.textContent?.trim() || currentSlug;
 
   const cachedFilm = currentSlug ? getCachedFilmData(currentSlug) : null;
-  const recentRatingsRaw = getRecentRatingsSummary();
+  const recentRatingsRaw = getRecentRatingsSummary().catch(() => ({ totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 }));
 
   const avgRating = document.querySelector('.ratings-histogram-chart .average-rating');
+  const reviewSection = document.querySelector('.review.body-text');
+  if (!avgRating?.parentElement || !reviewSection) return;
+
   const trendingElement = el('div', 'lbx-trending', 'Calculating...');
-  document.querySelector('.review.body-text')!.after(trendingElement);
+  reviewSection.after(trendingElement);
 
   let scorePromise: Promise<{ score: number; ratio: number }>;
   if (cachedFilm) {
     const scoreElement = el('span', 'lbx-score', `${addCommas(cachedFilm.score)} (${Math.round(cachedFilm.ratio * 100)}%)`);
-    avgRating!.parentElement!.insertBefore(scoreElement, avgRating);
+    avgRating.parentElement.insertBefore(scoreElement, avgRating);
     scorePromise = Promise.resolve({ score: cachedFilm.score, ratio: cachedFilm.ratio });
   } else {
     const scoreElement = el('span', 'lbx-score', 'Calculating...');
-    avgRating!.parentElement!.insertBefore(scoreElement, avgRating);
+    avgRating.parentElement.insertBefore(scoreElement, avgRating);
     scorePromise = fetchImdbRatings(document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null)
       .then(({ imdbScore, imdbTotal }) => {
         const { score, ratio } = calculateCombinedScore(ratings, imdbScore, imdbTotal);
@@ -591,14 +603,12 @@ async function run(ratings: number[]) {
       });
   }
 
-  // Trending resolves when both score + recent ratings complete
   const recentRatingsPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score }, recentRatings]) => {
     const trendingScore = Math.round((score * recentRatings.scorePercentage) / 100);
     trendingElement.textContent = `Trending: ${addCommas(trendingScore)} · Recent: ${recentRatings.scorePercentage}%`;
     return recentRatings;
   });
 
-  // Similar picks starts immediately — only awaits score at the final filter step
   const similarPicksPromise = currentSlug && currentRuntime
     ? displaySimilarPicks(currentSlug, scorePromise, currentRuntime, trendingElement, recentRatingsPromise)
     : Promise.resolve();
