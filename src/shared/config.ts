@@ -14,3 +14,8 @@ export async function getGeminiApiKey(): Promise<string> {
 
 // Sync export for MAIN world scripts (gmaps) that can't use chrome.storage
 export const GEMINI_API_KEY = BUILD_TIME_KEY || '';
+
+export const GEMINI_MODEL = 'gemini-3-flash-preview';
+
+export const geminiEndpoint = (apiKey: string) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;

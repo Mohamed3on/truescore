@@ -1,13 +1,12 @@
-import { GEMINI_API_KEY } from '../shared/config';
+import { GEMINI_API_KEY, geminiEndpoint } from '../shared/config';
 
 // Constants
 const TIME_PERIODS = ['total', 'inPastYear', 'inPastMonth'];
 const SORT_KEYS = ['relevant', 'newest'];
 const PAGE_SIZE = 20;
 const MIN_PAGES_BEFORE_STABILIZE = 2;
-const GEMINI_MODEL = 'gemini-3-flash-preview';
 const getGeminiKey = () => document.documentElement.dataset.tsGeminiKey || GEMINI_API_KEY;
-const getGeminiEndpoint = () => `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${getGeminiKey()}`;
+const getGeminiEndpoint = () => geminiEndpoint(getGeminiKey());
 
 // State
 let currentOption = 'total';

@@ -1,6 +1,6 @@
-import { getGeminiApiKey } from '../shared/config';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas } from '../shared/utils';
+import { buildSummarizeWidget } from '../shared/review-summary';
 
 const NUMBER_OF_PAGES_TO_PARSE = 10;
 
@@ -11,59 +11,6 @@ const getColorForPercentage = function (pct: number) {
   return { backgroundColor: `hsl(${hue}, 85%, 40%)` };
 };
 
-const renderStructuredSummary = (container: HTMLElement, { complaints, praised, conclusion, betterAlternative }: any) => {
-  container.textContent = '';
-  const addSection = (title: string, items: string[], type: string) => {
-    if (!items || !items.length) return;
-    const section = document.createElement('div');
-    section.className = `ars-section ars-section--${type}`;
-    const heading = document.createElement('div');
-    heading.className = 'ars-section-title';
-    heading.innerHTML = `${type === 'praised' ? '&#x25B3;' : '&#x25BD;'} ${title}`;
-    section.appendChild(heading);
-    for (const item of items) {
-      const bullet = document.createElement('div');
-      bullet.className = 'ars-section-item';
-      bullet.textContent = item;
-      section.appendChild(bullet);
-    }
-    container.appendChild(section);
-  };
-  addSection('Universally praised', praised, 'praised');
-  addSection('Common complaints', complaints, 'complaints');
-  if (betterAlternative) {
-    const section = document.createElement('div');
-    section.className = 'ars-section ars-section--alt';
-    const heading = document.createElement('div');
-    heading.className = 'ars-section-title';
-    heading.textContent = '\u21C4 Better alternative';
-    section.appendChild(heading);
-    const item = document.createElement('div');
-    item.className = 'ars-section-item';
-    item.textContent = betterAlternative;
-    section.appendChild(item);
-    container.appendChild(section);
-  }
-  if (conclusion) {
-    const el = document.createElement('div');
-    el.className = 'ars-conclusion';
-    el.textContent = conclusion;
-    container.appendChild(el);
-  }
-};
-
-// Legacy renderer for old cached text summaries
-const renderSummary = (container: HTMLElement, text: string) => {
-  container.textContent = '';
-  for (const line of text.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const el = document.createElement('div');
-    el.className = /^#{1,3}\s/.test(trimmed) ? 'ars-section-title' : 'ars-section-item';
-    el.textContent = trimmed.replace(/^[#*]+\s*/, '');
-    container.appendChild(el);
-  }
-};
 
 const getRatingPercentages = (root: Document | HTMLElement = document) => {
   const nodes = root.querySelectorAll('[role="progressbar"][aria-valuenow]');
@@ -137,30 +84,6 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     usedCache = true;
   }
 
-  const numberOfReviewsPerPage = 10;
-
-  const extractReviewListHTMLFromAjaxResponse = (raw: string) => {
-    if (!raw) return '';
-    const chunks = raw.split('&&&');
-    let html = '';
-    for (const chunk of chunks) {
-      const trimmed = chunk.trim();
-      if (!trimmed) continue;
-      try {
-        const payload = JSON.parse(trimmed);
-        if (
-          Array.isArray(payload) &&
-          payload.length >= 3 &&
-          typeof payload[2] === 'string' &&
-          payload[2].includes('data-hook="review"')
-        ) {
-          html += payload[2];
-        }
-      } catch (_) {}
-    }
-    return html;
-  };
-
   const getCrState = () => {
     const el = document.querySelector('#cr-state-object') as HTMLElement | null;
     if (el?.dataset?.state) {
@@ -171,45 +94,37 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
   const crState = getCrState();
   const antiCsrf = crState?.reviewsCsrfToken;
-  const ajaxUrl = crState?.reviewsAjaxUrl || '/hz/reviews-render/ajax/medley-filtered-reviews/get/';
 
-  const fetchReviewPageAjax = async (pageNumber: number) => {
-    const form = new URLSearchParams({
-      sortBy: 'recent',
-      pageNumber: String(pageNumber),
-      pageSize: String(numberOfReviewsPerPage),
-      asin: productSIN,
-    });
-
-    const res = await fetch(ajaxUrl, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'x-requested-with': 'XMLHttpRequest',
-        ...(antiCsrf ? { 'anti-csrftoken-a2z': antiCsrf } : {}),
-      },
-      body: form,
-    });
-    if (!res.ok) return '';
-    const raw = await res.text();
-    return extractReviewListHTMLFromAjaxResponse(raw);
-  };
-
-  const fetchReviewPageHTML = async (pageNumber: number) => {
-    const res = await fetch(
-      `/product-reviews/${productSIN}/?sortBy=recent&pageNumber=${pageNumber}`,
-      { credentials: 'include' }
-    );
-    if (!res.ok) return '';
-    return res.text();
-  };
-
-  const fetchReviewPage = async (pageNumber: number) => {
-    if (crState) {
-      const ajax = await fetchReviewPageAjax(pageNumber);
-      if (ajax) return ajax;
+  const parseAjaxChunks = (raw: string) => {
+    let html = '';
+    for (const chunk of raw.split('&&&')) {
+      try {
+        const arr = JSON.parse(chunk.trim());
+        if (Array.isArray(arr) && typeof arr[2] === 'string') html += arr[2];
+      } catch (_) {}
     }
-    return fetchReviewPageHTML(pageNumber);
+    return html;
+  };
+
+  const portalUrl = '/portal/customer-reviews/ajax/reviews/get/ref=cm_cr_getr_d_paging_btm';
+  const portalHeaders = {
+    'x-requested-with': 'XMLHttpRequest',
+    'content-type': 'application/x-www-form-urlencoded',
+    ...(antiCsrf ? { 'anti-csrftoken-a2z': antiCsrf } : {}),
+  };
+
+  const extractReviewTexts = (html: string, parser: DOMParser, seen: Set<string>) => {
+    const doc = parser.parseFromString(html, 'text/html');
+    const reviews = doc.querySelectorAll('[data-hook="review"]');
+    const texts: string[] = [];
+    for (const review of reviews) {
+      const bodyEl = review.querySelector('[data-hook="review-body"]');
+      if (bodyEl) {
+        const txt = bodyEl.textContent!.trim();
+        if (txt && !seen.has(txt)) { seen.add(txt); texts.push(txt); }
+      }
+    }
+    return { total: reviews.length, texts };
   };
 
   const ONE_DAY = 86400000;
@@ -218,24 +133,51 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     const cachedTexts = cacheGet(reviewsCacheKey, ONE_DAY);
     if (cachedTexts) return cachedTexts;
 
-    const pagePromises = Array.from({ length: NUMBER_OF_PAGES_TO_PARSE }, (_, i) =>
-      fetchReviewPage(i + 1)
-    );
-    const results = await Promise.allSettled(pagePromises);
     const parser = new DOMParser();
+    const seen = new Set<string>();
     const texts: string[] = [];
-    for (const result of results) {
-      if (result.status !== 'fulfilled' || !result.value) continue;
-      const doc = parser.parseFromString(result.value, 'text/html');
-      for (const review of doc.querySelectorAll('[data-hook="review"]')) {
-        const bodyEl = review.querySelector('[data-hook="review-body"]');
-        if (bodyEl) {
-          const txt = bodyEl.textContent!.trim();
-          if (txt) texts.push(txt);
-        }
+    let nextToken: string | null = null;
+
+    for (let page = 1; page <= NUMBER_OF_PAGES_TO_PARSE; page++) {
+      // Try /portal/ AJAX with cursor
+      const params: Record<string, string> = {
+        sortBy: 'recent', pageNumber: String(page), pageSize: '10',
+        asin: productSIN, scope: `reviewsAjax${page}`,
+        deviceType: 'desktop', reftag: 'cm_cr_getr_d_paging_btm',
+      };
+      if (nextToken) params.nextPageToken = nextToken;
+
+      let html = '';
+      try {
+        const res = await fetch(portalUrl, {
+          method: 'POST', credentials: 'include', headers: portalHeaders,
+          body: new URLSearchParams(params),
+        });
+        if (res.ok) html = parseAjaxChunks(await res.text());
+      } catch (_) {}
+
+      // Fallback to HTML scrape
+      if (!html) {
+        try {
+          const res = await fetch(`/product-reviews/${productSIN}/?sortBy=recent&pageNumber=${page}`, { credentials: 'include' });
+          if (res.ok) html = await res.text();
+        } catch (_) {}
       }
+      if (!html) break;
+
+      const { total, texts: newTexts } = extractReviewTexts(html, parser, seen);
+      texts.push(...newTexts);
+      if (total > 0 && newTexts.length === 0) {
+        console.warn(`[ARS] Page ${page}: all ${total} reviews were duplicates — pagination broken, stopping`);
+        break;
+      }
+
+      const tokenMatch = html.match(/nextPageToken[^:]*?:\s*(?:&quot;|")([^"&]+)/);
+      nextToken = tokenMatch?.[1] ?? null;
+      if (!nextToken) break;
     }
-    cacheSet(reviewsCacheKey, texts);
+
+    if (texts.length) cacheSet(reviewsCacheKey, texts);
     return texts;
   };
 
@@ -260,19 +202,35 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     loadingEl.innerHTML = '<div class="ars-header"><span class="ars-header-accent">&#x25C8;</span> Review Intelligence</div><div class="ars-loading">Analyzing recent reviews\u2026</div>';
     document.querySelector('#averageCustomerReviews')?.appendChild(loadingEl);
 
-    const pagePromises = Array.from({ length: NUMBER_OF_PAGES_TO_PARSE }, (_, i) =>
-      fetchReviewPage(i + 1)
-    );
+    const seenReviewIds = new Set<string>();
+    const collectedReviewTexts: string[] = [];
+    const reviewTextsSeen = new Set<string>();
+    let nextToken: string | null = null;
+    for (let page = 1; page <= NUMBER_OF_PAGES_TO_PARSE; page++) {
+      let html = '';
+      const portalParams: Record<string, string> = {
+        sortBy: 'recent', pageNumber: String(page), pageSize: '10',
+        asin: productSIN, scope: `reviewsAjax${page}`,
+        deviceType: 'desktop', reftag: 'cm_cr_getr_d_paging_btm',
+      };
+      if (nextToken) portalParams.nextPageToken = nextToken;
+      try {
+        const res = await fetch(portalUrl, {
+          method: 'POST', credentials: 'include', headers: portalHeaders,
+          body: new URLSearchParams(portalParams),
+        });
+        if (res.ok) html = parseAjaxChunks(await res.text());
+      } catch (_) {}
 
-    const results = await Promise.allSettled(pagePromises);
-    const reviewPages = results
-      .filter((result): result is PromiseFulfilledResult<string> => result.status === 'fulfilled')
-      .map(result => result.value);
+      if (!html) {
+        try {
+          const res = await fetch(`/product-reviews/${productSIN}/?sortBy=recent&pageNumber=${page}`, { credentials: 'include' });
+          if (res.ok) html = await res.text();
+        } catch (_) {}
+      }
+      if (!html) break;
 
-    for (const recentRatingsHTML of reviewPages) {
-      if (!recentRatingsHTML) continue;
-
-      const syntheticDocument = parser.parseFromString(recentRatingsHTML, 'text/html');
+      const syntheticDocument = parser.parseFromString(html, 'text/html');
 
       if (!totalRatingPercentages) {
         totalRatingPercentages = getRatingPercentages(syntheticDocument);
@@ -283,8 +241,14 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       }
 
       const reviews = syntheticDocument.querySelectorAll('[data-hook="review"]');
+      if (!reviews.length) break;
 
+      const prevSeen = seenReviewIds.size;
       for (const review of reviews) {
+        const reviewId = review.id || review.querySelector('[data-hook="review-body"]')?.textContent?.trim().slice(0, 80);
+        if (!reviewId || seenReviewIds.has(reviewId)) continue;
+        seenReviewIds.add(reviewId);
+
         const ratingElement = review.querySelector('[data-hook="review-star-rating"], [data-hook="cmps-review-star-rating"]');
         if (!ratingElement) continue;
 
@@ -304,10 +268,31 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
           scores.recent.absolute += starRatingsToLikeDislikeMapping[rating];
         }
       }
+
+      // Collect review texts for summarize (avoids double-fetching)
+      for (const review of reviews) {
+        const bodyEl = review.querySelector('[data-hook="review-body"]');
+        if (bodyEl) {
+          const txt = bodyEl.textContent!.trim();
+          if (txt && !reviewTextsSeen.has(txt)) { reviewTextsSeen.add(txt); collectedReviewTexts.push(txt); }
+        }
+      }
+
+      if (seenReviewIds.size === prevSeen) {
+        console.warn(`[ARS] Score page ${page}: all ${reviews.length} reviews were duplicates — pagination is broken, stopping`);
+        break;
+      }
+
+      const tokenMatch = html.match(/nextPageToken[^:]*?:\s*(?:&quot;|")([^"&]+)/);
+      nextToken = tokenMatch?.[1] ?? null;
+      if (!nextToken) break;
     }
 
     if (numberOfParsedReviews > 0) {
       cacheSet(scoresCacheKey, { numberOfParsedReviews, scores, formatRatings });
+    }
+    if (collectedReviewTexts.length) {
+      cacheSet(`ars-reviews-${cacheASIN}`, collectedReviewTexts);
     }
     loadingEl.remove();
   }
@@ -353,172 +338,22 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   }
 
   if (numberOfParsedReviews > 0) {
-    const cacheKey = `review-summary-${cacheASIN}`;
-    const THIRTY_DAYS = 30 * 86400000;
-    const rlKey = 'ars-gemini-rate-limit';
-    const summaryPanel = document.createElement('div');
-    summaryPanel.className = 'ars-summary-panel';
-    summaryPanel.style.display = 'none';
-
-    const checkRateLimit = () => {
-      let rl = JSON.parse(localStorage.getItem(rlKey) || '{"count":0,"resetAt":0}');
-      if (Date.now() > rl.resetAt) rl = { count: 0, resetAt: Date.now() + 86400000 };
-      return rl;
-    };
-
-    const runSummarize = async (btn: HTMLButtonElement) => {
-      btn.disabled = true;
-      btn.textContent = '⏳ Summarizing…';
-      const t0 = performance.now();
-      try {
-        btn.textContent = '⏳ Fetching reviews…';
-        const freshReviews = await fetchFreshReviewTexts();
-        if (!freshReviews.length) throw new Error('No reviews found');
-        freshReviews.sort((a: string, b: string) => b.length - a.length);
-        btn.textContent = '⏳ Summarizing…';
-        const prompt = `Analyze these Amazon product reviews. Ignore anything about shipping, delivery, packaging, or seller issues — focus ONLY on the product itself. Skip generic praise like "great product".
+    const SUMMARY_PROMPT = `Analyze these Amazon product reviews. Ignore anything about shipping, delivery, packaging, or seller issues \u2014 focus ONLY on the product itself. Skip generic praise like "great product".
 
 ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should start with the count, e.g. "(12) Too sweet for some tastes".
 
 If 2+ reviewers mention a specific better alternative product, note it and explain how reviewers compare it to this product (e.g. what's better/worse about the alternative).
 
-End with a 2-3 sentence verdict: who this product is ideal for, who should avoid it, and whether it's worth the price based on what reviewers say.
+Check for signs of review manipulation: repetitive phrasing across reviews, suspiciously similar wording or sentence structure, lack of specific/unique details, generic praise that reads like astroturfing, or signs of incentivized reviews. If detected, warn about it. If reviews appear genuine, leave suspiciousPatterns empty.
 
-Reviews:\n\n${freshReviews.join('\n---\n')}`;
-        const promptBytes = new Blob([prompt]).size;
-        console.log(`[ARS] Gemini request: ${freshReviews.length} reviews, prompt ${(promptBytes / 1024).toFixed(1)} KB`);
+End with a 2-3 sentence verdict: who this product is ideal for, who should avoid it, and whether it's worth the price based on what reviewers say.`;
 
-        const apiKey = await getGeminiApiKey();
-        if (!apiKey) { throw new Error('No Gemini API key — set one in the TrueScore popup'); }
-        const tFetch = performance.now();
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                temperature: 0,
-                thinkingConfig: { thinkingLevel: 'MINIMAL' },
-                maxOutputTokens: 2048,
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: 'object',
-                  properties: {
-                    complaints: {
-                      type: 'array',
-                      description: 'Specific product issues multiple reviewers agree on, ranked by frequency',
-                      items: { type: 'string' }
-                    },
-                    praised: {
-                      type: 'array',
-                      description: 'Things nearly everyone loved about the product',
-                      items: { type: 'string' }
-                    },
-                    conclusion: {
-                      type: 'string',
-                      description: '2-3 sentences: who it is ideal for, who should avoid it, and whether it is worth the price'
-                    },
-                    betterAlternative: {
-                      type: 'string',
-                      description: 'A specific alternative product 2+ reviewers say is better, including how they compare it to this product (what is better/worse about it). Empty string if none.',
-                      nullable: true
-                    }
-                  },
-                  required: ['complaints', 'praised', 'conclusion']
-                }
-              }
-            }),
-          }
-        );
-        const tResponse = performance.now();
-        console.log(`[ARS] Gemini HTTP status: ${res.status} — network wait: ${((tResponse - tFetch) / 1000).toFixed(2)}s`);
-
-        const tParseStart = performance.now();
-        const data = await res.json();
-        const tParseEnd = performance.now();
-        console.log(`[ARS] Response JSON parse: ${((tParseEnd - tParseStart) / 1000).toFixed(2)}s`);
-
-        const parts = data?.candidates?.[0]?.content?.parts || [];
-        const raw = parts.filter((p: any) => !p.thought).pop()?.text;
-        if (!raw) {
-          console.warn('[ARS] Gemini returned no text. Full response:', JSON.stringify(data).slice(0, 500));
-        }
-        const parsed = JSON.parse(raw);
-        const ts = Date.now();
-
-        const rl = checkRateLimit();
-        rl.count++;
-        localStorage.setItem(rlKey, JSON.stringify(rl));
-        localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts }));
-
-        renderStructuredSummary(summaryPanel, parsed);
-        summaryPanel.style.display = 'block';
-        console.log(`[ARS] Summarize total: ${((performance.now() - t0) / 1000).toFixed(2)}s`);
-        return ts;
-      } catch (e: any) {
-        console.error(`[ARS] Summarize failed after ${((performance.now() - t0) / 1000).toFixed(2)}s:`, e);
-        summaryPanel.textContent = `Error: ${e.message}`;
-        summaryPanel.style.display = 'block';
-        btn.disabled = false;
-        btn.textContent = '✦ Summarize Reviews';
-        return null;
-      }
-    };
-
-    const showDateRow = (ts: number) => {
-      const row = document.createElement('div');
-      row.className = 'ars-summary-meta';
-      const dateLabel = document.createElement('div');
-      dateLabel.className = 'ars-summary-date';
-      dateLabel.textContent = `Summarized on ${new Date(ts).toLocaleDateString()}`;
-      row.appendChild(dateLabel);
-
-      if (checkRateLimit().count < 20) {
-        const reBtn = document.createElement('button');
-        reBtn.className = 'ars-resummarize-btn';
-        reBtn.textContent = '↻ Re-summarize';
-        reBtn.addEventListener('click', async () => {
-          const newTs = await runSummarize(reBtn);
-          if (newTs) row.replaceWith(showDateRow(newTs));
-        });
-        row.appendChild(reBtn);
-      }
-      wrapper.appendChild(row);
-      return row;
-    };
-
-    // Check cache (valid for 30 days)
-    const rawCache = localStorage.getItem(cacheKey);
-    let cached: any = null;
-    if (rawCache) {
-      try { cached = JSON.parse(rawCache); } catch (_) {}
-      if (cached && Date.now() - cached.ts > THIRTY_DAYS) {
-        localStorage.removeItem(cacheKey);
-        cached = null;
-      }
-    }
-
-    if (cached) {
-      showDateRow(cached.ts);
-      if (cached.parsed) {
-        renderStructuredSummary(summaryPanel, cached.parsed);
-      } else {
-        renderSummary(summaryPanel, cached.text);
-      }
-      summaryPanel.style.display = 'block';
-    } else if (checkRateLimit().count < 20) {
-      const summarizeBtn = document.createElement('button');
-      summarizeBtn.className = 'ars-summarize-btn';
-      summarizeBtn.textContent = '✦ Summarize Reviews';
-      summarizeBtn.addEventListener('click', async () => {
-        const ts = await runSummarize(summarizeBtn);
-        if (ts) summarizeBtn.replaceWith(showDateRow(ts));
-      });
-      wrapper.appendChild(summarizeBtn);
-    }
-    wrapper.appendChild(summaryPanel);
+    buildSummarizeWidget({
+      wrapper,
+      cacheKey: `review-summary-${cacheASIN}`,
+      summaryPrompt: SUMMARY_PROMPT,
+      fetchReviews: fetchFreshReviewTexts,
+    });
   }
 
   elementToAppendTo!.appendChild(wrapper);

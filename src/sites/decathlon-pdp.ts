@@ -1,5 +1,6 @@
 import { addCommas, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
+import { buildSummarizeWidget } from '../shared/review-summary';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -91,7 +92,7 @@ const renderInsights = (productInfo: Element, stats: any) => {
   const panel = document.createElement('div');
   panel.className = 'nps-insights';
   panel.style.cssText = 'margin:16px 0;padding:14px;border-radius:8px;background:#f5f5f5;line-height:1.5;color:#333;';
-  panel.innerHTML = html; // safe: browser extension with controlled data
+  panel.innerHTML = html;
   const desc = productInfo.querySelector('.product-info__description');
   if (desc) desc.before(panel);
   else productInfo.appendChild(panel);
@@ -126,7 +127,7 @@ const replaceSizometer = (stats: any) => {
 
   const wrapper = document.createElement('div');
   wrapper.style.cssText = 'margin:4px 0;';
-  wrapper.innerHTML = [ // safe: browser extension with controlled data
+  wrapper.innerHTML = [
     `<button type="button" style="`,
     `  display:flex;align-items:center;gap:8px;width:100%;background:none;border:none;`,
     `  cursor:pointer;padding:8px 0;font-family:inherit;font-size:13px;color:#333;`,
@@ -157,6 +158,61 @@ const replaceSizometer = (stats: any) => {
   sizometer.replaceWith(wrapper);
 };
 
+const fetchReviewTexts = async (locale: string, modelId: string): Promise<string[]> => {
+  const domain = locale === 'en-GB' ? 'co.uk' : locale.split('-')[0];
+  const reviewsCacheKey = `dkt-reviews-${modelId}`;
+  const cached = cacheGet(reviewsCacheKey, 86400000);
+  if (cached) return cached;
+
+  const seen = new Set<string>();
+  const texts: string[] = [];
+  const results = await Promise.allSettled(
+    [0, 1, 2, 3, 4].map(page =>
+      fetch(`https://www.decathlon.${domain}/api/reviews/${locale}/reviews-stats/${modelId}/product?nbItemsPerPage=100&page=${page}&sortBy=DATE`)
+        .then(r => r.ok ? r.json() : null)
+    )
+  );
+  for (const result of results) {
+    if (result.status !== 'fulfilled' || !result.value?.reviews) continue;
+    for (const r of result.value.reviews) {
+      const text = [r.title, r.comment].filter(Boolean).join(': ').trim();
+      if (text && !seen.has(text)) { seen.add(text); texts.push(text); }
+    }
+  }
+  if (texts.length) cacheSet(reviewsCacheKey, texts);
+  return texts;
+};
+
+const SUMMARY_PROMPT = `Analyze these product reviews. Ignore anything about shipping, delivery, packaging, or seller issues \u2014 focus ONLY on the product itself. Skip generic praise like "great product".
+
+ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should start with the count, e.g. "(12) Too sweet for some tastes".
+
+If 2+ reviewers mention a specific better alternative product, note it and explain how reviewers compare it to this product.
+
+Check for signs of review manipulation: repetitive phrasing across reviews, suspiciously similar wording or sentence structure, lack of specific/unique details, generic praise that reads like astroturfing, or signs of incentivized reviews. If detected, warn about it. If reviews appear genuine, leave suspiciousPatterns empty.
+
+End with a 2-3 sentence verdict: who this product is ideal for, who should avoid it, and whether it's worth the price based on what reviewers say.`;
+
+const addSummarizeUI = (anchor: Element, locale: string, modelId: string) => {
+  if (document.querySelector('.ars-wrapper')) return;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'ars-wrapper';
+  const header = document.createElement('div');
+  header.className = 'ars-header';
+  header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
+  wrapper.appendChild(header);
+
+  buildSummarizeWidget({
+    wrapper,
+    cacheKey: `dkt-summary-${modelId}`,
+    summaryPrompt: SUMMARY_PROMPT,
+    fetchReviews: () => fetchReviewTexts(locale, modelId),
+  });
+
+  anchor.after(wrapper);
+};
+
 let generation = 0;
 
 const cleanup = () => {
@@ -166,6 +222,7 @@ const cleanup = () => {
     if (sep?.classList.contains('review__vertical-line')) sep.remove();
     el.remove();
   });
+  document.querySelectorAll('.ars-wrapper').forEach(el => el.remove());
 };
 
 const init = async () => {
@@ -197,6 +254,11 @@ const init = async () => {
   if (scoreData) appendScore(productInfo, scoreData);
   renderInsights(productInfo, stats);
   replaceSizometer(stats);
+
+  if (stats.count >= 5) {
+    const anchor = document.querySelector('.nps-insights') || productInfo.querySelector('.product-info__description') || productInfo;
+    addSummarizeUI(anchor, locale, modelId);
+  }
 };
 
 init();

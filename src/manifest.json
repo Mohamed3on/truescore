@@ -82,6 +82,7 @@
     {
       "matches": ["*://*.decathlon.de/p/*", "*://*.decathlon.co.uk/p/*"],
       "js": ["sites/decathlon-pdp.js"],
+      "css": ["sites/amazon-product.css"],
       "run_at": "document_end"
     },
     {

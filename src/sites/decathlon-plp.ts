@@ -2,8 +2,8 @@ import { addCommas } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
-const GRID = 'ul.product-grid';
-const CARD = `${GRID} .product-card`;
+const CONTAINERS = 'ul.product-grid, ul.carousel-slides-wrapper';
+const CARD = `:is(${CONTAINERS}) .product-card`;
 const LINK = 'a[href*="/p/"]';
 
 const locale = (() => {
@@ -69,21 +69,21 @@ const injectBadge = (card: Element, { score, nps }: { score: number; nps: number
 let sorting = false;
 
 const sortGrid = () => {
-  const grid = document.querySelector(GRID);
-  if (!grid) return;
-  const items = [...grid.children].map(li => {
-    const val = li.querySelector('[data-nps]')?.getAttribute('data-nps');
-    return { li, score: val != null ? parseFloat(val) : -Infinity };
-  });
-  items.sort((a, b) => b.score - a.score);
-  sorting = true;
-  for (const { li } of items) grid.appendChild(li);
-  sorting = false;
+  for (const grid of document.querySelectorAll(CONTAINERS)) {
+    const items = [...grid.children].map(li => {
+      const val = li.querySelector('[data-nps]')?.getAttribute('data-nps');
+      return { li, score: val != null ? parseFloat(val) : -Infinity };
+    });
+    items.sort((a, b) => b.score - a.score);
+    sorting = true;
+    for (const { li } of items) grid.appendChild(li);
+    sorting = false;
+  }
 };
 
 const dedupGrid = () => {
   const seen = new Set<string>();
-  for (const li of document.querySelectorAll(`${GRID} > li`)) {
+  for (const li of document.querySelectorAll(`:is(${CONTAINERS}) > li`)) {
     const link = li.querySelector(LINK);
     if (!link) continue;
     const pid = extractProductId(link.getAttribute('href')!);

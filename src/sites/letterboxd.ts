@@ -440,6 +440,14 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       })
     );
 
+    // Cache metadata for all fetched films so we don't re-fetch on next visit
+    // scored: false means only metadata cached — still needs IMDB scoring
+    allBasicData.forEach((f: any) => {
+      if (!f.fromCache && !f.fetchFailed && f.runtime) {
+        setCachedFilmData(f.slug, { score: 0, ratio: 0, scored: false, runtime: f.runtime, year: f.year, filmName: f.filmName });
+      }
+    });
+
     const runtimeMatches = allBasicData.filter(
       (f: any) => f.runtime && Math.abs(f.runtime - currentRuntime) <= CONFIG.RUNTIME_TOLERANCE
     );
@@ -452,13 +460,13 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
 
     const scoredFilms = await Promise.all(
       runtimeMatches.map(async (film: any) => {
-        if (film.fromCache) return film;
+        if (film.fromCache && film.scored !== false) return film;
         if (film.fetchFailed) return { ...film, score: 0, ratio: 0 };
 
         const { imdbScore, imdbTotal } = await fetchImdbRatings(film.imdbLink);
         const { score, ratio } = calculateCombinedScore(film.ratings, imdbScore, imdbTotal);
 
-        setCachedFilmData(film.slug, { score, ratio, runtime: film.runtime, year: film.year, filmName: film.filmName });
+        setCachedFilmData(film.slug, { score, ratio, scored: true, runtime: film.runtime, year: film.year, filmName: film.filmName });
         return { ...film, score, ratio };
       })
     );
@@ -597,7 +605,7 @@ async function run(ratings: number[]) {
         const { score, ratio } = calculateCombinedScore(ratings, imdbScore, imdbTotal);
         scoreElement.textContent = `${addCommas(score)} (${Math.round(ratio * 100)}%)`;
         if (currentSlug && currentRuntime) {
-          setCachedFilmData(currentSlug, { score, ratio, runtime: currentRuntime, year: currentYear, filmName: currentFilmName });
+          setCachedFilmData(currentSlug, { score, ratio, scored: true, runtime: currentRuntime, year: currentYear, filmName: currentFilmName });
         }
         return { score, ratio };
       });
