@@ -5,10 +5,11 @@ import { addCommas } from '../shared/utils';
 // Configuration
 // =============================================================================
 const CONFIG = {
-  CACHE_EXPIRY_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
+  CACHE_EXPIRY_MS: 7 * 24 * 60 * 60 * 1000, // 1 week
   RECENT_RATINGS_CACHE_MS: 12 * 60 * 60 * 1000, // 12 hours
   SIMILAR_PICKS_CACHE_MS: 7 * 24 * 60 * 60 * 1000, // 1 week
   RUNTIME_TOLERANCE: 10, // ±10 minutes
+  MAX_SIMILAR_PAGES: 3,
   MAX_CONCURRENCY: 10,
   DEBUG: false,
 };
@@ -408,26 +409,45 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
 
     const listName = firstList.querySelector('h2.name a')?.textContent?.trim() || 'Unknown List';
 
-    updateProgress(statusElement, 1, `Loading "${listName}"...`);
-    const listByRatingUrl = `https://letterboxd.com${listLink}by/rating/`;
-    const listResponse = await throttledFetch(listByRatingUrl, { credentials: 'include' });
-    const listDoc = new DOMParser().parseFromString(await listResponse.text(), 'text/html');
+    // Paginate until we find the page containing the current film (sorted by rating,
+    // so all films before it are rated higher) or hit the max page limit.
+    const listBaseUrl = `https://letterboxd.com${listLink}by/rating/`;
+    const allFilmSlugs: { slug: string; link: string }[] = [];
+    let foundCurrentFilm = false;
 
-    const filmSlugs = Array.from(listDoc.querySelectorAll('li.posteritem'))
-      .map((item) => {
-        const div = item.querySelector('[data-film-id]');
-        return div ? { slug: div.getAttribute('data-item-slug')!, link: div.getAttribute('data-item-link')! } : null;
-      })
-      .filter((f): f is { slug: string; link: string } => f?.slug != null && f.slug !== currentSlug);
+    for (let page = 1; page <= CONFIG.MAX_SIMILAR_PAGES; page++) {
+      const pageUrl = page === 1 ? listBaseUrl : `${listBaseUrl}page/${page}/`;
+      updateProgress(statusElement, 1, `Loading "${listName}"${page > 1 ? ` (page ${page})` : ''}...`);
+      const listResponse = await throttledFetch(pageUrl, { credentials: 'include' });
+      const listDoc = new DOMParser().parseFromString(await listResponse.text(), 'text/html');
 
-    if (!filmSlugs.length) return { films: [], listName, listLink };
+      const pageItems = Array.from(listDoc.querySelectorAll('li.posteritem'));
+      if (!pageItems.length) break;
 
-    debug(`Found ${filmSlugs.length} films in "${listName}"`);
+      // Check if current film is on this page
+      const slugsOnPage = pageItems.map(item => item.querySelector('[data-film-id]')?.getAttribute('data-item-slug'));
+      if (slugsOnPage.includes(currentSlug)) foundCurrentFilm = true;
 
-    updateProgress(statusElement, 2, `Fetching ${filmSlugs.length} films...`);
+      const pageSlugs = pageItems
+        .map((item) => {
+          const div = item.querySelector('[data-film-id]');
+          return div ? { slug: div.getAttribute('data-item-slug')!, link: div.getAttribute('data-item-link')! } : null;
+        })
+        .filter((f): f is { slug: string; link: string } => f?.slug != null && f.slug !== currentSlug);
+
+      allFilmSlugs.push(...pageSlugs);
+      debug(`Page ${page}: ${pageSlugs.length} films${foundCurrentFilm ? ' (current film found)' : ''}`);
+
+      if (foundCurrentFilm) break;
+    }
+
+    if (!allFilmSlugs.length) return { films: [], listName, listLink };
+
+    debug(`Total films across pages: ${allFilmSlugs.length}`);
+    updateProgress(statusElement, 2, `Fetching ${allFilmSlugs.length} films...`);
 
     const allBasicData = await Promise.all(
-      filmSlugs.map(async ({ slug, link }) => {
+      allFilmSlugs.map(async ({ slug, link }) => {
         try {
           const cached = getCachedFilmData(slug);
           if (cached) return { slug, link, ...cached, fromCache: true };
@@ -440,8 +460,6 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       })
     );
 
-    // Cache metadata for all fetched films so we don't re-fetch on next visit
-    // scored: false means only metadata cached — still needs IMDB scoring
     allBasicData.forEach((f: any) => {
       if (!f.fromCache && !f.fetchFailed && f.runtime) {
         setCachedFilmData(f.slug, { score: 0, ratio: 0, scored: false, runtime: f.runtime, year: f.year, filmName: f.filmName });
