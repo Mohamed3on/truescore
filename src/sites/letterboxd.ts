@@ -424,16 +424,14 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       const pageItems = Array.from(listDoc.querySelectorAll('li.posteritem'));
       if (!pageItems.length) break;
 
-      // Check if current film is on this page
-      const slugsOnPage = pageItems.map(item => item.querySelector('[data-film-id]')?.getAttribute('data-item-slug'));
-      if (slugsOnPage.includes(currentSlug)) foundCurrentFilm = true;
-
-      const pageSlugs = pageItems
-        .map((item) => {
-          const div = item.querySelector('[data-film-id]');
-          return div ? { slug: div.getAttribute('data-item-slug')!, link: div.getAttribute('data-item-link')! } : null;
-        })
-        .filter((f): f is { slug: string; link: string } => f?.slug != null && f.slug !== currentSlug);
+      const pageSlugs: { slug: string; link: string }[] = [];
+      for (const item of pageItems) {
+        const div = item.querySelector('[data-film-id]');
+        if (!div) continue;
+        const slug = div.getAttribute('data-item-slug');
+        if (slug === currentSlug) { foundCurrentFilm = true; continue; }
+        if (slug) pageSlugs.push({ slug, link: div.getAttribute('data-item-link')! });
+      }
 
       allFilmSlugs.push(...pageSlugs);
       debug(`Page ${page}: ${pageSlugs.length} films${foundCurrentFilm ? ' (current film found)' : ''}`);
@@ -600,7 +598,8 @@ async function run(ratings: number[]) {
   const currentYear = extractYear(document);
   const currentFilmName = document.querySelector('h1.headline-1')?.textContent?.trim() || currentSlug;
 
-  const cachedFilm = currentSlug ? getCachedFilmData(currentSlug) : null;
+  const cachedFilmRaw = currentSlug ? getCachedFilmData(currentSlug) : null;
+  const cachedFilm = cachedFilmRaw?.score > 0 ? cachedFilmRaw : null;
   const recentRatingsRaw = getRecentRatingsSummary().catch(() => ({ totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 }));
 
   const avgRating = document.querySelector('.ratings-histogram-chart .average-rating');
