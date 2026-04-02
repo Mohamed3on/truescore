@@ -159,7 +159,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       // Fallback to HTML scrape
       if (!html) {
         try {
-          const res = await fetch(`/product-reviews/${productSIN}/?sortBy=recent&pageNumber=${page}`, { credentials: 'include' });
+          const fallbackUrl = `/product-reviews/${productSIN}/?sortBy=recent&pageNumber=${page}${nextToken ? `&nextPageToken=${encodeURIComponent(nextToken)}` : ''}`;
+          const res = await fetch(fallbackUrl, { credentials: 'include' });
           if (res.ok) html = await res.text();
         } catch (_) {}
       }
@@ -224,7 +225,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
       if (!html) {
         try {
-          const res = await fetch(`/product-reviews/${productSIN}/?sortBy=recent&pageNumber=${page}`, { credentials: 'include' });
+          const fallbackUrl = `/product-reviews/${productSIN}/?sortBy=recent&pageNumber=${page}${nextToken ? `&nextPageToken=${encodeURIComponent(nextToken)}` : ''}`;
+          const res = await fetch(fallbackUrl, { credentials: 'include' });
           if (res.ok) html = await res.text();
         } catch (_) {}
       }
