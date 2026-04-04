@@ -91,6 +91,33 @@ const STYLES = `
     font-size: .85em;
     text-decoration: none;
   }
+  .lbx-similar-item.lbx-excluded {
+    opacity: .45;
+  }
+  .lbx-similar-item.lbx-excluded .lbx-similar-link {
+    color: #678;
+    text-decoration: line-through;
+  }
+  .lbx-similar-reason {
+    color: #e54;
+    font-size: .75rem;
+    white-space: nowrap;
+  }
+  .lbx-debug-toggle {
+    color: #567;
+    font-size: .75rem;
+    cursor: pointer;
+    margin-top: .75rem;
+    user-select: none;
+  }
+  .lbx-debug-toggle:hover { color: #9ab; }
+  .lbx-debug-content {
+    color: #567;
+    font-size: .75rem;
+    line-height: 1.5;
+    margin-top: .35rem;
+    font-family: monospace;
+  }
   .lbx-winner-source::before { content: '· '; }
   .lbx-winner-source:hover { color: #9ab; }
   .lbx-progress { color: #678; font-size: .9rem; }
@@ -146,7 +173,41 @@ function extractSlugFromUrl(url: string) {
 
 function filmMeta(film: any, recentText = '...') {
   const scoreText = film.fetchFailed ? '?' : addCommas(film.score);
-  return `${film.year ? film.year + ' · ' : ''}${film.runtime}m · ${scoreText} · ${recentText}`;
+  const base = `${film.year ? film.year + ' · ' : ''}${film.runtime}m · ${scoreText}`;
+  return recentText ? `${base} · ${recentText}` : base;
+}
+
+function debugDetails(stats: any) {
+  const toggle = el('div', 'lbx-debug-toggle', '▶ Debug info');
+  const content = el('div', 'lbx-debug-content');
+  content.style.display = 'none';
+  const lines = [
+    `Found on page: ${stats.foundOnPage || 'not found'} (searched ${stats.pagesSearched || '?'} of max ${CONFIG.MAX_SIMILAR_PAGES})`,
+    `Candidates from list: ${stats.totalInList}`,
+    `Runtime matched (≤${stats.currentRuntime ? stats.currentRuntime + CONFIG.RUNTIME_TOLERANCE : '?'}m): ${stats.runtimeMatched}`,
+    `Scored: ${stats.scored}`,
+    `Current film score: ${addCommas(stats.currentScore)}`,
+  ];
+  if (stats.recentThreshold != null) lines.push(`Recent % threshold: ${stats.recentThreshold}%`);
+  if (stats.allScored?.length) {
+    lines.push('');
+    lines.push('All runtime-matched films:');
+    for (const f of stats.allScored) {
+      const status = f.fetchFailed ? '(fetch failed)' : (f.score >= stats.currentScore ? '✓' : '✗');
+      lines.push(`  ${status} ${f.name} — ${f.runtime}m — ${f.fetchFailed ? '?' : addCommas(f.score)}`);
+    }
+  }
+  lines.forEach(line => {
+    content.append(document.createTextNode(line), document.createElement('br'));
+  });
+  toggle.addEventListener('click', () => {
+    const open = content.style.display !== 'none';
+    content.style.display = open ? 'none' : 'block';
+    toggle.textContent = (open ? '▶' : '▼') + ' Debug info';
+  });
+  const wrap = el('div');
+  wrap.append(toggle, content);
+  return wrap;
 }
 
 function winnerBanner(message: string, listName?: string | null, listLink?: string | null) {
@@ -409,11 +470,12 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
 
     const listName = firstList.querySelector('h2.name a')?.textContent?.trim() || 'Unknown List';
 
-    // Paginate until we find the page containing the current film (sorted by rating,
-    // so all films before it are rated higher) or hit the max page limit.
+    // Paginate until we find the page containing the current film (sorted by rating).
+    // Collects all films on the same page or higher — films after it on the same page are included.
     const listBaseUrl = `https://letterboxd.com${listLink}by/rating/`;
     const allFilmSlugs: { slug: string; link: string }[] = [];
     let foundCurrentFilm = false;
+    let foundOnPage = 0;
 
     for (let page = 1; page <= CONFIG.MAX_SIMILAR_PAGES; page++) {
       const pageUrl = page === 1 ? listBaseUrl : `${listBaseUrl}page/${page}/`;
@@ -429,7 +491,7 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
         const div = item.querySelector('[data-film-id]');
         if (!div) continue;
         const slug = div.getAttribute('data-item-slug');
-        if (slug === currentSlug) { foundCurrentFilm = true; continue; }
+        if (slug === currentSlug) { foundCurrentFilm = true; foundOnPage = page; continue; }
         if (slug) pageSlugs.push({ slug, link: div.getAttribute('data-item-link')! });
       }
 
@@ -464,11 +526,12 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       }
     });
 
+    // Allow any shorter film + up to TOLERANCE mins longer (no lower bound — a 90m film can beat a 200m one)
     const runtimeMatches = allBasicData.filter(
-      (f: any) => f.runtime && Math.abs(f.runtime - currentRuntime) <= CONFIG.RUNTIME_TOLERANCE
+      (f: any) => f.runtime && f.runtime <= currentRuntime + CONFIG.RUNTIME_TOLERANCE
     );
 
-    debug(`Runtime matches (±${CONFIG.RUNTIME_TOLERANCE}min): ${runtimeMatches.length}`);
+    debug(`Runtime matches (≤${currentRuntime + CONFIG.RUNTIME_TOLERANCE}m): ${runtimeMatches.length}`);
     if (!runtimeMatches.length) return { films: [], listName, listLink };
 
     const uncached = runtimeMatches.filter((f: any) => !f.fromCache).length;
@@ -488,13 +551,16 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
     );
 
     const currentScore = (await scorePromise).score;
+    scoredFilms.sort((a: any, b: any) => b.score - a.score);
     const qualifying = scoredFilms
       .filter((f: any) => f.fetchFailed || f.score >= currentScore)
-      .sort((a: any, b: any) => b.score - a.score)
       .map((f: any) => ({ slug: f.slug, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year, fetchFailed: f.fetchFailed }));
+    const allScored = scoredFilms
+      .map((f: any) => ({ name: f.filmName, score: f.score, runtime: f.runtime, fetchFailed: f.fetchFailed }));
+    const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentScore, currentRuntime, foundOnPage, pagesSearched: Math.min(foundOnPage || CONFIG.MAX_SIMILAR_PAGES, CONFIG.MAX_SIMILAR_PAGES), allScored };
 
     debug(`Qualifying films: ${qualifying.length}`);
-    const result = { films: qualifying, listName, listLink };
+    const result = { films: qualifying, stats, listName, listLink };
     const cacheable = qualifying.filter((f: any) => !f.fetchFailed);
     if (cacheable.length) {
       setCachedSimilarPicks(currentSlug, { films: cacheable, listName, listLink });
@@ -529,6 +595,7 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
     }
     await currentRecentPromise;
     similarSection.append(winnerBanner('★ Winner! No similar film with equal or higher score found.', result.listName, result.listLink));
+    if (result.stats) similarSection.append(debugDetails(result.stats));
     return;
   }
 
@@ -561,6 +628,7 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
   const currentRecent = await currentRecentPromise;
   const threshold = currentRecent.scorePercentage;
 
+  let passCount = 0;
   await Promise.all(
     recentPromises.map((p: any) =>
       p.then(({ slug, recent }: { slug: string; recent: any }) => {
@@ -569,18 +637,28 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
         const { film } = entry;
         if (film.fetchFailed || (recent && recent.scorePercentage >= threshold)) {
           entry.meta.textContent = filmMeta(film, recent ? `${recent.scorePercentage}%` : '?');
+          passCount++;
         } else {
-          entry.element.remove();
-          items.delete(slug);
+          entry.element.classList.add('lbx-excluded');
+          entry.meta.textContent = filmMeta(film, recent ? `${recent.scorePercentage}%` : '?');
+          const reason = el('span', 'lbx-similar-reason', `need ≥${threshold}%`);
+          entry.element.append(reason);
         }
       })
     )
   );
 
-  if (items.size === 0) {
+  if (passCount === 0) {
     similarSection.textContent = '';
     similarSection.append(winnerBanner('★ Winner! No similar film matches score and recent reviews.', result.listName, result.listLink));
+    const excludedList = el('ul', 'lbx-similar-list');
+    for (const [, entry] of items) {
+      entry.element.classList.add('lbx-excluded');
+      excludedList.append(entry.element);
+    }
+    similarSection.append(excludedList);
   }
+  if (result.stats) similarSection.append(debugDetails({ ...result.stats, recentThreshold: threshold }));
 }
 
 // =============================================================================
