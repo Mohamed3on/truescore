@@ -436,6 +436,32 @@ function updateProgress(element: HTMLElement, step: number, detail = '') {
  * Finds similar films from popular lists with matching runtime and score
  */
 async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ score: number; ratio: number }>, currentRuntime: number, statusElement: HTMLElement) {
+  // Set filmFilter cookie based on whether current film is watched
+  const productionUid = document.querySelector('#backdrop[data-production-uid]')?.getAttribute('data-production-uid');
+  const isWatched = await (async () => {
+    if (!productionUid) return false;
+    try {
+      const res = await fetch('/ajax/letterboxd-metadata/', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `productions=${encodeURIComponent(productionUid)}`,
+      });
+      const meta = await res.json();
+      debug('Metadata response:', meta);
+      return meta.watched?.includes(productionUid) ?? false;
+    } catch (e: any) {
+      debug('Failed to fetch metadata:', e.message);
+      return false;
+    }
+  })();
+  if (isWatched) {
+    // Delete any lingering hide-watched cookie so list fetches use default behavior
+    document.cookie = `filmFilter=; path=/; domain=.letterboxd.com; max-age=0`;
+  } else {
+    document.cookie = `filmFilter=hide-watched; path=/; domain=.letterboxd.com`;
+  }
+  debug(`Film ${isWatched ? 'is' : 'is not'} watched (uid=${productionUid}), filmFilter=${isWatched ? 'cleared' : 'hide-watched'}`);
+
   const cached = getCachedSimilarPicks(currentSlug);
   if (cached && cached.listLink) {
     // Re-fetch list with cookies to exclude newly watched films

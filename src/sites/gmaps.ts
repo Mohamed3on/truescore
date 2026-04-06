@@ -257,8 +257,7 @@ For the verdict: write 2-3 sentences as if texting a friend who asked "should I 
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
-        temperature: 0,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 16384,
         responseMimeType: 'application/json',
         responseSchema: {
           type: 'OBJECT',
@@ -270,7 +269,7 @@ For the verdict: write 2-3 sentences as if texting a friend who asked "should I 
             valueForMoney: { type: 'INTEGER' }
           }
         },
-        thinkingConfig: { thinkingBudget: 1024 }
+        thinkingConfig: { thinkingLevel: 'medium' }
       }
     })
   });

@@ -75,6 +75,15 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   const cachedScores = cacheGet(scoresCacheKey, THREE_DAYS);
   let usedCache = false;
 
+  const elementToAppendTo = document.querySelector('#averageCustomerReviews');
+  const wrapper = document.createElement('div');
+  wrapper.className = 'ars-wrapper';
+
+  const headerEl = document.createElement('div');
+  headerEl.className = 'ars-header';
+  headerEl.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
+  wrapper.appendChild(headerEl);
+
   if (cachedScores) {
     numberOfParsedReviews = cachedScores.numberOfParsedReviews;
     scores.recent = cachedScores.scores.recent;
@@ -198,10 +207,55 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       }
     } catch (_) {}
 
-    const loadingEl = document.createElement('div');
-    loadingEl.className = 'ars-wrapper';
-    loadingEl.innerHTML = '<div class="ars-header"><span class="ars-header-accent">&#x25C8;</span> Review Intelligence</div><div class="ars-loading">Analyzing recent reviews\u2026</div>';
-    document.querySelector('#averageCustomerReviews')?.appendChild(loadingEl);
+    // Build live gauge + stats so counts update in real-time
+    const gauge = document.createElement('a');
+    gauge.className = 'ars-gauge';
+    gauge.href = recentRatingsURL;
+    gauge.innerHTML = `
+      <div class="ars-gauge-label"><span class="ars-gauge-pct">\u2014</span> recent positive</div>
+      <div class="ars-gauge-track"><div class="ars-gauge-fill"></div></div>
+    `;  // safe: no user content in template
+    wrapper.appendChild(gauge);
+
+    const stats = document.createElement('div');
+    stats.className = 'ars-stats';
+    stats.innerHTML = `
+      <div class="ars-stat"><span class="ars-stat-val" data-ars="trending">\u2014</span><span class="ars-stat-lbl">trending</span></div>
+      <div class="ars-stat-div"></div>
+      <div class="ars-stat"><span class="ars-stat-val" data-ars="analyzed">0</span><span class="ars-stat-lbl">analyzed<span class="ars-scan-spinner" data-ars="scanning"></span></span></div>
+    `;  // safe: no user content in template
+    wrapper.appendChild(stats);
+
+    elementToAppendTo!.appendChild(wrapper);
+
+    const pctEl = gauge.querySelector('.ars-gauge-pct') as HTMLElement;
+    const fillEl = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
+    const trendEl = wrapper.querySelector('[data-ars="trending"]') as HTMLElement;
+    const analyzedEl = wrapper.querySelector('[data-ars="analyzed"]') as HTMLElement;
+
+    const bumpEl = (el: Element) => {
+      el.classList.remove('ars-bump');
+      requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('ars-bump')));
+    };
+
+    const updateLiveStats = () => {
+      if (numberOfParsedReviews === 0) return;
+      const pctRaw = scores.recent.absolute / numberOfParsedReviews;
+      const pct = Math.round(pctRaw * 100);
+      const { backgroundColor } = getColorForPercentage(pctRaw);
+      const trendingScore = Math.round(scores.total.calculated * pctRaw);
+
+      pctEl.textContent = `${pct}%`;
+      pctEl.style.color = backgroundColor;
+      fillEl.style.transform = `scaleX(${pctRaw})`;
+      fillEl.style.background = backgroundColor;
+
+      trendEl.textContent = addCommas(trendingScore);
+      bumpEl(trendEl);
+
+      analyzedEl.textContent = String(numberOfParsedReviews);
+      bumpEl(analyzedEl);
+    };
 
     const seenReviewIds = new Set<string>();
     const collectedReviewTexts: string[] = [];
@@ -285,6 +339,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         break;
       }
 
+      updateLiveStats();
+
       const tokenMatch = html.match(/nextPageToken[^:]*?:\s*(?:&quot;|")([^"&]+)/);
       nextToken = tokenMatch?.[1] ?? null;
       if (!nextToken) break;
@@ -296,50 +352,58 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     if (collectedReviewTexts.length) {
       cacheSet(`ars-reviews-${cacheASIN}`, collectedReviewTexts);
     }
-    loadingEl.remove();
-  }
 
-  const elementToAppendTo = document.querySelector('#averageCustomerReviews');
+    // Fade out scanning indicator
+    const spinner = wrapper.querySelector('[data-ars="scanning"]');
+    if (spinner) {
+      spinner.classList.add('ars-scan-done');
+      spinner.addEventListener('animationend', () => spinner.remove(), { once: true });
+    }
 
-  const wrapper = document.createElement('div');
-  wrapper.className = 'ars-wrapper';
-
-  const header = document.createElement('div');
-  header.className = 'ars-header';
-  header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
-  wrapper.appendChild(header);
-
-  if (numberOfParsedReviews > 0) {
-    scores.recent.percentage = (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
-    const trendingScore = Math.round(scores.total.calculated * scores.recent.percentage);
-    let { backgroundColor } = getColorForPercentage(scores.recent.percentage);
-    const pct = Math.round(scores.recent.percentage * 100);
-
-    const gauge = document.createElement('a');
-    gauge.className = 'ars-gauge';
-    gauge.href = recentRatingsURL;
-    gauge.innerHTML = `
-      <div class="ars-gauge-label"><span class="ars-gauge-pct" style="color:${backgroundColor}">${pct}%</span> recent positive</div>
-      <div class="ars-gauge-track"><div class="ars-gauge-fill" style="width:${pct}%;background:${backgroundColor}"></div></div>
-    `;
-    wrapper.appendChild(gauge);
-
-    const stats = document.createElement('div');
-    stats.className = 'ars-stats';
-    stats.innerHTML = `
-      <div class="ars-stat"><span class="ars-stat-val">${addCommas(trendingScore)}</span><span class="ars-stat-lbl">trending</span></div>
-      <div class="ars-stat-div"></div>
-      <div class="ars-stat"><span class="ars-stat-val">${numberOfParsedReviews}</span><span class="ars-stat-lbl">analyzed</span></div>
-    `;
-    wrapper.appendChild(stats);
+    if (numberOfParsedReviews === 0) {
+      gauge.remove();
+      stats.remove();
+      const noReviews = document.createElement('div');
+      noReviews.className = 'ars-empty';
+      noReviews.textContent = 'No local reviews available for analysis';
+      wrapper.appendChild(noReviews);
+    }
   } else {
-    const noReviews = document.createElement('div');
-    noReviews.className = 'ars-empty';
-    noReviews.textContent = 'No local reviews available for analysis';
-    wrapper.appendChild(noReviews);
+    // Cached path: build final widget immediately
+    if (numberOfParsedReviews > 0) {
+      scores.recent.percentage = (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
+      const pctRaw = parseFloat(scores.recent.percentage);
+      const pct = Math.round(pctRaw * 100);
+      const { backgroundColor } = getColorForPercentage(pctRaw);
+      const trendingScore = Math.round(scores.total.calculated * pctRaw);
+
+      const gauge = document.createElement('a');
+      gauge.className = 'ars-gauge';
+      gauge.href = recentRatingsURL;
+      gauge.innerHTML = `
+        <div class="ars-gauge-label"><span class="ars-gauge-pct" style="color:${backgroundColor}">${pct}%</span> recent positive</div>
+        <div class="ars-gauge-track"><div class="ars-gauge-fill" style="transform:scaleX(${pctRaw});background:${backgroundColor}"></div></div>
+      `;
+      wrapper.appendChild(gauge);
+
+      const stats = document.createElement('div');
+      stats.className = 'ars-stats';
+      stats.innerHTML = `
+        <div class="ars-stat"><span class="ars-stat-val">${addCommas(trendingScore)}</span><span class="ars-stat-lbl">trending</span></div>
+        <div class="ars-stat-div"></div>
+        <div class="ars-stat"><span class="ars-stat-val">${numberOfParsedReviews}</span><span class="ars-stat-lbl">analyzed</span></div>
+      `;
+      wrapper.appendChild(stats);
+    } else {
+      const noReviews = document.createElement('div');
+      noReviews.className = 'ars-empty';
+      noReviews.textContent = 'No local reviews available for analysis';
+      wrapper.appendChild(noReviews);
+    }
   }
 
   if (numberOfParsedReviews > 0) {
+    scores.recent.percentage = scores.recent.percentage || (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
     const SUMMARY_PROMPT = `Analyze these Amazon product reviews. Ignore anything about shipping, delivery, packaging, or seller issues \u2014 focus ONLY on the product itself. Skip generic praise like "great product".
 
 ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should start with the count, e.g. "(12) Too sweet for some tastes".
@@ -358,7 +422,7 @@ End with a 2-3 sentence verdict: who this product is ideal for, who should avoid
     });
   }
 
-  elementToAppendTo!.appendChild(wrapper);
+  if (!wrapper.parentNode) elementToAppendTo!.appendChild(wrapper);
   injectBestFormats(formatRatings);
 };
 
