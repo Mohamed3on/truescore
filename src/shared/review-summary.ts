@@ -66,22 +66,26 @@ const SUMMARY_SCHEMA = {
   required: ['complaints', 'praised', 'conclusion']
 };
 
-export const geminiSummarize = async (reviewTexts: string[], prompt: string): Promise<any> => {
+export const geminiSummarize = async (reviewTexts: string[], prompt: string, schema: any = SUMMARY_SCHEMA): Promise<any> => {
   const apiKey = await getGeminiApiKey();
   if (!apiKey) throw new Error('No Gemini API key \u2014 set one in the TrueScore popup');
+
+  const generationConfig: any = {
+    temperature: 0,
+    thinkingConfig: { thinkingLevel: 'MINIMAL' },
+    maxOutputTokens: 2048,
+  };
+  if (schema) {
+    generationConfig.responseMimeType = 'application/json';
+    generationConfig.responseSchema = schema;
+  }
 
   const res = await fetch(geminiEndpoint(apiKey), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt + '\n\nReviews:\n\n' + reviewTexts.join('\n---\n') }] }],
-      generationConfig: {
-        temperature: 0,
-        thinkingConfig: { thinkingLevel: 'MINIMAL' },
-        maxOutputTokens: 2048,
-        responseMimeType: 'application/json',
-        responseSchema: SUMMARY_SCHEMA
-      }
+      generationConfig,
     }),
   });
 
@@ -89,10 +93,18 @@ export const geminiSummarize = async (reviewTexts: string[], prompt: string): Pr
   const parts = data?.candidates?.[0]?.content?.parts || [];
   const raw = parts.filter((p: any) => !p.thought).pop()?.text;
   if (!raw) throw new Error(data.error?.message || 'Empty Gemini response');
-  return JSON.parse(raw);
+  return schema ? JSON.parse(raw) : raw;
 };
 
-const THIRTY_DAYS = 30 * 86400000;
+export const renderFreeFormAnswer = (container: HTMLElement, text: string) => {
+  container.textContent = '';
+  const div = document.createElement('div');
+  div.className = 'ars-answer';
+  div.style.whiteSpace = 'pre-wrap';
+  div.textContent = text;
+  container.appendChild(div);
+};
+
 const RL_KEY = 'ars-gemini-rate-limit';
 const RL_MAX = 20;
 
@@ -141,17 +153,17 @@ export const buildSummarizeWidget = ({ wrapper, cacheKey, summaryPrompt, fetchRe
       reviews.sort((a, b) => b.length - a.length);
       btn.textContent = '\u23F3 Summarizing\u2026';
 
-      const prompt = question
-        ? `${QUESTION_PROMPT}\n\nQuestion: ${question}`
-        : summaryPrompt;
-
-      const parsed = await geminiSummarize(reviews, prompt);
       const ts = Date.now();
-
-      bumpRateLimit();
-      if (!question) localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts }));
-
-      renderStructuredSummary(summaryPanel, parsed);
+      if (question) {
+        const answer = await geminiSummarize(reviews, `${QUESTION_PROMPT}\n\nQuestion: ${question}`, null);
+        bumpRateLimit();
+        renderFreeFormAnswer(summaryPanel, answer);
+      } else {
+        const parsed = await geminiSummarize(reviews, summaryPrompt);
+        bumpRateLimit();
+        localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts }));
+        renderStructuredSummary(summaryPanel, parsed);
+      }
       summaryPanel.style.display = 'block';
       return ts;
     } catch (e: any) {
@@ -207,10 +219,6 @@ export const buildSummarizeWidget = ({ wrapper, cacheKey, summaryPrompt, fetchRe
   let cached: any = null;
   if (rawCache) {
     try { cached = JSON.parse(rawCache); } catch (_) {}
-    if (cached && Date.now() - cached.ts > THIRTY_DAYS) {
-      localStorage.removeItem(cacheKey);
-      cached = null;
-    }
   }
   if (cached?.parsed) {
     showDateRow(cached.ts);

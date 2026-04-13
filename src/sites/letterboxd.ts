@@ -1,5 +1,5 @@
 import { cacheGet, cacheSet } from '../shared/cache';
-import { addCommas } from '../shared/utils';
+import { addCommas, el } from '../shared/utils';
 
 // =============================================================================
 // Configuration
@@ -142,14 +142,6 @@ function injectStyles() {
 
 /** Debug logger - only logs when CONFIG.DEBUG is true */
 const debug = (...args: any[]) => CONFIG.DEBUG && console.log('[LBX]', ...args);
-
-/** Creates a DOM element with optional class and text */
-function el(tag: string, className = '', text = '') {
-  const element = document.createElement(tag);
-  if (className) element.className = className;
-  if (text) element.textContent = text;
-  return element;
-}
 
 /** Extracts runtime in minutes from a document */
 function extractRuntime(doc: Document) {

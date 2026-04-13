@@ -1,30 +1,24 @@
 import { addCommas, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget } from '../shared/review-summary';
+import { getDecathlonSite } from '../shared/decathlon';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-const getLocale = () => {
-  const host = location.hostname;
-  if (host.includes('decathlon.de')) return 'de-DE';
-  if (host.includes('decathlon.co.uk')) return 'en-GB';
-  return null;
-};
-
 const extractModelId = () => {
   const path = location.pathname.split('#')[0].split('?')[0];
+  if (!path.includes('/p/')) return null;
   const match = path.split('/').pop()!.match(/(\d{5,})$/);
   return match ? match[1] : null;
 };
 
-const fetchStats = async (locale: string, modelId: string) => {
+const fetchStats = async (tld: string, locale: string, modelId: string) => {
   const cacheKey = `nps_stats_${modelId}`;
   const cached = cacheGet(cacheKey, CACHE_TTL);
   if (cached) return cached;
 
-  const domain = locale === 'en-GB' ? 'co.uk' : locale.split('-')[0];
   const res = await fetch(
-    `https://www.decathlon.${domain}/api/reviews/${locale}/reviews-stats/${modelId}/product?nbItemsPerPage=0&page=0`
+    `https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${modelId}/product?nbItemsPerPage=0&page=0`
   );
   if (!res.ok) return null;
   const json = await res.json();
@@ -158,8 +152,7 @@ const replaceSizometer = (stats: any) => {
   sizometer.replaceWith(wrapper);
 };
 
-const fetchReviewTexts = async (locale: string, modelId: string): Promise<string[]> => {
-  const domain = locale === 'en-GB' ? 'co.uk' : locale.split('-')[0];
+const fetchReviewTexts = async (tld: string, locale: string, modelId: string): Promise<string[]> => {
   const reviewsCacheKey = `dkt-reviews-${modelId}`;
   const cached = cacheGet(reviewsCacheKey, 86400000);
   if (cached) return cached;
@@ -168,7 +161,7 @@ const fetchReviewTexts = async (locale: string, modelId: string): Promise<string
   const texts: string[] = [];
   const results = await Promise.allSettled(
     [0, 1, 2, 3, 4].map(page =>
-      fetch(`https://www.decathlon.${domain}/api/reviews/${locale}/reviews-stats/${modelId}/product?nbItemsPerPage=100&page=${page}&sortBy=DATE`)
+      fetch(`https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${modelId}/product?nbItemsPerPage=100&page=${page}&sortBy=DATE`)
         .then(r => r.ok ? r.json() : null)
     )
   );
@@ -193,7 +186,7 @@ Check for signs of review manipulation: repetitive phrasing across reviews, susp
 
 End with a 2-3 sentence verdict: who this product is ideal for, who should avoid it, and whether it's worth the price based on what reviewers say.`;
 
-const addSummarizeUI = (anchor: Element, locale: string, modelId: string) => {
+const addSummarizeUI = (anchor: Element, tld: string, locale: string, modelId: string) => {
   if (document.querySelector('.ars-wrapper')) return;
 
   const wrapper = document.createElement('div');
@@ -207,7 +200,7 @@ const addSummarizeUI = (anchor: Element, locale: string, modelId: string) => {
     wrapper,
     cacheKey: `dkt-summary-${modelId}`,
     summaryPrompt: SUMMARY_PROMPT,
-    fetchReviews: () => fetchReviewTexts(locale, modelId),
+    fetchReviews: () => fetchReviewTexts(tld, locale, modelId),
   });
 
   anchor.after(wrapper);
@@ -226,9 +219,10 @@ const cleanup = () => {
 };
 
 const init = async () => {
-  const locale = getLocale();
+  const site = getDecathlonSite();
   const modelId = extractModelId();
-  if (!locale || !modelId) return;
+  if (!site || !modelId) return;
+  const { tld, locale } = site;
 
   const gen = ++generation;
   cleanup();
@@ -246,7 +240,7 @@ const init = async () => {
 
   const [productInfo, stats] = await Promise.all([
     waitFor('.product-info'),
-    fetchStats(locale, modelId),
+    fetchStats(tld, locale, modelId),
   ]);
 
   if (gen !== generation || !stats) return;
@@ -257,7 +251,7 @@ const init = async () => {
 
   if (stats.count >= 5) {
     const anchor = document.querySelector('.nps-insights') || productInfo.querySelector('.product-info__description') || productInfo;
-    addSummarizeUI(anchor, locale, modelId);
+    addSummarizeUI(anchor, tld, locale, modelId);
   }
 };
 

@@ -1,4 +1,5 @@
 import { GEMINI_API_KEY, geminiEndpoint } from '../shared/config';
+import { addCommas, el } from '../shared/utils';
 
 const TIME_PERIODS = ['total', 'inPastYear', 'inPastMonth'] as const;
 const SORT_KEYS = ['relevant', 'newest'] as const;
@@ -33,7 +34,7 @@ const getGeminiKey = () => document.documentElement.dataset.tsGeminiKey || GEMIN
 const getGeminiEndpoint = () => geminiEndpoint(getGeminiKey());
 
 let currentOption: Period = 'total';
-let lastPlaceName = '';
+let lastFeatureId = '';
 let lastUrl = '';
 let reviewLimit = 100;
 let fullPctObserver: MutationObserver | null = null;
@@ -43,7 +44,7 @@ let fullPctCache: number | null = null;
 const abortControllers: Record<SortKey, AbortController | null> = { relevant: null, newest: null };
 let summaryCache: { all: SummaryResult | null; filtered: SummaryResult | null } = { all: null, filtered: null };
 
-const getSummaryCacheKey = () => `rc_summary_${lastPlaceName || 'default'}`;
+const getSummaryCacheKey = () => `rc_summary_${lastFeatureId || 'default'}`;
 const loadSummaryCache = () => {
   try { summaryCache = JSON.parse(localStorage.getItem(getSummaryCacheKey()) as string) || { all: null, filtered: null }; }
   catch { summaryCache = { all: null, filtered: null }; }
@@ -62,20 +63,35 @@ const scores: Record<SortKey, SortState> = { relevant: makeState(), newest: make
 const isTrusted = (reviewerReviewCount: number) => reviewerReviewCount >= TRUSTED_MIN_REVIEWS;
 const starScore = (stars: number) => stars === 5 ? 1 : stars === 1 ? -1 : 0;
 const toPct = (ratio: number) => Math.round(ratio * 100);
-const getReviewCount = (sortKey: SortKey) => Object.keys(scores[sortKey].reviewMap).length;
 const getScorePercentage = (sortKey: SortKey) => {
   const { reviewsScores, trustedReviews } = scores[sortKey].reviewData;
   return reviewsScores[currentOption] / trustedReviews[currentOption] || 0;
 };
 const getRoundedPct = (sortKey: SortKey) => toPct(getScorePercentage(sortKey));
 
-const getMergedScore = () => {
-  let totalScore = 0, totalTrusted = 0;
+const getMergedStats = () => {
+  const merged: Record<string, Review> = {};
   for (const key of SORT_KEYS) {
-    totalScore += scores[key].reviewData.reviewsScores[currentOption];
-    totalTrusted += scores[key].reviewData.trustedReviews[currentOption];
+    for (const id in scores[key].reviewMap) {
+      if (!merged[id]) merged[id] = scores[key].reviewMap[id];
+    }
   }
-  return totalTrusted ? totalScore / totalTrusted : 0;
+  let totalAll = 0, totalTrusted = 0, totalScore = 0;
+  for (const id in merged) {
+    const r = merged[id];
+    if (!classifyTimePeriod(r.timestamp)[currentOption]) continue;
+    totalAll++;
+    if (isTrusted(r.reviewerReviewCount)) {
+      totalTrusted++;
+      totalScore += starScore(r.stars);
+    }
+  }
+  return {
+    totalCount: Object.keys(merged).length,
+    totalAll,
+    totalTrusted,
+    mergedPct: totalTrusted ? totalScore / totalTrusted : 0,
+  };
 };
 
 const resetScores = () => {
@@ -124,7 +140,7 @@ const readVisibleStats = (el: Element) => {
   if (cached) return cached;
   const starLabel = el.querySelector('span[role="img"][aria-label*="star"]')?.getAttribute('aria-label') || '';
   const stars = parseInt(starLabel.match(/(\d+)\s*star/)?.[1] || '0', 10);
-  const reviewerText = el.querySelector('.RfnDt')?.textContent || '';
+  const reviewerText = el.querySelector('.RfnDt')?.textContent?.replace(/,/g, '') || '';
   const count = parseInt(reviewerText.match(/(\d+)\s*review/)?.[1] || '1', 10);
   const stats = { stars, count };
   if (stars) visibleReviewStats.set(el, stats);
@@ -153,8 +169,6 @@ const getPlaceInfo = () => {
   return { name, category };
 };
 
-const addCommas = (x: string) => x.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-
 const injectSimpleScore = (placeDetailsElement: HTMLElement) => {
   const rows = document.querySelectorAll('tr[role="img"]');
   const fiveStars = rows[0]?.ariaLabel?.match(/(?<=stars,\s)(\d*),*(\d*)/g)?.[0];
@@ -170,7 +184,7 @@ const injectSimpleScore = (placeDetailsElement: HTMLElement) => {
 
   const newElement = document.createElement('div');
   newElement.className = 'truescore-simple-score';
-  newElement.innerHTML = `score: ${addCommas(String(calculatedScore))} &mdash; ${scorePercentage}%`;
+  newElement.innerHTML = `score: ${addCommas(calculatedScore)} &mdash; ${scorePercentage}%`;
   placeDetailsElement.appendChild(newElement);
 };
 
@@ -254,20 +268,20 @@ const processReview = (review: Review, sortKey: SortKey) => {
   }
 };
 
-const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null, customQuestion: string | null): Promise<SummaryResult> => {
+const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null, customQuestion: string | null): Promise<SummaryResult | string> => {
   const { name, category } = getPlaceInfo();
   const placeLabel = [name, category].filter(Boolean).join(' — ') || 'this place';
 
-  // Static part first (reviews) — benefits from API caching
   const reviewBlock = reviewTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
 
+  const isFreeForm = !!customQuestion;
   let instructions;
   if (customQuestion) {
     instructions = `You are a local expert helping a tourist decide about ${placeLabel}. Answer their question using only evidence from the reviews above.
 
 Question: ${customQuestion}
 
-For each highlight, quote or paraphrase the most vivid, concrete detail from the reviews — names, numbers, comparisons, warnings, tips. If reviewers disagree, surface the tension. Write the verdict as if advising a friend: direct, opinionated, practical.`;
+Quote or paraphrase the most vivid, concrete detail from the reviews — names, numbers, comparisons, warnings, tips. If reviewers disagree, surface the tension. Be direct, opinionated, practical. Keep it concise.`;
   } else if (filterQuery) {
     instructions = `You are analyzing what visitors to ${placeLabel} say specifically about "${filterQuery}".
 
@@ -290,32 +304,35 @@ For the verdict: write 2-3 sentences as if texting a friend who asked "should I 
   }
 
   const prompt = `${reviewBlock}\n\n---\n\n${instructions}`;
+  const generationConfig: any = {
+    maxOutputTokens: 16384,
+    thinkingConfig: { thinkingLevel: 'medium' },
+  };
+  if (!isFreeForm) {
+    generationConfig.responseMimeType = 'application/json';
+    generationConfig.responseSchema = {
+      type: 'OBJECT',
+      properties: {
+        highlights: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
+          text: { type: 'STRING' }, count: { type: 'INTEGER' }, sentiment: { type: 'STRING' }
+        }}},
+        verdict: { type: 'STRING' },
+        valueForMoney: { type: 'INTEGER' }
+      }
+    };
+  }
   const resp = await fetch(getGeminiEndpoint(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        maxOutputTokens: 16384,
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: 'OBJECT',
-          properties: {
-            highlights: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
-              text: { type: 'STRING' }, count: { type: 'INTEGER' }, sentiment: { type: 'STRING' }
-            }}},
-            verdict: { type: 'STRING' },
-            valueForMoney: { type: 'INTEGER' }
-          }
-        },
-        thinkingConfig: { thinkingLevel: 'medium' }
-      }
+      generationConfig,
     })
   });
   const data = await resp.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error(data.error?.message || 'Empty response from Gemini');
-  return JSON.parse(text);
+  return isFreeForm ? text : JSON.parse(text);
 };
 
 const fetchAllReviews = async (sortKey: SortKey) => {
@@ -362,13 +379,6 @@ const fetchAllReviews = async (sortKey: SortKey) => {
 const startFetching = () => {
   if (!getFeatureId()) return;
   for (const key of SORT_KEYS) fetchAllReviews(key);
-};
-
-const el = (tag: string, cls?: string, text?: string) => {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text) e.textContent = text;
-  return e;
 };
 
 const cardEls: CardEls = {};
@@ -490,11 +500,9 @@ const createUIElements = () => {
 };
 
 const updateUI = () => {
-  let totalCount = 0, totalTrusted = 0, totalAll = 0, anyFetching = false, allDone = true;
+  const { totalCount, totalAll, totalTrusted, mergedPct } = getMergedStats();
+  let anyFetching = false, allDone = true;
   for (const k of SORT_KEYS) {
-    totalCount += getReviewCount(k);
-    totalTrusted += scores[k].reviewData.trustedReviews[currentOption];
-    totalAll += scores[k].reviewData.totalReviews[currentOption];
     if (scores[k].isFetching) anyFetching = true;
     if (!scores[k].done) allDone = false;
   }
@@ -505,7 +513,6 @@ const updateUI = () => {
   if (!els) return;
 
   const fullPct = calculateFullPercentage();
-  const mergedPct = getMergedScore();
   const noData = totalAll === 0 && currentOption !== 'total';
 
   if (noData) {
@@ -580,10 +587,17 @@ const updateVisibleScore = () => {
   v.detailEl.textContent = `${s.trusted} trusted of ${s.total}`;
 };
 
-const renderSummary = (panel: HTMLElement, result: SummaryResult) => {
+const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   panel.textContent = '';
   panel.className = 'rc-summary-panel';
   panel.style.display = 'block';
+  if (typeof result === 'string') {
+    const answer = el('div', 'rc-answer');
+    answer.style.whiteSpace = 'pre-wrap';
+    answer.textContent = result;
+    panel.appendChild(answer);
+    return;
+  }
   if (result.highlights?.length) {
     for (const h of result.highlights) {
       const row = el('div', `rc-highlight ${h.sentiment}`);
@@ -632,7 +646,7 @@ const triggerSummarize = async (filtered: boolean) => {
   const customQuestion = !filtered ? cardEls.questionInput?.value?.trim() || null : null;
   try {
     const result = await summarizeReviews(texts, query, customQuestion);
-    if (!customQuestion) {
+    if (!customQuestion && typeof result !== 'string') {
       if (filtered) summaryCache.filtered = result;
       else summaryCache.all = result;
       saveSummaryCache();
@@ -714,23 +728,22 @@ const observer = new MutationObserver((mutations) => {
   if (url === lastUrl) return;
   lastUrl = url;
 
-  const isPlace = /\/place\//.test(url);
-  if (!isPlace) {
+  const featureId = getFeatureId();
+  if (!featureId) {
     document.querySelector('#reviews-container')?.remove();
     clearCardEls();
     return;
   }
 
-  const placeName = url.match(/(?:place\/)([^\/]+)/)?.[1];
-  if (placeName !== lastPlaceName) {
-    lastPlaceName = placeName || '';
+  if (featureId !== lastFeatureId) {
+    lastFeatureId = featureId;
     resetScores();
     loadSummaryCache();
     document.querySelector('#reviews-container')?.remove();
     clearCardEls();
     startFetching();
   }
-  if (!document.querySelector('#reviews-container') && getFeatureId()) {
+  if (!document.querySelector('#reviews-container')) {
     updateUI();
     if (!scores.relevant.isFetching && !scores.relevant.done) startFetching();
   }

@@ -1,16 +1,11 @@
 // ============================================================
 // Constants & Utilities
 // ============================================================
+import { el } from '../shared/utils';
+
 const CACHE_TTL = 3 * 24 * 60 * 60 * 1000; // 3 days
 const CACHE_PREFIX = 'tmSorter_v5_';
 let isSorting = false;
-
-const createEl = (tag: string, className?: string, text?: string | number) => {
-  const el = document.createElement(tag);
-  if (className) el.className = className;
-  if (text !== undefined) el.textContent = String(text);
-  return el;
-};
 
 const parseValue = (text: string): any => {
   const cleaned = text.trim();
@@ -207,16 +202,16 @@ const addRankingColumn = (table: HTMLTableElement) => {
   const tbody = table.querySelector('tbody');
   if (!thead || !tbody) return;
 
-  const th = createEl('th', 'zentriert', '#');
+  const th = el('th', 'zentriert', '#');
   (th as HTMLElement).style.cursor = 'default';
   thead.insertBefore(th, thead.firstChild);
 
   tbody.querySelectorAll('tr.even, tr.odd').forEach((row, i) => {
-    row.insertBefore(createEl('td', 'zentriert tm-rank-cell', i + 1), row.firstChild);
+    row.insertBefore(el('td', 'zentriert tm-rank-cell', i + 1), row.firstChild);
   });
 
   const tfoot = table.querySelector('tfoot tr');
-  if (tfoot) tfoot.insertBefore(createEl('td', '', '\u00A0'), tfoot.firstChild);
+  if (tfoot) tfoot.insertBefore(el('td', '', '\u00A0'), tfoot.firstChild);
 
   table.setAttribute('data-has-ranking', 'true');
 };
@@ -265,12 +260,12 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
     if (item.vereinId) mvRankByVereinId.set(item.vereinId, i + 1);
   });
 
-  const th = createEl('th', 'zentriert', 'Δ Pts');
+  const th = el('th', 'zentriert', 'Δ Pts');
   (th as HTMLElement).title = 'Points difference vs expected position based on market value';
   thead.appendChild(th);
 
   rows.forEach(row => {
-    const td = createEl('td', 'zentriert tm-pts-diff-cell');
+    const td = el('td', 'zentriert tm-pts-diff-cell');
     const vereinId = extractVereinId(row);
     const teamData = vereinId && leagueData.get(vereinId);
     const mvRank = vereinId && mvRankByVereinId.get(vereinId);
@@ -289,7 +284,7 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
   });
 
   const tfoot = table.querySelector('tfoot tr');
-  if (tfoot) tfoot.appendChild(createEl('td', '', '\u00A0'));
+  if (tfoot) tfoot.appendChild(el('td', '', '\u00A0'));
 
   table.setAttribute('data-has-pts-diff', 'true');
 };
@@ -331,9 +326,9 @@ const injectStyles = () => {
 const showLoading = (table: HTMLTableElement, current?: number, total?: number) => {
   let overlay = table.querySelector('.global-sort-loading') as HTMLElement | null;
   if (!overlay) {
-    overlay = createEl('div', 'global-sort-loading') as HTMLElement;
-    overlay.appendChild(createEl('div', 'loading-spinner'));
-    overlay.appendChild(createEl('span'));
+    overlay = el('div', 'global-sort-loading') as HTMLElement;
+    overlay.appendChild(el('div', 'loading-spinner'));
+    overlay.appendChild(el('span'));
     table.style.position = 'relative';
     table.appendChild(overlay);
   }
@@ -352,7 +347,7 @@ const showGlobalBadge = (table: HTMLTableElement, count: number) => {
   const parent = table.parentNode as Element;
   let badge = parent.querySelector('.global-sort-badge') as HTMLElement | null;
   if (!badge) {
-    badge = createEl('div', 'global-sort-badge') as HTMLElement;
+    badge = el('div', 'global-sort-badge') as HTMLElement;
     parent.insertBefore(badge, table);
   }
   badge.textContent = `Global Sort Active - Showing all ${count} players (Shift+Click to re-sort)`;
@@ -441,10 +436,10 @@ const renderGlobalResults = (table: HTMLTableElement, sortedRows: any[]) => {
   tbody.querySelectorAll('tr.even, tr.odd').forEach(row => row.remove());
 
   sortedRows.forEach((rowData, index) => {
-    const row = createEl('tr', index % 2 === 0 ? 'odd' : 'even');
+    const row = el('tr', index % 2 === 0 ? 'odd' : 'even');
 
     if (hasRanking) {
-      row.appendChild(createEl('td', 'zentriert tm-rank-cell', index + 1));
+      row.appendChild(el('td', 'zentriert tm-rank-cell', index + 1));
     }
 
     rowData.cells.forEach((cell: any) => {

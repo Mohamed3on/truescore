@@ -1,20 +1,16 @@
 import { addCommas } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
+import { getDecathlonSite } from '../shared/decathlon';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const CONTAINERS = 'ul.product-grid, ul.carousel-slides-wrapper';
 const CARD = `:is(${CONTAINERS}) .product-card`;
 const LINK = 'a[href*="/p/"]';
 
-const locale = (() => {
-  const h = location.hostname;
-  if (h.includes('decathlon.de')) return 'de-DE';
-  if (h.includes('decathlon.co.uk')) return 'en-GB';
-  return null;
-})();
-if (!locale) throw new Error('unsupported locale');
+const site = getDecathlonSite();
+if (!site) throw new Error('unsupported locale');
+const { tld, locale } = site;
 
-const domain = locale === 'en-GB' ? 'co.uk' : locale.split('-')[0];
 const cleanHref = (href: string) => href.split('#')[0].split('?')[0];
 
 const extractModelId = (href: string) => {
@@ -35,7 +31,7 @@ const fetchScore = async (modelId: string) => {
   if (cached) return cached;
 
   const res = await fetch(
-    `https://www.decathlon.${domain}/api/reviews/${locale}/reviews-stats/${modelId}/product?nbItemsPerPage=0&page=0`
+    `https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${modelId}/product?nbItemsPerPage=0&page=0`
   );
   if (!res.ok) return null;
   const dist = (await res.json())?.stats?.ratingDistribution;
