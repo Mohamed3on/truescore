@@ -24,6 +24,7 @@
     "*://*.booking.com/*",
     "*://*.decathlon.de/*",
     "*://*.decathlon.co.uk/*",
+    "*://*.decathlon.es/*",
     "*://*.uniqlo.com/*",
     "*://*.ikea.com/*",
     "*://*.dm.de/*",
@@ -80,13 +81,13 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://*.decathlon.de/p/*", "*://*.decathlon.co.uk/p/*"],
+      "matches": ["*://*.decathlon.de/p/*", "*://*.decathlon.co.uk/p/*", "*://*.decathlon.es/p/*"],
       "js": ["sites/decathlon-pdp.js"],
       "css": ["sites/amazon-product.css"],
       "run_at": "document_end"
     },
     {
-      "matches": ["*://*.decathlon.de/*", "*://*.decathlon.co.uk/*"],
+      "matches": ["*://*.decathlon.de/*", "*://*.decathlon.co.uk/*", "*://*.decathlon.es/*"],
       "js": ["sites/decathlon-plp.js"],
       "run_at": "document_end"
     },

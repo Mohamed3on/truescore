@@ -1,21 +1,47 @@
 import { GEMINI_API_KEY, geminiEndpoint } from '../shared/config';
 
-// Constants
-const TIME_PERIODS = ['total', 'inPastYear', 'inPastMonth'];
-const SORT_KEYS = ['relevant', 'newest'];
+const TIME_PERIODS = ['total', 'inPastYear', 'inPastMonth'] as const;
+const SORT_KEYS = ['relevant', 'newest'] as const;
 const PAGE_SIZE = 20;
 const MIN_PAGES_BEFORE_STABILIZE = 2;
+const TRUSTED_MIN_REVIEWS = 3;
+
+type Period = (typeof TIME_PERIODS)[number];
+type SortKey = (typeof SORT_KEYS)[number];
+type ReviewData = {
+  reviewsScores: Record<Period, number>;
+  trustedReviews: Record<Period, number>;
+  totalReviews: Record<Period, number>;
+};
+type Review = { reviewId: string; stars: number; reviewerReviewCount: number; timestamp: number | null; text: string };
+type SortState = { reviewMap: Record<string, Review>; reviewData: ReviewData; isFetching: boolean; done: boolean; cursor: string; pageCount: number };
+type SummaryResult = { highlights?: { text: string; count: number; sentiment: string }[]; verdict?: string; valueForMoney?: number };
+type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
+type VisibleEls = { row: HTMLElement; pctEl: HTMLElement; detailEl: HTMLElement };
+type CardEls = {
+  merged?: MergedEls;
+  visible?: VisibleEls;
+  sumBtn?: HTMLButtonElement;
+  questionInput?: HTMLInputElement;
+  sumPanel?: HTMLElement;
+  searchInput?: HTMLInputElement;
+  searchResults?: HTMLElement;
+  filteredSumPanel?: HTMLElement;
+};
+
 const getGeminiKey = () => document.documentElement.dataset.tsGeminiKey || GEMINI_API_KEY;
 const getGeminiEndpoint = () => geminiEndpoint(getGeminiKey());
 
-// State
-let currentOption = 'total';
+let currentOption: Period = 'total';
 let lastPlaceName = '';
 let lastUrl = '';
-let abortControllers: any = { relevant: null, newest: null };
-let summaryCache: any = { all: null, filtered: null };
-let reviewLimit = 50;
+let reviewLimit = 100;
 let fullPctObserver: MutationObserver | null = null;
+let lastVisibleKey = '';
+let fullPctCache: number | null = null;
+
+const abortControllers: Record<SortKey, AbortController | null> = { relevant: null, newest: null };
+let summaryCache: { all: SummaryResult | null; filtered: SummaryResult | null } = { all: null, filtered: null };
 
 const getSummaryCacheKey = () => `rc_summary_${lastPlaceName || 'default'}`;
 const loadSummaryCache = () => {
@@ -24,22 +50,24 @@ const loadSummaryCache = () => {
 };
 const saveSummaryCache = () => { try { localStorage.setItem(getSummaryCacheKey(), JSON.stringify(summaryCache)); } catch {} };
 
-const makeReviewData = () => ({
-  reviewsScores: Object.fromEntries(TIME_PERIODS.map((p) => [p, 0])),
-  trustedReviews: Object.fromEntries(TIME_PERIODS.map((p) => [p, 0])),
-  totalReviews: Object.fromEntries(TIME_PERIODS.map((p) => [p, 0])),
+const makeReviewData = (): ReviewData => ({
+  reviewsScores: { total: 0, inPastYear: 0, inPastMonth: 0 },
+  trustedReviews: { total: 0, inPastYear: 0, inPastMonth: 0 },
+  totalReviews: { total: 0, inPastYear: 0, inPastMonth: 0 },
 });
 
-const makeState = () => ({ reviewMap: {} as any, reviewData: makeReviewData(), isFetching: false, done: false, cursor: '', pageCount: 0 });
-const scores: any = { relevant: makeState(), newest: makeState() };
+const makeState = (): SortState => ({ reviewMap: {}, reviewData: makeReviewData(), isFetching: false, done: false, cursor: '', pageCount: 0 });
+const scores: Record<SortKey, SortState> = { relevant: makeState(), newest: makeState() };
 
-// Helpers
-const getReviewCount = (sortKey: string) => Object.keys(scores[sortKey].reviewMap).length;
-const getRoundedPct = (sortKey: string) => Math.round(getScorePercentage(sortKey) * 100);
-const getScorePercentage = (sortKey: string) => {
+const isTrusted = (reviewerReviewCount: number) => reviewerReviewCount >= TRUSTED_MIN_REVIEWS;
+const starScore = (stars: number) => stars === 5 ? 1 : stars === 1 ? -1 : 0;
+const toPct = (ratio: number) => Math.round(ratio * 100);
+const getReviewCount = (sortKey: SortKey) => Object.keys(scores[sortKey].reviewMap).length;
+const getScorePercentage = (sortKey: SortKey) => {
   const { reviewsScores, trustedReviews } = scores[sortKey].reviewData;
   return reviewsScores[currentOption] / trustedReviews[currentOption] || 0;
 };
+const getRoundedPct = (sortKey: SortKey) => toPct(getScorePercentage(sortKey));
 
 const getMergedScore = () => {
   let totalScore = 0, totalTrusted = 0;
@@ -53,9 +81,11 @@ const getMergedScore = () => {
 const resetScores = () => {
   for (const key of SORT_KEYS) {
     scores[key] = makeState();
-    if (abortControllers[key]) { abortControllers[key].abort(); abortControllers[key] = null; }
+    if (abortControllers[key]) { abortControllers[key]!.abort(); abortControllers[key] = null; }
   }
   if (fullPctObserver) { fullPctObserver.disconnect(); fullPctObserver = null; }
+  lastVisibleKey = '';
+  fullPctCache = null;
 };
 
 const getScoreColor = (pct: number) => {
@@ -73,16 +103,48 @@ const getScoreColor = (pct: number) => {
 };
 
 const calculateFullPercentage = () => {
+  if (fullPctCache !== null) return fullPctCache;
   const reviewRows = document.querySelectorAll('tr[role="img"]');
   if (reviewRows.length < 5) return null;
   const extractNumber = (str: string) => {
     const match = str.match(/(\d+(?:[.,]\d+)*)\s*(?:reviews?|$)/);
     return match ? parseInt(match[1].replace(/[.,]/g, ''), 10) : 0;
   };
-  const counts = Array.from(reviewRows).map((r) => extractNumber(r.getAttribute('aria-label') || ''));
+  const counts: number[] = [];
+  for (const r of reviewRows) counts.push(extractNumber(r.getAttribute('aria-label') || ''));
   const allReviews = counts.reduce((a, b) => a + b, 0);
   if (!allReviews) return null;
-  return Math.round(((counts[0] - counts[4]) / allReviews) * 100);
+  fullPctCache = toPct((counts[0] - counts[4]) / allReviews);
+  return fullPctCache;
+};
+
+const visibleReviewStats = new WeakMap<Element, { stars: number; count: number }>();
+const readVisibleStats = (el: Element) => {
+  const cached = visibleReviewStats.get(el);
+  if (cached) return cached;
+  const starLabel = el.querySelector('span[role="img"][aria-label*="star"]')?.getAttribute('aria-label') || '';
+  const stars = parseInt(starLabel.match(/(\d+)\s*star/)?.[1] || '0', 10);
+  const reviewerText = el.querySelector('.RfnDt')?.textContent || '';
+  const count = parseInt(reviewerText.match(/(\d+)\s*review/)?.[1] || '1', 10);
+  const stats = { stars, count };
+  if (stars) visibleReviewStats.set(el, stats);
+  return stats;
+};
+
+const getVisibleScore = () => {
+  const reviewEls = document.querySelectorAll('.jftiEf[data-review-id]');
+  if (!reviewEls.length) return null;
+  let total = 0, trusted = 0, score = 0;
+  for (const el of reviewEls) {
+    const { stars, count } = readVisibleStats(el);
+    if (!stars) continue;
+    total++;
+    if (isTrusted(count)) {
+      trusted++;
+      score += starScore(stars);
+    }
+  }
+  return { total, trusted, pct: trusted ? toPct(score / trusted) : 0, raw: trusted ? score / trusted : 0 };
 };
 
 const getPlaceInfo = () => {
@@ -91,53 +153,33 @@ const getPlaceInfo = () => {
   return { name, category };
 };
 
-// Simple score display (from Show-GMaps-score)
-const addCommas = (x: string) => {
-  return x.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-};
+const addCommas = (x: string) => x.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
 const injectSimpleScore = (placeDetailsElement: HTMLElement) => {
-  const fiveStars = document
-    .querySelectorAll('tr[role="img"]')[0]
-    ?.ariaLabel?.match(/(?<=stars,\s)(\d*),*(\d*)/g)?.[0];
-  if (!fiveStars) return;
+  const rows = document.querySelectorAll('tr[role="img"]');
+  const fiveStars = rows[0]?.ariaLabel?.match(/(?<=stars,\s)(\d*),*(\d*)/g)?.[0];
+  const oneStars = rows[4]?.ariaLabel?.match(/(?<=stars,\s)(\d*),*(\d*)/g)?.[0];
+  if (!fiveStars || !oneStars) return;
 
-  const fiveStarsAsNumber = Number(fiveStars.split(',').join(''));
-  const oneStars = document
-    .querySelectorAll('tr[role="img"]')[4]
-    ?.ariaLabel?.match(/(?<=stars,\s)(\d*),*(\d*)/g)?.[0];
-  if (!oneStars) return;
-
-  const oneStarsAsNumber = Number(oneStars.split(',').join(''));
-
-  const score = fiveStarsAsNumber - oneStarsAsNumber;
-
-  const allReviewsText = (document.querySelector(
-    '[jsaction="pane.reviewChart.moreReviews"] button'
-  ) as HTMLElement)?.innerText;
-
-  const allReviewsMatch = allReviewsText?.match(/\d+/g)?.join('');
-
-  const allReviewsAsNumber = Number(allReviewsMatch || 0);
-
+  const score = Number(fiveStars.split(',').join('')) - Number(oneStars.split(',').join(''));
+  const allReviewsText = (document.querySelector('[jsaction="pane.reviewChart.moreReviews"] button') as HTMLElement)?.innerText;
+  const allReviewsAsNumber = Number(allReviewsText?.match(/\d+/g)?.join('') || 0);
   const ratio = allReviewsAsNumber ? score / allReviewsAsNumber : 0;
-
   const calculatedScore = Math.round(score * ratio);
-
-  const scorePercentage = Math.round(ratio * 100);
+  const scorePercentage = toPct(ratio);
 
   const newElement = document.createElement('div');
+  newElement.className = 'truescore-simple-score';
   newElement.innerHTML = `score: ${addCommas(String(calculatedScore))} &mdash; ${scorePercentage}%`;
   placeDetailsElement.appendChild(newElement);
 };
 
-// URL & API
 const getFeatureId = () => {
   const matches = [...location.href.matchAll(/!3m\d+!1s(0x[a-f0-9]+(?:%3A|:)0x[a-f0-9]+)/gi)];
   return matches.length ? decodeURIComponent(matches[matches.length - 1][1]) : null;
 };
 
-const buildUrl = (featureId: string, sort: string, cursor = '') => {
+const buildUrl = (featureId: string, sort: SortKey, cursor = '') => {
   const hl = document.documentElement.lang || 'en';
   const gl = location.href.match(/gl=([a-zA-Z]{2})/)?.[1] || '';
   const sortVal = sort === 'newest' ? 2 : 1;
@@ -152,7 +194,6 @@ const buildUrl = (featureId: string, sort: string, cursor = '') => {
   return `https://www.google.com/maps/rpc/listugcposts?authuser=0&hl=${hl}&gl=${gl}&pb=${pb}`;
 };
 
-// Review parsing
 const findReviewText = (obj: any, depth = 0): string => {
   if (depth > 6) return '';
   if (typeof obj === 'string' && obj.length > 20 && !obj.startsWith('http') && !obj.startsWith('0x')) return obj;
@@ -167,56 +208,53 @@ const findReviewText = (obj: any, depth = 0): string => {
   return '';
 };
 
-const parseReviewsResponse = (text: string) => {
+const parseReviewsResponse = (text: string): { reviews: Review[]; nextCursor: string | null } => {
   try {
     const cleaned = text.replace(/^\)\]\}'/, '');
     const data = JSON.parse(cleaned);
     const arr = data[2];
-    if (!arr?.length) return { reviews: [] as any[], nextCursor: null };
-    const reviews: any[] = [];
+    if (!arr?.length) return { reviews: [], nextCursor: null };
+    const reviews: Review[] = [];
     for (const wrapper of arr) {
       if (!wrapper?.[0]) continue;
       const r = wrapper[0];
       const reviewId = r[0];
       const stars = r[2]?.[0]?.[0];
       const reviewerReviewCount = r[1]?.[4]?.[5]?.[5] || 1;
-      const timestamp = r[1]?.[2];
+      const timestamp = r[1]?.[2] ?? null;
       const reviewText = findReviewText(r);
       if (reviewId && stars) reviews.push({ reviewId, stars, reviewerReviewCount, timestamp, text: reviewText });
     }
     return { reviews, nextCursor: data[1] || null };
   } catch (e) {
     console.error('[Reviews] Parse error:', e);
-    return { reviews: [] as any[], nextCursor: null };
+    return { reviews: [], nextCursor: null };
   }
 };
 
-const classifyTimePeriod = (timestamp: any) => {
-  if (!timestamp) return { inPastYear: false, inPastMonth: false };
-  const d = new Date(timestamp / 1000);
-  const now = new Date();
-  const yearAgo = new Date(now); yearAgo.setFullYear(now.getFullYear() - 1);
-  const monthAgo = new Date(now); monthAgo.setMonth(now.getMonth() - 1);
-  return { inPastYear: d >= yearAgo, inPastMonth: d >= monthAgo };
+const classifyTimePeriod = (timestamp: number | null): Record<Period, boolean> => {
+  if (!timestamp) return { total: true, inPastYear: false, inPastMonth: false };
+  const t = timestamp / 1000;
+  const now = Date.now();
+  return { total: true, inPastYear: t >= now - 365 * 86400000, inPastMonth: t >= now - 30 * 86400000 };
 };
 
-const processReview = (review: any, sortKey: string) => {
+const processReview = (review: Review, sortKey: SortKey) => {
   const rd = scores[sortKey].reviewData;
-  const isTrusted = review.reviewerReviewCount > 2;
+  const trusted = isTrusted(review.reviewerReviewCount);
   const periods = classifyTimePeriod(review.timestamp);
-  TIME_PERIODS.forEach((period) => {
-    if (period === 'total' || (periods as any)[period]) {
-      rd.totalReviews[period]++;
-      if (isTrusted) {
-        rd.trustedReviews[period]++;
-        rd.reviewsScores[period] += review.stars === 5 ? 1 : review.stars === 1 ? -1 : 0;
-      }
+  const contribution = starScore(review.stars);
+  for (const period of TIME_PERIODS) {
+    if (!periods[period]) continue;
+    rd.totalReviews[period]++;
+    if (trusted) {
+      rd.trustedReviews[period]++;
+      rd.reviewsScores[period] += contribution;
     }
-  });
+  }
 };
 
-// Summarize
-const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null, customQuestion: string | null) => {
+const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null, customQuestion: string | null): Promise<SummaryResult> => {
   const { name, category } = getPlaceInfo();
   const placeLabel = [name, category].filter(Boolean).join(' — ') || 'this place';
 
@@ -239,6 +277,7 @@ Surface the most concrete, useful details: what exactly people praise, complain 
 
 What to extract:
 - The specific things that make this place worth visiting (or not) — name exact dishes, exhibits, views, features, staff behaviors, quirks
+- Standout menu items: which specific dishes/drinks do reviewers rave about or warn against by name? (If this is a restaurant, café, bar, or anywhere with a menu, this is required.)
 - Practical intel: timing, crowds, pricing surprises, what to skip, what's overrated vs underrated
 - Recurring complaints that would actually affect someone's visit
 - Things only regulars or repeat visitors would know
@@ -279,8 +318,7 @@ For the verdict: write 2-3 sentences as if texting a friend who asked "should I 
   return JSON.parse(text);
 };
 
-// Fetch
-const fetchAllReviews = async (sortKey: string) => {
+const fetchAllReviews = async (sortKey: SortKey) => {
   const featureId = getFeatureId();
   if (!featureId || scores[sortKey].isFetching) return;
 
@@ -323,10 +361,9 @@ const fetchAllReviews = async (sortKey: string) => {
 
 const startFetching = () => {
   if (!getFeatureId()) return;
-  SORT_KEYS.forEach(fetchAllReviews);
+  for (const key of SORT_KEYS) fetchAllReviews(key);
 };
 
-// UI
 const el = (tag: string, cls?: string, text?: string) => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -334,12 +371,12 @@ const el = (tag: string, cls?: string, text?: string) => {
   return e;
 };
 
-const cardEls: any = {};
+const cardEls: CardEls = {};
+const clearCardEls = () => { for (const k of Object.keys(cardEls) as (keyof CardEls)[]) delete cardEls[k]; };
 
 const createUIElements = () => {
   const c = el('div'); c.id = 'reviews-container';
 
-  // Header
   const header = el('div', 'rc-header');
   const title = el('span', 'rc-title');
   title.appendChild(el('span', 'rc-dot'));
@@ -350,7 +387,7 @@ const createUIElements = () => {
   ([['total', 'Total'], ['inPastYear', 'Past Year'], ['inPastMonth', 'Past Month']] as const).forEach(([v, t]) => {
     const opt = document.createElement('option'); opt.value = v; opt.textContent = t; select.appendChild(opt);
   });
-  select.onchange = (e: any) => { currentOption = e.target.value; updateUI(); };
+  select.onchange = (e) => { currentOption = (e.target as HTMLSelectElement).value as Period; updateUI(); };
   headerRight.appendChild(select);
   const collapseBtn = el('button', 'rc-collapse');
   collapseBtn.textContent = '▾';
@@ -362,7 +399,6 @@ const createUIElements = () => {
   header.appendChild(headerRight);
   c.appendChild(header);
 
-  // Score card
   const card = el('div', 'rc-card');
   const head = el('div', 'rc-card-head');
   head.appendChild(el('span', 'rc-card-label', 'Review Score'));
@@ -384,17 +420,28 @@ const createUIElements = () => {
   c.appendChild(card);
   cardEls.merged = { card, pctEl, barFill, countEl, diffEl, detailEl, tooltip };
 
-  // Summarize row
+  const visRow = el('div', 'rc-visible');
+  const visLabel = el('span', 'rc-visible-label', 'Visible');
+  const visPctEl = el('span', 'rc-visible-pct', '—');
+  const visDetailEl = el('span', 'rc-visible-detail', '');
+  visRow.appendChild(visLabel);
+  visRow.appendChild(visPctEl);
+  visRow.appendChild(visDetailEl);
+  visRow.style.display = 'none';
+  c.appendChild(visRow);
+  cardEls.visible = { row: visRow, pctEl: visPctEl, detailEl: visDetailEl };
+
   const sumRow = el('div', 'rc-sum-row');
-  const sumBtn = el('button', 'rc-summarize-btn', 'Summarize');
+  const sumBtn = el('button', 'rc-summarize-btn', 'Summarize') as HTMLButtonElement;
   sumBtn.onclick = () => triggerSummarize(false);
   sumRow.appendChild(sumBtn);
   const limitToggle = el('div', 'rc-limit-toggle');
   for (const n of [50, 100]) {
     const pill = el('button', `rc-limit-pill${n === reviewLimit ? ' active' : ''}`, String(n));
+    pill.dataset.limit = String(n);
     pill.onclick = () => {
       reviewLimit = n;
-      limitToggle.querySelectorAll('.rc-limit-pill').forEach((p: any) => p.classList.toggle('active', p.textContent === String(n)));
+      limitToggle.querySelectorAll<HTMLElement>('.rc-limit-pill').forEach((p) => p.classList.toggle('active', Number(p.dataset.limit) === n));
     };
     limitToggle.appendChild(pill);
   }
@@ -402,7 +449,6 @@ const createUIElements = () => {
   c.appendChild(sumRow);
   cardEls.sumBtn = sumBtn;
 
-  // Custom question input
   const questionInput = document.createElement('input');
   questionInput.type = 'text';
   questionInput.placeholder = 'Ask about this place… (Enter to ask)';
@@ -416,14 +462,12 @@ const createUIElements = () => {
   c.appendChild(questionInput);
   cardEls.questionInput = questionInput;
 
-  // Summary panel
   const sumPanel = el('div', 'rc-summary-panel');
-  (sumPanel as HTMLElement).style.display = 'none';
+  sumPanel.style.display = 'none';
   c.appendChild(sumPanel);
   cardEls.sumPanel = sumPanel;
-  if (summaryCache.all) renderSummary(sumPanel as HTMLElement, summaryCache.all);
+  if (summaryCache.all) renderSummary(sumPanel, summaryCache.all);
 
-  // Search filter
   const searchSec = el('div', 'rc-search-section');
   const searchInput = document.createElement('input');
   searchInput.type = 'text';
@@ -433,10 +477,10 @@ const createUIElements = () => {
   searchSec.appendChild(searchInput);
   cardEls.searchInput = searchInput;
   const searchResults = el('div', 'rc-search-results');
-  (searchResults as HTMLElement).style.display = 'none';
+  searchResults.style.display = 'none';
   searchSec.appendChild(searchResults);
   const filteredSumPanel = el('div', 'rc-summary-panel');
-  (filteredSumPanel as HTMLElement).style.display = 'none';
+  filteredSumPanel.style.display = 'none';
   searchSec.appendChild(filteredSumPanel);
   c.appendChild(searchSec);
   cardEls.searchResults = searchResults;
@@ -446,7 +490,14 @@ const createUIElements = () => {
 };
 
 const updateUI = () => {
-  const totalCount = SORT_KEYS.reduce((s, k) => s + getReviewCount(k), 0);
+  let totalCount = 0, totalTrusted = 0, totalAll = 0, anyFetching = false, allDone = true;
+  for (const k of SORT_KEYS) {
+    totalCount += getReviewCount(k);
+    totalTrusted += scores[k].reviewData.trustedReviews[currentOption];
+    totalAll += scores[k].reviewData.totalReviews[currentOption];
+    if (scores[k].isFetching) anyFetching = true;
+    if (!scores[k].done) allDone = false;
+  }
   if (!totalCount || !document.querySelector('.F7nice')) return;
   if (!document.querySelector('#reviews-container')) createUIElements();
 
@@ -455,52 +506,81 @@ const updateUI = () => {
 
   const fullPct = calculateFullPercentage();
   const mergedPct = getMergedScore();
-  const mergedRound = Math.round(mergedPct * 100);
-  const totalTrusted = SORT_KEYS.reduce((s, k) => s + scores[k].reviewData.trustedReviews[currentOption], 0);
-  const totalAll = SORT_KEYS.reduce((s, k) => s + scores[k].reviewData.totalReviews[currentOption], 0);
-  const anyFetching = SORT_KEYS.some((k: string) => scores[k].isFetching);
-  const allDone = SORT_KEYS.every((k: string) => scores[k].done);
+  const noData = totalAll === 0 && currentOption !== 'total';
 
-  els.pctEl.childNodes[0].textContent = `${mergedRound}%`;
-  els.tooltip.textContent = `Relevant: ${getRoundedPct('relevant')}% · Newest: ${getRoundedPct('newest')}%`;
-
-  if (fullPct !== null) {
-    const diff = mergedRound - fullPct;
-    const diffNorm = Math.max(0, Math.min(1, (diff + 10) / 20));
-    const color = getScoreColor(diffNorm);
-    els.pctEl.style.color = color;
-    els.pctEl.style.textShadow = `0 0 24px ${color}40`;
-    const sign = diff > 0 ? '+' : '';
-    els.diffEl.textContent = `${sign}${diff}% vs overall`;
-    els.diffEl.style.color = color;
-    els.diffEl.style.display = '';
-  } else {
-    const color = getScoreColor(Math.max(0, mergedPct));
-    els.pctEl.style.color = color;
-    els.pctEl.style.textShadow = `0 0 24px ${color}40`;
+  if (noData) {
+    els.pctEl.childNodes[0].textContent = '—';
+    els.pctEl.style.color = '#888';
+    els.pctEl.style.textShadow = 'none';
+    els.tooltip.textContent = 'No reviews in this period';
+    els.barFill.style.width = '0%';
     els.diffEl.style.display = 'none';
-    // Watch for star distribution rows to appear
-    if (!fullPctObserver) {
-      fullPctObserver = new MutationObserver(() => {
-        if (calculateFullPercentage() !== null) {
-          fullPctObserver!.disconnect();
-          fullPctObserver = null;
-          updateUI();
-        }
-      });
-      fullPctObserver.observe(document.body, { childList: true, subtree: true });
+  } else {
+    const mergedRound = toPct(mergedPct);
+    els.pctEl.childNodes[0].textContent = `${mergedRound}%`;
+    const relLabel = scores.relevant.reviewData.totalReviews[currentOption] ? `${getRoundedPct('relevant')}%` : '—';
+    const newLabel = scores.newest.reviewData.totalReviews[currentOption] ? `${getRoundedPct('newest')}%` : '—';
+    els.tooltip.textContent = `Relevant: ${relLabel} · Newest: ${newLabel}`;
+
+    if (fullPct !== null) {
+      const diff = mergedRound - fullPct;
+      const diffNorm = Math.max(0, Math.min(1, (diff + 10) / 20));
+      const color = getScoreColor(diffNorm);
+      els.pctEl.style.color = color;
+      els.pctEl.style.textShadow = `0 0 24px ${color}40`;
+      const sign = diff > 0 ? '+' : '';
+      els.diffEl.textContent = `${sign}${diff}% vs overall`;
+      els.diffEl.style.color = color;
+      els.diffEl.style.display = '';
+    } else {
+      const color = getScoreColor(Math.max(0, mergedPct));
+      els.pctEl.style.color = color;
+      els.pctEl.style.textShadow = `0 0 24px ${color}40`;
+      els.diffEl.style.display = 'none';
+      if (!fullPctObserver) {
+        fullPctObserver = new MutationObserver(() => {
+          fullPctCache = null;
+          if (calculateFullPercentage() !== null) {
+            fullPctObserver!.disconnect();
+            fullPctObserver = null;
+            updateUI();
+          }
+        });
+        fullPctObserver.observe(document.body, { childList: true, subtree: true });
+      }
     }
+
+    els.barFill.style.width = `${Math.max(2, Math.min(100, (mergedPct + 1) / 2 * 100))}%`;
   }
 
-  els.barFill.style.width = `${Math.max(2, Math.min(100, (mergedPct + 1) / 2 * 100))}%`;
-  els.countEl.textContent = totalCount;
+  els.countEl.textContent = String(totalCount);
   els.detailEl.textContent = totalAll > 0 ? `${totalTrusted} trusted of ${totalAll}` : '';
   els.card.classList.toggle('loading', anyFetching);
   els.card.classList.toggle('done', allDone);
+
+  updateVisibleScore();
 };
 
-// Render summary
-const renderSummary = (panel: HTMLElement, result: any) => {
+const updateVisibleScore = () => {
+  const v = cardEls.visible;
+  if (!v) return;
+  const s = getVisibleScore();
+  const key = s && s.total ? `${s.total}|${s.trusted}|${s.pct}` : '';
+  if (key === lastVisibleKey) return;
+  lastVisibleKey = key;
+  if (!key || !s) { v.row.style.display = 'none'; return; }
+  v.row.style.display = '';
+  if (s.trusted) {
+    v.pctEl.textContent = `${s.pct}%`;
+    v.pctEl.style.color = getScoreColor(Math.max(0, s.raw));
+  } else {
+    v.pctEl.textContent = '—';
+    v.pctEl.style.color = '#888';
+  }
+  v.detailEl.textContent = `${s.trusted} trusted of ${s.total}`;
+};
+
+const renderSummary = (panel: HTMLElement, result: SummaryResult) => {
   panel.textContent = '';
   panel.className = 'rc-summary-panel';
   panel.style.display = 'block';
@@ -532,20 +612,29 @@ const triggerSummarize = async (filtered: boolean) => {
   panel.textContent = 'Summarizing…';
   panel.className = 'rc-summary-panel loading';
 
-  const combined = { ...scores.relevant.reviewMap, ...scores.newest.reviewMap };
-  let reviews = Object.values(combined).filter((r: any) => r.text);
-
-  const query = filtered ? cardEls.searchInput?.value?.trim() : null;
-  if (query) reviews = reviews.filter((r: any) => r.text.toLowerCase().includes(query.toLowerCase()));
-
-  const texts = [...new Set(reviews.map((r: any) => r.text))].sort((a: any, b: any) => b.length - a.length).slice(0, reviewLimit);
+  const query = filtered ? cardEls.searchInput?.value?.trim() || null : null;
+  const queryLower = query?.toLowerCase() || null;
+  const pickTexts = (map: Record<string, Review>, limit: number) => {
+    const revs: Review[] = [];
+    for (const id in map) {
+      const r = map[id];
+      if (!r.text) continue;
+      if (queryLower && !r.text.toLowerCase().includes(queryLower)) continue;
+      revs.push(r);
+    }
+    revs.sort((a, b) => b.text.length - a.text.length);
+    return revs.slice(0, limit).map((r) => r.text);
+  };
+  const half = Math.ceil(reviewLimit / 2);
+  const texts = [...new Set([...pickTexts(scores.relevant.reviewMap, half), ...pickTexts(scores.newest.reviewMap, half)])].slice(0, reviewLimit);
   if (!texts.length) { panel.textContent = 'No review text available'; panel.className = 'rc-summary-panel'; return; }
 
-  const customQuestion = !filtered ? cardEls.questionInput?.value?.trim() : null;
+  const customQuestion = !filtered ? cardEls.questionInput?.value?.trim() || null : null;
   try {
     const result = await summarizeReviews(texts, query, customQuestion);
     if (!customQuestion) {
-      summaryCache[filtered ? 'filtered' : 'all'] = result;
+      if (filtered) summaryCache.filtered = result;
+      else summaryCache.all = result;
       saveSummaryCache();
     }
     renderSummary(panel, result);
@@ -556,26 +645,35 @@ const triggerSummarize = async (filtered: boolean) => {
   }
 };
 
-// Search filter
 const updateSearchSection = () => {
   const res = cardEls.searchResults;
   if (!res) return;
   const query = cardEls.searchInput?.value?.trim();
   if (!query) { res.style.display = 'none'; if (cardEls.filteredSumPanel) cardEls.filteredSumPanel.style.display = 'none'; return; }
 
-  const combined = { ...scores.relevant.reviewMap, ...scores.newest.reviewMap };
-  const allReviews: any[] = Object.values(combined);
-  const filtered = allReviews.filter((r: any) => r.text && r.text.toLowerCase().includes(query.toLowerCase()));
+  const queryLower = query.toLowerCase();
+  const seen = new Set<string>();
+  let allCount = 0;
+  const filtered: Review[] = [];
+  for (const map of [scores.relevant.reviewMap, scores.newest.reviewMap]) {
+    for (const id in map) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      allCount++;
+      const r = map[id];
+      if (r.text && r.text.toLowerCase().includes(queryLower)) filtered.push(r);
+    }
+  }
 
   if (!filtered.length) {
     res.style.display = 'block';
-    res.textContent = `No reviews mention "${query}" (in ${allReviews.length} sampled)`;
+    res.textContent = `No reviews mention "${query}" (in ${allCount} sampled)`;
     return;
   }
 
-  const trusted = filtered.filter((r: any) => r.reviewerReviewCount > 2);
-  const score = trusted.reduce((s: number, r: any) => s + (r.stars === 5 ? 1 : r.stars === 1 ? -1 : 0), 0);
-  const pct = trusted.length ? Math.round((score / trusted.length) * 100) : 0;
+  const trusted = filtered.filter((r) => isTrusted(r.reviewerReviewCount));
+  const score = trusted.reduce((s, r) => s + starScore(r.stars), 0);
+  const pct = trusted.length ? toPct(score / trusted.length) : 0;
   const color = getScoreColor(Math.max(0, score / (trusted.length || 1)));
 
   res.style.display = 'block';
@@ -584,7 +682,7 @@ const updateSearchSection = () => {
   const scoreEl = el('span', 'rc-search-score', `${pct}%`);
   scoreEl.style.color = color;
   header.appendChild(scoreEl);
-  header.appendChild(el('span', 'rc-search-count', `${filtered.length} of ${allReviews.length} mention "${query}"`));
+  header.appendChild(el('span', 'rc-search-count', `${filtered.length} of ${allCount} mention "${query}"`));
   res.appendChild(header);
 
   const sumBtn = el('button', 'rc-summarize-btn', `Summarize "${query}"`);
@@ -592,21 +690,36 @@ const updateSearchSection = () => {
   res.appendChild(sumBtn);
 };
 
-// Page observer — merges both extensions' observers
-const observer = new MutationObserver(() => {
+const observer = new MutationObserver((mutations) => {
   const url = location.href;
 
-  // Simple score display (from Show-GMaps-score)
-  const placeDetails = document.querySelector('.dmRWX') as HTMLElement;
-  if (placeDetails && !placeDetails.innerHTML.includes('score:')) {
+  const placeDetails = document.querySelector<HTMLElement>('.dmRWX');
+  if (placeDetails && !placeDetails.querySelector('.truescore-simple-score')) {
     injectSimpleScore(placeDetails);
   }
+
+  let reviewsChanged = false;
+  outer: for (const m of mutations) {
+    for (const nodes of [m.addedNodes, m.removedNodes]) {
+      for (const n of nodes) {
+        if (n instanceof Element && (n.classList.contains('jftiEf') || n.querySelector('.jftiEf'))) {
+          reviewsChanged = true;
+          break outer;
+        }
+      }
+    }
+  }
+  if (reviewsChanged) updateVisibleScore();
 
   if (url === lastUrl) return;
   lastUrl = url;
 
   const isPlace = /\/place\//.test(url);
-  if (!isPlace) { document.querySelector('#reviews-container')?.remove(); return; }
+  if (!isPlace) {
+    document.querySelector('#reviews-container')?.remove();
+    clearCardEls();
+    return;
+  }
 
   const placeName = url.match(/(?:place\/)([^\/]+)/)?.[1];
   if (placeName !== lastPlaceName) {
@@ -614,6 +727,7 @@ const observer = new MutationObserver(() => {
     resetScores();
     loadSummaryCache();
     document.querySelector('#reviews-container')?.remove();
+    clearCardEls();
     startFetching();
   }
   if (!document.querySelector('#reviews-container') && getFeatureId()) {
