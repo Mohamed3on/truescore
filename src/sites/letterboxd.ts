@@ -25,6 +25,21 @@ const STYLES = `
     line-height: 1;
     padding-top: .3rem;
   }
+  .lbx-score.-new {
+    float: none;
+    display: block;
+    padding: .15rem 0 .6rem 0;
+    text-align: right;
+    font-size: .8125rem;
+    font-weight: 500;
+    color: #9ab;
+    line-height: 1.3;
+    letter-spacing: .01em;
+  }
+  .lbx-score.-new .lbx-pct {
+    color: #678;
+    margin-left: .25em;
+  }
   .lbx-trending {
     margin-top: 1rem;
     font-size: 1.1rem;
@@ -161,6 +176,19 @@ function extractYear(doc: Document) {
 function extractSlugFromUrl(url: string) {
   const match = url.match(/\/film\/([^/]+)/);
   return match ? match[1] : null;
+}
+
+/** Parses 10 rating-bucket counts from either the new .barcolumn layout or the old .rating-histogram-bar CSI layout */
+function parseRatings(root: Document | Element): number[] {
+  const barcolumns = root.querySelectorAll('.barcolumn[data-original-title]');
+  if (barcolumns.length) {
+    return Array.from(barcolumns).map((el) => {
+      const match = el.getAttribute('data-original-title')!.match(/([\d,]+)/);
+      return match ? parseInt(match[1].replace(/,/g, ''), 10) : 0;
+    });
+  }
+  const bars = root.querySelectorAll('.rating-histogram-bar');
+  return Array.from(bars).map((el) => parseInt(el.textContent!.replace(/,/g, '').split('&')[0]) || 0);
 }
 
 function filmMeta(film: any, recentText = '...') {
@@ -327,11 +355,9 @@ async function getFilmBasicData(slug: string) {
   let ratings: number[] = [];
   if (statsResponse) {
     const statsDoc = new DOMParser().parseFromString(await statsResponse.text(), 'text/html');
-    const ratingBars = statsDoc.querySelectorAll('.rating-histogram-bar');
-    if (ratingBars.length) {
-      ratings = Array.from(ratingBars).map((el) => parseInt(el.textContent!.replace(/,/g, '').split('&')[0]) || 0);
-    }
+    ratings = parseRatings(statsDoc);
   }
+  if (!ratings.length) ratings = parseRatings(doc);
 
   debug(`${slug}: runtime=${runtime}, year=${year}, ratings=${ratings.join(',') || 'none'}`);
   return { runtime, year, filmName, imdbLink, ratings };
@@ -698,25 +724,43 @@ async function run(ratings: number[]) {
   const cachedFilm = cachedFilmRaw?.score > 0 ? cachedFilmRaw : null;
   const recentRatingsRaw = getRecentRatingsSummary().catch(() => ({ totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 }));
 
-  const avgRating = document.querySelector('.ratings-histogram-chart .average-rating');
+  const avgRating = document.querySelector('.ratings-histogram-chart .average-rating, .ratings-histogram-chart .averagerating');
   const reviewSection = document.querySelector('.review.body-text');
   if (!avgRating?.parentElement || !reviewSection) return;
+
+  const histogramContainer = avgRating.closest('.rating-histogram');
+  const scoreClass = histogramContainer ? 'lbx-score -new' : 'lbx-score';
+  const mountScore = (scoreEl: HTMLElement) => {
+    if (histogramContainer) histogramContainer.before(scoreEl);
+    else avgRating.parentElement!.insertBefore(scoreEl, avgRating);
+  };
+  const renderScore = (scoreEl: HTMLElement, score: number, ratio: number) => {
+    const val = addCommas(score);
+    const pct = `${Math.round(ratio * 100)}%`;
+    if (histogramContainer) {
+      scoreEl.textContent = val;
+      scoreEl.append(el('span', 'lbx-pct', `· ${pct}`));
+    } else {
+      scoreEl.textContent = `${val} (${pct})`;
+    }
+  };
 
   const trendingElement = el('div', 'lbx-trending', 'Calculating...');
   reviewSection.after(trendingElement);
 
   let scorePromise: Promise<{ score: number; ratio: number }>;
   if (cachedFilm) {
-    const scoreElement = el('span', 'lbx-score', `${addCommas(cachedFilm.score)} (${Math.round(cachedFilm.ratio * 100)}%)`);
-    avgRating.parentElement.insertBefore(scoreElement, avgRating);
+    const scoreElement = el('span', scoreClass);
+    renderScore(scoreElement, cachedFilm.score, cachedFilm.ratio);
+    mountScore(scoreElement);
     scorePromise = Promise.resolve({ score: cachedFilm.score, ratio: cachedFilm.ratio });
   } else {
-    const scoreElement = el('span', 'lbx-score', 'Calculating...');
-    avgRating.parentElement.insertBefore(scoreElement, avgRating);
+    const scoreElement = el('span', scoreClass, 'Calculating...');
+    mountScore(scoreElement);
     scorePromise = fetchImdbRatings(document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null)
       .then(({ imdbScore, imdbTotal }) => {
         const { score, ratio } = calculateCombinedScore(ratings, imdbScore, imdbTotal);
-        scoreElement.textContent = `${addCommas(score)} (${Math.round(ratio * 100)}%)`;
+        renderScore(scoreElement, score, ratio);
         if (currentSlug && currentRuntime) {
           setCachedFilmData(currentSlug, { score, ratio, scored: true, runtime: currentRuntime, year: currentYear, filmName: currentFilmName });
         }
@@ -746,27 +790,21 @@ let observer: MutationObserver | null = null;
 function initObserver() {
   if (observer) observer.disconnect();
 
-  observer = new MutationObserver(async (mutations) => {
-    for (const mutation of mutations) {
-      if (!mutation.addedNodes) continue;
-
-      const ratingNodes = document.getElementsByClassName('rating-histogram-bar');
-      if (ratingNodes.length) {
-        observer!.disconnect();
-        const ratings = Array.from(ratingNodes).map(
-          (el) => parseInt(el.textContent!.replace(/,/g, '').split('&')[0]) || 0
-        );
-        try {
-          await run(ratings);
-        } catch (error) {
-          console.error('LBX Extension error:', error);
-        }
-        break;
-      }
+  const tryRun = async () => {
+    const ratings = parseRatings(document);
+    if (!ratings.length) return false;
+    observer?.disconnect();
+    try {
+      await run(ratings);
+    } catch (error) {
+      console.error('LBX Extension error:', error);
     }
-  });
+    return true;
+  };
 
+  observer = new MutationObserver(() => { tryRun(); });
   observer.observe(document.body, { childList: true, subtree: true });
+  tryRun();
 }
 
 initObserver();
