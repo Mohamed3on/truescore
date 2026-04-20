@@ -1,5 +1,6 @@
 import { cacheGet, cacheSet } from '../shared/cache';
-import { addCommas } from '../shared/utils';
+import { createThrottledFetcher } from '../shared/throttled-fetch';
+import { addCommas, el } from '../shared/utils';
 
 const CONFIG = {
   BOOK_CACHE_MS: 14 * 24 * 60 * 60 * 1000,
@@ -47,30 +48,10 @@ function injectStyles() {
   document.head.appendChild(style);
 }
 
-// =============================================================================
-// Throttled fetch
-// =============================================================================
-
-function createThrottledFetcher(concurrency: number) {
-  let active = 0;
-  const queue: { fn: () => Promise<Response>; resolve: (v: Response) => void; reject: (e: any) => void }[] = [];
-  const next = () => {
-    while (active < concurrency && queue.length) {
-      active++;
-      const { fn, resolve, reject } = queue.shift()!;
-      fn().then(resolve, reject).finally(() => { active--; next(); });
-    }
-  };
-  return (url: string, options: RequestInit = {}) => new Promise<Response>((resolve, reject) => {
-    queue.push({
-      fn: () => fetch(url, { credentials: 'include', ...options }),
-      resolve, reject,
-    });
-    next();
-  });
-}
-
-const throttledFetch = createThrottledFetcher(CONFIG.MAX_CONCURRENCY);
+const throttledFetch = createThrottledFetcher(
+  CONFIG.MAX_CONCURRENCY,
+  (url, options) => fetch(url, { credentials: 'include', ...options }),
+);
 
 const fetchDoc = async (url: string): Promise<Document> => {
   const res = await throttledFetch(url);
@@ -121,15 +102,20 @@ const getCurrentBookStats = (): BookStats | null => {
 const getBookIdFromURL = (url: string): string | null =>
   url.match(/\/show\/(\d+)/)?.[1] ?? null;
 
+const bookCacheKey = (id: string) => `gr_book_${id}`;
+
 const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
-  const cached = cacheGet(`gr_book_${bookURL}`, CONFIG.BOOK_CACHE_MS);
-  if (cached) return cached;
+  const id = getBookIdFromURL(bookURL);
+  if (id) {
+    const cached = cacheGet(bookCacheKey(id), CONFIG.BOOK_CACHE_MS);
+    if (cached) return cached;
+  }
   const doc = await fetchDoc(bookURL);
   const script = doc.querySelector('#__NEXT_DATA__');
   if (!script?.textContent) throw new Error('no __NEXT_DATA__ on ' + bookURL);
   const stats = parseBookNextData(JSON.parse(script.textContent));
   if (!stats) throw new Error('could not parse book stats ' + bookURL);
-  cacheSet(`gr_book_${bookURL}`, stats);
+  if (id) cacheSet(bookCacheKey(id), stats);
   return stats;
 };
 
@@ -138,7 +124,7 @@ const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
 // =============================================================================
 
 const fetchRecentRatings = async (workId: string, jwtToken: string): Promise<number[]> => {
-  const res = await fetch(
+  const res = await throttledFetch(
     'https://kxbwmqov6jgg3daaamb744ycu4.appsync-api.us-east-1.amazonaws.com/graphql',
     {
       method: 'POST',
@@ -218,17 +204,21 @@ const pickShelf = async (shelves: string[]): Promise<string | null> => {
 // Best-book search
 // =============================================================================
 
-type Candidate = { bookURL: string; isRead: boolean; bookRating: string | null };
+type Candidate = { bookId: string; bookURL: string; isRead: boolean; bookRating: string | null };
 
 const parseShelfPage = (doc: Document): Candidate[] =>
-  Array.from(doc.querySelectorAll<HTMLElement>('.leftContainer > .elementList')).map(el => {
-    const titleEl = el.querySelector('.bookTitle') as HTMLAnchorElement | null;
+  Array.from(doc.querySelectorAll<HTMLElement>('.leftContainer > .elementList')).map(row => {
+    const titleEl = row.querySelector('.bookTitle') as HTMLAnchorElement | null;
     const href = titleEl?.getAttribute('href');
     if (!href) return null;
-    const ratingText = el.querySelector('.greyText.smallText')?.textContent || '';
+    const bookURL = new URL(href, 'https://www.goodreads.com').href;
+    const bookId = getBookIdFromURL(bookURL);
+    if (!bookId) return null;
+    const ratingText = row.querySelector('.greyText.smallText')?.textContent || '';
     return {
-      bookURL: new URL(href, 'https://www.goodreads.com').href,
-      isRead: !!el.querySelector('.hasRating'),
+      bookId,
+      bookURL,
+      isRead: !!row.querySelector('.hasRating'),
       bookRating: ratingText.match(/\d(\.\d+)?(?=\s+—)/)?.[0] || null,
     };
   }).filter((x): x is Candidate => x !== null);
@@ -259,10 +249,11 @@ const findBestBook = async (params: {
   refRecentRatio: number | null;
 }): Promise<string | null> => {
   const { originalBookURL, shelf, refScore, refRatio, refAvgRating, refRecentRatio } = params;
-  const cacheKey = `gr_best_${getBookIdFromURL(originalBookURL)}`;
+  const originalId = getBookIdFromURL(originalBookURL);
+  const cacheKey = `gr_best_${originalId}`;
   const cached = cacheGet(cacheKey, CONFIG.BEST_BOOK_CACHE_MS);
   if (cached !== null) return cached;
-  const originalId = getBookIdFromURL(originalBookURL);
+  const refAvg = parseFloat(refAvgRating);
 
   for (let start = 1; start <= CONFIG.MAX_PAGES; start += CONFIG.PAGE_BATCH) {
     const end = Math.min(start + CONFIG.PAGE_BATCH - 1, CONFIG.MAX_PAGES);
@@ -277,16 +268,14 @@ const findBestBook = async (params: {
     const rows = pageDocs.flatMap(d => d ? parseShelfPage(d) : []);
     if (!rows.length) break;
 
-    const referenceInBatch = rows.some(r => getBookIdFromURL(r.bookURL) === originalId);
+    const referenceInBatch = rows.some(r => r.bookId === originalId);
 
-    const eligible = rows.filter(({ bookURL, isRead, bookRating }) => {
-      if (getBookIdFromURL(bookURL) === originalId) return false;
+    const eligible = rows.filter(({ bookId, isRead, bookRating }) => {
+      if (bookId === originalId) return false;
       if (isRead) return false;
-      const diff = parseFloat(refAvgRating) - parseFloat(bookRating || '0');
-      return diff <= CONFIG.AVG_RATING_TOLERANCE;
+      return refAvg - parseFloat(bookRating || '0') <= CONFIG.AVG_RATING_TOLERANCE;
     });
 
-    // Race: resolve with the first qualifier; `Promise.any` ignores rejections.
     try {
       const winner = await Promise.any(
         eligible.map(async (c) => {
@@ -297,11 +286,9 @@ const findBestBook = async (params: {
       );
       cacheSet(cacheKey, winner);
       return winner;
-    } catch {
-      // nothing in this batch
-    }
+    } catch {}
 
-    // Stop: reference book seen — later pages are unlikely to beat it.
+    // later pages sorted lower by popularity — unlikely to beat reference
     if (referenceInBatch) break;
   }
 
@@ -313,28 +300,22 @@ const findBestBook = async (params: {
 // UI orchestration
 // =============================================================================
 
-const createButton = (text: string, cls = ''): HTMLAnchorElement => {
-  const a = document.createElement('a');
-  a.className = 'gr-best-book' + (cls ? ' ' + cls : '');
-  a.textContent = text;
-  return a;
-};
-
 const renderBestBook = async (
   anchor: Element,
   currentBookURL: string,
   currentStats: BookStats,
   currentRecentRatio: number | null,
 ) => {
-  const btn = createButton('Finding best in this shelf…', '-loading');
+  const btn = el('a', 'gr-best-book -loading', 'Finding best in this shelf…') as HTMLAnchorElement;
   anchor.parentNode!.insertBefore(btn, anchor.nextSibling);
+  const setNone = (text: string) => { btn.textContent = text; btn.className = 'gr-best-book -none'; };
 
   try {
     const shelves = await getBookShelves(currentBookURL);
-    if (!shelves.length) { btn.textContent = 'No shelves found'; btn.className = 'gr-best-book -none'; return; }
+    if (!shelves.length) return setNone('No shelves found');
 
     const shelf = await pickShelf(shelves);
-    if (!shelf) { btn.textContent = 'No usable shelf'; btn.className = 'gr-best-book -none'; return; }
+    if (!shelf) return setNone('No usable shelf');
 
     btn.textContent = `Searching "${shelf}"…`;
 
@@ -348,25 +329,22 @@ const renderBestBook = async (
     });
 
     if (bestURL) {
-      btn.textContent = '';
       btn.className = 'gr-best-book';
       btn.href = bestURL;
       btn.target = '_blank';
       btn.rel = 'noopener';
-      btn.append(document.createTextNode(`★ Best in "${shelf}" →`));
+      btn.textContent = `★ Best in "${shelf}" →`;
     } else {
-      btn.textContent = `★ Winner in "${shelf}" — nothing beats it`;
-      btn.className = 'gr-best-book -none';
+      setNone(`★ Winner in "${shelf}" — nothing beats it`);
     }
   } catch (e: any) {
     debug('best-book error:', e);
-    btn.textContent = 'Best-book search failed';
-    btn.className = 'gr-best-book -none';
+    setNone('Best-book search failed');
   }
 };
 
 // =============================================================================
-// Score display (existing behavior preserved)
+// Score display
 // =============================================================================
 
 const appendScore = async (bookTitle: Element) => {
@@ -374,26 +352,20 @@ const appendScore = async (bookTitle: Element) => {
   const stats = getCurrentBookStats();
   if (!stats) return;
 
-  const scoreElement = document.createElement('h1');
-  scoreElement.textContent = `${addCommas(Math.round(stats.score))} (${Math.round(stats.ratio * 100)}%)`;
+  const currentId = getBookIdFromURL(window.location.href);
+  if (currentId) cacheSet(bookCacheKey(currentId), stats);
+
+  const scoreElement = el('h1', undefined, `${addCommas(Math.round(stats.score))} (${Math.round(stats.ratio * 100)}%)`);
   bookTitle.parentNode!.insertBefore(scoreElement, bookTitle.nextSibling);
 
-  const recentElement = document.createElement('div');
+  const recentElement = el('div', undefined, 'Recent: loading...');
   recentElement.style.cssText = 'font-size: 16px; margin-top: 4px; color: #666;';
-  recentElement.textContent = 'Recent: loading...';
   scoreElement.parentNode!.insertBefore(recentElement, scoreElement.nextSibling);
 
-  let recentRatio: number | null = null;
-  try {
-    const ratings = await fetchRecentRatings(stats.workId, stats.jwtToken || '');
-    recentRatio = calculateRecentRatio(ratings);
-    recentElement.textContent = recentRatio !== null
-      ? `Recent: ${Math.round(recentRatio * 100)}%`
-      : 'Recent: N/A';
-  } catch (err) {
-    recentElement.textContent = 'Recent: failed to load';
-    console.error('Failed to fetch recent ratings:', err);
-  }
+  const recentRatio = await getRecentRatio(stats.workId, stats.jwtToken);
+  recentElement.textContent = recentRatio !== null
+    ? `Recent: ${Math.round(recentRatio * 100)}%`
+    : 'Recent: N/A';
 
   renderBestBook(recentElement, window.location.href, stats, recentRatio);
 };

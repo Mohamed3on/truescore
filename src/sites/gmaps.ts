@@ -148,19 +148,28 @@ const startAutoScroll = async () => {
   stopAutoScroll();
 };
 
-document.addEventListener('keydown', (e) => {
-  if (e.repeat) return;
-  if (e.key === 'Escape' && autoScroll.active) { stopAutoScroll(); return; }
-  if (e.key !== 'Alt' || e.ctrlKey || e.metaKey) return;
-  const container = findReviewsScrollContainer();
-  if (!container) return;
-  e.preventDefault();
-  if (e.shiftKey) {
-    stopAutoScroll();
-    container.scrollTo({ top: 0, behavior: 'smooth' });
-  } else if (autoScroll.active) stopAutoScroll();
-  else startAutoScroll();
-});
+const isTypingTarget = (el: EventTarget | null) => {
+  if (!(el instanceof HTMLElement)) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+};
+
+if (!(window as any).__rcGmapsKeybound) {
+  (window as any).__rcGmapsKeybound = true;
+  document.addEventListener('keydown', (e) => {
+    if (e.repeat || isTypingTarget(e.target)) return;
+    if (e.key === 'Escape' && autoScroll.active) { stopAutoScroll(); return; }
+    if (e.key !== 'Alt' || e.ctrlKey || e.metaKey) return;
+    const container = findReviewsScrollContainer();
+    if (!container) return;
+    e.preventDefault();
+    if (e.shiftKey) {
+      stopAutoScroll();
+      container.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (autoScroll.active) stopAutoScroll();
+    else startAutoScroll();
+  });
+}
 
 const getScoreColor = (pct: number) => {
   const stops = [

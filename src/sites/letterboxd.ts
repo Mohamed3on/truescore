@@ -1,4 +1,5 @@
 import { cacheGet, cacheSet } from '../shared/cache';
+import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 
 // =============================================================================
@@ -286,23 +287,7 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries
   throw new Error(`Failed after ${maxRetries} retries`);
 }
 
-function createThrottledFetcher(concurrency = CONFIG.MAX_CONCURRENCY) {
-  let active = 0;
-  const queue: { fn: () => Promise<Response>; resolve: (v: Response) => void; reject: (e: any) => void }[] = [];
-  function next() {
-    while (active < concurrency && queue.length) {
-      active++;
-      const { fn, resolve, reject } = queue.shift()!;
-      fn().then(resolve, reject).finally(() => { active--; next(); });
-    }
-  }
-  return (url: string, options?: RequestInit) => new Promise<Response>((resolve, reject) => {
-    queue.push({ fn: () => fetchWithRetry(url, options), resolve, reject });
-    next();
-  });
-}
-
-const throttledFetch = createThrottledFetcher();
+const throttledFetch = createThrottledFetcher(CONFIG.MAX_CONCURRENCY, fetchWithRetry);
 
 /**
  * Fetches IMDB rating data via CORS proxy
@@ -489,16 +474,16 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
     debug('Re-validating cached similar picks from', listUrl);
     const res = await throttledFetch(listUrl, { credentials: 'include' });
     const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
-    const visibleSlugs: string[] = [];
-    for (const el of Array.from(doc.querySelectorAll('[data-item-slug], a[href^="/film/"]'))) {
-      const slug = el.getAttribute('data-item-slug') || el.getAttribute('href')?.match(/\/film\/([^/]+)\//)?.[1];
-      if (slug) visibleSlugs.push(slug);
+    const posteritems = Array.from(doc.querySelectorAll('li.posteritem'));
+    const visible = new Set<string>();
+    for (const item of posteritems) {
+      const div = item.querySelector('[data-item-slug], a[href^="/film/"]');
+      const slug = div?.getAttribute('data-item-slug') || extractSlugFromUrl(div?.getAttribute('href') || '');
+      if (slug) visible.add(slug);
     }
-    const visible = new Set(visibleSlugs);
-    const posteritems = doc.querySelectorAll('li.posteritem').length;
-    if (posteritems > 0 && visible.size === 0) {
-      console.warn(`[LBX] Selector mismatch on cached list re-validation: ${posteritems} posteritems but 0 slugs — skipping filter`);
-      return { ...cached, stats: cached.stats ? { ...cached.stats, fromCache: true } : undefined };
+    if (posteritems.length > 0 && visible.size === 0) {
+      console.warn(`[LBX] Selector mismatch on cached list re-validation: ${posteritems.length} posteritems but 0 slugs — skipping filter`);
+      return { ...cached, stats: cached.stats };
     }
     debug(`List has ${visible.size} visible films, cache has ${cached.films.length}`);
     const films = cached.films.filter((f: any) => visible.has(f.slug));
@@ -507,7 +492,7 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       debug(`Filtered out ${removed} watched films:`, cached.films.filter((f: any) => !visible.has(f.slug)).map((f: any) => f.name));
       setCachedSimilarPicks(currentSlug, { ...cached, films });
     }
-    return { ...cached, films, stats: cached.stats ? { ...cached.stats, fromCache: true, cachedFilmsRemaining: films.length, cachedFilmsRemoved: removed } : undefined };
+    return { ...cached, films, stats: cached.stats };
   }
 
   try {
@@ -546,10 +531,10 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
 
       const pageSlugs: { slug: string; link: string }[] = [];
       for (const item of pageItems) {
-        const div = item.querySelector('[data-item-slug], [data-item-link], a[href^="/film/"]') as HTMLElement | null;
+        const div = item.querySelector('[data-item-slug], [data-item-link], a[href^="/film/"]');
         if (!div) continue;
         const link = div.getAttribute('data-item-link') || div.getAttribute('href') || '';
-        const slug = div.getAttribute('data-item-slug') || link.match(/\/film\/([^/]+)\//)?.[1] || '';
+        const slug = div.getAttribute('data-item-slug') || extractSlugFromUrl(link) || '';
         if (!slug) continue;
         if (slug === currentSlug) { foundCurrentFilm = true; foundOnPage = page; continue; }
         pageSlugs.push({ slug, link });
