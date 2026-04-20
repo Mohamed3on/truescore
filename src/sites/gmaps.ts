@@ -1,5 +1,5 @@
 import { GEMINI_API_KEY, geminiEndpoint } from '../shared/config';
-import { addCommas, el } from '../shared/utils';
+import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 
 const TIME_PERIODS = ['total', 'inPastYear', 'inPastMonth'] as const;
 const SORT_KEYS = ['relevant', 'newest'] as const;
@@ -102,7 +102,65 @@ const resetScores = () => {
   if (fullPctObserver) { fullPctObserver.disconnect(); fullPctObserver = null; }
   lastVisibleKey = '';
   fullPctCache = null;
+  stopAutoScroll();
 };
+
+let autoScroll: { active: boolean; abort: AbortController | null } = { active: false, abort: null };
+
+const findReviewsScrollContainer = (): HTMLElement | null => {
+  const first = document.querySelector<HTMLElement>('.jftiEf[data-review-id]');
+  if (!first) return null;
+  let el: HTMLElement | null = first.parentElement;
+  while (el) {
+    const style = getComputedStyle(el);
+    if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return el;
+    el = el.parentElement;
+  }
+  return null;
+};
+
+const stopAutoScroll = () => {
+  if (!autoScroll.active) return;
+  autoScroll.active = false;
+  autoScroll.abort?.abort();
+  autoScroll.abort = null;
+};
+
+const startAutoScroll = async () => {
+  const container = findReviewsScrollContainer();
+  if (!container) return;
+  const ctrl = new AbortController();
+  autoScroll = { active: true, abort: ctrl };
+  container.addEventListener('wheel', (e) => { if ((e as WheelEvent).deltaY < 0) stopAutoScroll(); }, { signal: ctrl.signal });
+
+  let stagnant = 0;
+  while (autoScroll.active) {
+    const beforeCount = container.querySelectorAll('.jftiEf[data-review-id]').length;
+    const beforeHeight = container.scrollHeight;
+    container.scrollTo({ top: container.scrollHeight });
+    await new Promise((r) => setTimeout(r, 350));
+    if (!autoScroll.active) return;
+    const afterCount = container.querySelectorAll('.jftiEf[data-review-id]').length;
+    if (afterCount === beforeCount && container.scrollHeight === beforeHeight) {
+      if (++stagnant >= 2) break;
+    } else stagnant = 0;
+  }
+  stopAutoScroll();
+};
+
+document.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  if (e.key === 'Escape' && autoScroll.active) { stopAutoScroll(); return; }
+  if (e.key !== 'Alt' || e.ctrlKey || e.metaKey) return;
+  const container = findReviewsScrollContainer();
+  if (!container) return;
+  e.preventDefault();
+  if (e.shiftKey) {
+    stopAutoScroll();
+    container.scrollTo({ top: 0, behavior: 'smooth' });
+  } else if (autoScroll.active) stopAutoScroll();
+  else startAutoScroll();
+});
 
 const getScoreColor = (pct: number) => {
   const stops = [
@@ -593,8 +651,7 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   panel.style.display = 'block';
   if (typeof result === 'string') {
     const answer = el('div', 'rc-answer');
-    answer.style.whiteSpace = 'pre-wrap';
-    answer.textContent = result;
+    renderMarkdown(answer, result);
     panel.appendChild(answer);
     return;
   }
@@ -603,7 +660,9 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
       const row = el('div', `rc-highlight ${h.sentiment}`);
       const badge = el('span', 'rc-h-count', `${h.count}x`);
       row.appendChild(badge);
-      row.appendChild(document.createTextNode(` ${h.text}`));
+      const text = el('span', 'rc-h-text');
+      renderMarkdownInline(text, ` ${h.text}`);
+      row.appendChild(text);
       panel.appendChild(row);
     }
   }
@@ -612,7 +671,9 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
     panel.appendChild(el('div', 'rc-value', `Value for money: ${'★'.repeat(v)}${'☆'.repeat(5 - v)}`));
   }
   if (result.verdict) {
-    panel.appendChild(el('div', 'rc-verdict', result.verdict));
+    const verdict = el('div', 'rc-verdict');
+    renderMarkdown(verdict, result.verdict);
+    panel.appendChild(verdict);
   }
   if (!result.highlights?.length && !result.verdict) {
     panel.textContent = 'No highlights found';

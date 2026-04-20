@@ -328,6 +328,53 @@
   line-height: 1.5;
 }
 
+/* Free-form answer */
+.ars-answer {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #1C1917;
+}
+
+.ars-answer p,
+.ars-conclusion p,
+.ars-section-item p { margin: 0 0 6px 0; }
+.ars-answer p:last-child,
+.ars-conclusion p:last-child,
+.ars-section-item p:last-child { margin-bottom: 0; }
+.ars-answer ul,
+.ars-answer ol,
+.ars-conclusion ul,
+.ars-conclusion ol { margin: 4px 0; padding-left: 20px; }
+.ars-answer li,
+.ars-conclusion li { margin: 2px 0; }
+.ars-answer strong,
+.ars-conclusion strong,
+.ars-section-item strong { font-weight: 700; color: #1C1917; }
+.ars-answer em,
+.ars-conclusion em,
+.ars-section-item em { font-style: italic; }
+.ars-answer code,
+.ars-conclusion code,
+.ars-section-item code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  padding: 1px 4px;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 3px;
+}
+.ars-answer a,
+.ars-conclusion a,
+.ars-section-item a { color: #0369A1; text-decoration: underline; }
+.ars-answer h1,
+.ars-answer h2,
+.ars-answer h3,
+.ars-answer h4 {
+  margin: 8px 0 4px 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1C1917;
+}
+
 /* Format table */
 .format-table {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;

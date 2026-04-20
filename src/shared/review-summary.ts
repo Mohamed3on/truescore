@@ -1,4 +1,5 @@
 import { getGeminiApiKey, geminiEndpoint } from './config';
+import { renderMarkdown, renderMarkdownInline } from './utils';
 
 export const renderStructuredSummary = (container: HTMLElement, { complaints, praised, conclusion, betterAlternative, suspiciousPatterns }: any) => {
   container.textContent = '';
@@ -13,7 +14,7 @@ export const renderStructuredSummary = (container: HTMLElement, { complaints, pr
     for (const item of items) {
       const bullet = document.createElement('div');
       bullet.className = 'ars-section-item';
-      bullet.textContent = item;
+      renderMarkdownInline(bullet, item);
       section.appendChild(bullet);
     }
     container.appendChild(section);
@@ -29,7 +30,7 @@ export const renderStructuredSummary = (container: HTMLElement, { complaints, pr
     section.appendChild(heading);
     const item = document.createElement('div');
     item.className = 'ars-section-item';
-    item.textContent = betterAlternative;
+    renderMarkdownInline(item, betterAlternative);
     section.appendChild(item);
     container.appendChild(section);
   }
@@ -42,14 +43,14 @@ export const renderStructuredSummary = (container: HTMLElement, { complaints, pr
     section.appendChild(heading);
     const item = document.createElement('div');
     item.className = 'ars-section-item';
-    item.textContent = suspiciousPatterns;
+    renderMarkdownInline(item, suspiciousPatterns);
     section.appendChild(item);
     container.appendChild(section);
   }
   if (conclusion) {
     const el = document.createElement('div');
     el.className = 'ars-conclusion';
-    el.textContent = conclusion;
+    renderMarkdown(el, conclusion);
     container.appendChild(el);
   }
 };
@@ -100,8 +101,7 @@ export const renderFreeFormAnswer = (container: HTMLElement, text: string) => {
   container.textContent = '';
   const div = document.createElement('div');
   div.className = 'ars-answer';
-  div.style.whiteSpace = 'pre-wrap';
-  div.textContent = text;
+  renderMarkdown(div, text);
   container.appendChild(div);
 };
 

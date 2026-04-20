@@ -402,6 +402,31 @@
   color: rgba(255, 255, 255, 0.7);
 }
 
+.rc-summary-panel p { margin: 0 0 6px 0; }
+.rc-summary-panel p:last-child { margin-bottom: 0; }
+.rc-summary-panel ul,
+.rc-summary-panel ol { margin: 4px 0; padding-left: 18px; }
+.rc-summary-panel li { margin: 2px 0; }
+.rc-summary-panel strong { color: rgba(255, 255, 255, 0.9); font-weight: 600; }
+.rc-summary-panel em { font-style: italic; }
+.rc-summary-panel code {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+}
+.rc-summary-panel a { color: #8AB4F8; text-decoration: underline; }
+.rc-summary-panel h1,
+.rc-summary-panel h2,
+.rc-summary-panel h3,
+.rc-summary-panel h4 {
+  margin: 6px 0 4px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+}
+
 /* Search-filtered section */
 .rc-search-section {
   margin-top: 10px;

@@ -201,13 +201,15 @@ function debugDetails(stats: any) {
   const toggle = el('div', 'lbx-debug-toggle', '▶ Debug info');
   const content = el('div', 'lbx-debug-content');
   content.style.display = 'none';
+  const selectorMismatch = stats.totalInList === 0 && stats.lastPageItemCount > 0;
   const lines = [
     `Found on page: ${stats.foundOnPage || 'not found'} (searched ${stats.pagesSearched || '?'} of max ${CONFIG.MAX_SIMILAR_PAGES})`,
-    `Candidates from list: ${stats.totalInList}`,
+    `Candidates from list: ${stats.totalInList}${stats.totalInList === 0 && stats.lastPageItemCount != null ? ` (last page had ${stats.lastPageItemCount} posteritems)` : ''}`,
     `Runtime matched (≤${stats.currentRuntime ? stats.currentRuntime + CONFIG.RUNTIME_TOLERANCE : '?'}m): ${stats.runtimeMatched}`,
     `Scored: ${stats.scored}`,
     `Current film score: ${addCommas(stats.currentScore)}`,
   ];
+  if (selectorMismatch) lines.push('⚠ Selector mismatch — Letterboxd markup may have changed');
   if (stats.recentThreshold != null) lines.push(`Recent % threshold: ${stats.recentThreshold}%`);
   if (stats.allScored?.length) {
     lines.push('');
@@ -487,9 +489,17 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
     debug('Re-validating cached similar picks from', listUrl);
     const res = await throttledFetch(listUrl, { credentials: 'include' });
     const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
-    const visible = new Set(
-      Array.from(doc.querySelectorAll('[data-item-slug]')).map(el => el.getAttribute('data-item-slug'))
-    );
+    const visibleSlugs: string[] = [];
+    for (const el of Array.from(doc.querySelectorAll('[data-item-slug], a[href^="/film/"]'))) {
+      const slug = el.getAttribute('data-item-slug') || el.getAttribute('href')?.match(/\/film\/([^/]+)\//)?.[1];
+      if (slug) visibleSlugs.push(slug);
+    }
+    const visible = new Set(visibleSlugs);
+    const posteritems = doc.querySelectorAll('li.posteritem').length;
+    if (posteritems > 0 && visible.size === 0) {
+      console.warn(`[LBX] Selector mismatch on cached list re-validation: ${posteritems} posteritems but 0 slugs — skipping filter`);
+      return { ...cached, stats: cached.stats ? { ...cached.stats, fromCache: true } : undefined };
+    }
     debug(`List has ${visible.size} visible films, cache has ${cached.films.length}`);
     const films = cached.films.filter((f: any) => visible.has(f.slug));
     const removed = cached.films.length - films.length;
@@ -497,7 +507,7 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       debug(`Filtered out ${removed} watched films:`, cached.films.filter((f: any) => !visible.has(f.slug)).map((f: any) => f.name));
       setCachedSimilarPicks(currentSlug, { ...cached, films });
     }
-    return { ...cached, films };
+    return { ...cached, films, stats: cached.stats ? { ...cached.stats, fromCache: true, cachedFilmsRemaining: films.length, cachedFilmsRemoved: removed } : undefined };
   }
 
   try {
@@ -520,6 +530,8 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
     const allFilmSlugs: { slug: string; link: string }[] = [];
     let foundCurrentFilm = false;
     let foundOnPage = 0;
+    let pagesSearched = 0;
+    let lastPageItemCount = 0;
 
     for (let page = 1; page <= CONFIG.MAX_SIMILAR_PAGES; page++) {
       const pageUrl = page === 1 ? listBaseUrl : `${listBaseUrl}page/${page}/`;
@@ -527,25 +539,32 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       const listResponse = await throttledFetch(pageUrl, { credentials: 'include' });
       const listDoc = new DOMParser().parseFromString(await listResponse.text(), 'text/html');
 
+      pagesSearched = page;
       const pageItems = Array.from(listDoc.querySelectorAll('li.posteritem'));
+      lastPageItemCount = pageItems.length;
       if (!pageItems.length) break;
 
       const pageSlugs: { slug: string; link: string }[] = [];
       for (const item of pageItems) {
-        const div = item.querySelector('[data-film-id]');
+        const div = item.querySelector('[data-item-slug], [data-item-link], a[href^="/film/"]') as HTMLElement | null;
         if (!div) continue;
-        const slug = div.getAttribute('data-item-slug');
+        const link = div.getAttribute('data-item-link') || div.getAttribute('href') || '';
+        const slug = div.getAttribute('data-item-slug') || link.match(/\/film\/([^/]+)\//)?.[1] || '';
+        if (!slug) continue;
         if (slug === currentSlug) { foundCurrentFilm = true; foundOnPage = page; continue; }
-        if (slug) pageSlugs.push({ slug, link: div.getAttribute('data-item-link')! });
+        pageSlugs.push({ slug, link });
       }
 
       allFilmSlugs.push(...pageSlugs);
-      debug(`Page ${page}: ${pageSlugs.length} films${foundCurrentFilm ? ' (current film found)' : ''}`);
+      debug(`Page ${page}: ${pageSlugs.length} films (${pageItems.length} posteritems)${foundCurrentFilm ? ' (current film found)' : ''}`);
+      if (pageItems.length > 0 && pageSlugs.length === 0 && !foundCurrentFilm) {
+        console.warn(`[LBX] Selector mismatch: ${pageItems.length} posteritems on page ${page} but 0 slugs extracted — Letterboxd markup may have changed`);
+      }
 
       if (foundCurrentFilm) break;
     }
 
-    if (!allFilmSlugs.length) return { films: [], listName, listLink };
+    if (!allFilmSlugs.length) return { films: [], listName, listLink, stats: { totalInList: 0, runtimeMatched: 0, scored: 0, currentScore: (await scorePromise).score, currentRuntime, foundOnPage, pagesSearched, lastPageItemCount, allScored: [] } };
 
     debug(`Total films across pages: ${allFilmSlugs.length}`);
     updateProgress(statusElement, 2, `Fetching ${allFilmSlugs.length} films...`);
@@ -576,7 +595,7 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
     );
 
     debug(`Runtime matches (≤${currentRuntime + CONFIG.RUNTIME_TOLERANCE}m): ${runtimeMatches.length}`);
-    if (!runtimeMatches.length) return { films: [], listName, listLink };
+    if (!runtimeMatches.length) return { films: [], listName, listLink, stats: { totalInList: allFilmSlugs.length, runtimeMatched: 0, scored: 0, currentScore: (await scorePromise).score, currentRuntime, foundOnPage, pagesSearched, allScored: [] } };
 
     const uncached = runtimeMatches.filter((f: any) => !f.fromCache).length;
     updateProgress(statusElement, 3, `Scoring ${runtimeMatches.length} matches${uncached ? ` (${uncached} new)` : ''}...`);
@@ -601,13 +620,13 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       .map((f: any) => ({ slug: f.slug, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year, fetchFailed: f.fetchFailed }));
     const allScored = scoredFilms
       .map((f: any) => ({ name: f.filmName, score: f.score, runtime: f.runtime, fetchFailed: f.fetchFailed }));
-    const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentScore, currentRuntime, foundOnPage, pagesSearched: Math.min(foundOnPage || CONFIG.MAX_SIMILAR_PAGES, CONFIG.MAX_SIMILAR_PAGES), allScored };
+    const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentScore, currentRuntime, foundOnPage, pagesSearched, allScored };
 
     debug(`Qualifying films: ${qualifying.length}`);
     const result = { films: qualifying, stats, listName, listLink };
     const cacheable = qualifying.filter((f: any) => !f.fetchFailed);
     if (cacheable.length) {
-      setCachedSimilarPicks(currentSlug, { films: cacheable, listName, listLink });
+      setCachedSimilarPicks(currentSlug, { films: cacheable, listName, listLink, stats });
     }
     return result;
   } catch (error) {
