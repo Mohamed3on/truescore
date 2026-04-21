@@ -573,7 +573,7 @@ const updateUI = () => {
     if (scores[k].isFetching) anyFetching = true;
     if (!scores[k].done) allDone = false;
   }
-  if (!totalCount || !document.querySelector('.F7nice')) return;
+  if (!totalCount || !document.querySelector('.jANrlb')) return;
   if (!document.querySelector('#reviews-container')) createUIElements();
 
   const els = cardEls.merged;
