@@ -1,0 +1,176 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=Sora:wght@300;400;500;600&display=swap');
+
+.ts-bp {
+  --ts-surface: rgba(14, 16, 24, 0.92);
+  --ts-border: rgba(255, 255, 255, 0.07);
+  --ts-shadow: 0 8px 32px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --ts-accent: linear-gradient(90deg, #E8B86D 0%, rgba(255,255,255,0.06) 50%, #6DD3CE 100%);
+  --ts-pos: #4ADE80;
+  --ts-mid: #E8B86D;
+  --ts-neg: #F87171;
+  --ts-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ts-ink-1: rgba(255, 255, 255, 0.88);
+  --ts-ink-3: rgba(255, 255, 255, 0.5);
+  --ts-ink-4: rgba(255, 255, 255, 0.3);
+  --ts-ink-5: rgba(255, 255, 255, 0.06);
+  --ts-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+  --ts-sans: 'Sora', system-ui, sans-serif;
+
+
+  position: relative;
+  margin: 12px 0 0;
+  padding: 16px 12px 14px;
+  background: var(--ts-surface);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid var(--ts-border);
+  border-radius: 14px;
+  box-shadow: var(--ts-shadow);
+  color: var(--ts-ink-1);
+  font-family: var(--ts-sans);
+  animation: ts-bp-enter 0.5s var(--ts-ease);
+  overflow: hidden;
+}
+
+.ts-bp::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 24px;
+  right: 24px;
+  height: 1px;
+  background: var(--ts-accent);
+  border-radius: 1px;
+}
+
+@keyframes ts-bp-enter {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Header */
+.ts-bp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 14px;
+}
+.ts-bp-kicker {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ts-ink-3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ts-bp-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ts-pos);
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.55);
+}
+.ts-bp-sub {
+  font-family: var(--ts-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.28);
+  letter-spacing: 0.02em;
+  margin-top: 4px;
+}
+.ts-bp-score {
+  font-family: var(--ts-mono);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Section */
+.ts-bp-section + .ts-bp-section { margin-top: 14px; }
+.ts-bp-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.ts-bp-section-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ts-ink-3);
+  white-space: nowrap;
+}
+.ts-bp-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--ts-ink-5);
+}
+.ts-bp-section-count {
+  font-family: var(--ts-mono);
+  font-size: 9px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.28);
+}
+
+/* Row */
+.ts-bp-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.ts-bp-row + .ts-bp-row { margin-top: 1px; }
+.ts-bp-row-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: -1;
+  opacity: 0.14;
+  border-radius: 6px;
+  transform-origin: left;
+  animation: ts-bp-grow 0.7s var(--ts-ease);
+}
+@keyframes ts-bp-grow {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.ts-bp-label {
+  font-size: 12px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.82);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  letter-spacing: -0.005em;
+}
+.ts-bp-pct {
+  font-family: var(--ts-mono);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  text-align: right;
+}
+.ts-bp-count {
+  font-family: var(--ts-mono);
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ts-ink-4);
+  text-align: right;
+}
+
+/* Sentiment variants for fill */
+.ts-bp-row.pos .ts-bp-row-fill { background: var(--ts-pos); }
+.ts-bp-row.mid .ts-bp-row-fill { background: var(--ts-mid); }
+.ts-bp-row.neg .ts-bp-row-fill { background: var(--ts-neg); }

@@ -99,6 +99,7 @@
     {
       "matches": ["*://*.booking.com/hotel/*"],
       "js": ["sites/booking-hotel.js"],
+      "css": ["sites/booking-hotel.css"],
       "run_at": "document_idle"
     },
     {

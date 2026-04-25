@@ -67,5 +67,6 @@ cpSync('src/popup/popup.html', `${OUT}/popup/popup.html`);
 cpSync('src/popup/popup.css', `${OUT}/popup/popup.css`);
 cpSync('src/styles/amazon-product.css', `${OUT}/sites/amazon-product.css`);
 cpSync('src/styles/gmaps.css', `${OUT}/sites/gmaps.css`);
+cpSync('src/styles/booking-hotel.css', `${OUT}/sites/booking-hotel.css`);
 
 console.log(`Build complete → ./${OUT}/`);

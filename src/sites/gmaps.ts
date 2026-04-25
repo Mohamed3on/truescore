@@ -39,7 +39,7 @@ let lastUrl = '';
 let reviewLimit = 100;
 let fullPctObserver: MutationObserver | null = null;
 let lastVisibleKey = '';
-let fullPctCache: number | null = null;
+let staleHistogramKey: string | null = null;
 
 const abortControllers: Record<SortKey, AbortController | null> = { relevant: null, newest: null };
 let summaryCache: { all: SummaryResult | null; filtered: SummaryResult | null } = { all: null, filtered: null };
@@ -95,13 +95,13 @@ const getMergedStats = () => {
 };
 
 const resetScores = () => {
+  staleHistogramKey = readHistogramCounts()?.join(',') ?? null;
   for (const key of SORT_KEYS) {
     scores[key] = makeState();
     if (abortControllers[key]) { abortControllers[key]!.abort(); abortControllers[key] = null; }
   }
   if (fullPctObserver) { fullPctObserver.disconnect(); fullPctObserver = null; }
   lastVisibleKey = '';
-  fullPctCache = null;
   stopAutoScroll();
 };
 
@@ -185,20 +185,24 @@ const getScoreColor = (pct: number) => {
   return `rgb(${Math.round(lo.r + (hi.r - lo.r) * t)},${Math.round(lo.g + (hi.g - lo.g) * t)},${Math.round(lo.b + (hi.b - lo.b) * t)})`;
 };
 
-const calculateFullPercentage = () => {
-  if (fullPctCache !== null) return fullPctCache;
+const readHistogramCounts = () => {
   const reviewRows = document.querySelectorAll('tr[role="img"]');
   if (reviewRows.length < 5) return null;
   const extractNumber = (str: string) => {
     const match = str.match(/(\d+(?:[.,]\d+)*)\s*(?:reviews?|$)/);
     return match ? parseInt(match[1].replace(/[.,]/g, ''), 10) : 0;
   };
-  const counts: number[] = [];
-  for (const r of reviewRows) counts.push(extractNumber(r.getAttribute('aria-label') || ''));
+  return Array.from(reviewRows).map((r) => extractNumber(r.getAttribute('aria-label') || ''));
+};
+
+const calculateFullPercentage = () => {
+  const counts = readHistogramCounts();
+  if (!counts) return null;
+  const key = counts.join(',');
+  if (key === staleHistogramKey) return null;
   const allReviews = counts.reduce((a, b) => a + b, 0);
   if (!allReviews) return null;
-  fullPctCache = toPct((counts[0] - counts[4]) / allReviews);
-  return fullPctCache;
+  return toPct((counts[0] - counts[4]) / allReviews);
 };
 
 const visibleReviewStats = new WeakMap<Element, { stars: number; count: number }>();
@@ -613,14 +617,14 @@ const updateUI = () => {
       els.diffEl.style.display = 'none';
       if (!fullPctObserver) {
         fullPctObserver = new MutationObserver(() => {
-          fullPctCache = null;
           if (calculateFullPercentage() !== null) {
             fullPctObserver!.disconnect();
             fullPctObserver = null;
             updateUI();
           }
         });
-        fullPctObserver.observe(document.body, { childList: true, subtree: true });
+        const target = document.querySelector('.jANrlb') || document.body;
+        fullPctObserver.observe(target, { childList: true, subtree: true });
       }
     }
 
@@ -698,20 +702,27 @@ const triggerSummarize = async (filtered: boolean) => {
 
   const query = filtered ? cardEls.searchInput?.value?.trim() || null : null;
   const queryLower = query?.toLowerCase() || null;
-  const pickTexts = (map: Record<string, Review>, limit: number) => {
-    const revs: Review[] = [];
+  const pool: Review[] = [];
+  const seen = new Set<string>();
+  for (const map of [scores.relevant.reviewMap, scores.newest.reviewMap]) {
     for (const id in map) {
+      if (seen.has(id)) continue;
+      seen.add(id);
       const r = map[id];
       if (!r.text) continue;
       if (queryLower && !r.text.toLowerCase().includes(queryLower)) continue;
-      revs.push(r);
+      pool.push(r);
     }
-    revs.sort((a, b) => b.text.length - a.text.length);
-    return revs.slice(0, limit).map((r) => r.text);
-  };
-  const half = Math.ceil(reviewLimit / 2);
-  const texts = [...new Set([...pickTexts(scores.relevant.reviewMap, half), ...pickTexts(scores.newest.reviewMap, half)])].slice(0, reviewLimit);
+  }
+  pool.sort((a, b) => b.text.length - a.text.length);
+  const texts = pool.slice(0, reviewLimit).map((r) => r.text);
   if (!texts.length) { panel.textContent = 'No review text available'; panel.className = 'rc-summary-panel'; return; }
+
+  const buttons = [
+    cardEls.sumBtn,
+    cardEls.searchResults?.querySelector<HTMLButtonElement>('.rc-summarize-btn'),
+  ].filter((b): b is HTMLButtonElement => !!b);
+  for (const b of buttons) b.disabled = true;
 
   const customQuestion = !filtered ? cardEls.questionInput?.value?.trim() || null : null;
   try {
@@ -726,6 +737,8 @@ const triggerSummarize = async (filtered: boolean) => {
     console.error('[Reviews] Summarize error:', e);
     panel.textContent = 'Summarization failed';
     panel.className = 'rc-summary-panel';
+  } finally {
+    for (const b of buttons) b.disabled = false;
   }
 };
 
