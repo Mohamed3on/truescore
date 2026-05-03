@@ -282,7 +282,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 14px;
 }
 .rc-summarize-btn {
   flex: 1;
@@ -315,7 +315,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 7px 10px;
-  margin-top: 6px;
+  margin-top: 8px;
   font-family: 'Sora', system-ui, sans-serif;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.8);
@@ -571,6 +571,11 @@
   color: rgba(255, 255, 255, 0.85);
   white-space: pre-wrap;
   word-break: break-word;
+}
+.rc-search-section {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 .rc-search-input {
   width: 100%;
