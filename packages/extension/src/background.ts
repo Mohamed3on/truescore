@@ -1,4 +1,27 @@
 // Combined background service worker
+import { SCORE_CACHE_PREFIX } from './shared/cache-keys';
+
+// Drop rc_score_* entries older than 30 days. Registered on install/update
+// only — top-level chrome.alarms.create on every SW wake would reset the
+// next-fire time and starve the alarm under heavy activity.
+const SWEEP_ALARM = 'truescore-sweep';
+const ENTRY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms.create(SWEEP_ALARM, { periodInMinutes: 24 * 60 });
+});
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== SWEEP_ALARM) return;
+  const all = await chrome.storage.local.get(null);
+  const cutoff = Date.now() - ENTRY_MAX_AGE_MS;
+  const stale = Object.keys(all).filter((k) => {
+    if (!k.startsWith(SCORE_CACHE_PREFIX)) return false;
+    const ts = (all[k] as { ts?: number } | null)?.ts;
+    return typeof ts === 'number' && ts < cutoff;
+  });
+  if (!stale.length) return;
+  await chrome.storage.local.remove(stale);
+  console.log(`[truescore] swept ${stale.length} stale score cache entries`);
+});
 
 // Booking.com: notify content script on tab update
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {

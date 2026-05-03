@@ -1,6 +1,7 @@
 import { GEMINI_API_KEY, geminiEndpoint } from '../shared/config';
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
+import { SCORE_CACHE_PREFIX } from '../shared/cache-keys';
 import {
   buildListUrl,
   buildTokenUrl,
@@ -156,14 +157,19 @@ type ScoreCacheEntry = {
   relevant: ReviewData;
   newest: ReviewData;
   merged: ReviewData;
+  // Merged + deduped review bodies. Optional for backward compat with cache
+  // entries written before this field existed; old entries trigger a refetch
+  // on next visit and get rewritten with the new shape.
+  reviews?: Record<string, Review>;
 };
+type FullScoreCacheEntry = ScoreCacheEntry & { reviews: Record<string, Review> };
+const isFullyHydrated = (e: ScoreCacheEntry | null): e is FullScoreCacheEntry => !!e?.reviews;
 let cachedScoreState: ScoreCacheEntry | null = null;
 // Set when invalidateStaleCaches confirms the cache is fresh and aborts the
 // speculative refetches. Tells persistScoreCacheIfReady to skip — otherwise a
 // partial reviewMap from the aborted-mid-pagination fetch would clobber the
 // known-good cache. Reset on featureId change.
 let scoreCacheServedFresh = false;
-const SCORE_CACHE_PREFIX = 'rc_score_';
 const loadScoreCache = (featureId: string) => bridgeStorage.get<ScoreCacheEntry>(`${SCORE_CACHE_PREFIX}${featureId}`);
 const saveScoreCache = (featureId: string, entry: ScoreCacheEntry) =>
   bridgeStorage.set(`${SCORE_CACHE_PREFIX}${featureId}`, entry);
@@ -245,7 +251,7 @@ const getMergedStats = () => {
 const persistScoreCacheIfReady = () => {
   const featureId = getFeatureId();
   if (!featureId) return;
-  if (scoreCacheServedFresh) return;
+  if (scoreCacheServedFresh && isFullyHydrated(cachedScoreState)) return;
   if (!scores.relevant.done || !scores.newest.done) return;
   const liveMerged = mergeReviewMaps();
   if (!Object.keys(liveMerged).length) return;
@@ -257,9 +263,11 @@ const persistScoreCacheIfReady = () => {
     relevant: scores.relevant.reviewData,
     newest: scores.newest.reviewData,
     merged: mergedRD,
+    reviews: liveMerged,
   };
-  // Skip the storage round-trip if nothing changed.
-  if (cachedScoreState && cachedScoreState.totalReviewsAtCache === entry.totalReviewsAtCache &&
+  // Old entries without bodies always re-persist so they get the new shape.
+  if (isFullyHydrated(cachedScoreState) &&
+      cachedScoreState.totalReviewsAtCache === entry.totalReviewsAtCache &&
       cachedScoreState.merged.totalReviews.total === entry.merged.totalReviews.total) {
     return;
   }
@@ -391,15 +399,18 @@ const invalidateStaleCaches = (currentTotal: number) => {
     saveHighlightsCache();
     renderHighlights();
   }
-  // SWR: if cached score's histogram total still matches, abort the in-flight
-  // refetches we kicked off speculatively — cached aggregates are still valid.
+  // SWR: histogram total still matches, cached aggregates are fresh. Only
+  // abort the speculative refetches when bodies are also cached; old entries
+  // need the fetches to keep running so they backfill on next persist.
   if (cachedScoreState && cachedScoreState.totalReviewsAtCache === currentTotal) {
     scoreCacheServedFresh = true;
-    for (const k of SORT_KEYS) {
-      if (scores[k].isFetching) abortControllers[k]?.abort();
-      scores[k].isFetching = false;
-      scores[k].done = true;
-      abortControllers[k] = null;
+    if (isFullyHydrated(cachedScoreState)) {
+      for (const k of SORT_KEYS) {
+        if (scores[k].isFetching) abortControllers[k]?.abort();
+        scores[k].isFetching = false;
+        scores[k].done = true;
+        abortControllers[k] = null;
+      }
     }
   } else if (cachedScoreState && cachedScoreState.totalReviewsAtCache != null) {
     // Total changed → cached score is stale. Drop it; the in-flight fetches
@@ -1322,6 +1333,13 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   }
 };
 
+const collectReviewTexts = (): string[] =>
+  Object.values(mergeReviewMaps())
+    .filter((r) => r.text)
+    .sort((a, b) => b.text.length - a.text.length)
+    .slice(0, REVIEW_LIMIT)
+    .map((r) => r.text);
+
 const triggerSummarize = async () => {
   const panel = cardEls.sumPanel;
   if (!panel) return;
@@ -1329,18 +1347,7 @@ const triggerSummarize = async () => {
   panel.textContent = 'Summarizing…';
   panel.className = 'rc-summary-panel loading';
 
-  const pool: Review[] = [];
-  const seen = new Set<string>();
-  for (const map of [scores.relevant.reviewMap, scores.newest.reviewMap]) {
-    for (const id in map) {
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const r = map[id];
-      if (r.text) pool.push(r);
-    }
-  }
-  pool.sort((a, b) => b.text.length - a.text.length);
-  const texts = pool.slice(0, REVIEW_LIMIT).map((r) => r.text);
+  const texts = collectReviewTexts();
   if (!texts.length) { panel.textContent = 'No review text available'; panel.className = 'rc-summary-panel'; return; }
 
   if (cardEls.sumBtn) cardEls.sumBtn.disabled = true;
@@ -1412,6 +1419,13 @@ const observer = new MutationObserver((mutations) => {
       if (!entry || getFeatureId() !== featureId || cachedScoreState) return;
       if (Object.keys(mergeReviewMaps()).length > 0) return;
       cachedScoreState = entry;
+      if (entry.reviews) {
+        // Reviews are immutable post-insert; the per-map outer clone keeps
+        // fetch-dedup independent per sort while letting both maps point at
+        // the same Review objects.
+        scores.relevant.reviewMap = { ...entry.reviews };
+        scores.newest.reviewMap = { ...entry.reviews };
+      }
       updateUI();
     }).catch((e) => console.warn('[gmaps] load score cache failed', e));
   }

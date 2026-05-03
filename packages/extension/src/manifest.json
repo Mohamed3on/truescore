@@ -4,7 +4,7 @@
   "version": "1.0",
   "description": "Cut through inflated ratings. See what's actually good on Amazon, Airbnb, Booking, IMDB, Letterboxd, Google Maps, Goodreads, and more.",
   "author": "Mohamed Oun",
-  "permissions": ["tabs", "scripting", "webNavigation", "storage"],
+  "permissions": ["tabs", "scripting", "webNavigation", "storage", "unlimitedStorage", "alarms"],
   "host_permissions": [
     "*://www.airbnb.com/rooms/*",
     "*://*.amazon.fr/*",
