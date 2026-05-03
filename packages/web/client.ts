@@ -620,3 +620,9 @@ askForm.addEventListener('submit', async (e) => {
     askBtn.disabled = false;
   }
 });
+
+const sharedUrl = new URLSearchParams(location.search).get('url');
+if (sharedUrl) {
+  urlInput.value = sharedUrl;
+  form.requestSubmit();
+}
