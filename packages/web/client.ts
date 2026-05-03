@@ -391,6 +391,7 @@ async function loadHighlights(force = false) {
 
 function renderScore(data: LookupResponse) {
   result.hidden = false;
+  document.body.dataset.state = 'scored';
   $('name').textContent = data.name || '(unnamed place)';
   const pctEl = $('scorePct');
   pctEl.textContent = `${data.score.scorePct}`;
@@ -587,6 +588,14 @@ searchRefreshBtn.addEventListener('click', () => {
 });
 
 chipCloseBtn.addEventListener('click', closeChipPanel);
+
+document.getElementById('brand')?.addEventListener('click', () => {
+  delete document.body.dataset.state;
+  result.hidden = true;
+  urlInput.value = '';
+  setStatus('');
+  urlInput.focus();
+});
 
 askForm.addEventListener('submit', async (e) => {
   e.preventDefault();

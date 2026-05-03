@@ -4,19 +4,60 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0e1018">
-<title>TrueScore</title>
+<title>TrueScore — honest scores for Google Maps</title>
+<meta name="description" content="TrueScore reads every Google review, drops the one-time tourists and lukewarm 3-stars, and gives you the only number that matters.">
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
 <main>
   <header>
-    <span class="brand">TRUESCORE</span>
+    <button class="brand" id="brand" type="button" title="Reset">TRUESCORE</button>
   </header>
+
+  <section class="hero" id="hero">
+    <h1 class="hero-title">
+      Stop trusting <span class="hero-num">4.7<span class="hero-star">★</span></span>.
+    </h1>
+    <p class="lede">
+      TrueScore reads every Google review on a place, drops the one-time tourists
+      and lukewarm 3-stars, and gives you the only number that matters: do
+      regulars actually love it.
+    </p>
+  </section>
 
   <form id="form">
     <input id="url" type="url" inputmode="url" autocomplete="off" placeholder="Paste a Google Maps link" required>
     <button id="go" type="submit">SCORE</button>
   </form>
+  <p class="hint" id="hint">
+    Open Maps, find a place, hit <span class="kbd">Share</span> →
+    <span class="kbd">Copy link</span>, paste above. Works with
+    <code>maps.app.goo.gl</code> and full URLs.
+  </p>
+
+  <section class="explainer" id="explainer">
+    <div class="explainer-block">
+      <span class="micro">METHOD</span>
+      <ol class="steps">
+        <li><span class="step-num">01</span><span class="step-text">Pull every review from <em>Most relevant</em> and <em>Newest</em>.</span></li>
+        <li><span class="step-num">02</span><span class="step-text">Drop reviewers with fewer than 3 reviews. They haven&rsquo;t calibrated.</span></li>
+        <li><span class="step-num">03</span><span class="step-text">Count <span class="pos-inline">5★ as +1</span>, <span class="neg-inline">1★ as &minus;1</span>, ignore the in-betweens.</span></li>
+        <li><span class="step-num">04</span><span class="step-text">Score 0 to 100. <span class="pos-inline">Above 60</span> trusted. <span class="neg-inline">Below 30</span>, walk.</span></li>
+      </ol>
+    </div>
+
+    <div class="explainer-block">
+      <span class="micro">LEGEND</span>
+      <dl class="legend">
+        <dt>SCORE</dt><dd>0&ndash;100, weighted by reviewer trust.</dd>
+        <dt>REVIEWS</dt><dd>Total · trusted.</dd>
+        <dt>RELEVANT</dt><dd>Score from Google&rsquo;s &ldquo;Most relevant&rdquo; reviews.</dd>
+        <dt>NEWEST</dt><dd>Score from recent reviews. Delta vs RELEVANT is the trend.</dd>
+        <dt>VALUE</dt><dd>Worth-it score, /5, extracted from review text.</dd>
+        <dt>HIGHLIGHTS</dt><dd>Topics from reviews. Click a chip to read the actual reviews about it, then summarize.</dd>
+      </dl>
+    </div>
+  </section>
 
   <section id="result" hidden>
     <div class="place">
