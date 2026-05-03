@@ -1,3 +1,5 @@
+import { renderMarkdown, renderMarkdownInline } from './markdown';
+
 type SummaryHighlight = { text: string; count: number; sentiment: string };
 type Review = { reviewId: string; stars: number; reviewerReviewCount: number; timestamp: number | null; text: string };
 type SortStats = { totalReviews: number; trustedReviews: number; scorePct: number };
@@ -252,7 +254,7 @@ function renderChipSummary(summary: Summary) {
   while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
   const verdict = document.createElement('div');
   verdict.className = 'verdict';
-  verdict.textContent = summary.verdict;
+  renderMarkdown(verdict, summary.verdict);
   chipBody.appendChild(verdict);
   if (summary.highlights?.length) {
     const ul = document.createElement('ul');
@@ -261,7 +263,7 @@ function renderChipSummary(summary: Summary) {
       const li = document.createElement('li');
       const text = document.createElement('span');
       text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
-      text.textContent = h.text;
+      renderMarkdownInline(text, h.text);
       const count = document.createElement('span');
       count.className = 'h-count';
       count.textContent = `×${h.count}`;
@@ -444,14 +446,14 @@ function renderOverall(overallPct: number | null, mergedPct: number) {
 
 function renderSummary(summary: Summary) {
   $('valueForMoney').textContent = `${summary.valueForMoney}/5`;
-  $('verdict').textContent = summary.verdict;
+  renderMarkdown($('verdict'), summary.verdict);
   resummarizeBtn.hidden = false;
   while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
   for (const h of summary.highlights) {
     const li = document.createElement('li');
     const text = document.createElement('span');
     text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
-    text.textContent = h.text;
+    renderMarkdownInline(text, h.text);
     const count = document.createElement('span');
     count.className = 'h-count';
     count.textContent = `×${h.count}`;
@@ -612,7 +614,7 @@ askForm.addEventListener('submit', async (e) => {
     });
     const data = await resp.json();
     if (data.error) throw new Error(data.error);
-    answerEl.textContent = data.answer;
+    renderMarkdown(answerEl, data.answer);
     setStatus('');
   } catch (e) {
     setStatus(e instanceof Error ? e.message : String(e), true);
