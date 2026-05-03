@@ -8,6 +8,7 @@ import {
   chipsFromPreview,
   extractReviewText,
   isTrusted,
+  PAGE_SIZE,
   parseReviewsResponse,
   starScore,
   statsForReviews,
@@ -502,15 +503,13 @@ const localeFromDom = (): Locale => ({
 const buildUrl = (featureId: string, sort: SortKey, cursor = '') =>
   buildListUrl(featureId, sort, cursor, localeFromDom());
 
-const PAGE_SIZE = 20;
-
 const buildUrlForSearch = (featureId: string, query: string, cursor = '') => {
-  const hl = document.documentElement.lang || 'en';
-  const gl = location.href.match(/gl=([a-zA-Z]{2})/)?.[1] || '';
+  const { hl = 'en', gl = '' } = localeFromDom();
+  const c = encodeURIComponent(cursor);
   const pb = [
-    `!1m6!1s${featureId}!6m4!4m1!1e1!4m1!1e3`,
-    `!2m2!1i${PAGE_SIZE}!2s${encodeURIComponent(cursor)}`,
-    `!5m2!1s${encodeURIComponent(query)}!7e81`,
+    `!1m7!1s${featureId}!3s${encodeURIComponent(query)}!6m4!4m1!1e1!4m1!1e3`,
+    `!2m2!1i${PAGE_SIZE}!2s${c}`,
+    `!5m2!1s${c}!7e81`,
     `!8m9!2b1!3b1!5b1!7b1!12m4!1b1!2b1!4m1!1e1`,
     `!11m4!1e3!2e1!6m1!1i2`,
     `!13m1!1e1`,
@@ -1131,32 +1130,6 @@ const createUIElements = () => {
   cardEls.highlightsBtn = hlBtn;
   if (highlightsState && highlightsState.items.length) renderHighlights();
 
-  const sumRow = el('div', 'rc-sum-row');
-  const sumBtn = el('button', 'rc-summarize-btn', 'Summarize') as HTMLButtonElement;
-  sumBtn.onclick = () => triggerSummarize();
-  sumRow.appendChild(sumBtn);
-  c.appendChild(sumRow);
-  cardEls.sumBtn = sumBtn;
-
-  const questionInput = document.createElement('input');
-  questionInput.type = 'text';
-  questionInput.placeholder = 'Ask about this place… (Enter to ask)';
-  questionInput.className = 'rc-question-input';
-  questionInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') triggerSummarize();
-  });
-  questionInput.addEventListener('input', () => {
-    sumBtn.textContent = questionInput.value.trim() ? 'Ask' : 'Summarize';
-  });
-  c.appendChild(questionInput);
-  cardEls.questionInput = questionInput;
-
-  const sumPanel = el('div', 'rc-summary-panel');
-  sumPanel.style.display = 'none';
-  c.appendChild(sumPanel);
-  cardEls.sumPanel = sumPanel;
-  if (summaryCache.all) renderSummary(sumPanel, summaryCache.all);
-
   const searchSec = el('div', 'rc-search-section');
   const searchInput = document.createElement('input');
   searchInput.type = 'text';
@@ -1183,6 +1156,32 @@ const createUIElements = () => {
   c.appendChild(searchSec);
   cardEls.searchResults = searchResults;
   cardEls.filteredSumPanel = filteredSumPanel;
+
+  const sumPanel = el('div', 'rc-summary-panel');
+  sumPanel.style.display = 'none';
+  c.appendChild(sumPanel);
+  cardEls.sumPanel = sumPanel;
+  if (summaryCache.all) renderSummary(sumPanel, summaryCache.all);
+
+  const sumRow = el('div', 'rc-sum-row');
+  const sumBtn = el('button', 'rc-summarize-btn', 'Summarize') as HTMLButtonElement;
+  sumBtn.onclick = () => triggerSummarize();
+  sumRow.appendChild(sumBtn);
+  c.appendChild(sumRow);
+  cardEls.sumBtn = sumBtn;
+
+  const questionInput = document.createElement('input');
+  questionInput.type = 'text';
+  questionInput.placeholder = 'Ask about this place… (Enter to ask)';
+  questionInput.className = 'rc-question-input';
+  questionInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') triggerSummarize();
+  });
+  questionInput.addEventListener('input', () => {
+    sumBtn.textContent = questionInput.value.trim() ? 'Ask' : 'Summarize';
+  });
+  c.appendChild(questionInput);
+  cardEls.questionInput = questionInput;
 
   const chipPanel = el('div', 'rc-chip-panel');
   chipPanel.style.display = 'none';
@@ -1308,6 +1307,11 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
     panel.appendChild(answer);
     return;
   }
+  if (result.verdict) {
+    const verdict = el('div', 'rc-verdict');
+    renderMarkdown(verdict, result.verdict);
+    panel.appendChild(verdict);
+  }
   if (result.highlights?.length) {
     for (const h of result.highlights) {
       const row = el('div', `rc-highlight ${h.sentiment}`);
@@ -1322,11 +1326,6 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   if (result.valueForMoney) {
     const v = Math.max(1, Math.min(5, result.valueForMoney));
     panel.appendChild(el('div', 'rc-value', `Value for money: ${'★'.repeat(v)}${'☆'.repeat(5 - v)}`));
-  }
-  if (result.verdict) {
-    const verdict = el('div', 'rc-verdict');
-    renderMarkdown(verdict, result.verdict);
-    panel.appendChild(verdict);
   }
   if (!result.highlights?.length && !result.verdict) {
     panel.textContent = 'No highlights found';

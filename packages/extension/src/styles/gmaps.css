@@ -46,7 +46,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   cursor: default;
 }
 .rc-header-right {
@@ -120,11 +120,11 @@
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 12px;
-  padding: 14px 12px 12px;
+  padding: 10px 12px;
   transition: background 0.3s, border-color 0.3s;
   position: relative;
   overflow: visible;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 /* Card header */
@@ -132,7 +132,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .rc-card-label {
@@ -153,10 +153,10 @@
 /* Big percentage */
 .rc-card-pct {
   font-family: 'IBM Plex Mono', 'SF Mono', monospace;
-  font-size: 30px;
+  font-size: 26px;
   font-weight: 600;
   line-height: 1;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   color: rgba(255, 255, 255, 0.2);
   transition: color 0.4s ease;
   position: relative;
@@ -189,7 +189,7 @@
   height: 2px;
   background: rgba(255, 255, 255, 0.06);
   border-radius: 2px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
   overflow: hidden;
 }
 
@@ -253,8 +253,8 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-top: 8px;
-  padding: 8px 12px;
+  margin-top: 4px;
+  padding: 6px 12px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 10px;
@@ -376,9 +376,9 @@
 }
 
 .rc-verdict {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-weight: 500;
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.7);
