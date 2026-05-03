@@ -31,3 +31,4 @@ the Hetzner service.
 
 - Web ops: [`packages/web/deploy/HETZNER.md`](packages/web/deploy/HETZNER.md)
 - Extension dev: [`packages/extension/CLAUDE.md`](packages/extension/CLAUDE.md)
+- Shelved Workers migration (postmortem + porting plan): [`packages/web/WORKERS-SHELVED.md`](packages/web/WORKERS-SHELVED.md)
