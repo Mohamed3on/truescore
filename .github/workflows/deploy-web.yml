@@ -27,7 +27,10 @@ jobs:
           SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 700 ~/.ssh
+          # printf "%s\n" guarantees the trailing newline OpenSSL needs to parse
+          # the key (libcrypto rejects keys missing the final newline as malformed).
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H 65.108.153.112 >> ~/.ssh/known_hosts
 
