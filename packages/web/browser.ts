@@ -1,0 +1,91 @@
+import { homedir } from 'os';
+
+const COOKIES_PATH = process.env.TRUESCORE_COOKIES_PATH || `${homedir()}/.truescore-cookies.json`;
+const COOKIES_TTL_MS = Number(process.env.TRUESCORE_COOKIES_TTL_MS) || 7 * 24 * 60 * 60 * 1000;
+
+const PROXY_URL = (() => {
+  const server = process.env.TRUESCORE_PROXY_SERVER;
+  if (!server) return undefined;
+  const u = new URL(server);
+  if (process.env.TRUESCORE_PROXY_USER) u.username = process.env.TRUESCORE_PROXY_USER;
+  if (process.env.TRUESCORE_PROXY_PASS) u.password = process.env.TRUESCORE_PROXY_PASS;
+  return u.toString();
+})();
+
+const FETCH_HEADERS_BASE = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+  'Accept': '*/*',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Referer': 'https://www.google.com/maps/',
+};
+
+// Pre-seeded values that signal "consent already given" — bypasses the EU consent dance.
+// Google then issues __Secure-ENID and __Secure-BUCKET on the next page load, which
+// together with these are enough to authenticate listugcposts and preview/place RPCs.
+const SEED_COOKIES: Record<string, string> = {
+  CONSENT: 'YES+cb.20210720-07-p0.en+FX+410',
+  SOCS: 'CAESHAgBEhJnd3NfMjAyMzAyMDgtMF9SQzIaAmVuIAEaBgiAm6KfBg',
+};
+
+type CachedCookies = { header: string; ts: number };
+let cookiesCache: CachedCookies | null = null;
+let cookiesRefreshing: Promise<string> | null = null;
+
+async function bakeCookies(): Promise<string> {
+  const jar: Record<string, string> = { ...SEED_COOKIES };
+  const cookieHeader = () => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
+  const r = await fetch('https://www.google.com/maps?hl=en', {
+    proxy: PROXY_URL,
+    redirect: 'follow',
+    headers: { ...FETCH_HEADERS_BASE, Accept: 'text/html,application/xhtml+xml', Cookie: cookieHeader() },
+  });
+  const setCookies = (r.headers as any).getAll
+    ? (r.headers as any).getAll('set-cookie')
+    : [r.headers.get('set-cookie')].filter(Boolean);
+  for (const c of (setCookies || []) as string[]) {
+    const m = c?.match(/^([^=]+)=([^;]*)/);
+    if (m) jar[m[1]] = m[2];
+  }
+  return cookieHeader();
+}
+
+export async function getGoogleCookieHeader(): Promise<string> {
+  if (!cookiesCache) {
+    try {
+      const f = Bun.file(COOKIES_PATH);
+      if (await f.exists()) cookiesCache = await f.json();
+    } catch {}
+  }
+  if (cookiesCache && Date.now() - cookiesCache.ts < COOKIES_TTL_MS) return cookiesCache.header;
+  if (cookiesRefreshing) return cookiesRefreshing;
+  cookiesRefreshing = (async () => {
+    const header = await bakeCookies();
+    cookiesCache = { header, ts: Date.now() };
+    await Bun.write(COOKIES_PATH, JSON.stringify(cookiesCache));
+    console.log(`[browser] baked google cookies via proxy`);
+    return header;
+  })().finally(() => { cookiesRefreshing = null; });
+  return cookiesRefreshing;
+}
+
+export async function googleFetch(url: string): Promise<string> {
+  const cookie = await getGoogleCookieHeader();
+  const r = await fetch(url, {
+    proxy: PROXY_URL,
+    headers: { ...FETCH_HEADERS_BASE, Cookie: cookie },
+  });
+  if (!r.ok) throw new Error(`googleFetch ${r.status} for ${url.slice(0, 80)}…`);
+  return r.text();
+}
+
+export async function fetchPlacePreview(placeUrl: string): Promise<any> {
+  const html = await googleFetch(placeUrl);
+  const m = html.match(/\/maps\/preview\/place\?[^"\s<>]+/);
+  if (!m) throw new Error('preview URL not found in place HTML');
+  const u = new URL(`https://www.google.com${m[0].replace(/&amp;/g, '&')}`);
+  // Pin locale to en-US so chip labels and strings don't take on the proxy exit's geo.
+  u.searchParams.set('hl', 'en');
+  u.searchParams.set('gl', 'us');
+  const body = await googleFetch(u.toString());
+  return JSON.parse(body.replace(/^\)\]\}'\s*/, ''));
+}

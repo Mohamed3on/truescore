@@ -1,0 +1,24 @@
+[Unit]
+Description=TrueScore web server (Bun, RPC-only via residential proxy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=truescore
+WorkingDirectory=/opt/truescore/packages/web
+EnvironmentFile=/opt/truescore/.env
+Environment=PORT=80
+Environment=TRUESCORE_CACHE_PATH=/var/lib/truescore/cache.json
+Environment=TRUESCORE_COOKIES_PATH=/var/lib/truescore/cookies.json
+Environment=HOME=/home/truescore
+ExecStart=/usr/local/bin/bun server.ts
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,47 @@
+name: Deploy web to Hetzner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/web/**'
+      - 'packages/gmaps-shared/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'deploy/**'
+      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H 65.108.153.112 >> ~/.ssh/known_hosts
+
+      - name: Sync to Hetzner
+        env:
+          SERVER: root@65.108.153.112
+        run: ./deploy/sync.sh
+
+      - name: Smoke test
+        run: |
+          sleep 3
+          curl -sf -X POST https://truescore.mohamed3on.com/api/lookup \
+            -H 'Content-Type: application/json' \
+            -d '{"url":"https://www.google.com/maps/place/Eiffel+Tower/@48.8583701,2.2922873,17z/data=!4m6!3m5!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0"}' \
+            -o /tmp/resp.json
+          jq -e '.score.scorePct >= 0' /tmp/resp.json
+          echo "smoke test passed"

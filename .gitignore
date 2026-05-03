@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.local
+.DS_Store
+*.log
+
+# extension build output (built by `bun run build`)
+packages/extension/truescore/
+
+# old standalone build artifacts (legacy)
+dist/
+build/

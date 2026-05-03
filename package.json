@@ -1,0 +1,10 @@
+{
+  "name": "truescore",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build:extension": "bun --cwd packages/extension run build",
+    "deploy:web": "SERVER=root@65.108.153.112 ./deploy/sync.sh"
+  }
+}

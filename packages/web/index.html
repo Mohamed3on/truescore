@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e1018">
+<title>TrueScore</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<main>
+  <header>
+    <span class="brand">TRUESCORE</span>
+  </header>
+
+  <form id="form">
+    <input id="url" type="url" inputmode="url" autocomplete="off" placeholder="Paste a Google Maps link" required>
+    <button id="go" type="submit">SCORE</button>
+  </form>
+
+  <section id="result" hidden>
+    <div class="place">
+      <span class="place-name" id="name"></span>
+    </div>
+    <div class="score-row">
+      <div class="score-block">
+        <span class="micro">SCORE</span>
+        <span class="score-num" id="scorePct">—</span>
+        <span class="overall-delta" id="overallDelta"></span>
+      </div>
+      <div class="meta">
+        <div class="meta-row"><span class="micro">REVIEWS</span><span id="reviewsLabel" class="num">—</span></div>
+        <div class="meta-row"><span class="micro">RELEVANT</span><span id="relevantPct" class="num">—</span></div>
+        <div class="meta-row"><span class="micro">NEWEST</span><span class="num"><span id="newestPct">—</span><span id="newestDelta" class="delta"></span></span></div>
+        <div class="meta-row"><span class="micro">VALUE</span><span id="valueForMoney" class="num">—</span></div>
+      </div>
+    </div>
+    <div class="highlights-row" id="highlightsRow" hidden>
+      <div class="highlights-header">
+        <span class="micro">HIGHLIGHTS</span>
+        <button id="highlightsRefresh" class="ghost-btn" type="button" hidden>REFRESH</button>
+      </div>
+      <div id="highlightsList" class="highlights-list"></div>
+    </div>
+    <form id="searchForm" class="search-row" hidden>
+      <input id="searchInput" type="text" placeholder="Search reviews for term…" autocomplete="off">
+      <button id="searchBtn" class="ghost-btn" type="submit">SEARCH</button>
+      <button id="searchRefreshBtn" class="ghost-btn" type="button" hidden title="Re-run search ignoring cache">↻</button>
+    </form>
+    <div id="chipPanel" class="chip-panel" hidden>
+      <div class="chip-panel-header">
+        <span class="chip-panel-title" id="chipPanelTitle"></span>
+        <button id="chipSummarize" class="ghost-btn" type="button">SUMMARIZE</button>
+        <button id="chipClose" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div id="chipBody" class="chip-body"></div>
+    </div>
+    <div class="verdict-row">
+      <div id="verdict" class="verdict"></div>
+      <button id="resummarize" class="ghost-btn" type="button" hidden>RE-SUMMARIZE</button>
+    </div>
+    <ul id="highlights" class="highlights"></ul>
+
+    <form id="askForm" class="ask">
+      <input id="question" placeholder="Ask anything about this place" autocomplete="off">
+      <button id="askBtn" type="submit">ASK</button>
+    </form>
+    <div id="answer" class="answer"></div>
+  </section>
+
+  <div id="status" class="status"></div>
+</main>
+
+<script type="module" src="./client.ts"></script>
+</body>
+</html>
