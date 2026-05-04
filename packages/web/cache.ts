@@ -22,6 +22,8 @@ export type CacheEntry = {
   searches?: Record<string, SearchResult>; // keyed by lowercase query
   histogram?: number[];
   histogramTs?: number;
+  lastAccessTs?: number;
+  accessCount?: number;
 };
 
 export type SearchResult = {
@@ -100,8 +102,23 @@ export const cache = {
       totalReviewsAtCache: totalReviewsAtCache ?? existing?.totalReviewsAtCache,
       histogram: existing?.histogram,
       histogramTs: existing?.histogramTs,
+      lastAccessTs: existing?.lastAccessTs ?? Date.now(),
+      accessCount: existing?.accessCount ?? 1,
     };
     await flush();
+  },
+  async touch(featureId: string) {
+    const existing = store[featureId];
+    if (!existing) return;
+    store[featureId] = {
+      ...existing,
+      lastAccessTs: Date.now(),
+      accessCount: (existing.accessCount ?? 1) + 1,
+    };
+    await flush();
+  },
+  all(): Array<{ featureId: string } & CacheEntry> {
+    return Object.entries(store).map(([featureId, entry]) => ({ featureId, ...entry }));
   },
   async putSummary(featureId: string, summary: Summary) {
     const existing = store[featureId];

@@ -66,6 +66,7 @@ Bun.serve({
 
           const cached = cache.get(featureId);
           if (cached) {
+            void cache.touch(featureId).catch((e) => console.error('[touch]', e));
             // Stale-while-revalidate: serve cache immediately, refresh in background.
             void revalidate(featureId, name, resolvedUrl).catch((e) => console.error('[revalidate]', e));
             return json({
@@ -99,6 +100,31 @@ Bun.serve({
           console.error('[lookup]', e);
           return json(errBody(e), 400);
         }
+      },
+    },
+    '/api/places': {
+      GET: () => {
+        const now = Date.now();
+        const DAY_MS = 24 * 60 * 60 * 1000;
+        const places = cache.all()
+          .map((e) => {
+            const lastAccessTs = e.lastAccessTs ?? e.scoreTs ?? 0;
+            const accessCount = e.accessCount ?? 1;
+            const days = (now - lastAccessTs) / DAY_MS;
+            // Frecency: count weighted by exponential decay, 30-day half-life.
+            const frecency = accessCount * Math.pow(0.5, days / 30);
+            return {
+              featureId: e.featureId,
+              name: e.name,
+              scorePct: e.score?.scorePct ?? 0,
+              resolvedUrl: e.resolvedUrl ?? `https://www.google.com/maps?q=&ftid=${e.featureId}`,
+              lastAccessTs,
+              frecency,
+            };
+          })
+          .sort((a, b) => b.frecency - a.frecency)
+          .map(({ frecency, ...rest }) => rest);
+        return json({ places });
       },
     },
     '/api/histogram': {

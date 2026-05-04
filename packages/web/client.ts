@@ -37,6 +37,14 @@ type SearchResult = {
   summary?: Summary;
 };
 type SearchResponse = { result?: SearchResult; cached?: boolean; error?: string };
+type PlaceItem = {
+  featureId: string;
+  name: string;
+  scorePct: number;
+  resolvedUrl: string;
+  lastAccessTs: number;
+};
+type PlacesResponse = { places?: PlaceItem[]; error?: string };
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -64,6 +72,14 @@ const chipSummarizeBtn = $('chipSummarize') as HTMLButtonElement;
 const chipCloseBtn = $('chipClose') as HTMLButtonElement;
 const verdictRow = document.querySelector('.verdict-row') as HTMLElement;
 const highlightsListEl = $('highlights') as HTMLElement;
+const placesSection = $('places') as HTMLElement;
+const placesList = $('placesList') as HTMLElement;
+const placesToggle = $('placesToggle') as HTMLButtonElement;
+const explainerEl = $('explainer') as HTMLElement;
+
+const PLACES_TOP_N = 8;
+let placesCache: PlaceItem[] = [];
+let placesExpanded = false;
 
 let currentFeatureId = '';
 let currentMergedPct = 0;
@@ -601,6 +617,71 @@ document.getElementById('brand')?.addEventListener('click', () => {
   urlInput.value = '';
   setStatus('');
   urlInput.focus();
+  loadPlaces();
+});
+
+function timeAgo(ts: number): string {
+  const sec = Math.max(0, (Date.now() - ts) / 1000);
+  if (sec < 60) return 'just now';
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}d ago`;
+  if (sec < 86400 * 30) return `${Math.floor(sec / 86400 / 7)}w ago`;
+  return `${Math.floor(sec / 86400 / 30)}mo ago`;
+}
+
+function renderPlaces() {
+  while (placesList.firstChild) placesList.removeChild(placesList.firstChild);
+  if (placesCache.length === 0) {
+    placesSection.hidden = true;
+    explainerEl.hidden = false;
+    return;
+  }
+  placesSection.hidden = false;
+  explainerEl.hidden = true;
+  const list = placesExpanded ? placesCache : placesCache.slice(0, PLACES_TOP_N);
+  for (const p of list) {
+    const tile = document.createElement('button');
+    tile.type = 'button';
+    tile.className = 'place-tile';
+    const name = document.createElement('span');
+    name.className = 'place-name';
+    name.textContent = p.name || '(unnamed)';
+    const score = document.createElement('span');
+    score.className = `place-score ${scoreClass(p.scorePct)}`;
+    score.textContent = `${p.scorePct}`;
+    const age = document.createElement('span');
+    age.className = 'place-age';
+    age.textContent = timeAgo(p.lastAccessTs);
+    tile.append(name, score, age);
+    tile.addEventListener('click', () => {
+      urlInput.value = p.resolvedUrl;
+      form.requestSubmit();
+    });
+    placesList.appendChild(tile);
+  }
+  if (placesCache.length > PLACES_TOP_N) {
+    placesToggle.hidden = false;
+    placesToggle.textContent = placesExpanded ? 'SHOW LESS' : `SHOW ALL (${placesCache.length})`;
+  } else {
+    placesToggle.hidden = true;
+  }
+}
+
+async function loadPlaces() {
+  try {
+    const resp = await fetch('/api/places');
+    const data: PlacesResponse = await resp.json();
+    placesCache = data.places ?? [];
+    renderPlaces();
+  } catch (e) {
+    console.error('[places]', e);
+  }
+}
+
+placesToggle.addEventListener('click', () => {
+  placesExpanded = !placesExpanded;
+  renderPlaces();
 });
 
 askForm.addEventListener('submit', async (e) => {
@@ -631,4 +712,6 @@ const sharedUrl = new URLSearchParams(location.search).get('url');
 if (sharedUrl) {
   urlInput.value = sharedUrl;
   form.requestSubmit();
+} else {
+  loadPlaces();
 }

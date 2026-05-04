@@ -191,7 +191,78 @@ form#form {
 
 body[data-state] .hero,
 body[data-state] .hint,
-body[data-state] .explainer { display: none; }
+body[data-state] .explainer,
+body[data-state] .places { display: none; }
+
+.explainer[hidden],
+.places[hidden] { display: none; }
+
+.places {
+  margin: 0 0 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.places-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 4px;
+  gap: 12px;
+}
+.places-list {
+  display: flex;
+  flex-direction: column;
+}
+.place-tile {
+  display: grid;
+  grid-template-columns: 1fr max-content max-content;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 4px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  transition: background 200ms var(--ease);
+}
+.place-tile:last-child { border-bottom: 0; }
+.place-tile:hover { background: var(--t5); }
+.place-tile:focus-visible { outline: 1px solid var(--hairline); outline-offset: 2px; border-radius: 2px; }
+.place-tile .place-name {
+  font-family: 'Sora', sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--t1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.place-tile .place-score {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: var(--t1);
+}
+.place-tile .place-score.pos { color: var(--pos); }
+.place-tile .place-score.neg { color: var(--neg); }
+.place-tile .place-score.mid { color: var(--mid); }
+.place-tile .place-age {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--t3);
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  text-align: right;
+}
 body[data-state] form#form { margin-bottom: 20px; }
 body[data-state="loading"] .status {
   margin-top: 24px;
