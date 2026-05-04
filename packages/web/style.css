@@ -189,10 +189,30 @@ form#form {
   color: var(--t2);
 }
 
-body[data-state="scored"] .hero,
-body[data-state="scored"] .hint,
-body[data-state="scored"] .explainer { display: none; }
-body[data-state="scored"] form#form { margin-bottom: 20px; }
+body[data-state] .hero,
+body[data-state] .hint,
+body[data-state] .explainer { display: none; }
+body[data-state] form#form { margin-bottom: 20px; }
+body[data-state="loading"] .status {
+  margin-top: 24px;
+  font-size: 12px;
+  color: var(--t1);
+}
+body[data-state="loading"] .status::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 10px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
+  animation: blink 1.2s ease-in-out infinite;
+}
+@keyframes blink {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
+}
 input, button {
   font-family: inherit;
   font-size: 15px;

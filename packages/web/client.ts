@@ -506,7 +506,9 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const url = urlInput.value.trim();
   if (!url) return;
+  document.body.dataset.state = 'loading';
   goBtn.disabled = true;
+  goBtn.textContent = 'FETCHING';
   setStatus('Fetching reviews…');
   const t0 = Date.now();
   try {
@@ -538,9 +540,11 @@ form.addEventListener('submit', async (e) => {
     const [sum] = await Promise.all([fetchSummaryFor(featureId), histogramTask, highlightsTask]);
     setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
   } catch (e) {
+    delete document.body.dataset.state;
     setStatus(e instanceof Error ? e.message : String(e), true);
   } finally {
     goBtn.disabled = false;
+    goBtn.textContent = 'SCORE';
   }
 });
 

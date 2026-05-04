@@ -4,8 +4,16 @@ export async function resolvePlace(input: string): Promise<PlaceRef> {
   let url = input.trim();
   if (!url.startsWith('http')) throw new Error('paste a Google Maps URL');
 
-  // Follow short-link redirects via headers only (avoid downloading the full page)
+  // Follow short-link redirects via headers only (avoid downloading the full page).
+  // Strip query first — the path alone identifies the link, and iOS Shortcut share
+  // appends ?g_st=com.apple.shortcuts.Run-Workflow.(null) which otherwise rides the
+  // redirect into our cached resolvedUrl.
   if (url.includes('maps.app.goo.gl') || url.includes('goo.gl/maps')) {
+    try {
+      const u = new URL(url);
+      u.search = '';
+      url = u.toString();
+    } catch {}
     for (let hop = 0; hop < 5; hop++) {
       const resp = await fetch(url, { redirect: 'manual', method: 'HEAD' });
       const loc = resp.headers.get('location');
