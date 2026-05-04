@@ -9,6 +9,7 @@ import index from './index.html';
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json' } });
 const errBody = (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) });
+const mapsUrlFor = (featureId: string) => `https://www.google.com/maps?q=&ftid=${featureId}`;
 
 const PORT = Number(process.env.PORT || 3000);
 
@@ -108,16 +109,15 @@ Bun.serve({
         const DAY_MS = 24 * 60 * 60 * 1000;
         const places = cache.all()
           .map((e) => {
-            const lastAccessTs = e.lastAccessTs ?? e.scoreTs ?? 0;
+            const lastAccessTs = e.lastAccessTs ?? e.scoreTs;
             const accessCount = e.accessCount ?? 1;
             const days = (now - lastAccessTs) / DAY_MS;
-            // Frecency: count weighted by exponential decay, 30-day half-life.
             const frecency = accessCount * Math.pow(0.5, days / 30);
             return {
               featureId: e.featureId,
               name: e.name,
-              scorePct: e.score?.scorePct ?? 0,
-              resolvedUrl: e.resolvedUrl ?? `https://www.google.com/maps?q=&ftid=${e.featureId}`,
+              scorePct: e.score.scorePct,
+              resolvedUrl: e.resolvedUrl ?? mapsUrlFor(e.featureId),
               lastAccessTs,
               frecency,
             };
@@ -133,7 +133,7 @@ Bun.serve({
           const { featureId } = await req.json();
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
-          const url = entry.resolvedUrl ?? `https://www.google.com/maps?q=&ftid=${featureId}`;
+          const url = entry.resolvedUrl ?? mapsUrlFor(featureId);
           const histogram = await getOrFetchHistogram(featureId, url);
           if (!histogram) return json({ error: 'histogram unavailable' }, 500);
           return json({ histogram, overallPct: overallPctFromHistogram(histogram), cached: cache.histogramFresh(entry) });
@@ -167,7 +167,7 @@ Bun.serve({
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
           if (entry.highlights && !force) return json({ highlights: entry.highlights, cached: true });
-          const url = entry.resolvedUrl ?? `https://www.google.com/maps?q=&ftid=${featureId}`;
+          const url = entry.resolvedUrl ?? mapsUrlFor(featureId);
           const tokens = await harvestTokens(url);
           if (!tokens.length) return json({ error: 'no highlights found for this place' }, 404);
           const scored = await scoreHighlights(featureId, tokens);

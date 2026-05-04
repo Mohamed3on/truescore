@@ -631,7 +631,7 @@ function timeAgo(ts: number): string {
 }
 
 function renderPlaces() {
-  while (placesList.firstChild) placesList.removeChild(placesList.firstChild);
+  placesList.replaceChildren();
   if (placesCache.length === 0) {
     placesSection.hidden = true;
     explainerEl.hidden = false;
@@ -646,7 +646,7 @@ function renderPlaces() {
     tile.className = 'place-tile';
     const name = document.createElement('span');
     name.className = 'place-name';
-    name.textContent = p.name || '(unnamed)';
+    name.textContent = p.name;
     const score = document.createElement('span');
     score.className = `place-score ${scoreClass(p.scorePct)}`;
     score.textContent = `${p.scorePct}`;
