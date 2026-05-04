@@ -158,31 +158,6 @@ function starString(stars: number) {
   return '★'.repeat(stars) + '☆'.repeat(Math.max(0, 5 - stars));
 }
 
-function renderChipReviews(h: Highlight) {
-  while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
-  const reviews = (h.reviews ?? []).slice().sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
-  for (const r of reviews) {
-    if (!r.text || r.text.length < 10) continue;
-    const card = document.createElement('div');
-    card.className = 'review-card';
-    const meta = document.createElement('div');
-    meta.className = 'review-meta';
-    const stars = document.createElement('span');
-    stars.className = 'review-stars';
-    stars.textContent = starString(r.stars);
-    const trust = document.createElement('span');
-    const isTrustedRev = r.reviewerReviewCount >= 3;
-    trust.className = isTrustedRev ? 'review-trusted' : 'review-untrusted';
-    trust.textContent = `${r.reviewerReviewCount} rev${isTrustedRev ? '' : ' · untrusted'}`;
-    meta.append(stars, trust);
-    const text = document.createElement('p');
-    text.className = 'review-text';
-    text.textContent = r.text;
-    card.append(meta, text);
-    chipBody.appendChild(card);
-  }
-}
-
 function setPanelTitle(label: string, scorePct: number, trusted: number, total: number) {
   while (chipPanelTitle.firstChild) chipPanelTitle.removeChild(chipPanelTitle.firstChild);
   const labelSpan = document.createElement('span');
@@ -199,7 +174,7 @@ function showChipPanel(h: Highlight) {
   setActiveChip(h.token);
   const score = h.score?.scorePct ?? 0;
   setPanelTitle(h.label.toUpperCase(), score, h.score?.trustedReviews ?? 0, h.reviews?.length ?? h.count);
-  renderChipReviews(h);
+  renderReviewList(h.reviews ?? []);
   chipPanel.hidden = false;
   verdictRow.style.display = 'none';
   highlightsListEl.style.display = 'none';
@@ -583,7 +558,7 @@ highlightsRefreshBtn.addEventListener('click', async () => {
 
 chipSummarizeBtn.addEventListener('click', () => {
   if (chipSummarizeBtn.textContent === 'SHOW REVIEWS') {
-    if (activeHighlight) renderChipReviews(activeHighlight);
+    if (activeHighlight) renderReviewList(activeHighlight.reviews ?? []);
     else if (activeSearch) renderReviewList(activeSearch.reviews);
     chipSummarizeBtn.textContent = 'SUMMARIZE';
     return;
