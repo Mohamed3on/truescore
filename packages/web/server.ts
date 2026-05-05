@@ -1,3 +1,4 @@
+import { textReviewsFor } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
 import { scorePlace, fetchAllForSearch, type Review } from './gmaps';
 import { summarize, ask } from './gemini';
@@ -155,8 +156,7 @@ Bun.serve({
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
           if (entry.summary && !force) return json({ summary: entry.summary, cached: true });
-          const reviewTexts = entry.score.reviews.map((r) => r.text).filter((t) => t.length > 30);
-          const summary = await summarize(entry.name, reviewTexts.slice(0, 100));
+          const summary = await summarize(entry.name, textReviewsFor(entry.score.reviews));
           await cache.putSummary(featureId, summary);
           return json({ summary, cached: false });
         } catch (e) {
@@ -211,9 +211,9 @@ Bun.serve({
           if (!highlight) return json({ error: 'highlight not found, refresh highlights' }, 404);
           const cached = entry.highlightSummaries?.[token];
           if (cached && !force) return json({ summary: cached, label: highlight.label, cached: true });
-          const reviewTexts = (highlight.reviews ?? []).map((r) => r.text).filter((t) => t.length > 30);
-          if (reviewTexts.length === 0) return json({ error: 'no review text available for this highlight' }, 400);
-          const summary = await summarize(entry.name, reviewTexts.slice(0, 100), highlight.label);
+          const reviewTexts = textReviewsFor(highlight.reviews ?? []);
+          if (!reviewTexts.length) return json({ error: 'no review text available for this highlight' }, 400);
+          const summary = await summarize(entry.name, reviewTexts, highlight.label);
           await cache.putHighlightSummary(featureId, token, summary);
           return json({ summary, label: highlight.label, cached: false });
         } catch (e) {
@@ -264,9 +264,9 @@ Bun.serve({
           }
 
           if (doSummarize && (!result.summary || force)) {
-            const reviewTexts = result.reviews.map((r) => r.text).filter((t) => t.length > 30);
-            if (reviewTexts.length > 0) {
-              result.summary = await summarize(entry.name, reviewTexts.slice(0, 100), term);
+            const reviewTexts = textReviewsFor(result.reviews);
+            if (reviewTexts.length) {
+              result.summary = await summarize(entry.name, reviewTexts, term);
             }
           }
 
@@ -284,8 +284,7 @@ Bun.serve({
           const { featureId, question } = await req.json();
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
-          const reviewTexts = entry.score.reviews.map((r) => r.text).filter((t) => t.length > 30);
-          const answer = await ask(entry.name, reviewTexts.slice(0, 100), question);
+          const answer = await ask(entry.name, textReviewsFor(entry.score.reviews), question);
           return json({ answer });
         } catch (e) {
           console.error('[ask]', e);
