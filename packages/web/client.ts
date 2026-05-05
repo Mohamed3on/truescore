@@ -1,8 +1,7 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
+import type { Review, SortStats, DayHours, PlaceMeta } from '@truescore/gmaps-shared';
 
 type SummaryHighlight = { text: string; count: number; sentiment: string };
-type Review = { reviewId: string; stars: number; reviewerReviewCount: number; timestamp: number | null; text: string };
-type SortStats = { totalReviews: number; trustedReviews: number; scorePct: number };
 type Score = {
   featureId: string;
   totalReviews: number;
@@ -13,21 +12,6 @@ type Score = {
   reviews: Review[];
 };
 type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney: number };
-type DayHours = { day: string; label: string; openHour?: number; closeHour?: number };
-type PlaceMeta = {
-  canonicalName?: string;
-  address?: string;
-  locality?: string;
-  lat?: number;
-  lng?: number;
-  googleRating?: number;
-  googleReviewCount?: number;
-  priceRange?: string;
-  category?: string;
-  photoUrl?: string;
-  timezone?: string;
-  hoursWeek?: DayHours[];
-};
 type LookupResponse = {
   name: string;
   score: Score;
@@ -42,8 +26,7 @@ type LookupResponse = {
 };
 type SummarizeResponse = { summary?: Summary; error?: string; cached?: boolean };
 type HistogramResponse = { histogram?: number[]; overallPct?: number; error?: string };
-type HighlightStats = { totalReviews: number; trustedReviews: number; scorePct: number };
-type Highlight = { label: string; count: number; token: string; score?: HighlightStats; reviews?: Review[] };
+type Highlight = { label: string; count: number; token: string; score?: SortStats; reviews?: Review[] };
 type HighlightsResponse = { highlights?: Highlight[]; cached?: boolean; error?: string };
 type SearchResult = {
   query: string;
