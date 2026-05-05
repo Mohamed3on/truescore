@@ -49,6 +49,8 @@
     "*://*.uniqlo.com/*",
     "*://*.ikea.com/*",
     "*://*.dm.de/*",
+    "*://bjjfanatics.com/products/*",
+    "https://stamped.io/api/*",
     "*://apps.bazaarvoice.com/*",
     "*://*.goodreads.com/book/show/*",
     "*://*.appsync-api.us-east-1.amazonaws.com/*",
@@ -160,6 +162,12 @@
       "matches": ["*://*.dm.de/*"],
       "js": ["sites/dm-plp.js"],
       "run_at": "document_end"
+    },
+    {
+      "matches": ["*://bjjfanatics.com/products/*"],
+      "js": ["sites/bjjfanatics-pdp.js"],
+      "css": ["sites/amazon-product.css"],
+      "run_at": "document_idle"
     },
     {
       "matches": ["*://*.goodreads.com/book/show/*"],

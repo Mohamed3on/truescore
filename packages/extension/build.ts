@@ -31,6 +31,7 @@ await esbuild.build({
     'src/sites/ikea-plp.ts',
     'src/sites/dm-pdp.ts',
     'src/sites/dm-plp.ts',
+    'src/sites/bjjfanatics-pdp.ts',
     'src/sites/goodreads.ts',
     'src/sites/gmaps.ts',
     'src/sites/gmaps-bridge.ts',
