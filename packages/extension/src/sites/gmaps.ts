@@ -12,6 +12,7 @@ import {
   parseReviewsResponse,
   starScore,
   statsForReviews,
+  textReviewsFor,
   type Locale,
   type Review,
   type SortKey,
@@ -99,7 +100,6 @@ const getGeminiEndpoint = () => geminiEndpoint(getGeminiKey());
 let currentOption: Period = 'total';
 let lastFeatureId = '';
 let lastUrl = '';
-const REVIEW_LIMIT = 100;
 let fullPctObserver: MutationObserver | null = null;
 let lastVisibleKey = '';
 let staleHistogramKey: string | null = null;
@@ -942,7 +942,7 @@ const summarizeActiveChip = async () => {
   sumBtn.textContent = 'Summarizing…';
   body.textContent = 'Summarizing…';
   body.className = 'rc-chip-body loading';
-  const texts = (h.reviews ?? []).map((r) => r.text).filter((t) => t.length > 30).slice(0, REVIEW_LIMIT);
+  const texts = textReviewsFor(h.reviews ?? []);
   if (!texts.length) {
     body.textContent = 'No review text available';
     body.className = 'rc-chip-body';
@@ -1033,7 +1033,7 @@ const summarizeLabelSearch = async () => {
   const search = activeLabelSearch;
   const panel = cardEls.filteredSumPanel;
   if (!search || !panel) return;
-  const texts = search.reviews.map((r) => r.text).filter((t) => t.length > 30).slice(0, REVIEW_LIMIT);
+  const texts = textReviewsFor(search.reviews);
   panel.style.display = 'block';
   panel.textContent = 'Summarizing…';
   panel.className = 'rc-summary-panel loading';
@@ -1332,12 +1332,7 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   }
 };
 
-const collectReviewTexts = (): string[] =>
-  Object.values(mergeReviewMaps())
-    .filter((r) => r.text)
-    .sort((a, b) => b.text.length - a.text.length)
-    .slice(0, REVIEW_LIMIT)
-    .map((r) => r.text);
+const collectReviewTexts = (): string[] => textReviewsFor(Object.values(mergeReviewMaps()));
 
 const triggerSummarize = async () => {
   const panel = cardEls.sumPanel;
