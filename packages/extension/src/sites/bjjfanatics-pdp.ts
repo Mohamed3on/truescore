@@ -33,12 +33,14 @@ const getProductInfo = (): ProductInfo | null => {
   return { id, sku, name };
 };
 
+// minRating=1 disables Stamped's silent default filter that hides non-5★ reviews
+// from the public widget — without it, total + reviews are missing the 4★/3★/2★ ones.
 const stampedUrl = (page: number, info: ProductInfo) =>
   `https://stamped.io/api/widget/reviews?productId=${encodeURIComponent(info.id)}` +
   `&productSKU=${encodeURIComponent(info.sku)}` +
   `&productName=${encodeURIComponent(info.name)}` +
   `&apiKey=${STAMPED_API_KEY}&storeUrl=${STAMPED_STORE}` +
-  `&take=${PAGE_SIZE}&page=${page}&sort=recent`;
+  `&take=${PAGE_SIZE}&page=${page}&sort=recent&minRating=1`;
 
 const fetchPage = async (page: number, info: ProductInfo) => {
   const res = await fetch(stampedUrl(page, info));
