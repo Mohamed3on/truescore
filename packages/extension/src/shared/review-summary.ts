@@ -73,7 +73,7 @@ export const geminiSummarize = async (reviewTexts: string[], prompt: string, sch
 
   const generationConfig: any = {
     thinkingConfig: { thinkingLevel: 'MINIMAL' },
-    maxOutputTokens: 2048,
+    maxOutputTokens: 32768,
   };
   if (schema) {
     generationConfig.responseMimeType = 'application/json';
