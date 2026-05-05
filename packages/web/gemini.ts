@@ -6,7 +6,7 @@ export type Highlight = { text: string; count: number; sentiment: string };
 export type Summary = { highlights: Highlight[]; verdict: string; valueForMoney: number };
 
 export async function summarize(placeName: string, reviewTexts: string[], filterQuery?: string): Promise<Summary> {
-  const block = reviewTexts.filter(Boolean).map((t, i) => `${i + 1}. ${t}`).join('\n');
+  const block = reviewTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
   const place = placeName || 'this place';
   const instructions = filterQuery
     ? `You are analyzing what visitors to ${place} say specifically about "${filterQuery}".
@@ -67,7 +67,7 @@ Also rate value for money 1-5 — base this on what reviewers actually say about
 }
 
 export async function ask(placeName: string, reviewTexts: string[], question: string): Promise<string> {
-  const block = reviewTexts.filter(Boolean).map((t, i) => `${i + 1}. ${t}`).join('\n');
+  const block = reviewTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
   const prompt = `${block}\n\n---\n\nYou are a local expert helping a tourist decide about ${placeName || 'this place'}. Answer their question using only evidence from the reviews above.
 
 Question: ${question}
