@@ -37,7 +37,7 @@ Also rate value for money 1-5 — base this on what reviewers actually say about
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         maxOutputTokens: 32768,
-        thinkingConfig: { thinkingLevel: 'medium' },
+        thinkingConfig: { thinkingLevel: 'MINIMAL' },
         responseMimeType: 'application/json',
         responseSchema: {
           type: 'OBJECT',
@@ -81,7 +81,7 @@ Quote or paraphrase the most vivid, concrete detail from the reviews — names, 
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         maxOutputTokens: 32768,
-        thinkingConfig: { thinkingLevel: 'medium' },
+        thinkingConfig: { thinkingLevel: 'MINIMAL' },
       },
     }),
   });

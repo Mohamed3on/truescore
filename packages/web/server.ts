@@ -1,4 +1,4 @@
-import { textReviewsFor } from '@truescore/gmaps-shared';
+import { statsForReviews, textReviewsFor } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
 import { scorePlace, fetchAllForSearch, type Review } from './gmaps';
 import { summarize, ask } from './gemini';
@@ -245,22 +245,7 @@ Bun.serve({
           let result = cached && !force ? cached : null;
           if (!result) {
             const reviews = await fetchAllForSearch(featureId, term);
-            let trusted = 0, score = 0;
-            const TRUSTED = 3;
-            for (const r of reviews) {
-              if (r.reviewerReviewCount < TRUSTED) continue;
-              trusted++;
-              if (r.stars === 5) score++;
-              else if (r.stars === 1) score--;
-            }
-            result = {
-              query: term,
-              totalReviews: reviews.length,
-              trustedReviews: trusted,
-              scorePct: trusted ? Math.round((score / trusted) * 100) : 0,
-              reviews,
-              ts: Date.now(),
-            };
+            result = { query: term, ...statsForReviews(reviews), reviews, ts: Date.now() };
           }
 
           if (doSummarize && (!result.summary || force)) {
