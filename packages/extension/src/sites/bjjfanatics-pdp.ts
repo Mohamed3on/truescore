@@ -131,11 +131,13 @@ ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned
 
 BE AS SPECIFIC AS POSSIBLE. Cite concrete volumes, parts, chapters, sections, positions, techniques, sweeps, submissions, or drills by name when reviewers mention them. Generic praise like "great instruction" or generic complaints like "too long" are useless — skip them. Aim for: which volume/part is most valuable, which specific techniques reviewers say worked for them in rolling, which chapters reviewers say to skip or revisit, and which positions get the deepest coverage.
 
+Surface the actual takeaways — what reviewers say they learned, what mental models or principles changed how they roll, what details unlocked a position, what technique they immediately added to their game. The single most important thing reviewers say a viewer should walk away with belongs in the conclusion.
+
 Each review may be prefixed with [Ranking: BLUE | How old are you?: 33-40 | How many years have you been training BJJ?: 1-3]. Use this to note which skill levels found which sections useful.
 
 If 2+ reviewers mention a specific better alternative course or instructor by name, note it and explain how reviewers compare.
 
-End with a short summary: who this course is best for (skill level, goals), which volumes/parts to prioritize first, weak spots, and whether it's worth the price.`;
+End with a short summary: the single most important takeaway reviewers got from this course, who it's best for (skill level, goals), which volumes/parts to prioritize first, weak spots, and whether it's worth the price.`;
 
 const renderScoreCard = (wrapper: HTMLElement, score: number, nps: number, total: number) => {
   const card = document.createElement('a');
