@@ -116,12 +116,15 @@ const computeScore = ({ total, reviews }: ReviewBundle) => {
   return { score, ratio, nps, total: denom };
 };
 
+const MIN_REVIEW_CHARS = 20;
+
 const reviewToText = (r: StampedReview): string => {
+  const head = [r.reviewTitle, r.reviewMessage].filter(Boolean).join(': ').trim();
+  if (head.length < MIN_REVIEW_CHARS) return '';
   const meta = (r.reviewOptionsList || [])
     .map(o => o.message && o.value ? `${o.message}: ${o.value}` : '')
     .filter(Boolean)
     .join(' | ');
-  const head = [r.reviewTitle, r.reviewMessage].filter(Boolean).join(': ').trim();
   return [meta && `[${meta}]`, head].filter(Boolean).join(' ').trim();
 };
 
@@ -137,7 +140,14 @@ Each review may be prefixed with [Ranking: BLUE | How old are you?: 33-40 | How 
 
 If 2+ reviewers mention a specific better alternative course or instructor by name, note it and explain how reviewers compare.
 
-End with a short summary: the single most important takeaway reviewers got from this course, who it's best for (skill level, goals), which volumes/parts to prioritize first, weak spots, and whether it's worth the price.`;
+The conclusion is the single most important field — write it like a buying verdict, not an essay. Use this exact structure (markdown):
+
+**Verdict:** one decisive sentence — buy / skip / who it's for. Lead with the bottom line.
+**Takeaway:** one sentence — the single most important idea reviewers walked away with, in concrete BJJ terms.
+**Start with:** specific volumes/parts/chapters reviewers say to watch first.
+**Skip if:** what this course doesn't deliver, so the reader knows when to pass.
+
+Each line ≤ 25 words. No hedging, no "many reviewers say" — state it. Cite specific techniques and volumes by name.`;
 
 const renderScoreCard = (wrapper: HTMLElement, score: number, nps: number, total: number) => {
   const card = document.createElement('a');
