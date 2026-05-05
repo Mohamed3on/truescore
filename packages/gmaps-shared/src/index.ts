@@ -26,6 +26,9 @@ export const TRUSTED_MIN_REVIEWS = 3;
 export const isTrusted = (reviewerReviewCount: number) => reviewerReviewCount >= TRUSTED_MIN_REVIEWS;
 export const starScore = (stars: number): number => (stars === 5 ? 1 : stars === 1 ? -1 : 0);
 
+export const textReviewsFor = (reviews: Review[]): string[] =>
+  reviews.map((r) => r.text).filter((t) => t.length > 20);
+
 const localeQuery = (locale: Locale = {}) => `hl=${locale.hl || 'en'}&gl=${locale.gl || ''}`;
 
 export const buildListUrl = (featureId: string, sort: SortKey, cursor = '', locale: Locale = {}) => {
