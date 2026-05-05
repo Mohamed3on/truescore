@@ -150,6 +150,9 @@ export type PlaceMeta = {
   hoursWeek?: DayHours[];
 };
 
+const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+const asNumber = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+
 const decodeCategory = (raw: unknown): string | undefined => {
   if (typeof raw !== 'string') return undefined;
   const s = raw.replace(/^SearchResult\.TYPE_/, '').toLowerCase().replace(/_/g, ' ').trim();
@@ -171,18 +174,15 @@ const resizePhoto = (url: string, w: number, h: number): string =>
   url.replace(/=w\d+-h\d+(-k)?(-no)?$/, '') + `=w${w}-h${h}-k-no`;
 
 const parseHoursDay = (entry: any): DayHours | null => {
-  const day = entry?.[0];
+  const day = asString(entry?.[0]);
+  if (!day) return null;
   const slot = entry?.[3]?.[0];
-  if (typeof day !== 'string') return null;
   if (!slot) return { day, label: 'Closed' };
-  const label = typeof slot[0] === 'string' ? slot[0] : '';
-  const openHour = slot?.[1]?.[0]?.[0];
-  const closeHour = slot?.[1]?.[1]?.[0];
   return {
     day,
-    label: label || '—',
-    openHour: typeof openHour === 'number' ? openHour : undefined,
-    closeHour: typeof closeHour === 'number' ? closeHour : undefined,
+    label: asString(slot[0]) || '—',
+    openHour: asNumber(slot?.[1]?.[0]?.[0]),
+    closeHour: asNumber(slot?.[1]?.[1]?.[0]),
   };
 };
 
@@ -196,17 +196,17 @@ export const metaFromPreview = (data: any): PlaceMeta => {
     ? hoursRaw.map(parseHoursDay).filter((d): d is DayHours => d !== null)
     : undefined;
   return {
-    canonicalName: typeof six[11] === 'string' ? six[11] : undefined,
-    address: typeof six[39] === 'string' ? six[39] : undefined,
-    locality: typeof six[166] === 'string' ? six[166] : undefined,
-    lat: typeof six[9]?.[2] === 'number' ? six[9][2] : undefined,
-    lng: typeof six[9]?.[3] === 'number' ? six[9][3] : undefined,
-    googleRating: typeof ratingBlock?.[7] === 'number' ? ratingBlock[7] : undefined,
-    googleReviewCount: typeof ratingBlock?.[8] === 'number' ? ratingBlock[8] : undefined,
-    priceRange: typeof ratingBlock?.[2] === 'string' ? ratingBlock[2] : undefined,
+    canonicalName: asString(six[11]),
+    address: asString(six[39]),
+    locality: asString(six[166]),
+    lat: asNumber(six[9]?.[2]),
+    lng: asNumber(six[9]?.[3]),
+    googleRating: asNumber(ratingBlock?.[7]),
+    googleReviewCount: asNumber(ratingBlock?.[8]),
+    priceRange: asString(ratingBlock?.[2]),
     category: decodeCategory(six[88]?.[1]),
     photoUrl: photo ? resizePhoto(photo, 800, 320) : undefined,
-    timezone: typeof six[30] === 'string' ? six[30] : undefined,
+    timezone: asString(six[30]),
     hoursWeek: hoursWeek?.length ? hoursWeek : undefined,
   };
 };

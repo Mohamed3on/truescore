@@ -454,33 +454,62 @@ function formatHourLabel(h: number): string {
   return h < 12 ? `${h} AM` : `${h - 12} PM`;
 }
 
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+
 function localHourInTz(tz: string | undefined, now = new Date()): { day: number; hour: number } {
-  if (!tz) return { day: now.getDay(), hour: now.getHours() + now.getMinutes() / 60 };
+  const fallback = { day: now.getDay(), hour: now.getHours() + now.getMinutes() / 60 };
+  if (!tz) return fallback;
   try {
     const fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz, weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+      timeZone: tz, weekday: 'long', hour: 'numeric', minute: 'numeric', hour12: false,
     });
     const parts = Object.fromEntries(fmt.formatToParts(now).map((p) => [p.type, p.value]));
-    const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const day = WEEKDAYS.indexOf(parts.weekday as typeof WEEKDAYS[number]);
     return {
-      day: dayMap[parts.weekday] ?? now.getDay(),
+      day: day >= 0 ? day : fallback.day,
       hour: parseInt(parts.hour, 10) + parseInt(parts.minute, 10) / 60,
     };
   } catch {
-    return { day: now.getDay(), hour: now.getHours() + now.getMinutes() / 60 };
+    return fallback;
   }
+}
+
+function isOpenNow(today: DayHours | undefined, hour: number): boolean | null {
+  if (!today) return null;
+  if (today.openHour != null && today.closeHour != null) {
+    const close = today.closeHour <= today.openHour ? today.closeHour + 24 : today.closeHour;
+    const cur = hour < today.openHour ? hour + 24 : hour;
+    return cur >= today.openHour && cur < close;
+  }
+  if (today.label === 'Closed') return false;
+  return null;
+}
+
+function renderHoursToday(meta: PlaceMeta | undefined) {
+  const hoursEl = $('placeHours');
+  const hoursStatusEl = $('placeHoursStatus');
+  const hoursTodayEl = $('placeHoursToday');
+  const week = meta?.hoursWeek;
+  if (!week?.length) { hoursEl.hidden = true; return; }
+  const { day, hour } = localHourInTz(meta?.timezone);
+  const today = week.find((d) => WEEKDAYS.indexOf(d.day as typeof WEEKDAYS[number]) === day) ?? week[0];
+  const open = isOpenNow(today, hour);
+  const status = open === true ? 'open' : open === false ? 'closed' : null;
+  hoursStatusEl.className = `place-hours-status ${status ?? ''}`;
+  hoursStatusEl.textContent = status ? status.toUpperCase() : '';
+  hoursStatusEl.hidden = status === null;
+  const hoursLabel = today?.openHour != null && today.closeHour != null
+    ? `${formatHourLabel(today.openHour)}–${formatHourLabel(today.closeHour)}`
+    : (today?.label ?? '');
+  hoursTodayEl.textContent = hoursLabel ? `${today.day.slice(0, 3)} · ${hoursLabel}` : '';
+  hoursEl.hidden = false;
 }
 
 function renderPlaceMeta(meta: PlaceMeta | undefined) {
   const photoEl = $('placePhoto') as HTMLImageElement;
   const metaRow = $('placeMetaRow');
-  const categoryEl = $('placeCategory');
-  const priceEl = $('placePrice');
   const googleEl = $('placeGoogle');
   const addressEl = $('placeAddress');
-  const hoursEl = $('placeHours');
-  const hoursStatusEl = $('placeHoursStatus');
-  const hoursTodayEl = $('placeHoursToday');
 
   if (meta?.photoUrl) {
     photoEl.src = meta.photoUrl;
@@ -493,8 +522,8 @@ function renderPlaceMeta(meta: PlaceMeta | undefined) {
   const showTag = (el: HTMLElement, text: string | undefined) => {
     if (text) { el.textContent = text; el.hidden = false; } else { el.hidden = true; }
   };
-  showTag(categoryEl, meta?.category);
-  showTag(priceEl, meta?.priceRange);
+  showTag($('placeCategory'), meta?.category);
+  showTag($('placePrice'), meta?.priceRange);
 
   if (meta?.googleRating != null) {
     while (googleEl.firstChild) googleEl.removeChild(googleEl.firstChild);
@@ -516,41 +545,8 @@ function renderPlaceMeta(meta: PlaceMeta | undefined) {
   }
 
   metaRow.hidden = !(meta?.category || meta?.priceRange || meta?.googleRating != null);
-
-  if (meta?.address) {
-    addressEl.textContent = meta.address;
-    addressEl.hidden = false;
-  } else {
-    addressEl.hidden = true;
-  }
-
-  const week = meta?.hoursWeek;
-  if (week && week.length) {
-    const { day, hour } = localHourInTz(meta?.timezone);
-    const today = week.find((d) => {
-      const idx = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(d.day);
-      return idx === day;
-    }) ?? week[0];
-    let isOpen: boolean | null = null;
-    if (today?.openHour != null && today.closeHour != null) {
-      const open = today.openHour;
-      const close = today.closeHour <= open ? today.closeHour + 24 : today.closeHour;
-      const cur = hour < open ? hour + 24 : hour;
-      isOpen = cur >= open && cur < close;
-    } else if (today?.label === 'Closed') {
-      isOpen = false;
-    }
-    hoursStatusEl.className = `place-hours-status ${isOpen ? 'open' : isOpen === false ? 'closed' : ''}`;
-    hoursStatusEl.textContent = isOpen ? 'OPEN' : isOpen === false ? 'CLOSED' : '';
-    hoursStatusEl.hidden = isOpen === null;
-    const hoursLabel = today?.openHour != null && today.closeHour != null
-      ? `${formatHourLabel(today.openHour)}–${formatHourLabel(today.closeHour)}`
-      : (today?.label ?? '');
-    hoursTodayEl.textContent = hoursLabel ? `${today.day.slice(0, 3)} · ${hoursLabel}` : '';
-    hoursEl.hidden = false;
-  } else {
-    hoursEl.hidden = true;
-  }
+  showTag(addressEl, meta?.address);
+  renderHoursToday(meta);
 }
 
 function renderFreshness(reviews: Review[]) {

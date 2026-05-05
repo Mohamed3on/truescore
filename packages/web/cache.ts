@@ -24,7 +24,6 @@ export type CacheEntry = {
   histogram?: number[];
   histogramTs?: number;
   meta?: PlaceMeta;
-  metaTs?: number;
   lastAccessTs?: number;
   accessCount?: number;
 };
@@ -149,24 +148,14 @@ export const cache = {
     store[featureId] = { ...existing, searches };
     await flush();
   },
-  async putHistogram(featureId: string, histogram: number[]) {
+  async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta }) {
     const existing = store[featureId];
     if (!existing) return;
-    store[featureId] = { ...existing, histogram, histogramTs: Date.now() };
-    await flush();
-  },
-  async putMeta(featureId: string, meta: PlaceMeta) {
-    const existing = store[featureId];
-    if (!existing) return;
-    store[featureId] = { ...existing, meta, metaTs: Date.now() };
-    await flush();
-  },
-  async putPreviewBundle(featureId: string, histogram: number[] | null, meta: PlaceMeta) {
-    const existing = store[featureId];
-    if (!existing) return;
-    const next: CacheEntry = { ...existing, meta, metaTs: Date.now() };
-    if (histogram) {
-      next.histogram = histogram;
+    const next: CacheEntry = { ...existing, meta: bundle.meta };
+    const histogramChanged = bundle.histogram &&
+      (!existing.histogram || existing.histogram.some((v, i) => v !== bundle.histogram![i]));
+    if (histogramChanged) {
+      next.histogram = bundle.histogram!;
       next.histogramTs = Date.now();
     }
     store[featureId] = next;

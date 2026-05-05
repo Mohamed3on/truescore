@@ -46,7 +46,7 @@ function getOrFetchPreviewBundle(featureId: string, url: string): Promise<Previe
   const p = (async () => {
     try {
       const bundle = await fetchPreviewBundle(url);
-      await cache.putPreviewBundle(featureId, bundle.histogram, bundle.meta);
+      await cache.putPreviewBundle(featureId, bundle);
       return bundle;
     } finally {
       previewInflight.delete(featureId);
@@ -83,7 +83,7 @@ Bun.serve({
             });
           }
 
-          // Cold path: nothing cached. Fetch preview (histogram + meta) in parallel with score scrape.
+          // Run preview fetch in parallel with the score scrape.
           const bundlePromise = getOrFetchPreviewBundle(featureId, resolvedUrl)
             .catch((e) => { console.error('[preview]', e); return { histogram: null, meta: {} } as PreviewBundle; });
           const t0 = Date.now();
