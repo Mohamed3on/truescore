@@ -127,15 +127,15 @@ const reviewToText = (r: StampedReview): string => {
 
 const SUMMARY_PROMPT = `Analyze these reviews of a BJJ instructional course. Ignore shipping, delivery, packaging, or seller issues — focus ONLY on the course content and instruction.
 
-ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should start with the count, e.g. "(12) Too advanced for white belts".
+ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should start with the count, e.g. "(12) Volume 3 (back attacks chapter) — most actionable".
 
-Each review may be prefixed with [Ranking: BLUE | How old are you?: 33-40 | How many years have you been training BJJ?: 1-3]. Use this to note which skill levels found it useful.
+BE AS SPECIFIC AS POSSIBLE. Cite concrete volumes, parts, chapters, sections, positions, techniques, sweeps, submissions, or drills by name when reviewers mention them. Generic praise like "great instruction" or generic complaints like "too long" are useless — skip them. Aim for: which volume/part is most valuable, which specific techniques reviewers say worked for them in rolling, which chapters reviewers say to skip or revisit, and which positions get the deepest coverage.
+
+Each review may be prefixed with [Ranking: BLUE | How old are you?: 33-40 | How many years have you been training BJJ?: 1-3]. Use this to note which skill levels found which sections useful.
 
 If 2+ reviewers mention a specific better alternative course or instructor by name, note it and explain how reviewers compare.
 
-Check for signs of review manipulation: repetitive phrasing, suspiciously similar wording, generic praise without specifics. If detected, warn about it.
-
-End with a short summary: who this course is best for (skill level, goals), what it teaches well, weak spots, and whether it's worth the price.`;
+End with a short summary: who this course is best for (skill level, goals), which volumes/parts to prioritize first, weak spots, and whether it's worth the price.`;
 
 const renderScoreCard = (wrapper: HTMLElement, score: number, nps: number, total: number) => {
   const card = document.createElement('a');
@@ -184,6 +184,7 @@ const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: { score: nu
     cacheKey: `bjj-summary-${info.id}`,
     summaryPrompt: SUMMARY_PROMPT,
     fetchReviews: async () => bundle.reviews.map(reviewToText).filter(Boolean),
+    skipSuspicious: true,
   });
 
   return wrapper;

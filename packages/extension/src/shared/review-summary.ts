@@ -1,8 +1,18 @@
 import { getGeminiApiKey, geminiEndpoint } from './config';
 import { el, renderMarkdown, renderMarkdownInline } from './utils';
 
-export const renderStructuredSummary = (container: HTMLElement, { complaints, praised, conclusion, betterAlternative, suspiciousPatterns }: any) => {
+export const renderStructuredSummary = (
+  container: HTMLElement,
+  { complaints, praised, conclusion, betterAlternative, suspiciousPatterns }: any,
+  opts: { skipSuspicious?: boolean } = {},
+) => {
   container.textContent = '';
+  if (conclusion) {
+    const el = document.createElement('div');
+    el.className = 'ars-conclusion';
+    renderMarkdown(el, conclusion);
+    container.appendChild(el);
+  }
   const addSection = (title: string, items: string[], type: string) => {
     if (!items?.length) return;
     const section = document.createElement('div');
@@ -34,7 +44,7 @@ export const renderStructuredSummary = (container: HTMLElement, { complaints, pr
     section.appendChild(item);
     container.appendChild(section);
   }
-  if (suspiciousPatterns) {
+  if (suspiciousPatterns && !opts.skipSuspicious) {
     const section = document.createElement('div');
     section.className = 'ars-section ars-section--suspicious';
     const heading = document.createElement('div');
@@ -46,12 +56,6 @@ export const renderStructuredSummary = (container: HTMLElement, { complaints, pr
     renderMarkdownInline(item, suspiciousPatterns);
     section.appendChild(item);
     container.appendChild(section);
-  }
-  if (conclusion) {
-    const el = document.createElement('div');
-    el.className = 'ars-conclusion';
-    renderMarkdown(el, conclusion);
-    container.appendChild(el);
   }
 };
 
@@ -162,6 +166,7 @@ interface SummarizeWidgetOpts {
   questionPrompt?: string;
   cacheMeta?: any;
   alternates?: AlternatesConfig;
+  skipSuspicious?: boolean;
 }
 
 const collectAlternates = (prefix: string, currentKey: string): AlternateEntry[] => {
@@ -204,7 +209,9 @@ export const buildSummarizeWidget = ({
   questionPrompt = QUESTION_PROMPT,
   cacheMeta,
   alternates,
+  skipSuspicious,
 }: SummarizeWidgetOpts) => {
+  const renderOpts = { skipSuspicious };
   const questionRow = document.createElement('div');
   questionRow.className = 'ars-question-row';
   const questionInput = document.createElement('input');
@@ -249,7 +256,7 @@ export const buildSummarizeWidget = ({
         const parsed = await geminiSummarize(reviews, summaryPrompt);
         bumpRateLimit();
         localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts, meta: cacheMeta }));
-        renderStructuredSummary(summaryPanel, parsed);
+        renderStructuredSummary(summaryPanel, parsed, renderOpts);
       }
       summaryPanel.style.display = 'block';
       return ts;
@@ -343,7 +350,7 @@ export const buildSummarizeWidget = ({
   }
   if (cached?.parsed) {
     showDateRow(cached.ts);
-    renderStructuredSummary(summaryPanel, cached.parsed);
+    renderStructuredSummary(summaryPanel, cached.parsed, renderOpts);
     summaryPanel.style.display = 'block';
   }
 
