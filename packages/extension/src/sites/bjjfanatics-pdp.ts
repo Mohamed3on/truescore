@@ -140,14 +140,7 @@ Each review may be prefixed with [Ranking: BLUE | How old are you?: 33-40 | How 
 
 If 2+ reviewers mention a specific better alternative course or instructor by name, note it and explain how reviewers compare.
 
-The conclusion is the single most important field — write it like a buying verdict, not an essay. Use this exact structure (markdown):
-
-**Verdict:** one decisive sentence — buy / skip / who it's for. Lead with the bottom line.
-**Takeaway:** one sentence — the single most important idea reviewers walked away with, in concrete BJJ terms.
-**Start with:** specific volumes/parts/chapters reviewers say to watch first.
-**Skip if:** what this course doesn't deliver, so the reader knows when to pass.
-
-Each line ≤ 25 words. No hedging, no "many reviewers say" — state it. Cite specific techniques and volumes by name.`;
+The conclusion is the most important field — write it like a buying verdict, not an essay. Lead with the bottom line: buy or skip, and for whom. Then the single most important takeaway reviewers walked away with, what to watch first, and what this course doesn't deliver so the reader knows when to pass. Be punchy and decisive, cite specific techniques and volumes by name, no hedging like "many reviewers say". Format however reads best — a few short paragraphs, bolded leads, or short bullets are all fine.`;
 
 const renderScoreCard = (wrapper: HTMLElement, score: number, nps: number, total: number) => {
   const card = document.createElement('a');
