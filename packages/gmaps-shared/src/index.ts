@@ -134,6 +134,83 @@ export const histogramFromPreview = (data: any): Histogram | null => {
   return [counts[4], counts[3], counts[2], counts[1], counts[0]];
 };
 
+export type DayHours = { day: string; label: string; openHour?: number; closeHour?: number };
+export type PlaceMeta = {
+  canonicalName?: string;
+  address?: string;
+  locality?: string;
+  lat?: number;
+  lng?: number;
+  googleRating?: number;
+  googleReviewCount?: number;
+  priceRange?: string;
+  category?: string;
+  photoUrl?: string;
+  timezone?: string;
+  hoursWeek?: DayHours[];
+};
+
+const decodeCategory = (raw: unknown): string | undefined => {
+  if (typeof raw !== 'string') return undefined;
+  const s = raw.replace(/^SearchResult\.TYPE_/, '').toLowerCase().replace(/_/g, ' ').trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : undefined;
+};
+
+// Find the first lh3 photo URL anywhere inside a photos block. The exact path
+// drifts between place types; deep-search is more robust than fixed indices.
+const findPhotoUrl = (v: any, depth = 0): string | undefined => {
+  if (depth > 8 || v == null) return undefined;
+  if (typeof v === 'string' && v.startsWith('https://lh3.googleusercontent.com/')) return v;
+  if (Array.isArray(v)) {
+    for (const c of v) { const r = findPhotoUrl(c, depth + 1); if (r) return r; }
+  }
+  return undefined;
+};
+
+const resizePhoto = (url: string, w: number, h: number): string =>
+  url.replace(/=w\d+-h\d+(-k)?(-no)?$/, '') + `=w${w}-h${h}-k-no`;
+
+const parseHoursDay = (entry: any): DayHours | null => {
+  const day = entry?.[0];
+  const slot = entry?.[3]?.[0];
+  if (typeof day !== 'string') return null;
+  if (!slot) return { day, label: 'Closed' };
+  const label = typeof slot[0] === 'string' ? slot[0] : '';
+  const openHour = slot?.[1]?.[0]?.[0];
+  const closeHour = slot?.[1]?.[1]?.[0];
+  return {
+    day,
+    label: label || '—',
+    openHour: typeof openHour === 'number' ? openHour : undefined,
+    closeHour: typeof closeHour === 'number' ? closeHour : undefined,
+  };
+};
+
+export const metaFromPreview = (data: any): PlaceMeta => {
+  const six = data?.[6];
+  if (!six) return {};
+  const ratingBlock = six[4];
+  const photo = findPhotoUrl(six[51]) ?? findPhotoUrl(six[37]);
+  const hoursRaw = six[203]?.[0];
+  const hoursWeek = Array.isArray(hoursRaw)
+    ? hoursRaw.map(parseHoursDay).filter((d): d is DayHours => d !== null)
+    : undefined;
+  return {
+    canonicalName: typeof six[11] === 'string' ? six[11] : undefined,
+    address: typeof six[39] === 'string' ? six[39] : undefined,
+    locality: typeof six[166] === 'string' ? six[166] : undefined,
+    lat: typeof six[9]?.[2] === 'number' ? six[9][2] : undefined,
+    lng: typeof six[9]?.[3] === 'number' ? six[9][3] : undefined,
+    googleRating: typeof ratingBlock?.[7] === 'number' ? ratingBlock[7] : undefined,
+    googleReviewCount: typeof ratingBlock?.[8] === 'number' ? ratingBlock[8] : undefined,
+    priceRange: typeof ratingBlock?.[2] === 'string' ? ratingBlock[2] : undefined,
+    category: decodeCategory(six[88]?.[1]),
+    photoUrl: photo ? resizePhoto(photo, 800, 320) : undefined,
+    timezone: typeof six[30] === 'string' ? six[30] : undefined,
+    hoursWeek: hoursWeek?.length ? hoursWeek : undefined,
+  };
+};
+
 export const overallPctFromHistogram = (h: Histogram): number => {
   const total = h.reduce((a, b) => a + b, 0);
   if (!total) return 0;

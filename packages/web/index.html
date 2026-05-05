@@ -61,6 +61,7 @@
         <dt>REVIEWS</dt><dd>Total · trusted.</dd>
         <dt>RELEVANT</dt><dd>Score from Google&rsquo;s &ldquo;Most relevant&rdquo; reviews.</dd>
         <dt>NEWEST</dt><dd>Score from recent reviews. Delta vs RELEVANT is the trend.</dd>
+        <dt>LATEST</dt><dd>How recent the most recent review we pulled is.</dd>
         <dt>VALUE</dt><dd>Worth-it score, /5, extracted from review text.</dd>
         <dt>HIGHLIGHTS</dt><dd>Topics from reviews. Click a chip to read the actual reviews about it, then summarize.</dd>
       </dl>
@@ -69,7 +70,18 @@
 
   <section id="result" hidden>
     <div class="place">
-      <span class="place-name" id="name"></span>
+      <img class="place-photo" id="placePhoto" hidden alt="" loading="lazy" referrerpolicy="no-referrer">
+      <a class="place-name" id="name" target="_blank" rel="noopener noreferrer"></a>
+      <div class="place-meta-row" id="placeMetaRow" hidden>
+        <span class="place-tag" id="placeCategory" hidden></span>
+        <span class="place-tag" id="placePrice" hidden></span>
+        <span class="place-google" id="placeGoogle" hidden></span>
+      </div>
+      <div class="place-address" id="placeAddress" hidden></div>
+      <div class="place-hours" id="placeHours" hidden>
+        <span class="place-hours-status" id="placeHoursStatus" hidden></span>
+        <span class="place-hours-today" id="placeHoursToday"></span>
+      </div>
     </div>
     <div class="score-row">
       <div class="score-block">
@@ -81,6 +93,7 @@
         <div class="meta-row"><span class="micro">REVIEWS</span><span id="reviewsLabel" class="num">—</span></div>
         <div class="meta-row"><span class="micro">RELEVANT</span><span id="relevantPct" class="num">—</span></div>
         <div class="meta-row"><span class="micro">NEWEST</span><span class="num"><span id="newestPct">—</span><span id="newestDelta" class="delta"></span></span></div>
+        <div class="meta-row" id="freshnessRow" hidden><span class="micro">LATEST</span><span class="num" id="freshnessLabel">—</span></div>
         <div class="meta-row"><span class="micro">VALUE</span><span id="valueForMoney" class="num">—</span></div>
       </div>
     </div>

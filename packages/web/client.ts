@@ -13,12 +13,29 @@ type Score = {
   reviews: Review[];
 };
 type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney: number };
+type DayHours = { day: string; label: string; openHour?: number; closeHour?: number };
+type PlaceMeta = {
+  canonicalName?: string;
+  address?: string;
+  locality?: string;
+  lat?: number;
+  lng?: number;
+  googleRating?: number;
+  googleReviewCount?: number;
+  priceRange?: string;
+  category?: string;
+  photoUrl?: string;
+  timezone?: string;
+  hoursWeek?: DayHours[];
+};
 type LookupResponse = {
   name: string;
   score: Score;
   summary?: Summary;
   histogram?: number[];
   overallPct?: number | null;
+  meta?: PlaceMeta;
+  resolvedUrl?: string;
   cached?: boolean;
   fetchMs?: number;
   error?: string;
@@ -385,11 +402,19 @@ async function loadHighlights(force = false) {
 function renderScore(data: LookupResponse) {
   result.hidden = false;
   document.body.dataset.state = 'scored';
-  $('name').textContent = data.name || '(unnamed place)';
+  const nameEl = $('name') as HTMLAnchorElement;
+  nameEl.textContent = data.meta?.canonicalName || data.name || '(unnamed place)';
+  nameEl.href = data.resolvedUrl ?? `https://www.google.com/maps?q=&ftid=${data.score.featureId}`;
+  renderPlaceMeta(data.meta);
+  renderFreshness(data.score.reviews);
   const pctEl = $('scorePct');
   pctEl.textContent = `${data.score.scorePct}`;
   pctEl.className = `score-num ${scoreClass(data.score.scorePct)}`;
-  $('reviewsLabel').textContent = `${data.score.totalReviews} · ${data.score.trustedReviews}`;
+  const trustedPct = data.score.totalReviews
+    ? Math.round((data.score.trustedReviews / data.score.totalReviews) * 100)
+    : 0;
+  $('reviewsLabel').textContent =
+    `${data.score.totalReviews} · ${data.score.trustedReviews} (${trustedPct}%)`;
   $('relevantPct').textContent = `${data.score.relevant.scorePct}%`;
   $('newestPct').textContent = `${data.score.newest.scorePct}%`;
   const delta = data.score.newest.scorePct - data.score.relevant.scorePct;
@@ -421,6 +446,125 @@ function renderScore(data: LookupResponse) {
   while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
   while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
   while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
+}
+
+function formatHourLabel(h: number): string {
+  if (h === 0 || h === 24) return '12 AM';
+  if (h === 12) return '12 PM';
+  return h < 12 ? `${h} AM` : `${h - 12} PM`;
+}
+
+function localHourInTz(tz: string | undefined, now = new Date()): { day: number; hour: number } {
+  if (!tz) return { day: now.getDay(), hour: now.getHours() + now.getMinutes() / 60 };
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+    });
+    const parts = Object.fromEntries(fmt.formatToParts(now).map((p) => [p.type, p.value]));
+    const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    return {
+      day: dayMap[parts.weekday] ?? now.getDay(),
+      hour: parseInt(parts.hour, 10) + parseInt(parts.minute, 10) / 60,
+    };
+  } catch {
+    return { day: now.getDay(), hour: now.getHours() + now.getMinutes() / 60 };
+  }
+}
+
+function renderPlaceMeta(meta: PlaceMeta | undefined) {
+  const photoEl = $('placePhoto') as HTMLImageElement;
+  const metaRow = $('placeMetaRow');
+  const categoryEl = $('placeCategory');
+  const priceEl = $('placePrice');
+  const googleEl = $('placeGoogle');
+  const addressEl = $('placeAddress');
+  const hoursEl = $('placeHours');
+  const hoursStatusEl = $('placeHoursStatus');
+  const hoursTodayEl = $('placeHoursToday');
+
+  if (meta?.photoUrl) {
+    photoEl.src = meta.photoUrl;
+    photoEl.hidden = false;
+  } else {
+    photoEl.removeAttribute('src');
+    photoEl.hidden = true;
+  }
+
+  const showTag = (el: HTMLElement, text: string | undefined) => {
+    if (text) { el.textContent = text; el.hidden = false; } else { el.hidden = true; }
+  };
+  showTag(categoryEl, meta?.category);
+  showTag(priceEl, meta?.priceRange);
+
+  if (meta?.googleRating != null) {
+    while (googleEl.firstChild) googleEl.removeChild(googleEl.firstChild);
+    const star = document.createElement('span');
+    star.className = 'star';
+    star.textContent = '★';
+    const num = document.createElement('span');
+    num.textContent = meta.googleRating.toFixed(1);
+    googleEl.append(star, num);
+    if (meta.googleReviewCount != null) {
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = ` · ${meta.googleReviewCount.toLocaleString()} on Google`;
+      googleEl.appendChild(count);
+    }
+    googleEl.hidden = false;
+  } else {
+    googleEl.hidden = true;
+  }
+
+  metaRow.hidden = !(meta?.category || meta?.priceRange || meta?.googleRating != null);
+
+  if (meta?.address) {
+    addressEl.textContent = meta.address;
+    addressEl.hidden = false;
+  } else {
+    addressEl.hidden = true;
+  }
+
+  const week = meta?.hoursWeek;
+  if (week && week.length) {
+    const { day, hour } = localHourInTz(meta?.timezone);
+    const today = week.find((d) => {
+      const idx = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].indexOf(d.day);
+      return idx === day;
+    }) ?? week[0];
+    let isOpen: boolean | null = null;
+    if (today?.openHour != null && today.closeHour != null) {
+      const open = today.openHour;
+      const close = today.closeHour <= open ? today.closeHour + 24 : today.closeHour;
+      const cur = hour < open ? hour + 24 : hour;
+      isOpen = cur >= open && cur < close;
+    } else if (today?.label === 'Closed') {
+      isOpen = false;
+    }
+    hoursStatusEl.className = `place-hours-status ${isOpen ? 'open' : isOpen === false ? 'closed' : ''}`;
+    hoursStatusEl.textContent = isOpen ? 'OPEN' : isOpen === false ? 'CLOSED' : '';
+    hoursStatusEl.hidden = isOpen === null;
+    const hoursLabel = today?.openHour != null && today.closeHour != null
+      ? `${formatHourLabel(today.openHour)}–${formatHourLabel(today.closeHour)}`
+      : (today?.label ?? '');
+    hoursTodayEl.textContent = hoursLabel ? `${today.day.slice(0, 3)} · ${hoursLabel}` : '';
+    hoursEl.hidden = false;
+  } else {
+    hoursEl.hidden = true;
+  }
+}
+
+function renderFreshness(reviews: Review[]) {
+  const row = $('freshnessRow');
+  const label = $('freshnessLabel');
+  let latest = 0;
+  for (const r of reviews) {
+    if (r.timestamp != null && r.timestamp > latest) latest = r.timestamp;
+  }
+  if (!latest) { row.hidden = true; return; }
+  // Google review timestamps come in microseconds; normalise to ms.
+  const ms = latest > 1e14 ? latest / 1000 : latest;
+  label.textContent = timeAgo(ms);
+  row.hidden = false;
 }
 
 function renderOverall(overallPct: number | null, mergedPct: number) {

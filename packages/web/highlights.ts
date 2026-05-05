@@ -13,11 +13,7 @@ export type Highlight = {
 };
 
 export async function harvestTokens(placeUrl: string): Promise<{ label: string; count: number; token: string }[]> {
-  try {
-    return chipsFromPreview(await fetchPlacePreview(placeUrl));
-  } catch {
-    return [];
-  }
+  return chipsFromPreview(await fetchPlacePreview(placeUrl));
 }
 
 export async function scoreHighlights(

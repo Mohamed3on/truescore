@@ -2,6 +2,7 @@ import { homedir } from 'os';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './gemini';
 import type { Highlight } from './highlights';
+import type { PlaceMeta } from './histogram';
 
 const PATH = process.env.TRUESCORE_CACHE_PATH || `${homedir()}/.truescore-cache.json`;
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
@@ -22,6 +23,8 @@ export type CacheEntry = {
   searches?: Record<string, SearchResult>; // keyed by lowercase query
   histogram?: number[];
   histogramTs?: number;
+  meta?: PlaceMeta;
+  metaTs?: number;
   lastAccessTs?: number;
   accessCount?: number;
 };
@@ -150,6 +153,23 @@ export const cache = {
     const existing = store[featureId];
     if (!existing) return;
     store[featureId] = { ...existing, histogram, histogramTs: Date.now() };
+    await flush();
+  },
+  async putMeta(featureId: string, meta: PlaceMeta) {
+    const existing = store[featureId];
+    if (!existing) return;
+    store[featureId] = { ...existing, meta, metaTs: Date.now() };
+    await flush();
+  },
+  async putPreviewBundle(featureId: string, histogram: number[] | null, meta: PlaceMeta) {
+    const existing = store[featureId];
+    if (!existing) return;
+    const next: CacheEntry = { ...existing, meta, metaTs: Date.now() };
+    if (histogram) {
+      next.histogram = histogram;
+      next.histogramTs = Date.now();
+    }
+    store[featureId] = next;
     await flush();
   },
 };

@@ -1,7 +1,7 @@
 import { resolvePlace } from './resolve';
 import { scorePlace, fetchAllForSearch, type Review } from './gmaps';
 import { summarize, ask } from './gemini';
-import { fetchHistogram, overallPctFromHistogram, type Histogram } from './histogram';
+import { fetchPreviewBundle, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, scoreHighlights } from './highlights';
 import { cache } from './cache';
 import index from './index.html';
@@ -13,16 +13,17 @@ const mapsUrlFor = (featureId: string) => `https://www.google.com/maps?q=&ftid=$
 
 const PORT = Number(process.env.PORT || 3000);
 
-const histogramInflight = new Map<string, Promise<Histogram | null>>();
+const previewInflight = new Map<string, Promise<PreviewBundle>>();
 const revalidateInflight = new Map<string, Promise<void>>();
 
-// Stale-while-revalidate: re-fetch the histogram, compare its total to the
+// Stale-while-revalidate: re-fetch the preview, compare its total to the
 // cached `totalReviewsAtCache`, and re-score if Google has new reviews.
 function revalidate(featureId: string, name: string, resolvedUrl: string): Promise<void> {
   const existing = revalidateInflight.get(featureId);
   if (existing) return existing;
   const p = (async () => {
-    const histogram = await getOrFetchHistogram(featureId, resolvedUrl).catch(() => null);
+    const bundle = await getOrFetchPreviewBundle(featureId, resolvedUrl).catch(() => null);
+    const histogram = bundle?.histogram ?? null;
     const currentTotal = histogram ? histogram.reduce((a, b) => a + b, 0) : null;
     if (currentTotal == null) return;
     const entry = cache.get(featureId);
@@ -35,23 +36,23 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
   return p;
 }
 
-function getOrFetchHistogram(featureId: string, url: string): Promise<Histogram | null> {
+function getOrFetchPreviewBundle(featureId: string, url: string): Promise<PreviewBundle> {
   const existing = cache.get(featureId);
-  if (existing?.histogram && cache.histogramFresh(existing)) {
-    return Promise.resolve(existing.histogram);
+  if (existing?.histogram && existing.meta && cache.histogramFresh(existing)) {
+    return Promise.resolve({ histogram: existing.histogram, meta: existing.meta });
   }
-  const inflight = histogramInflight.get(featureId);
+  const inflight = previewInflight.get(featureId);
   if (inflight) return inflight;
   const p = (async () => {
     try {
-      const h = await fetchHistogram(url);
-      if (h) await cache.putHistogram(featureId, h);
-      return h;
+      const bundle = await fetchPreviewBundle(url);
+      await cache.putPreviewBundle(featureId, bundle.histogram, bundle.meta);
+      return bundle;
     } finally {
-      histogramInflight.delete(featureId);
+      previewInflight.delete(featureId);
     }
   })();
-  histogramInflight.set(featureId, p);
+  previewInflight.set(featureId, p);
   return p;
 }
 
@@ -76,16 +77,18 @@ Bun.serve({
               summary: cached.summary,
               histogram: cached.histogram,
               overallPct: cached.histogram ? overallPctFromHistogram(cached.histogram) : null,
+              meta: cached.meta,
+              resolvedUrl: cached.resolvedUrl ?? mapsUrlFor(featureId),
               cached: true,
             });
           }
 
-          // Cold path: nothing cached. Fetch histogram in parallel with score scrape.
-          const histogramPromise = getOrFetchHistogram(featureId, resolvedUrl)
-            .catch((e) => { console.error('[histogram]', e); return null; });
+          // Cold path: nothing cached. Fetch preview (histogram + meta) in parallel with score scrape.
+          const bundlePromise = getOrFetchPreviewBundle(featureId, resolvedUrl)
+            .catch((e) => { console.error('[preview]', e); return { histogram: null, meta: {} } as PreviewBundle; });
           const t0 = Date.now();
           const score = await scorePlace(featureId);
-          const histogram = await histogramPromise;
+          const { histogram, meta } = await bundlePromise;
           const currentTotal = histogram ? histogram.reduce((a, b) => a + b, 0) : null;
           await cache.putScore(featureId, name, score, currentTotal, resolvedUrl);
           return json({
@@ -94,6 +97,8 @@ Bun.serve({
             summary: undefined,
             histogram,
             overallPct: histogram ? overallPctFromHistogram(histogram) : null,
+            meta,
+            resolvedUrl,
             fetchMs: Date.now() - t0,
             cached: false,
           });
@@ -134,7 +139,7 @@ Bun.serve({
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
           const url = entry.resolvedUrl ?? mapsUrlFor(featureId);
-          const histogram = await getOrFetchHistogram(featureId, url);
+          const { histogram } = await getOrFetchPreviewBundle(featureId, url);
           if (!histogram) return json({ error: 'histogram unavailable' }, 500);
           return json({ histogram, overallPct: overallPctFromHistogram(histogram), cached: cache.histogramFresh(entry) });
         } catch (e) {
@@ -162,25 +167,36 @@ Bun.serve({
     },
     '/api/highlights': {
       POST: async (req) => {
+        let featureId = '';
         try {
-          const { featureId, force } = await req.json() as { featureId: string; force?: boolean };
+          const body = await req.json() as { featureId: string; force?: boolean };
+          featureId = body.featureId;
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
-          if (entry.highlights && !force) return json({ highlights: entry.highlights, cached: true });
+          if (entry.highlights && !body.force) return json({ highlights: entry.highlights, cached: true });
           const url = entry.resolvedUrl ?? mapsUrlFor(featureId);
           const tokens = await harvestTokens(url);
-          if (!tokens.length) return json({ error: 'no highlights found for this place' }, 404);
-          const scored = await scoreHighlights(featureId, tokens);
-          // Skip caching when every chip came back empty — likely a transient
-          // upstream failure (rate limit, proxy hiccup). Returning 404 lets the
-          // next request retry instead of locking in a broken result.
-          if (!scored.some((h) => (h.fetched ?? 0) > 0)) {
+          if (!tokens.length) {
+            console.warn(`[highlights] ${entry.name} (${featureId}): preview returned no chips — ${url}`);
             return json({ error: 'no highlights found for this place' }, 404);
           }
+          const scored = await scoreHighlights(featureId, tokens);
+          const totalFetched = scored.reduce((a, h) => a + (h.fetched ?? 0), 0);
+          // Skip caching when every chip came back empty — likely a transient
+          // upstream hiccup. 404 lets the next request retry.
+          if (!totalFetched) {
+            console.warn(
+              `[highlights] ${entry.name} (${featureId}): all ${scored.length} chips fetched 0 reviews ` +
+              `(likely upstream throttle). chips=[${scored.map((h) => h.label).join(', ')}] url=${url}`,
+            );
+            return json({ error: 'no highlights found for this place' }, 404);
+          }
+          console.log(`[highlights] ${entry.name} (${featureId}): ${scored.length} chips, ${totalFetched} reviews`);
           await cache.putHighlights(featureId, scored);
           return json({ highlights: scored, cached: false });
         } catch (e) {
-          console.error('[highlights]', e);
+          const entry = featureId ? cache.get(featureId) : null;
+          console.error(`[highlights] ${entry?.name ?? '?'} (${featureId || '?'}):`, e);
           return json(errBody(e), 400);
         }
       },

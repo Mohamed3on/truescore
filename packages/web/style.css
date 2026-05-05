@@ -337,14 +337,99 @@ section#result::before {
 }
 
 .place {
-  margin-bottom: 18px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.place-photo {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--hairline);
+  background: var(--t5);
 }
 .place-name {
   font-family: 'Sora', sans-serif;
   font-weight: 500;
   font-size: 20px;
   color: var(--t1);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 200ms var(--ease);
 }
+.place-name::after {
+  content: '↗';
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  color: var(--t4);
+  transition: transform 200ms var(--ease), color 200ms var(--ease);
+}
+.place-name:hover { color: var(--gold); }
+.place-name:hover::after { color: var(--gold); transform: translate(1px, -1px); }
+.place-name:focus-visible { outline: 1px solid var(--hairline); outline-offset: 4px; border-radius: 2px; }
+
+.place-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--t2);
+}
+.place-tag {
+  padding: 2px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--t2);
+  background: var(--t5);
+}
+.place-google {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+  color: var(--t2);
+}
+.place-google .star { color: var(--gold); font-size: 12px; }
+.place-google .count { color: var(--t3); }
+
+.place-address {
+  font-family: 'Sora', sans-serif;
+  font-weight: 300;
+  font-size: 13px;
+  color: var(--t3);
+  line-height: 1.45;
+}
+
+.place-hours {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--t3);
+  font-variant-numeric: tabular-nums;
+}
+.place-hours-status {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.place-hours-status.open { color: var(--pos); background: rgba(74, 222, 128, 0.1); border: 1px solid rgba(74, 222, 128, 0.25); }
+.place-hours-status.closed { color: var(--neg); background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.25); }
+.place-hours-today { color: var(--t2); }
 
 .score-row {
   display: grid;
