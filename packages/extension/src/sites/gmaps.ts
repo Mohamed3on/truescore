@@ -100,6 +100,7 @@ const getGeminiEndpoint = () => geminiEndpoint(getGeminiKey());
 let currentOption: Period = 'total';
 let lastFeatureId = '';
 let lastUrl = '';
+let chipViewMode: 'reviews' | 'summary' = 'reviews';
 let fullPctObserver: MutationObserver | null = null;
 let lastVisibleKey = '';
 let staleHistogramKey: string | null = null;
@@ -907,6 +908,7 @@ const showChipPanel = (h: Highlight) => {
   title.textContent = `${h.label.toUpperCase()} · ${score}% · ${h.score?.trustedReviews ?? 0}/${h.reviews?.length ?? h.count}`;
   panel.style.display = 'block';
   sumBtn.disabled = false;
+  chipViewMode = h.summary ? 'summary' : 'reviews';
   sumBtn.textContent = h.summary ? 'Show Reviews' : 'Summarize';
   if (h.summary) renderSummary(cardEls.chipPanelBody!, h.summary);
   else renderChipReviews(h);
@@ -927,15 +929,16 @@ const summarizeActiveChip = async () => {
   const body = cardEls.chipPanelBody;
   const sumBtn = cardEls.chipSummarizeBtn;
   if (!body || !sumBtn) return;
-  // toggle if already summarized
-  if (h.summary && sumBtn.textContent === 'Show Reviews') {
+  if (h.summary && chipViewMode === 'summary') {
     renderChipReviews(h);
     sumBtn.textContent = 'Summarize';
+    chipViewMode = 'reviews';
     return;
   }
   if (h.summary) {
     renderSummary(body, h.summary);
     sumBtn.textContent = 'Show Reviews';
+    chipViewMode = 'summary';
     return;
   }
   sumBtn.disabled = true;
@@ -958,6 +961,7 @@ const summarizeActiveChip = async () => {
       body.className = 'rc-chip-body';
       renderSummary(body, result);
       sumBtn.textContent = 'Show Reviews';
+      chipViewMode = 'summary';
     }
   } catch (e) {
     console.error('[highlights] summary failed', e);
