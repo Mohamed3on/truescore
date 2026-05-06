@@ -30,9 +30,35 @@ const PORT = Number(process.env.PORT || 3000);
 
 const previewInflight = new Map<string, Promise<PreviewBundle>>();
 const revalidateInflight = new Map<string, Promise<void>>();
+const highlightsRecomputeInflight = new Map<string, Promise<void>>();
+
+const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
+
+async function recomputeHighlights(featureId: string, name: string, url: string): Promise<void> {
+  const chips = await harvestTokens(url);
+  if (!chips.length) return;
+  const successes: Highlight[] = [];
+  let failures = 0;
+  await Promise.all(chips.map(async (chip) => {
+    try {
+      successes.push(await scoreHighlight(featureId, chip));
+    } catch (e) {
+      failures++;
+      console.warn(`[recompute-highlights] ${name} (${featureId}): chip "${chip.label}" failed:`, e);
+    }
+  }));
+  const totalFetched = successes.reduce((a, h) => a + (h.fetched ?? 0), 0);
+  if (failures === 0 && totalFetched > 0) {
+    await cache.putHighlights(featureId, successes);
+    console.log(`[recompute-highlights] ${name} (${featureId}): ${successes.length}/${chips.length} chips, ${totalFetched} reviews`);
+  } else {
+    console.log(`[recompute-highlights] ${name} (${featureId}): not cached (${successes.length}/${chips.length} chips, ${failures} failed, ${totalFetched} reviews)`);
+  }
+}
 
 // Stale-while-revalidate: re-fetch the preview, compare its total to the
 // cached `totalReviewsAtCache`, and re-score if Google has new reviews.
+// Highlights are recomputed in the background only when drift exceeds 1%.
 function revalidate(featureId: string, name: string, resolvedUrl: string): Promise<void> {
   const existing = revalidateInflight.get(featureId);
   if (existing) return existing;
@@ -42,10 +68,22 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
     const currentTotal = histogram ? histogram.reduce((a, b) => a + b, 0) : null;
     if (currentTotal == null) return;
     const entry = cache.get(featureId);
-    if (entry && entry.totalReviewsAtCache === currentTotal) return; // still fresh
+    const prevTotal = entry?.totalReviewsAtCache;
+    const hadHighlights = !!entry?.highlights?.length;
+    if (entry && prevTotal === currentTotal) return; // still fresh
     const score = await scorePlace(featureId);
     await cache.putScore(featureId, name, score, currentTotal, resolvedUrl);
-    console.log(`[revalidate] ${name}: total ${entry?.totalReviewsAtCache ?? 'unset'} → ${currentTotal}, re-scored`);
+    console.log(`[revalidate] ${name}: total ${prevTotal ?? 'unset'} → ${currentTotal}, re-scored`);
+
+    if (hadHighlights && prevTotal != null) {
+      const drift = Math.abs(currentTotal - prevTotal) / prevTotal;
+      if (drift > HIGHLIGHTS_DRIFT_THRESHOLD && !highlightsRecomputeInflight.has(featureId)) {
+        const hp = recomputeHighlights(featureId, name, resolvedUrl)
+          .catch((e) => console.error(`[recompute-highlights] ${name} (${featureId}):`, e))
+          .finally(() => highlightsRecomputeInflight.delete(featureId));
+        highlightsRecomputeInflight.set(featureId, hp);
+      }
+    }
   })().finally(() => revalidateInflight.delete(featureId));
   revalidateInflight.set(featureId, p);
   return p;

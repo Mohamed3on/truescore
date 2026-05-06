@@ -46,6 +46,7 @@ type CardEls = {
   highlightsSection?: HTMLElement;
   highlightsList?: HTMLElement;
   highlightsBtn?: HTMLButtonElement;
+  highlightsStale?: HTMLElement;
   chipPanel?: HTMLElement;
   chipPanelTitle?: HTMLElement;
   chipPanelBody?: HTMLElement;
@@ -399,11 +400,25 @@ const getHistogramTotal = (): number | null => {
   return counts ? counts.reduce((a, b) => a + b, 0) : null;
 };
 
+const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
+
+const updateHighlightsStaleBadge = () => {
+  const badge = cardEls.highlightsStale;
+  if (!badge) return;
+  const cached = highlightsState?.totalReviewsAtCache;
+  const total = getHistogramTotal();
+  const stale = cached != null && total != null && cached !== total && !!highlightsState?.items.length;
+  badge.style.display = stale ? '' : 'none';
+};
+
 const invalidateStaleCaches = (currentTotal: number) => {
-  if (highlightsState?.totalReviewsAtCache != null && highlightsState.totalReviewsAtCache !== currentTotal) {
-    highlightsState = null;
-    saveHighlightsCache();
-    renderHighlights();
+  if (highlightsState?.totalReviewsAtCache != null && highlightsState.totalReviewsAtCache !== currentTotal && highlightsState.items.length) {
+    const drift = Math.abs(currentTotal - highlightsState.totalReviewsAtCache) / highlightsState.totalReviewsAtCache;
+    if (drift > HIGHLIGHTS_DRIFT_THRESHOLD && !highlightsBusy) {
+      void computeHighlights(true);
+    } else {
+      updateHighlightsStaleBadge();
+    }
   }
   // SWR: histogram total still matches, cached aggregates are fresh. Only
   // abort the speculative refetches when bodies are also cached; old entries
@@ -867,6 +882,7 @@ const renderHighlights = () => {
     chip.onclick = () => onChipClick(h);
     list.appendChild(chip);
   }
+  updateHighlightsStaleBadge();
 };
 
 const onChipClick = (h: Highlight) => {
@@ -1124,7 +1140,13 @@ const createUIElements = () => {
 
   const hlSec = el('div', 'rc-highlights-section');
   const hlHeader = el('div', 'rc-highlights-header');
-  hlHeader.appendChild(el('span', 'rc-highlights-title', 'Highlights'));
+  const hlTitleWrap = el('div', 'rc-highlights-title-wrap');
+  hlTitleWrap.appendChild(el('span', 'rc-highlights-title', 'Highlights'));
+  const hlStale = el('span', 'rc-highlights-stale', 'stale');
+  hlStale.title = 'New reviews since these were computed';
+  hlStale.style.display = 'none';
+  hlTitleWrap.appendChild(hlStale);
+  hlHeader.appendChild(hlTitleWrap);
   const hlBtn = el('button', 'rc-highlights-btn', 'Compute Highlights') as HTMLButtonElement;
   hlBtn.type = 'button';
   hlBtn.onclick = () => computeHighlights(!!highlightsState);
@@ -1136,6 +1158,7 @@ const createUIElements = () => {
   cardEls.highlightsSection = hlSec;
   cardEls.highlightsList = hlList;
   cardEls.highlightsBtn = hlBtn;
+  cardEls.highlightsStale = hlStale;
   if (highlightsState && highlightsState.items.length) renderHighlights();
 
   const searchSec = el('div', 'rc-search-section');

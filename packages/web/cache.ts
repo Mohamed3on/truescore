@@ -54,13 +54,6 @@ async function flush() {
   await Bun.write(PATH, JSON.stringify(store));
 }
 
-// Both must be non-null and different. Null on either side = treat as unchanged
-// (e.g. a histogram fetch failed; we don't want to needlessly invalidate).
-function currentTotalChanged(prev: number | null | undefined, next: number | null | undefined): boolean {
-  if (prev == null || next == null) return false;
-  return prev !== next;
-}
-
 await load();
 
 export const cache = {
@@ -80,30 +73,13 @@ export const cache = {
   },
   async putScore(featureId: string, name: string, score: ScoreResult, totalReviewsAtCache: number | null, resolvedUrl?: string) {
     const existing = store[featureId];
-    // If total review count changed (or we couldn't determine it before), wipe
-    // all review-derived caches. Otherwise preserve summary/highlights/searches.
-    const totalChanged =
-      existing != null &&
-      currentTotalChanged(existing.totalReviewsAtCache, totalReviewsAtCache);
-    const preserved = totalChanged
-      ? {}
-      : {
-          summary: existing?.summary,
-          summaryTs: existing?.summaryTs,
-          highlights: existing?.highlights,
-          highlightsTs: existing?.highlightsTs,
-          highlightSummaries: existing?.highlightSummaries,
-          searches: existing?.searches,
-        };
     store[featureId] = {
-      ...preserved,
+      ...existing,
       name,
       resolvedUrl: resolvedUrl ?? existing?.resolvedUrl,
       score,
       scoreTs: Date.now(),
       totalReviewsAtCache: totalReviewsAtCache ?? existing?.totalReviewsAtCache,
-      histogram: existing?.histogram,
-      histogramTs: existing?.histogramTs,
       lastAccessTs: existing?.lastAccessTs ?? Date.now(),
       accessCount: existing?.accessCount ?? 1,
     };

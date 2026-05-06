@@ -421,6 +421,11 @@
   align-items: center;
   margin-bottom: 8px;
 }
+.rc-highlights-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .rc-highlights-title {
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 500;
@@ -428,6 +433,15 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.5);
+}
+.rc-highlights-stale {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 500;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #E8B86D;
+  cursor: help;
 }
 .rc-highlights-btn {
   font-family: 'IBM Plex Mono', monospace;
