@@ -163,9 +163,19 @@ type ScoreCacheEntry = {
   // entries written before this field existed; old entries trigger a refetch
   // on next visit and get rewritten with the new shape.
   reviews?: Record<string, Review>;
+  // v2: per-sort review IDs so hydration can rebuild each reviewMap without
+  // cross-pollinating sorts. Together with `reviews`, these uniquely describe
+  // both sort-specific maps without duplicating bodies.
+  relevantIds?: string[];
+  newestIds?: string[];
 };
-type FullScoreCacheEntry = ScoreCacheEntry & { reviews: Record<string, Review> };
-const isFullyHydrated = (e: ScoreCacheEntry | null): e is FullScoreCacheEntry => !!e?.reviews;
+type FullScoreCacheEntry = ScoreCacheEntry & {
+  reviews: Record<string, Review>;
+  relevantIds: string[];
+  newestIds: string[];
+};
+const isFullyHydrated = (e: ScoreCacheEntry | null): e is FullScoreCacheEntry =>
+  !!e?.reviews && !!e?.relevantIds && !!e?.newestIds;
 let cachedScoreState: ScoreCacheEntry | null = null;
 // Set when invalidateStaleCaches confirms the cache is fresh and aborts the
 // speculative refetches. Tells persistScoreCacheIfReady to skip — otherwise a
@@ -201,6 +211,12 @@ const makeReviewData = (): ReviewData => ({
   reviewsScores: { total: 0, inPastYear: 0, inPastMonth: 0 },
   trustedReviews: { total: 0, inPastYear: 0, inPastMonth: 0 },
   totalReviews: { total: 0, inPastYear: 0, inPastMonth: 0 },
+});
+
+const cloneReviewData = (rd: ReviewData): ReviewData => ({
+  reviewsScores: { ...rd.reviewsScores },
+  trustedReviews: { ...rd.trustedReviews },
+  totalReviews: { ...rd.totalReviews },
 });
 
 const makeState = (): SortState => ({ reviewMap: {}, reviewData: makeReviewData(), isFetching: false, done: false, cursor: '', pageCount: 0 });
@@ -266,6 +282,8 @@ const persistScoreCacheIfReady = () => {
     newest: scores.newest.reviewData,
     merged: mergedRD,
     reviews: liveMerged,
+    relevantIds: Object.keys(scores.relevant.reviewMap),
+    newestIds: Object.keys(scores.newest.reviewMap),
   };
   // Old entries without bodies always re-persist so they get the new shape.
   if (isFullyHydrated(cachedScoreState) &&
@@ -1421,12 +1439,25 @@ const observer = new MutationObserver((mutations) => {
       if (!entry || getFeatureId() !== featureId || cachedScoreState) return;
       if (Object.keys(mergeReviewMaps()).length > 0) return;
       cachedScoreState = entry;
-      if (entry.reviews) {
-        // Reviews are immutable post-insert; the per-map outer clone keeps
-        // fetch-dedup independent per sort while letting both maps point at
-        // the same Review objects.
-        scores.relevant.reviewMap = { ...entry.reviews };
-        scores.newest.reviewMap = { ...entry.reviews };
+      if (isFullyHydrated(entry)) {
+        // Restore each sort's reviewMap from its own ID list — keeps dedup
+        // namespaces distinct across sorts. Restore reviewData too: otherwise
+        // the live refetch's dedup-skip of cached reviews leaves them out of
+        // per-sort aggregates, and the next persist writes a cache where
+        // per-sort stats track only recent additions while merged tracks the
+        // full union.
+        const pickFrom = (ids: string[]) => {
+          const out: Record<string, Review> = {};
+          for (const id of ids) {
+            const r = entry.reviews[id];
+            if (r) out[id] = r;
+          }
+          return out;
+        };
+        scores.relevant.reviewMap = pickFrom(entry.relevantIds);
+        scores.newest.reviewMap = pickFrom(entry.newestIds);
+        scores.relevant.reviewData = cloneReviewData(entry.relevant);
+        scores.newest.reviewData = cloneReviewData(entry.newest);
       }
       updateUI();
     }).catch((e) => console.warn('[gmaps] load score cache failed', e));
