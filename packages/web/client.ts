@@ -116,16 +116,14 @@ function chipClass(pct: number, overall: number) {
   return pct >= overall ? 'pos' : 'neg';
 }
 
-function renderHighlights(highlights: Highlight[], opts: { sort?: boolean; activeToken?: string } = {}) {
+function renderHighlights(highlights: Highlight[], sort = false) {
   while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
   const weight = (h: Highlight) => {
     const r = (h.score?.scorePct ?? 0) / 100;
     return r * Math.abs(r) * h.count;
   };
   const isAbove = (h: Highlight) => (h.score?.scorePct ?? 0) >= currentMergedPct;
-  // During streaming we keep chips in the order they were announced, so the
-  // user sees stable rows fill in. After 'done' we sort once by weight.
-  const list = opts.sort
+  const list = sort
     ? [...highlights].sort((a, b) => {
         const above = Number(isAbove(b)) - Number(isAbove(a));
         if (above !== 0) return above;
@@ -140,7 +138,6 @@ function renderHighlights(highlights: Highlight[], opts: { sort?: boolean; activ
     btn.dataset.token = h.token;
     if (state === 'loading') btn.classList.add('loading');
     if (state === 'error') btn.classList.add('errored');
-    if (opts.activeToken === h.token) btn.classList.add('active');
     if (state === 'error' && h.error) btn.title = h.error;
     const label = document.createElement('span');
     label.className = 'label';
@@ -415,7 +412,7 @@ async function loadHighlights(force = false) {
     if (!resp.ok) throw new Error(data.error || `request failed (${resp.status})`);
     if (data.error) throw new Error(data.error);
     if (data.highlights && data.highlights.length) {
-      renderHighlights(data.highlights, { sort: true });
+      renderHighlights(data.highlights, true);
       highlightsRefreshBtn.hidden = false;
     } else {
       highlightsRow.hidden = true;
@@ -428,9 +425,7 @@ async function loadHighlights(force = false) {
 async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
-  // Preserve the order chips were announced; mutate in place as results arrive.
   const chipMap = new Map<string, Highlight>();
-  const renderStreaming = () => renderHighlights([...chipMap.values()]);
   let buffer = '';
   let lastFailures = 0;
   while (true) {
@@ -443,24 +438,26 @@ async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
       buffer = buffer.slice(nl + 1);
       if (!line) continue;
       const evt = JSON.parse(line) as HighlightStreamEvent;
-      if (evt.type === 'chips') {
-        chipMap.clear();
-        for (const c of evt.chips) chipMap.set(c.token, { ...c, state: 'loading' });
-        renderStreaming();
-      } else if (evt.type === 'chip') {
-        chipMap.set(evt.highlight.token, { ...evt.highlight, state: 'done' });
-        renderStreaming();
-      } else if (evt.type === 'chip-error') {
-        const existing = chipMap.get(evt.token);
-        chipMap.set(evt.token, {
-          ...(existing ?? { token: evt.token, label: evt.label, count: 0 }),
-          state: 'error',
-          error: evt.error,
-        });
-        renderStreaming();
-      } else if (evt.type === 'done') {
-        lastFailures = evt.failures;
-        renderHighlights([...chipMap.values()], { sort: true });
+      switch (evt.type) {
+        case 'chips':
+          chipMap.clear();
+          for (const c of evt.chips) chipMap.set(c.token, { ...c, state: 'loading' });
+          renderHighlights([...chipMap.values()]);
+          break;
+        case 'chip':
+          chipMap.set(evt.highlight.token, { ...evt.highlight, state: 'done' });
+          renderHighlights([...chipMap.values()]);
+          break;
+        case 'chip-error': {
+          const existing = chipMap.get(evt.token) ?? { token: evt.token, label: evt.label, count: 0 };
+          chipMap.set(evt.token, { ...existing, state: 'error', error: evt.error });
+          renderHighlights([...chipMap.values()]);
+          break;
+        }
+        case 'done':
+          lastFailures = evt.failures;
+          renderHighlights([...chipMap.values()], true);
+          break;
       }
     }
   }

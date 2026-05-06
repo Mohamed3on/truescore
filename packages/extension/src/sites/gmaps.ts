@@ -213,12 +213,6 @@ const makeReviewData = (): ReviewData => ({
   totalReviews: { total: 0, inPastYear: 0, inPastMonth: 0 },
 });
 
-const cloneReviewData = (rd: ReviewData): ReviewData => ({
-  reviewsScores: { ...rd.reviewsScores },
-  trustedReviews: { ...rd.trustedReviews },
-  totalReviews: { ...rd.totalReviews },
-});
-
 const makeState = (): SortState => ({ reviewMap: {}, reviewData: makeReviewData(), isFetching: false, done: false, cursor: '', pageCount: 0 });
 const scores: Record<SortKey, SortState> = { relevant: makeState(), newest: makeState() };
 
@@ -1257,12 +1251,10 @@ const updateUI = () => {
   } else {
     const mergedRound = toPct(mergedPct);
     els.pctEl.childNodes[0].textContent = `${mergedRound}%`;
-    // Fall back to the cached per-sort data on cache hits before the live
-    // refetch lands — `getRoundedPct` already does, but the gate didn't.
-    const relTotal = scores.relevant.reviewData.totalReviews[currentOption] || cachedScoreState?.relevant.totalReviews[currentOption] || 0;
-    const newTotal = scores.newest.reviewData.totalReviews[currentOption] || cachedScoreState?.newest.totalReviews[currentOption] || 0;
-    const relLabel = relTotal ? `${getRoundedPct('relevant')}%` : '—';
-    const newLabel = newTotal ? `${getRoundedPct('newest')}%` : '—';
+    const sortTotal = (k: SortKey) =>
+      scores[k].reviewData.totalReviews[currentOption] || cachedScoreState?.[k].totalReviews[currentOption] || 0;
+    const relLabel = sortTotal('relevant') ? `${getRoundedPct('relevant')}%` : '—';
+    const newLabel = sortTotal('newest') ? `${getRoundedPct('newest')}%` : '—';
     els.tooltip.textContent = `Relevant: ${relLabel} · Newest: ${newLabel}`;
 
     if (fullPct !== null) {
@@ -1440,12 +1432,8 @@ const observer = new MutationObserver((mutations) => {
       if (Object.keys(mergeReviewMaps()).length > 0) return;
       cachedScoreState = entry;
       if (isFullyHydrated(entry)) {
-        // Restore each sort's reviewMap from its own ID list — keeps dedup
-        // namespaces distinct across sorts. Restore reviewData too: otherwise
-        // the live refetch's dedup-skip of cached reviews leaves them out of
-        // per-sort aggregates, and the next persist writes a cache where
-        // per-sort stats track only recent additions while merged tracks the
-        // full union.
+        // Restore reviewData too — otherwise the live refetch's dedup-skip of
+        // cached reviews leaves them out of per-sort aggregates.
         const pickFrom = (ids: string[]) => {
           const out: Record<string, Review> = {};
           for (const id of ids) {
@@ -1456,8 +1444,8 @@ const observer = new MutationObserver((mutations) => {
         };
         scores.relevant.reviewMap = pickFrom(entry.relevantIds);
         scores.newest.reviewMap = pickFrom(entry.newestIds);
-        scores.relevant.reviewData = cloneReviewData(entry.relevant);
-        scores.newest.reviewData = cloneReviewData(entry.newest);
+        scores.relevant.reviewData = structuredClone(entry.relevant);
+        scores.newest.reviewData = structuredClone(entry.newest);
       }
       updateUI();
     }).catch((e) => console.warn('[gmaps] load score cache failed', e));

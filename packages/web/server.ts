@@ -51,11 +51,10 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
   return p;
 }
 
-// Stream chip results as NDJSON so the UI can render each chip the moment its
-// reviews are scored, instead of waiting on the slowest of ~10 parallel
-// listugcposts fan-outs. A single chip's 502 no longer kills the batch — its
-// failure is reported in-line and the others still arrive. We only commit to
-// cache when *all* chips succeeded, otherwise the next request retries.
+// Cache only on full success so the next request retries cleanly when any
+// chip failed. The `closed` flag protects the cache write from being lost
+// if the consumer aborts mid-stream — without it, the first failed enqueue
+// would reject Promise.all before we could persist.
 function streamHighlights(name: string, featureId: string, url: string, chips: ChipMeta[]): Response {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -99,9 +98,7 @@ function streamHighlights(name: string, featureId: string, url: string, chips: C
       console.log(`[highlights] ${name} (${featureId}): ${tag}, ${totalFetched} reviews${cacheable ? '' : ' (not cached)'}`);
 
       write({ type: 'done', failures, totalFetched, cached: cacheable });
-      if (!closed) {
-        try { controller.close(); } catch {}
-      }
+      if (!closed) controller.close();
     },
   });
   return new Response(stream, {
