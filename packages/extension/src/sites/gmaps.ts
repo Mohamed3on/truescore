@@ -400,15 +400,6 @@ const getHistogramTotal = (): number | null => {
 };
 
 const invalidateStaleCaches = (currentTotal: number) => {
-  if (summaryCache.totalReviewsAtCache != null && summaryCache.totalReviewsAtCache !== currentTotal) {
-    summaryCache = { all: null };
-    saveSummaryCache();
-    if (cardEls.sumPanel) {
-      cardEls.sumPanel.textContent = '';
-      cardEls.sumPanel.style.display = 'none';
-    }
-    refreshSumBtnState();
-  }
   if (highlightsState?.totalReviewsAtCache != null && highlightsState.totalReviewsAtCache !== currentTotal) {
     highlightsState = null;
     saveHighlightsCache();
