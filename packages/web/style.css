@@ -663,7 +663,14 @@ section#result::before {
   color: var(--t3);
   font-variant-numeric: tabular-nums;
 }
-.chip[disabled] { opacity: 0.4; cursor: wait; }
+.chip[disabled] { opacity: 0.55; cursor: default; }
+.chip.loading[disabled] { cursor: wait; }
+.chip.errored[disabled] { cursor: not-allowed; }
+.chip.errored:hover { background: var(--t5); }
+.chip .pct.chip-pending {
+  color: var(--t3);
+  letter-spacing: 0.06em;
+}
 .chip-loading {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 10px;

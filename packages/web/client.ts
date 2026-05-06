@@ -26,8 +26,22 @@ type LookupResponse = {
 };
 type SummarizeResponse = { summary?: Summary; error?: string; cached?: boolean };
 type HistogramResponse = { histogram?: number[]; overallPct?: number; error?: string };
-type Highlight = { label: string; count: number; token: string; score?: SortStats; reviews?: Review[] };
+type ChipState = 'loading' | 'done' | 'error';
+type Highlight = {
+  label: string;
+  count: number;
+  token: string;
+  score?: SortStats;
+  reviews?: Review[];
+  state?: ChipState;
+  error?: string;
+};
 type HighlightsResponse = { highlights?: Highlight[]; cached?: boolean; error?: string };
+type HighlightStreamEvent =
+  | { type: 'chips'; chips: { label: string; count: number; token: string }[] }
+  | { type: 'chip'; highlight: Highlight }
+  | { type: 'chip-error'; token: string; label: string; error: string }
+  | { type: 'done'; failures: number; totalFetched: number; cached: boolean };
 type SearchResult = {
   query: string;
   totalReviews: number;
@@ -102,39 +116,61 @@ function chipClass(pct: number, overall: number) {
   return pct >= overall ? 'pos' : 'neg';
 }
 
-function renderHighlights(highlights: Highlight[], activeToken?: string) {
+function renderHighlights(highlights: Highlight[], opts: { sort?: boolean; activeToken?: string } = {}) {
   while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
   const weight = (h: Highlight) => {
     const r = (h.score?.scorePct ?? 0) / 100;
     return r * Math.abs(r) * h.count;
   };
   const isAbove = (h: Highlight) => (h.score?.scorePct ?? 0) >= currentMergedPct;
-  const sorted = [...highlights].sort((a, b) => {
-    const above = Number(isAbove(b)) - Number(isAbove(a));
-    if (above !== 0) return above;
-    return weight(b) - weight(a);
-  });
-  for (const h of sorted) {
+  // During streaming we keep chips in the order they were announced, so the
+  // user sees stable rows fill in. After 'done' we sort once by weight.
+  const list = opts.sort
+    ? [...highlights].sort((a, b) => {
+        const above = Number(isAbove(b)) - Number(isAbove(a));
+        if (above !== 0) return above;
+        return weight(b) - weight(a);
+      })
+    : highlights;
+  for (const h of list) {
+    const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'chip';
     btn.dataset.token = h.token;
-    if (activeToken === h.token) btn.classList.add('active');
+    if (state === 'loading') btn.classList.add('loading');
+    if (state === 'error') btn.classList.add('errored');
+    if (opts.activeToken === h.token) btn.classList.add('active');
+    if (state === 'error' && h.error) btn.title = h.error;
     const label = document.createElement('span');
     label.className = 'label';
     label.textContent = h.label;
     btn.appendChild(label);
-    if (h.score) {
+    if (state === 'done' && h.score) {
       const pct = document.createElement('span');
       pct.className = `pct ${chipClass(h.score.scorePct, currentMergedPct)}`;
       pct.textContent = `${h.score.scorePct}%`;
       btn.appendChild(pct);
+    } else if (state === 'error') {
+      const err = document.createElement('span');
+      err.className = 'pct neg';
+      err.textContent = '✗';
+      btn.appendChild(err);
+    } else {
+      const dot = document.createElement('span');
+      dot.className = 'pct chip-pending';
+      dot.textContent = '…';
+      btn.appendChild(dot);
     }
     const count = document.createElement('span');
     count.className = 'count';
     count.textContent = `·${h.count}`;
     btn.appendChild(count);
-    btn.addEventListener('click', () => onHighlightClick(h));
+    if (state === 'done') {
+      btn.addEventListener('click', () => onHighlightClick(h));
+    } else {
+      btn.disabled = true;
+    }
     highlightsList.appendChild(btn);
   }
 }
@@ -369,16 +405,67 @@ async function loadHighlights(force = false) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ featureId: currentFeatureId, force }),
     });
+    const ct = resp.headers.get('content-type') ?? '';
+    if (ct.includes('ndjson') && resp.body) {
+      await consumeHighlightStream(resp.body);
+      highlightsRefreshBtn.hidden = false;
+      return;
+    }
     const data: HighlightsResponse = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `request failed (${resp.status})`);
     if (data.error) throw new Error(data.error);
     if (data.highlights && data.highlights.length) {
-      renderHighlights(data.highlights);
+      renderHighlights(data.highlights, { sort: true });
       highlightsRefreshBtn.hidden = false;
     } else {
       highlightsRow.hidden = true;
     }
   } catch (e) {
-    showHighlightsLoading(`failed: ${e instanceof Error ? e.message : String(e)}`);
+    showHighlightsLoading(`couldn't load highlights — ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  // Preserve the order chips were announced; mutate in place as results arrive.
+  const chipMap = new Map<string, Highlight>();
+  const renderStreaming = () => renderHighlights([...chipMap.values()]);
+  let buffer = '';
+  let lastFailures = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      const evt = JSON.parse(line) as HighlightStreamEvent;
+      if (evt.type === 'chips') {
+        chipMap.clear();
+        for (const c of evt.chips) chipMap.set(c.token, { ...c, state: 'loading' });
+        renderStreaming();
+      } else if (evt.type === 'chip') {
+        chipMap.set(evt.highlight.token, { ...evt.highlight, state: 'done' });
+        renderStreaming();
+      } else if (evt.type === 'chip-error') {
+        const existing = chipMap.get(evt.token);
+        chipMap.set(evt.token, {
+          ...(existing ?? { token: evt.token, label: evt.label, count: 0 }),
+          state: 'error',
+          error: evt.error,
+        });
+        renderStreaming();
+      } else if (evt.type === 'done') {
+        lastFailures = evt.failures;
+        renderHighlights([...chipMap.values()], { sort: true });
+      }
+    }
+  }
+  if (lastFailures > 0) {
+    setStatus(`${lastFailures} highlight${lastFailures === 1 ? '' : 's'} failed — refresh to retry`, true);
   }
 }
 

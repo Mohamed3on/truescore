@@ -1,15 +1,29 @@
-import { statsForReviews, textReviewsFor } from '@truescore/gmaps-shared';
+import { statsForReviews, textReviewsFor, type ChipMeta } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
 import { scorePlace, fetchAllForSearch, type Review } from './gmaps';
 import { summarize, ask } from './gemini';
 import { fetchPreviewBundle, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
-import { harvestTokens, scoreHighlights } from './highlights';
+import { harvestTokens, scoreHighlight, type Highlight } from './highlights';
 import { cache } from './cache';
 import index from './index.html';
 
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json' } });
-const errBody = (e: unknown) => ({ error: e instanceof Error ? e.message : String(e) });
+
+// Translate proxy / upstream errors into something users can act on, instead
+// of surfacing raw "googleFetch 502 for https://…" strings. Unknown errors
+// pass through so the chip tooltip still has useful detail in dev.
+function friendlyError(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  const status = m.match(/googleFetch (\d+)/)?.[1];
+  if (status === '429') return 'Google is throttling — try again in a moment';
+  if (status === '502' || status === '522' || status === '524') return 'Google is busy upstream — try again';
+  if (status === '503') return 'Google maps is unavailable right now';
+  if (status && status.startsWith('5')) return `Google returned ${status} — try again`;
+  if (m.includes('preview URL not found')) return "Google didn't return a preview for this place";
+  return m;
+}
+const errBody = (e: unknown) => ({ error: friendlyError(e) });
 const mapsUrlFor = (featureId: string) => `https://www.google.com/maps?q=&ftid=${featureId}`;
 
 const PORT = Number(process.env.PORT || 3000);
@@ -35,6 +49,64 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
   })().finally(() => revalidateInflight.delete(featureId));
   revalidateInflight.set(featureId, p);
   return p;
+}
+
+// Stream chip results as NDJSON so the UI can render each chip the moment its
+// reviews are scored, instead of waiting on the slowest of ~10 parallel
+// listugcposts fan-outs. A single chip's 502 no longer kills the batch — its
+// failure is reported in-line and the others still arrive. We only commit to
+// cache when *all* chips succeeded, otherwise the next request retries.
+function streamHighlights(name: string, featureId: string, url: string, chips: ChipMeta[]): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enc = new TextEncoder();
+      let closed = false;
+      const write = (obj: unknown) => {
+        if (closed) return;
+        try { controller.enqueue(enc.encode(JSON.stringify(obj) + '\n')); }
+        catch { closed = true; }
+      };
+
+      write({ type: 'chips', chips });
+
+      const successes: Highlight[] = [];
+      let failures = 0;
+      await Promise.all(chips.map(async (chip) => {
+        try {
+          const h = await scoreHighlight(featureId, chip);
+          successes.push(h);
+          write({ type: 'chip', highlight: h });
+        } catch (e) {
+          failures++;
+          console.warn(`[highlights] ${name} (${featureId}): chip "${chip.label}" failed:`, e);
+          write({ type: 'chip-error', token: chip.token, label: chip.label, error: friendlyError(e) });
+        }
+      }));
+
+      const totalFetched = successes.reduce((a, h) => a + (h.fetched ?? 0), 0);
+      const cacheable = failures === 0 && totalFetched > 0;
+      if (cacheable) {
+        await cache.putHighlights(featureId, successes);
+      } else if (totalFetched === 0 && failures === 0) {
+        console.warn(
+          `[highlights] ${name} (${featureId}): all ${chips.length} chips fetched 0 reviews ` +
+            `(likely upstream throttle). chips=[${chips.map((c) => c.label).join(', ')}] url=${url}`,
+        );
+      }
+      const tag = failures
+        ? `${successes.length}/${chips.length} ok, ${failures} failed`
+        : `${chips.length} chips`;
+      console.log(`[highlights] ${name} (${featureId}): ${tag}, ${totalFetched} reviews${cacheable ? '' : ' (not cached)'}`);
+
+      write({ type: 'done', failures, totalFetched, cached: cacheable });
+      if (!closed) {
+        try { controller.close(); } catch {}
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: { 'Content-Type': 'application/x-ndjson' },
+  });
 }
 
 function getOrFetchPreviewBundle(featureId: string, url: string): Promise<PreviewBundle> {
@@ -165,25 +237,12 @@ Bun.serve({
           if (!entry) return json({ error: 'look up the place first' }, 404);
           if (entry.highlights && !body.force) return json({ highlights: entry.highlights, cached: true });
           const url = entry.resolvedUrl ?? mapsUrlFor(featureId);
-          const tokens = await harvestTokens(url);
-          if (!tokens.length) {
-            console.warn(`[highlights] ${entry.name} (${featureId}): preview returned no chips — ${url}`);
-            return json({ error: 'no highlights found for this place' }, 404);
+          const chips = await harvestTokens(url);
+          if (!chips.length) {
+            console.warn(`[highlights] ${entry.name} (${featureId}): preview returned no chips after retries — ${url}`);
+            return json({ error: "Google didn't return any topic chips for this place" }, 404);
           }
-          const scored = await scoreHighlights(featureId, tokens);
-          const totalFetched = scored.reduce((a, h) => a + (h.fetched ?? 0), 0);
-          // Skip caching when every chip came back empty — likely a transient
-          // upstream hiccup. 404 lets the next request retry.
-          if (!totalFetched) {
-            console.warn(
-              `[highlights] ${entry.name} (${featureId}): all ${scored.length} chips fetched 0 reviews ` +
-              `(likely upstream throttle). chips=[${scored.map((h) => h.label).join(', ')}] url=${url}`,
-            );
-            return json({ error: 'no highlights found for this place' }, 404);
-          }
-          console.log(`[highlights] ${entry.name} (${featureId}): ${scored.length} chips, ${totalFetched} reviews`);
-          await cache.putHighlights(featureId, scored);
-          return json({ highlights: scored, cached: false });
+          return streamHighlights(entry.name, featureId, url, chips);
         } catch (e) {
           const entry = featureId ? cache.get(featureId) : null;
           console.error(`[highlights] ${entry?.name ?? '?'} (${featureId || '?'}):`, e);
