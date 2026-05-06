@@ -1239,8 +1239,12 @@ const updateUI = () => {
   } else {
     const mergedRound = toPct(mergedPct);
     els.pctEl.childNodes[0].textContent = `${mergedRound}%`;
-    const relLabel = scores.relevant.reviewData.totalReviews[currentOption] ? `${getRoundedPct('relevant')}%` : '—';
-    const newLabel = scores.newest.reviewData.totalReviews[currentOption] ? `${getRoundedPct('newest')}%` : '—';
+    // Fall back to the cached per-sort data on cache hits before the live
+    // refetch lands — `getRoundedPct` already does, but the gate didn't.
+    const relTotal = scores.relevant.reviewData.totalReviews[currentOption] || cachedScoreState?.relevant.totalReviews[currentOption] || 0;
+    const newTotal = scores.newest.reviewData.totalReviews[currentOption] || cachedScoreState?.newest.totalReviews[currentOption] || 0;
+    const relLabel = relTotal ? `${getRoundedPct('relevant')}%` : '—';
+    const newLabel = newTotal ? `${getRoundedPct('newest')}%` : '—';
     els.tooltip.textContent = `Relevant: ${relLabel} · Newest: ${newLabel}`;
 
     if (fullPct !== null) {
