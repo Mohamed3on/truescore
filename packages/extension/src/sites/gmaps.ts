@@ -407,6 +407,7 @@ const invalidateStaleCaches = (currentTotal: number) => {
       cardEls.sumPanel.textContent = '';
       cardEls.sumPanel.style.display = 'none';
     }
+    refreshSumBtnState();
   }
   if (highlightsState?.totalReviewsAtCache != null && highlightsState.totalReviewsAtCache !== currentTotal) {
     highlightsState = null;
@@ -1191,13 +1192,12 @@ const createUIElements = () => {
   questionInput.placeholder = 'Ask about this place… (Enter to ask)';
   questionInput.className = 'rc-question-input';
   questionInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') triggerSummarize();
+    if (e.key === 'Enter') sumBtn.click();
   });
-  questionInput.addEventListener('input', () => {
-    sumBtn.textContent = questionInput.value.trim() ? 'Ask' : 'Summarize';
-  });
+  questionInput.addEventListener('input', refreshSumBtnState);
   c.appendChild(questionInput);
   cardEls.questionInput = questionInput;
+  refreshSumBtnState();
 
   const chipPanel = el('div', 'rc-chip-panel');
   chipPanel.style.display = 'none';
@@ -1352,6 +1352,14 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
 
 const collectReviewTexts = (): string[] => textReviewsFor(Object.values(mergeReviewMaps()));
 
+const refreshSumBtnState = () => {
+  const btn = cardEls.sumBtn;
+  if (!btn) return;
+  const hasQuestion = !!cardEls.questionInput?.value?.trim();
+  btn.textContent = hasQuestion ? 'Ask' : 'Summarize';
+  btn.disabled = !hasQuestion && !!summaryCache.all;
+};
+
 const triggerSummarize = async () => {
   const panel = cardEls.sumPanel;
   if (!panel) return;
@@ -1376,7 +1384,7 @@ const triggerSummarize = async () => {
     panel.textContent = 'Summarization failed';
     panel.className = 'rc-summary-panel';
   } finally {
-    if (cardEls.sumBtn) cardEls.sumBtn.disabled = false;
+    refreshSumBtnState();
   }
 };
 
