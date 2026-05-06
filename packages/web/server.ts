@@ -111,25 +111,15 @@ Bun.serve({
     },
     '/api/places': {
       GET: () => {
-        const now = Date.now();
-        const DAY_MS = 24 * 60 * 60 * 1000;
         const places = cache.all()
-          .map((e) => {
-            const lastAccessTs = e.lastAccessTs ?? e.scoreTs;
-            const accessCount = e.accessCount ?? 1;
-            const days = (now - lastAccessTs) / DAY_MS;
-            const frecency = accessCount * Math.pow(0.5, days / 30);
-            return {
-              featureId: e.featureId,
-              name: e.name,
-              scorePct: e.score.scorePct,
-              resolvedUrl: e.resolvedUrl ?? mapsUrlFor(e.featureId),
-              lastAccessTs,
-              frecency,
-            };
-          })
-          .sort((a, b) => b.frecency - a.frecency)
-          .map(({ frecency, ...rest }) => rest);
+          .map((e) => ({
+            featureId: e.featureId,
+            name: e.name,
+            scorePct: e.score.scorePct,
+            resolvedUrl: e.resolvedUrl ?? mapsUrlFor(e.featureId),
+            lastAccessTs: e.lastAccessTs ?? e.scoreTs,
+          }))
+          .sort((a, b) => b.lastAccessTs - a.lastAccessTs);
         return json({ places });
       },
     },
