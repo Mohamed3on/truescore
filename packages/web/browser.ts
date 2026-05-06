@@ -68,14 +68,41 @@ export async function getGoogleCookieHeader(): Promise<string> {
   return cookiesRefreshing;
 }
 
+// 429: explicit throttle. 5xx covers proxy-origin timeouts (502/504), upstream
+// unavailability (503), and Cloudflare-shape errors (522/524) that show up when
+// the proxy provider sits behind Cloudflare and the listugcposts fan-out from
+// /api/highlights spikes connection counts.
+const RETRY_STATUSES = new Set([429, 500, 502, 503, 504, 522, 524]);
+const MAX_ATTEMPTS = 4;
+
 export async function googleFetch(url: string): Promise<string> {
   const cookie = await getGoogleCookieHeader();
-  const r = await fetch(url, {
-    proxy: PROXY_URL,
-    headers: { ...FETCH_HEADERS_BASE, Cookie: cookie },
-  });
-  if (!r.ok) throw new Error(`googleFetch ${r.status} for ${url.slice(0, 80)}…`);
-  return r.text();
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let r: Response | null = null;
+    let networkErr: Error | null = null;
+    try {
+      r = await fetch(url, {
+        proxy: PROXY_URL,
+        headers: { ...FETCH_HEADERS_BASE, Cookie: cookie },
+      });
+    } catch (e) {
+      networkErr = e instanceof Error ? e : new Error(String(e));
+    }
+    if (r?.ok) return r.text();
+    const status = r?.status ?? 0;
+    const retryable = networkErr !== null || RETRY_STATUSES.has(status);
+    const last = attempt === MAX_ATTEMPTS - 1;
+    if (!retryable || last) {
+      if (networkErr) throw networkErr;
+      throw new Error(`googleFetch ${status} for ${url.slice(0, 80)}…`);
+    }
+    const delay = 500 * 2 ** attempt + Math.floor(Math.random() * 250);
+    console.warn(
+      `[googleFetch] ${networkErr ? networkErr.message : status} — retry ${attempt + 1}/${MAX_ATTEMPTS - 1} in ${delay}ms`,
+    );
+    await Bun.sleep(delay);
+  }
+  throw new Error('googleFetch: unreachable');
 }
 
 export async function fetchPlacePreview(placeUrl: string): Promise<any> {
