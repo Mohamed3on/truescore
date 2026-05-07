@@ -218,7 +218,10 @@ function debugDetails(stats: any) {
     lines.push('');
     lines.push('All runtime-matched films:');
     for (const f of stats.allScored) {
-      const status = f.fetchFailed ? '(fetch failed)' : (f.parseEmpty ? '⚠ parse empty' : (f.score >= stats.currentScore ? '✓' : '✗'));
+      let status: string;
+      if (f.fetchFailed) status = '(fetch failed)';
+      else if (f.parseEmpty) status = '⚠ parse empty';
+      else status = f.score >= stats.currentScore ? '✓' : '✗';
       lines.push(`  ${status} ${f.name} — ${f.runtime}m — ${f.fetchFailed ? '?' : addCommas(f.score)}`);
     }
   }
@@ -255,6 +258,16 @@ const getCachedRecentRatings = (slug: string) => cacheGet(`lbx_recent_${slug}`, 
 const setCachedRecentRatings = (slug: string, data: any) => cacheSet(`lbx_recent_${slug}`, data);
 const getCachedSimilarPicks = (slug: string) => cacheGet(`lbx_similar_v2_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
 const setCachedSimilarPicks = (slug: string, data: any) => cacheSet(`lbx_similar_v2_${slug}`, data);
+
+(function purgeOrphanedCacheKeys() {
+  if (localStorage.getItem('lbx_purged_v2')) return;
+  for (const key of Object.keys(localStorage)) {
+    if ((key.startsWith('lbx_film_') || key.startsWith('lbx_similar_')) && !key.includes('_v2_')) {
+      localStorage.removeItem(key);
+    }
+  }
+  localStorage.setItem('lbx_purged_v2', '1');
+})();
 
 // =============================================================================
 // Fetching
@@ -607,17 +620,19 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
 
     const currentScore = (await scorePromise).score;
     scoredFilms.sort((a: any, b: any) => b.score - a.score);
-    const qualifying = scoredFilms
-      .filter((f: any) => f.fetchFailed || f.score >= currentScore)
-      .map((f: any) => ({ slug: f.slug, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year, fetchFailed: f.fetchFailed }));
-    const allScored = scoredFilms
-      .map((f: any) => ({ name: f.filmName, score: f.score, runtime: f.runtime, fetchFailed: f.fetchFailed, parseEmpty: f.parseEmpty }));
+    const qualifying: any[] = [];
+    const allScored: any[] = [];
     let freshlyFetched = 0;
     let parseEmptyCount = 0;
     for (const f of scoredFilms) {
-      if (f.fromCache || f.fetchFailed) continue;
-      freshlyFetched++;
-      if (f.parseEmpty) parseEmptyCount++;
+      allScored.push({ name: f.filmName, score: f.score, runtime: f.runtime, fetchFailed: f.fetchFailed, parseEmpty: f.parseEmpty });
+      if (f.fetchFailed || f.score >= currentScore) {
+        qualifying.push({ slug: f.slug, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year, fetchFailed: f.fetchFailed });
+      }
+      if (!f.fromCache && !f.fetchFailed) {
+        freshlyFetched++;
+        if (f.parseEmpty) parseEmptyCount++;
+      }
     }
     if (freshlyFetched >= 5 && parseEmptyCount / freshlyFetched >= 0.5) {
       console.warn(`[LBX] Histogram parser returned empty for ${parseEmptyCount}/${freshlyFetched} freshly-fetched films — Letterboxd CSI markup may have changed. Inspect /csi/film/<slug>/rating-histogram/ and update parseRatings().`);

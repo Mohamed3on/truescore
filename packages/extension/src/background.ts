@@ -14,6 +14,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   const all = await chrome.storage.local.get(null);
   const cutoff = Date.now() - ENTRY_MAX_AGE_MS;
   const stale = Object.keys(all).filter((k) => {
+    if (k.startsWith('rc_score_') && !k.startsWith(SCORE_CACHE_PREFIX)) return true;
     if (!k.startsWith(SCORE_CACHE_PREFIX)) return false;
     const ts = (all[k] as { ts?: number } | null)?.ts;
     return typeof ts === 'number' && ts < cutoff;
