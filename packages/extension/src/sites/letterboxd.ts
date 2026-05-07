@@ -351,8 +351,6 @@ async function getFilmBasicData(slug: string) {
   }
   if (!ratings.length) ratings = parseRatings(doc);
 
-  // Histogram parser returned empty buckets despite a non-trivial CSI response.
-  // Almost always means Letterboxd changed the markup — surface loudly so it's caught fast.
   const parseEmpty = ratings.length === 0 && statsHtmlLen > 500;
 
   debug(`${slug}: runtime=${runtime}, year=${year}, ratings=${ratings.join(',') || 'none'}`);
@@ -614,12 +612,17 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       .map((f: any) => ({ slug: f.slug, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year, fetchFailed: f.fetchFailed }));
     const allScored = scoredFilms
       .map((f: any) => ({ name: f.filmName, score: f.score, runtime: f.runtime, fetchFailed: f.fetchFailed, parseEmpty: f.parseEmpty }));
-    const freshlyFetched = scoredFilms.filter((f: any) => !f.fromCache && !f.fetchFailed);
-    const parseEmptyCount = freshlyFetched.filter((f: any) => f.parseEmpty).length;
-    if (freshlyFetched.length >= 5 && parseEmptyCount / freshlyFetched.length >= 0.5) {
-      console.warn(`[LBX] Histogram parser returned empty for ${parseEmptyCount}/${freshlyFetched.length} freshly-fetched films — Letterboxd CSI markup may have changed. Inspect /csi/film/<slug>/rating-histogram/ and update parseRatings().`);
+    let freshlyFetched = 0;
+    let parseEmptyCount = 0;
+    for (const f of scoredFilms) {
+      if (f.fromCache || f.fetchFailed) continue;
+      freshlyFetched++;
+      if (f.parseEmpty) parseEmptyCount++;
     }
-    const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentScore, currentRuntime, foundOnPage, pagesSearched, allScored, parseEmptyCount, freshlyFetched: freshlyFetched.length };
+    if (freshlyFetched >= 5 && parseEmptyCount / freshlyFetched >= 0.5) {
+      console.warn(`[LBX] Histogram parser returned empty for ${parseEmptyCount}/${freshlyFetched} freshly-fetched films — Letterboxd CSI markup may have changed. Inspect /csi/film/<slug>/rating-histogram/ and update parseRatings().`);
+    }
+    const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentScore, currentRuntime, foundOnPage, pagesSearched, allScored, parseEmptyCount, freshlyFetched };
 
     debug(`Qualifying films: ${qualifying.length}`);
     const result = { films: qualifying, stats, listName, listLink };
