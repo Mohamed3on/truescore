@@ -179,12 +179,13 @@ function extractSlugFromUrl(url: string) {
   return match ? match[1] : null;
 }
 
-/** Parses 10 rating-bucket counts from either the new .barcolumn layout or the old .rating-histogram-bar CSI layout */
+/** Parses 10 rating-bucket counts from .barcolumn (current title= or legacy data-original-title=) or old .rating-histogram-bar layout */
 function parseRatings(root: Document | Element): number[] {
-  const barcolumns = root.querySelectorAll('.barcolumn[data-original-title]');
+  const barcolumns = root.querySelectorAll('.barcolumn[title], .barcolumn[data-original-title]');
   if (barcolumns.length) {
     return Array.from(barcolumns).map((el) => {
-      const match = el.getAttribute('data-original-title')!.match(/([\d,]+)/);
+      const attr = el.getAttribute('title') || el.getAttribute('data-original-title') || '';
+      const match = attr.match(/([\d,]+)/);
       return match ? parseInt(match[1].replace(/,/g, ''), 10) : 0;
     });
   }
@@ -211,12 +212,13 @@ function debugDetails(stats: any) {
     `Current film score: ${addCommas(stats.currentScore)}`,
   ];
   if (selectorMismatch) lines.push('⚠ Selector mismatch — Letterboxd markup may have changed');
+  if (stats.parseEmptyCount > 0) lines.push(`⚠ Histogram parse empty: ${stats.parseEmptyCount}/${stats.freshlyFetched} freshly fetched (CSI markup likely changed)`);
   if (stats.recentThreshold != null) lines.push(`Recent % threshold: ${stats.recentThreshold}%`);
   if (stats.allScored?.length) {
     lines.push('');
     lines.push('All runtime-matched films:');
     for (const f of stats.allScored) {
-      const status = f.fetchFailed ? '(fetch failed)' : (f.score >= stats.currentScore ? '✓' : '✗');
+      const status = f.fetchFailed ? '(fetch failed)' : (f.parseEmpty ? '⚠ parse empty' : (f.score >= stats.currentScore ? '✓' : '✗'));
       lines.push(`  ${status} ${f.name} — ${f.runtime}m — ${f.fetchFailed ? '?' : addCommas(f.score)}`);
     }
   }
@@ -247,12 +249,12 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
 // Cache
 // =============================================================================
 
-const getCachedFilmData = (slug: string) => cacheGet(`lbx_film_${slug}`, CONFIG.CACHE_EXPIRY_MS);
-const setCachedFilmData = (slug: string, data: any) => cacheSet(`lbx_film_${slug}`, data);
+const getCachedFilmData = (slug: string) => cacheGet(`lbx_film_v2_${slug}`, CONFIG.CACHE_EXPIRY_MS);
+const setCachedFilmData = (slug: string, data: any) => cacheSet(`lbx_film_v2_${slug}`, data);
 const getCachedRecentRatings = (slug: string) => cacheGet(`lbx_recent_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
 const setCachedRecentRatings = (slug: string, data: any) => cacheSet(`lbx_recent_${slug}`, data);
-const getCachedSimilarPicks = (slug: string) => cacheGet(`lbx_similar_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
-const setCachedSimilarPicks = (slug: string, data: any) => cacheSet(`lbx_similar_${slug}`, data);
+const getCachedSimilarPicks = (slug: string) => cacheGet(`lbx_similar_v2_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
+const setCachedSimilarPicks = (slug: string, data: any) => cacheSet(`lbx_similar_v2_${slug}`, data);
 
 // =============================================================================
 // Fetching
@@ -340,14 +342,21 @@ async function getFilmBasicData(slug: string) {
   const imdbLink = doc.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null;
 
   let ratings: number[] = [];
+  let statsHtmlLen = 0;
   if (statsResponse) {
-    const statsDoc = new DOMParser().parseFromString(await statsResponse.text(), 'text/html');
+    const statsHtml = await statsResponse.text();
+    statsHtmlLen = statsHtml.length;
+    const statsDoc = new DOMParser().parseFromString(statsHtml, 'text/html');
     ratings = parseRatings(statsDoc);
   }
   if (!ratings.length) ratings = parseRatings(doc);
 
+  // Histogram parser returned empty buckets despite a non-trivial CSI response.
+  // Almost always means Letterboxd changed the markup — surface loudly so it's caught fast.
+  const parseEmpty = ratings.length === 0 && statsHtmlLen > 500;
+
   debug(`${slug}: runtime=${runtime}, year=${year}, ratings=${ratings.join(',') || 'none'}`);
-  return { runtime, year, filmName, imdbLink, ratings };
+  return { runtime, year, filmName, imdbLink, ratings, parseEmpty };
 }
 
 // =============================================================================
@@ -604,8 +613,13 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       .filter((f: any) => f.fetchFailed || f.score >= currentScore)
       .map((f: any) => ({ slug: f.slug, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year, fetchFailed: f.fetchFailed }));
     const allScored = scoredFilms
-      .map((f: any) => ({ name: f.filmName, score: f.score, runtime: f.runtime, fetchFailed: f.fetchFailed }));
-    const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentScore, currentRuntime, foundOnPage, pagesSearched, allScored };
+      .map((f: any) => ({ name: f.filmName, score: f.score, runtime: f.runtime, fetchFailed: f.fetchFailed, parseEmpty: f.parseEmpty }));
+    const freshlyFetched = scoredFilms.filter((f: any) => !f.fromCache && !f.fetchFailed);
+    const parseEmptyCount = freshlyFetched.filter((f: any) => f.parseEmpty).length;
+    if (freshlyFetched.length >= 5 && parseEmptyCount / freshlyFetched.length >= 0.5) {
+      console.warn(`[LBX] Histogram parser returned empty for ${parseEmptyCount}/${freshlyFetched.length} freshly-fetched films — Letterboxd CSI markup may have changed. Inspect /csi/film/<slug>/rating-histogram/ and update parseRatings().`);
+    }
+    const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentScore, currentRuntime, foundOnPage, pagesSearched, allScored, parseEmptyCount, freshlyFetched: freshlyFetched.length };
 
     debug(`Qualifying films: ${qualifying.length}`);
     const result = { films: qualifying, stats, listName, listLink };
