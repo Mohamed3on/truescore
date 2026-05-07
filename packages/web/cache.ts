@@ -1,10 +1,12 @@
 import { homedir } from 'os';
+import { Database } from 'bun:sqlite';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './gemini';
 import type { Highlight } from './highlights';
 import type { PlaceMeta } from './histogram';
 
-const PATH = process.env.TRUESCORE_CACHE_PATH || `${homedir()}/.truescore-cache.json`;
+const LEGACY_JSON_PATH = process.env.TRUESCORE_CACHE_PATH || `${homedir()}/.truescore-cache.json`;
+const DB_PATH = process.env.TRUESCORE_CACHE_DB_PATH || LEGACY_JSON_PATH.replace(/\.json$/, '') + '.sqlite';
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
 
 export type CacheEntry = {
@@ -38,27 +40,47 @@ export type SearchResult = {
   ts: number;
 };
 
-let store: Record<string, CacheEntry> = {};
+const db = new Database(DB_PATH, { create: true });
+db.run('PRAGMA journal_mode = WAL');
+db.run('CREATE TABLE IF NOT EXISTS entries (featureId TEXT PRIMARY KEY, data TEXT NOT NULL)');
 
-async function load() {
+const upsertStmt = db.prepare<void, [string, string]>('INSERT OR REPLACE INTO entries (featureId, data) VALUES (?, ?)');
+const selectAllStmt = db.prepare<{ featureId: string; data: string }, []>('SELECT featureId, data FROM entries');
+
+const store = new Map<string, CacheEntry>();
+for (const row of selectAllStmt.all()) {
+  try { store.set(row.featureId, JSON.parse(row.data)); }
+  catch (e) { console.error(`[cache] skip corrupt row ${row.featureId}:`, e); }
+}
+
+// One-shot migration: legacy JSON file → sqlite. Runs only on a fresh DB so a
+// stale JSON sitting next to the live DB can't clobber newer entries.
+if (store.size === 0) {
   try {
-    const f = Bun.file(PATH);
-    if (await f.exists()) store = await f.json();
+    const f = Bun.file(LEGACY_JSON_PATH);
+    if (await f.exists()) {
+      const json = await f.json() as Record<string, CacheEntry>;
+      const tx = db.transaction((entries: [string, CacheEntry][]) => {
+        for (const [id, entry] of entries) upsertStmt.run(id, JSON.stringify(entry));
+      });
+      const list = Object.entries(json);
+      tx(list);
+      for (const [id, entry] of list) store.set(id, entry);
+      console.log(`[cache] migrated ${list.length} entries from ${LEGACY_JSON_PATH} → ${DB_PATH}`);
+    }
   } catch (e) {
-    console.error('[cache] load failed, starting empty:', e);
-    store = {};
+    console.error('[cache] legacy JSON migration failed:', e);
   }
 }
 
-async function flush() {
-  await Bun.write(PATH, JSON.stringify(store));
-}
-
-await load();
+const persist = (featureId: string, entry: CacheEntry) => {
+  store.set(featureId, entry);
+  upsertStmt.run(featureId, JSON.stringify(entry));
+};
 
 export const cache = {
   get(featureId: string): CacheEntry | undefined {
-    return store[featureId];
+    return store.get(featureId);
   },
   // Cached entry is fresh iff the place's total review count is unchanged
   // since we last computed. If we don't know the live total (histogram fetch
@@ -72,8 +94,8 @@ export const cache = {
     return !!entry.histogramTs && Date.now() - entry.histogramTs < HISTOGRAM_TTL_MS;
   },
   async putScore(featureId: string, name: string, score: ScoreResult, totalReviewsAtCache: number | null, resolvedUrl?: string) {
-    const existing = store[featureId];
-    store[featureId] = {
+    const existing = store.get(featureId);
+    persist(featureId, {
       ...existing,
       name,
       resolvedUrl: resolvedUrl ?? existing?.resolvedUrl,
@@ -82,50 +104,44 @@ export const cache = {
       totalReviewsAtCache: totalReviewsAtCache ?? existing?.totalReviewsAtCache,
       lastAccessTs: existing?.lastAccessTs ?? Date.now(),
       accessCount: existing?.accessCount ?? 1,
-    };
-    await flush();
+    });
   },
   async touch(featureId: string) {
-    const existing = store[featureId];
+    const existing = store.get(featureId);
     if (!existing) return;
-    store[featureId] = {
+    persist(featureId, {
       ...existing,
       lastAccessTs: Date.now(),
       accessCount: (existing.accessCount ?? 1) + 1,
-    };
-    await flush();
+    });
   },
   all(): Array<{ featureId: string } & CacheEntry> {
-    return Object.entries(store).map(([featureId, entry]) => ({ featureId, ...entry }));
+    return Array.from(store, ([featureId, entry]) => ({ featureId, ...entry }));
   },
   async putSummary(featureId: string, summary: Summary) {
-    const existing = store[featureId];
+    const existing = store.get(featureId);
     if (!existing) return;
-    store[featureId] = { ...existing, summary, summaryTs: Date.now() };
-    await flush();
+    persist(featureId, { ...existing, summary, summaryTs: Date.now() });
   },
   async putHighlights(featureId: string, highlights: Highlight[]) {
-    const existing = store[featureId];
+    const existing = store.get(featureId);
     if (!existing) return;
-    store[featureId] = { ...existing, highlights, highlightsTs: Date.now() };
-    await flush();
+    persist(featureId, { ...existing, highlights, highlightsTs: Date.now() });
   },
   async putHighlightSummary(featureId: string, token: string, summary: Summary) {
-    const existing = store[featureId];
+    const existing = store.get(featureId);
     if (!existing) return;
     const highlightSummaries = { ...(existing.highlightSummaries ?? {}), [token]: summary };
-    store[featureId] = { ...existing, highlightSummaries };
-    await flush();
+    persist(featureId, { ...existing, highlightSummaries });
   },
   async putSearch(featureId: string, query: string, result: SearchResult) {
-    const existing = store[featureId];
+    const existing = store.get(featureId);
     if (!existing) return;
     const searches = { ...(existing.searches ?? {}), [query.toLowerCase()]: result };
-    store[featureId] = { ...existing, searches };
-    await flush();
+    persist(featureId, { ...existing, searches });
   },
   async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta }) {
-    const existing = store[featureId];
+    const existing = store.get(featureId);
     if (!existing) return;
     const next: CacheEntry = { ...existing, meta: bundle.meta };
     const histogramChanged = bundle.histogram &&
@@ -134,7 +150,6 @@ export const cache = {
       next.histogram = bundle.histogram!;
       next.histogramTs = Date.now();
     }
-    store[featureId] = next;
-    await flush();
+    persist(featureId, next);
   },
 };

@@ -32,12 +32,22 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup }: SpaInjecto
   };
 
   let lastUrl = location.href;
-  new MutationObserver(() => {
+  const onUrlChange = () => {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
     if (match()) init();
     else fullCleanup();
-  }).observe(document, { childList: true, subtree: true });
+  };
+  // Navigation API covers pushState/replaceState/popstate/hash; falls back to
+  // popstate+hashchange on browsers without it. Replaces a body-subtree
+  // MutationObserver that ran JS on every DOM mutation just to compare hrefs.
+  const nav = (window as any).navigation;
+  if (nav?.addEventListener) {
+    nav.addEventListener('navigatesuccess', onUrlChange);
+  } else {
+    window.addEventListener('popstate', onUrlChange);
+    window.addEventListener('hashchange', onUrlChange);
+  }
 
   init();
 };

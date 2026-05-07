@@ -11,7 +11,7 @@ TLS: Cloudflare edge (Flexible mode — edge ↔ origin is plain HTTP)
 |---|---|
 | App dir | `/opt/truescore` |
 | .env | `/opt/truescore/.env` (PORT=80, Decodo creds, paths) |
-| Code/cache state | `/var/lib/truescore/{cache.json,cookies.json}` |
+| Code/cache state | `/var/lib/truescore/{cache.sqlite,cookies.json}` (legacy `cache.json` migrated on first start) |
 | systemd unit | `/etc/systemd/system/truescore.service` |
 | Service user | `truescore` |
 | Bun | `/usr/local/bin/bun` |
@@ -41,7 +41,7 @@ ssh root@65.108.153.112 'ss -tlnp | grep bun'
 ssh root@65.108.153.112 'ls -la /var/lib/truescore/'
 
 # wipe place cache (forces fresh fetches)
-ssh root@65.108.153.112 'rm /var/lib/truescore/cache.json && systemctl restart truescore'
+ssh root@65.108.153.112 'rm -f /var/lib/truescore/cache.sqlite* && systemctl restart truescore'
 
 # wipe cookies (forces re-bake via proxy)
 ssh root@65.108.153.112 'rm /var/lib/truescore/cookies.json && systemctl restart truescore'
