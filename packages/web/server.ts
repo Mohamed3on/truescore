@@ -240,6 +240,38 @@ Bun.serve({
         });
       },
     },
+    // Extension uploads what it just generated so the next visitor (any
+    // client) gets the cached summary/highlights without recompute. Creates
+    // a stub entry if the server has never seen this place; revalidate fills
+    // in the score next time /api/lookup runs.
+    '/api/contribute': {
+      POST: async (req) => {
+        try {
+          const { featureId, name, summary, highlights, highlightSummaries } = await req.json() as {
+            featureId: string;
+            name: string;
+            summary?: any;
+            highlights?: any[];
+            highlightSummaries?: Record<string, any>;
+          };
+          if (!featureId || !name) return json({ error: 'missing featureId or name' }, 400);
+          if (!summary && !highlights && !highlightSummaries) return json({ error: 'nothing to contribute' }, 400);
+          await cache.putContribution(featureId, name, { summary, highlights, highlightSummaries });
+          return json({ ok: true });
+        } catch (e) {
+          console.error('[contribute]', e);
+          return json(errBody(e), 400);
+        }
+      },
+      OPTIONS: () => new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Max-Age': '86400',
+        },
+      }),
+    },
     '/api/places': {
       GET: () => {
         const places = cache.all()

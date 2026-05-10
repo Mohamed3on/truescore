@@ -213,6 +213,23 @@ const fetchCloudCache = async (featureId: string): Promise<CloudCache | null> =>
   } catch { return null; }
 };
 
+// Mirror what the extension just generated back to the web cache so the next
+// visitor (extension or web) gets it without recompute. Fire-and-forget; a
+// failure here is invisible to the user.
+const pushContribution = (featureId: string, patch: {
+  summary?: SummaryResult;
+  highlights?: Highlight[];
+  highlightSummaries?: Record<string, SummaryResult>;
+}): void => {
+  const { name } = getPlaceInfo();
+  if (!name) return;
+  fetch(`${TRUESCORE_API_BASE}/api/contribute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ featureId, name, ...patch }),
+  }).catch((e) => console.warn('[gmaps] contribute failed', e));
+};
+
 // Pull whatever the web SPA has computed for this place. Adopts any field the
 // extension hasn't computed locally, persists it, and re-renders so users see
 // summaries/highlights without clicking a button on places they (or anyone)
@@ -766,6 +783,7 @@ const computeHighlights = async (force = false) => {
       return;
     }
     renderHighlights();
+    pushContribution(featureId, { highlights: items });
   } catch (e) {
     console.error('[highlights] error:', e);
     if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'Failed — retry';
@@ -1100,6 +1118,8 @@ const summarizeActiveChip = async () => {
       renderSummary(body, result);
       sumBtn.textContent = 'Show Reviews';
       chipViewMode = 'summary';
+      const featureId = getFeatureId();
+      if (featureId) pushContribution(featureId, { highlightSummaries: { [h.token]: result } });
     }
   } catch (e) {
     console.error('[highlights] summary failed', e);
@@ -1513,6 +1533,8 @@ const triggerSummarize = async () => {
     if (!customQuestion && typeof result !== 'string') {
       summaryCache.all = result;
       saveSummaryCache();
+      const featureId = getFeatureId();
+      if (featureId) pushContribution(featureId, { summary: result });
     }
     renderSummary(panel, result);
   } catch (e) {

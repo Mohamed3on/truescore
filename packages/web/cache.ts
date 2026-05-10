@@ -140,6 +140,29 @@ export const cache = {
     const searches = { ...(existing.searches ?? {}), [query.toLowerCase()]: result };
     persist(featureId, { ...existing, searches });
   },
+  // Used by the extension's contribute endpoint: merge any of summary,
+  // highlights, highlightSummaries into the entry; create a stub if the
+  // place hasn't been looked up. The next /api/lookup or revalidate fills
+  // in the empty score.
+  async putContribution(featureId: string, name: string, patch: {
+    summary?: Summary;
+    highlights?: Highlight[];
+    highlightSummaries?: Record<string, Summary>;
+  }) {
+    const existing = store.get(featureId);
+    const base: CacheEntry = existing ?? {
+      name,
+      score: { featureId, totalReviews: 0, trustedReviews: 0, scorePct: 0, relevant: { totalReviews: 0, trustedReviews: 0, scorePct: 0 }, newest: { totalReviews: 0, trustedReviews: 0, scorePct: 0 }, reviews: [] },
+      scoreTs: 0,
+    };
+    const next: CacheEntry = { ...base, name: existing?.name || name };
+    if (patch.summary) { next.summary = patch.summary; next.summaryTs = Date.now(); }
+    if (patch.highlights) { next.highlights = patch.highlights; next.highlightsTs = Date.now(); }
+    if (patch.highlightSummaries) {
+      next.highlightSummaries = { ...(base.highlightSummaries ?? {}), ...patch.highlightSummaries };
+    }
+    persist(featureId, next);
+  },
   async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta }) {
     const existing = store.get(featureId);
     if (!existing) return;
