@@ -8,7 +8,15 @@ import { cache } from './cache';
 import index from './index.html';
 
 const json = (v: any, status = 200) =>
-  new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json' } });
+  new Response(JSON.stringify(v), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      // Read-only place data is public; allow the browser extension (and any
+      // other client) to call from a different origin.
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
 
 // Translate proxy / upstream errors into something users can act on, instead
 // of surfacing raw "googleFetch 502 for https://…" strings. Unknown errors
@@ -214,6 +222,22 @@ Bun.serve({
           console.error('[lookup]', e);
           return json(errBody(e), 400);
         }
+      },
+    },
+    // Read-only cache peek for the extension: returns summary/highlights/etc
+    // if the place was already looked up via the web. Never triggers compute.
+    '/api/cached': {
+      GET: (req) => {
+        const featureId = new URL(req.url).searchParams.get('featureId');
+        if (!featureId) return json({ error: 'missing featureId' }, 400);
+        const entry = cache.get(featureId);
+        if (!entry) return json({ found: false }, 404);
+        return json({
+          found: true,
+          summary: entry.summary,
+          highlights: entry.highlights,
+          highlightSummaries: entry.highlightSummaries,
+        });
       },
     },
     '/api/places': {

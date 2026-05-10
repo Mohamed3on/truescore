@@ -194,6 +194,66 @@ const loadHighlightsCache = () => {
   try { highlightsState = JSON.parse(localStorage.getItem(getHighlightsCacheKey()) as string) || null; }
   catch { highlightsState = null; }
 };
+// Read-only mirror of the web's cache; lets the extension surface summaries
+// and highlights computed by the web SPA without recompute or local cache.
+const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
+
+type CloudCache = {
+  summary?: SummaryResult;
+  highlights?: Highlight[];
+  highlightSummaries?: Record<string, SummaryResult>;
+};
+
+const fetchCloudCache = async (featureId: string): Promise<CloudCache | null> => {
+  try {
+    const resp = await fetch(`${TRUESCORE_API_BASE}/api/cached?featureId=${encodeURIComponent(featureId)}`);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data?.found ? data as CloudCache : null;
+  } catch { return null; }
+};
+
+// Pull whatever the web SPA has computed for this place. Adopts any field the
+// extension hasn't computed locally, persists it, and re-renders so users see
+// summaries/highlights without clicking a button on places they (or anyone)
+// already explored on the web.
+const hydrateFromCloud = (featureId: string) => {
+  const needSummary = !summaryCache.all;
+  const needHighlights = !highlightsState?.items?.length;
+  if (!needSummary && !needHighlights) return;
+  fetchCloudCache(featureId).then((cloud) => {
+    if (!cloud) return;
+    if (getFeatureId() !== featureId || lastFeatureId !== featureId) return;
+    let touchedSummary = false;
+    let touchedHighlights = false;
+    if (needSummary && cloud.summary) {
+      summaryCache.all = cloud.summary;
+      saveSummaryCache();
+      touchedSummary = true;
+    }
+    if (needHighlights && cloud.highlights?.length) {
+      const items: Highlight[] = cloud.highlights.map((h) => ({
+        token: h.token,
+        label: h.label,
+        count: h.count,
+        fetched: h.fetched,
+        score: h.score,
+        reviews: h.reviews,
+        summary: cloud.highlightSummaries?.[h.token],
+      }));
+      highlightsState = { items, ts: Date.now() };
+      saveHighlightsCache();
+      touchedHighlights = true;
+    }
+    if (touchedSummary && cardEls.sumPanel && summaryCache.all) {
+      cardEls.sumPanel.style.display = 'block';
+      renderSummary(cardEls.sumPanel, summaryCache.all);
+      refreshSumBtnState();
+    }
+    if (touchedHighlights) renderHighlights();
+  }).catch((e) => console.warn('[gmaps] cloud hydrate failed', e));
+};
+
 const saveHighlightsCache = () => {
   try {
     if (highlightsState) {
@@ -1247,10 +1307,14 @@ const createUIElements = () => {
   cardEls.filteredSumPanel = filteredSumPanel;
 
   const sumPanel = el('div', 'rc-summary-panel');
-  sumPanel.style.display = 'none';
   c.appendChild(sumPanel);
   cardEls.sumPanel = sumPanel;
-  if (summaryCache.all) renderSummary(sumPanel, summaryCache.all);
+  if (summaryCache.all) {
+    sumPanel.style.display = 'block';
+    renderSummary(sumPanel, summaryCache.all);
+  } else {
+    sumPanel.style.display = 'none';
+  }
 
   const sumRow = el('div', 'rc-sum-row');
   const sumBtn = el('button', 'rc-summarize-btn', 'Summarize') as HTMLButtonElement;
@@ -1503,6 +1567,7 @@ const observer = new MutationObserver((mutations) => {
     document.querySelector('#reviews-container')?.remove();
     clearCardEls();
     startFetching();
+    hydrateFromCloud(featureId);
     // Race the cache load against fetches: if cache lands first, render aggregates
     // immediately. invalidateStaleCaches() will abort in-flight fetches once the
     // histogram confirms the cache is still fresh. Skip if any live data already
