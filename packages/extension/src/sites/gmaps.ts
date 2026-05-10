@@ -109,7 +109,9 @@ let lastHistogramKey: string | null = null;
 let validatedHistogramKey: string | null = null;
 
 const abortControllers: Record<SortKey, AbortController | null> = { relevant: null, newest: null };
-let summaryCache: { all: SummaryResult | null; totalReviewsAtCache?: number } = { all: null };
+// Summaries persist indefinitely — they're invalidated only by an explicit
+// re-summarize, never by review count drift like score/highlights.
+let summaryCache: { all: SummaryResult | null } = { all: null };
 
 const getSummaryCacheKey = () => `${SUMMARY_CACHE_PREFIX}${lastFeatureId || 'default'}`;
 const loadSummaryCache = () => {
@@ -117,13 +119,7 @@ const loadSummaryCache = () => {
   catch { summaryCache = { all: null }; }
 };
 const saveSummaryCache = () => {
-  try {
-    if (summaryCache.all && summaryCache.totalReviewsAtCache == null) {
-      const t = getHistogramTotal();
-      if (t != null) summaryCache.totalReviewsAtCache = t;
-    }
-    localStorage.setItem(getSummaryCacheKey(), JSON.stringify(summaryCache));
-  } catch {}
+  try { localStorage.setItem(getSummaryCacheKey(), JSON.stringify(summaryCache)); } catch {}
 };
 
 // chrome.storage.local proxy via gmaps-bridge.ts (we run in MAIN world).
