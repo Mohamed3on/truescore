@@ -201,12 +201,40 @@ const saveHighlightsCache = () => {
         const t = getHistogramTotal();
         if (t != null) highlightsState.totalReviewsAtCache = t;
       }
-      localStorage.setItem(getHighlightsCacheKey(), JSON.stringify(highlightsState));
+      // Strip review bodies before persisting — they balloon to MBs per place
+      // and exhaust the 5MB localStorage quota, silently dropping summaries.
+      // Reviews refetch on demand when a chip opens.
+      const slim = {
+        ...highlightsState,
+        items: highlightsState.items.map(({ reviews: _r, ...rest }) => rest),
+      };
+      localStorage.setItem(getHighlightsCacheKey(), JSON.stringify(slim));
     } else {
       localStorage.removeItem(getHighlightsCacheKey());
     }
   } catch {}
 };
+
+// Legacy rc_highlights_* entries persisted full review bodies; one place can
+// hit 3MB and crowd out everything else. Slim them in place once at load.
+(() => {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k?.startsWith('rc_highlights_')) continue;
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      let parsed: any;
+      try { parsed = JSON.parse(raw); } catch { continue; }
+      if (!Array.isArray(parsed?.items) || !parsed.items.some((it: any) => it?.reviews)) continue;
+      const slim = {
+        ...parsed,
+        items: parsed.items.map(({ reviews: _r, ...rest }: any) => rest),
+      };
+      localStorage.setItem(k, JSON.stringify(slim));
+    }
+  } catch {}
+})();
 
 const makeReviewData = (): ReviewData => ({
   reviewsScores: { total: 0, inPastYear: 0, inPastMonth: 0 },
@@ -918,21 +946,51 @@ const renderChipReviews = (h: Highlight) => {
   }
 };
 
+const renderChipTitle = (title: HTMLElement, h: Highlight) => {
+  const score = h.score?.scorePct ?? 0;
+  title.textContent = `${h.label.toUpperCase()} · ${score}% · ${h.score?.trustedReviews ?? 0}/${h.reviews?.length ?? h.count}`;
+};
+
+// Reviews are not persisted (see saveHighlightsCache); fetch on demand after a
+// refresh so the chip panel and Summarize have data to work with.
+const ensureChipReviews = async (h: Highlight): Promise<void> => {
+  if (h.reviews) return;
+  const featureId = getFeatureId();
+  if (!featureId) return;
+  try { h.reviews = await fetchAllForToken(featureId, h.token); }
+  catch (e) { console.error('[highlights] refetch reviews failed for', h.label, e); }
+};
+
 const showChipPanel = (h: Highlight) => {
   activeHighlight = h;
   const panel = cardEls.chipPanel;
   const title = cardEls.chipPanelTitle;
   const sumBtn = cardEls.chipSummarizeBtn;
-  if (!panel || !title || !sumBtn) return;
-  const score = h.score?.scorePct ?? 0;
-  title.textContent = `${h.label.toUpperCase()} · ${score}% · ${h.score?.trustedReviews ?? 0}/${h.reviews?.length ?? h.count}`;
+  const body = cardEls.chipPanelBody;
+  if (!panel || !title || !sumBtn || !body) return;
+  renderChipTitle(title, h);
   panel.style.display = 'block';
-  sumBtn.disabled = false;
   chipViewMode = h.summary ? 'summary' : 'reviews';
   sumBtn.textContent = h.summary ? 'Show Reviews' : 'Summarize';
-  if (h.summary) renderSummary(cardEls.chipPanelBody!, h.summary);
+  if (h.summary) renderSummary(body, h.summary);
   else renderChipReviews(h);
-  // re-render chips so the active one gets the highlight class
+
+  if (!h.reviews) {
+    if (!h.summary) {
+      body.textContent = 'Loading reviews…';
+      body.className = 'rc-chip-body loading';
+    }
+    sumBtn.disabled = true;
+    ensureChipReviews(h).then(() => {
+      if (activeHighlight !== h) return;
+      sumBtn.disabled = false;
+      renderChipTitle(title, h);
+      if (chipViewMode === 'reviews') renderChipReviews(h);
+    });
+  } else {
+    sumBtn.disabled = false;
+  }
+
   renderHighlights();
   panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 };
