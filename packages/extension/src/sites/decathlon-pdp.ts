@@ -1,25 +1,18 @@
 import { addCommas, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget } from '../shared/review-summary';
-import { getDecathlonSite } from '../shared/decathlon';
+import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-const extractModelId = () => {
-  const path = location.pathname.split('#')[0].split('?')[0];
-  if (!path.includes('/p/')) return null;
-  const match = path.split('/').pop()!.match(/(\d{5,})$/);
-  return match ? match[1] : null;
-};
-
-const fetchStats = async (tld: string, locale: string, modelId: string) => {
-  const cacheKey = `nps_stats_${modelId}`;
+const fetchStats = async (tld: string, locale: string, sku: string, productId: string) => {
+  const cacheKey = `nps_stats_${productId}`;
   const cached = cacheGet(cacheKey, CACHE_TTL);
   if (cached) return cached;
 
   const res = await fetch(
-    `https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${modelId}/product?nbItemsPerPage=0&page=0`
+    `https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${sku}/product?nbItemsPerPage=0&page=0`
   );
   if (!res.ok) return null;
   const json = await res.json();
@@ -153,8 +146,8 @@ const replaceSizometer = (stats: any) => {
   sizometer.replaceWith(wrapper);
 };
 
-const fetchReviewTexts = async (tld: string, locale: string, modelId: string): Promise<string[]> => {
-  const reviewsCacheKey = `dkt-reviews-${modelId}`;
+const fetchReviewTexts = async (tld: string, locale: string, sku: string, productId: string): Promise<string[]> => {
+  const reviewsCacheKey = `dkt-reviews-${productId}`;
   const cached = cacheGet(reviewsCacheKey, 86400000);
   if (cached) return cached;
 
@@ -162,7 +155,7 @@ const fetchReviewTexts = async (tld: string, locale: string, modelId: string): P
   const texts: string[] = [];
   const results = await Promise.allSettled(
     [0, 1, 2, 3, 4].map(page =>
-      fetch(`https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${modelId}/product?nbItemsPerPage=100&page=${page}&sortBy=DATE`)
+      fetch(`https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${sku}/product?nbItemsPerPage=100&page=${page}&sortBy=DATE`)
         .then(r => r.ok ? r.json() : null)
     )
   );
@@ -187,7 +180,7 @@ Check for signs of review manipulation: repetitive phrasing across reviews, susp
 
 End with a short summary: the gist of what owners say, anything to watch out for, any better alternatives mentioned, and whether this is the best you can get for the price.`;
 
-const addSummarizeUI = (anchor: Element, tld: string, locale: string, modelId: string) => {
+const addSummarizeUI = (anchor: Element, tld: string, locale: string, sku: string, productId: string) => {
   if (document.querySelector('.ars-wrapper')) return;
 
   const wrapper = document.createElement('div');
@@ -199,25 +192,25 @@ const addSummarizeUI = (anchor: Element, tld: string, locale: string, modelId: s
 
   buildSummarizeWidget({
     wrapper,
-    cacheKey: `dkt-summary-${modelId}`,
+    cacheKey: `dkt-summary-${productId}`,
     summaryPrompt: SUMMARY_PROMPT,
-    fetchReviews: () => fetchReviewTexts(tld, locale, modelId),
+    fetchReviews: () => fetchReviewTexts(tld, locale, sku, productId),
   });
 
   anchor.after(wrapper);
 };
 
 setupSpaInjector({
-  match: extractModelId,
+  match: () => !!extractDecathlonIds(),
   load: async () => {
     const site = getDecathlonSite();
-    const modelId = extractModelId();
-    if (!site || !modelId) return null;
-    const stats = await fetchStats(site.tld, site.locale, modelId);
+    const ids = extractDecathlonIds();
+    if (!site || !ids) return null;
+    const stats = await fetchStats(site.tld, site.locale, ids.sku, ids.productId);
     if (!stats) return null;
-    return { site, modelId, stats, scoreData: getScoreFromStats(stats) };
+    return { site, ids, stats, scoreData: getScoreFromStats(stats) };
   },
-  inject: ({ site, modelId, stats, scoreData }) => {
+  inject: ({ site, ids, stats, scoreData }) => {
     const productInfo = document.querySelector('.product-info');
     if (!productInfo) return;
     if (scoreData) appendScore(productInfo, scoreData);
@@ -225,7 +218,7 @@ setupSpaInjector({
     replaceSizometer(stats);
     if (stats.count >= 5 && !document.querySelector('.ars-wrapper')) {
       const anchor = document.querySelector('.nps-insights') || productInfo.querySelector('.product-info__description') || productInfo;
-      addSummarizeUI(anchor, site.tld, site.locale, modelId);
+      addSummarizeUI(anchor, site.tld, site.locale, ids.sku, ids.productId);
     }
   },
   cleanup: () => {

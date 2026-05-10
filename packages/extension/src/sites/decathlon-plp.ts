@@ -1,6 +1,6 @@
 import { addCommas } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
-import { getDecathlonSite } from '../shared/decathlon';
+import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const CONTAINERS = 'ul.product-grid, ul.carousel-slides-wrapper';
@@ -11,27 +11,13 @@ const site = getDecathlonSite();
 if (!site) throw new Error('unsupported locale');
 const { tld, locale } = site;
 
-const cleanHref = (href: string) => href.split('#')[0].split('?')[0];
-
-const extractModelId = (href: string) => {
-  const match = cleanHref(href).split('/').pop()!.match(/(\d{5,})$/);
-  return match?.[1] ?? null;
-};
-
-// URL pattern: /p/{slug}/{productId}/{variantId}
-const extractProductId = (href: string) => {
-  const parts = cleanHref(href).split('/');
-  const i = parts.indexOf('p');
-  return i >= 0 ? parts[i + 2] ?? null : null;
-};
-
-const fetchScore = async (modelId: string) => {
-  const key = `nps_score_${modelId}`;
+const fetchScore = async (sku: string, productId: string) => {
+  const key = `nps_score_${productId}`;
   const cached = cacheGet(key, CACHE_TTL);
   if (cached) return cached;
 
   const res = await fetch(
-    `https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${modelId}/product?nbItemsPerPage=0&page=0`
+    `https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${sku}/product?nbItemsPerPage=0&page=0`
   );
   if (!res.ok) return null;
   const dist = (await res.json())?.stats?.ratingDistribution;
@@ -82,10 +68,10 @@ const dedupGrid = () => {
   for (const li of document.querySelectorAll(`:is(${CONTAINERS}) > li`)) {
     const link = li.querySelector(LINK);
     if (!link) continue;
-    const pid = extractProductId(link.getAttribute('href')!);
-    if (!pid) continue;
-    (li as HTMLElement).style.display = seen.has(pid) ? 'none' : '';
-    seen.add(pid);
+    const ids = extractDecathlonIds(link.getAttribute('href')!);
+    if (!ids) continue;
+    (li as HTMLElement).style.display = seen.has(ids.productId) ? 'none' : '';
+    seen.add(ids.productId);
   }
 };
 
@@ -99,10 +85,10 @@ const processNewCards = () => {
     card.setAttribute('data-nps-done', '1');
     const link = card.querySelector(LINK);
     if (!link) continue;
-    const modelId = extractModelId(link.getAttribute('href')!);
-    if (!modelId) continue;
+    const ids = extractDecathlonIds(link.getAttribute('href')!);
+    if (!ids) continue;
     promises.push(
-      fetchScore(modelId).then((data) => {
+      fetchScore(ids.sku, ids.productId).then((data) => {
         if (data && !isNaN(data.nps)) {
           card.setAttribute('data-nps', data.score);
           injectBadge(card, data);
