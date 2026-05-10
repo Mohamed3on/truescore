@@ -1,7 +1,7 @@
 import { GEMINI_API_KEY, geminiEndpoint } from '../shared/config';
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
-import { SCORE_CACHE_PREFIX } from '../shared/cache-keys';
+import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX } from '../shared/cache-keys';
 import {
   buildListUrl,
   buildTokenUrl,
@@ -111,7 +111,7 @@ let validatedHistogramKey: string | null = null;
 const abortControllers: Record<SortKey, AbortController | null> = { relevant: null, newest: null };
 let summaryCache: { all: SummaryResult | null; totalReviewsAtCache?: number } = { all: null };
 
-const getSummaryCacheKey = () => `rc_summary_${lastFeatureId || 'default'}`;
+const getSummaryCacheKey = () => `${SUMMARY_CACHE_PREFIX}${lastFeatureId || 'default'}`;
 const loadSummaryCache = () => {
   try { summaryCache = JSON.parse(localStorage.getItem(getSummaryCacheKey()) as string) || { all: null }; }
   catch { summaryCache = { all: null }; }
@@ -189,7 +189,7 @@ const saveScoreCache = (featureId: string, entry: ScoreCacheEntry) =>
 
 let highlightsState: HighlightsCache | null = null;
 let highlightsBusy = false;
-const getHighlightsCacheKey = () => `rc_highlights_${lastFeatureId || 'default'}`;
+const getHighlightsCacheKey = () => `${HIGHLIGHTS_CACHE_PREFIX}${lastFeatureId || 'default'}`;
 const loadHighlightsCache = () => {
   try { highlightsState = JSON.parse(localStorage.getItem(getHighlightsCacheKey()) as string) || null; }
   catch { highlightsState = null; }
@@ -287,7 +287,7 @@ const saveHighlightsCache = () => {
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (!k?.startsWith('rc_highlights_')) continue;
+      if (!k?.startsWith(HIGHLIGHTS_CACHE_PREFIX)) continue;
       const raw = localStorage.getItem(k);
       if (!raw || !raw.includes('"reviews":[')) continue;
       let parsed: any;

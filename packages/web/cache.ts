@@ -84,6 +84,15 @@ const emptyScore = (featureId: string): ScoreResult => ({
   relevant: emptyStat, newest: emptyStat, reviews: [],
 });
 
+// Persist a stub if the place hasn't been looked up yet, so the existing
+// putX methods (which all guard `if (!existing) return`) can apply their
+// patches without needing an upsert variant. Revalidate replaces the
+// zero-score with real data on the next /api/lookup.
+const ensureEntry = (featureId: string, name: string): void => {
+  if (store.get(featureId)) return;
+  persist(featureId, { name, score: emptyScore(featureId), scoreTs: 0 });
+};
+
 export const cache = {
   get(featureId: string): CacheEntry | undefined {
     return store.get(featureId);
@@ -146,23 +155,19 @@ export const cache = {
     const searches = { ...(existing.searches ?? {}), [query.toLowerCase()]: result };
     persist(featureId, { ...existing, searches });
   },
-  // Extension's contribute endpoint: merge sub-fields into the entry;
-  // create a stub if the place was never looked up. The next /api/lookup or
-  // revalidate replaces the zero-score with real data.
   async putContribution(featureId: string, name: string, patch: {
     summary?: Summary;
     highlights?: Highlight[];
     highlightSummaries?: Record<string, Summary>;
   }) {
-    const existing = store.get(featureId);
-    const base: CacheEntry = existing ?? { name, score: emptyScore(featureId), scoreTs: 0 };
-    const next: CacheEntry = { ...base };
-    if (patch.summary) { next.summary = patch.summary; next.summaryTs = Date.now(); }
-    if (patch.highlights) { next.highlights = patch.highlights; next.highlightsTs = Date.now(); }
+    ensureEntry(featureId, name);
+    if (patch.summary) await this.putSummary(featureId, patch.summary);
+    if (patch.highlights) await this.putHighlights(featureId, patch.highlights);
     if (patch.highlightSummaries) {
-      next.highlightSummaries = { ...(base.highlightSummaries ?? {}), ...patch.highlightSummaries };
+      for (const [token, summary] of Object.entries(patch.highlightSummaries)) {
+        await this.putHighlightSummary(featureId, token, summary);
+      }
     }
-    persist(featureId, next);
   },
   async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta }) {
     const existing = store.get(featureId);

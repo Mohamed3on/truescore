@@ -8,14 +8,15 @@ import { cache } from './cache';
 import index from './index.html';
 
 const json = (v: any, status = 200) =>
+  new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json' } });
+
+// Extension-facing endpoints only — keeps Lookup/Summarize/etc. same-origin
+// so a drive-by site can't trigger Google fetches or Gemini calls via the
+// user's browser.
+const corsJson = (v: any, status = 200) =>
   new Response(JSON.stringify(v), {
     status,
-    headers: {
-      'Content-Type': 'application/json',
-      // Read-only place data is public; allow the browser extension (and any
-      // other client) to call from a different origin.
-      'Access-Control-Allow-Origin': '*',
-    },
+    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
   });
 
 // Translate proxy / upstream errors into something users can act on, instead
@@ -229,10 +230,10 @@ Bun.serve({
     '/api/cached': {
       GET: (req) => {
         const featureId = new URL(req.url).searchParams.get('featureId');
-        if (!featureId) return json({ error: 'missing featureId' }, 400);
+        if (!featureId) return corsJson({ error: 'missing featureId' }, 400);
         const entry = cache.get(featureId);
-        if (!entry) return json({ found: false }, 404);
-        return json({
+        if (!entry) return corsJson({ found: false }, 404);
+        return corsJson({
           found: true,
           summary: entry.summary,
           highlights: entry.highlights,
@@ -254,13 +255,13 @@ Bun.serve({
             highlights?: any[];
             highlightSummaries?: Record<string, any>;
           };
-          if (!featureId || !name) return json({ error: 'missing featureId or name' }, 400);
-          if (!summary && !highlights && !highlightSummaries) return json({ error: 'nothing to contribute' }, 400);
+          if (!featureId || !name) return corsJson({ error: 'missing featureId or name' }, 400);
+          if (!summary && !highlights && !highlightSummaries) return corsJson({ error: 'nothing to contribute' }, 400);
           await cache.putContribution(featureId, name, { summary, highlights, highlightSummaries });
-          return json({ ok: true });
+          return corsJson({ ok: true });
         } catch (e) {
           console.error('[contribute]', e);
-          return json(errBody(e), 400);
+          return corsJson(errBody(e), 400);
         }
       },
       OPTIONS: () => new Response(null, {
