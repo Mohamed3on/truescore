@@ -78,6 +78,12 @@ const persist = (featureId: string, entry: CacheEntry) => {
   upsertStmt.run(featureId, JSON.stringify(entry));
 };
 
+const emptyStat = { totalReviews: 0, trustedReviews: 0, scorePct: 0 };
+const emptyScore = (featureId: string): ScoreResult => ({
+  featureId, totalReviews: 0, trustedReviews: 0, scorePct: 0,
+  relevant: emptyStat, newest: emptyStat, reviews: [],
+});
+
 export const cache = {
   get(featureId: string): CacheEntry | undefined {
     return store.get(featureId);
@@ -140,22 +146,17 @@ export const cache = {
     const searches = { ...(existing.searches ?? {}), [query.toLowerCase()]: result };
     persist(featureId, { ...existing, searches });
   },
-  // Used by the extension's contribute endpoint: merge any of summary,
-  // highlights, highlightSummaries into the entry; create a stub if the
-  // place hasn't been looked up. The next /api/lookup or revalidate fills
-  // in the empty score.
+  // Extension's contribute endpoint: merge sub-fields into the entry;
+  // create a stub if the place was never looked up. The next /api/lookup or
+  // revalidate replaces the zero-score with real data.
   async putContribution(featureId: string, name: string, patch: {
     summary?: Summary;
     highlights?: Highlight[];
     highlightSummaries?: Record<string, Summary>;
   }) {
     const existing = store.get(featureId);
-    const base: CacheEntry = existing ?? {
-      name,
-      score: { featureId, totalReviews: 0, trustedReviews: 0, scorePct: 0, relevant: { totalReviews: 0, trustedReviews: 0, scorePct: 0 }, newest: { totalReviews: 0, trustedReviews: 0, scorePct: 0 }, reviews: [] },
-      scoreTs: 0,
-    };
-    const next: CacheEntry = { ...base, name: existing?.name || name };
+    const base: CacheEntry = existing ?? { name, score: emptyScore(featureId), scoreTs: 0 };
+    const next: CacheEntry = { ...base };
     if (patch.summary) { next.summary = patch.summary; next.summaryTs = Date.now(); }
     if (patch.highlights) { next.highlights = patch.highlights; next.highlightsTs = Date.now(); }
     if (patch.highlightSummaries) {

@@ -194,8 +194,6 @@ const loadHighlightsCache = () => {
   try { highlightsState = JSON.parse(localStorage.getItem(getHighlightsCacheKey()) as string) || null; }
   catch { highlightsState = null; }
 };
-// Read-only mirror of the web's cache; lets the extension surface summaries
-// and highlights computed by the web SPA without recompute or local cache.
 const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
 
 type CloudCache = {
@@ -213,16 +211,14 @@ const fetchCloudCache = async (featureId: string): Promise<CloudCache | null> =>
   } catch { return null; }
 };
 
-// Mirror what the extension just generated back to the web cache so the next
-// visitor (extension or web) gets it without recompute. Fire-and-forget; a
-// failure here is invisible to the user.
-const pushContribution = (featureId: string, patch: {
+const pushContribution = (patch: {
   summary?: SummaryResult;
   highlights?: Highlight[];
   highlightSummaries?: Record<string, SummaryResult>;
 }): void => {
+  const featureId = getFeatureId();
   const { name } = getPlaceInfo();
-  if (!name) return;
+  if (!featureId || !name) return;
   fetch(`${TRUESCORE_API_BASE}/api/contribute`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -230,10 +226,6 @@ const pushContribution = (featureId: string, patch: {
   }).catch((e) => console.warn('[gmaps] contribute failed', e));
 };
 
-// Pull whatever the web SPA has computed for this place. Adopts any field the
-// extension hasn't computed locally, persists it, and re-renders so users see
-// summaries/highlights without clicking a button on places they (or anyone)
-// already explored on the web.
 const hydrateFromCloud = (featureId: string) => {
   const needSummary = !summaryCache.all;
   const needHighlights = !highlightsState?.items?.length;
@@ -250,26 +242,29 @@ const hydrateFromCloud = (featureId: string) => {
     }
     if (needHighlights && cloud.highlights?.length) {
       const items: Highlight[] = cloud.highlights.map((h) => ({
-        token: h.token,
-        label: h.label,
-        count: h.count,
-        fetched: h.fetched,
-        score: h.score,
-        reviews: h.reviews,
+        ...h,
         summary: cloud.highlightSummaries?.[h.token],
       }));
       highlightsState = { items, ts: Date.now() };
       saveHighlightsCache();
       touchedHighlights = true;
     }
-    if (touchedSummary && cardEls.sumPanel && summaryCache.all) {
+    if (touchedSummary && cardEls.sumPanel) {
       cardEls.sumPanel.style.display = 'block';
-      renderSummary(cardEls.sumPanel, summaryCache.all);
+      renderSummary(cardEls.sumPanel, summaryCache.all!);
       refreshSumBtnState();
     }
     if (touchedHighlights) renderHighlights();
   }).catch((e) => console.warn('[gmaps] cloud hydrate failed', e));
 };
+
+// Strip review bodies before persisting — they balloon to MBs per place and
+// exhaust the 5MB localStorage quota, silently dropping summaries. Reviews
+// refetch on demand when a chip opens.
+const slimHighlightItems = <T extends { items: any[] }>(state: T): T => ({
+  ...state,
+  items: state.items.map(({ reviews: _r, ...rest }: any) => rest),
+});
 
 const saveHighlightsCache = () => {
   try {
@@ -278,14 +273,7 @@ const saveHighlightsCache = () => {
         const t = getHistogramTotal();
         if (t != null) highlightsState.totalReviewsAtCache = t;
       }
-      // Strip review bodies before persisting — they balloon to MBs per place
-      // and exhaust the 5MB localStorage quota, silently dropping summaries.
-      // Reviews refetch on demand when a chip opens.
-      const slim = {
-        ...highlightsState,
-        items: highlightsState.items.map(({ reviews: _r, ...rest }) => rest),
-      };
-      localStorage.setItem(getHighlightsCacheKey(), JSON.stringify(slim));
+      localStorage.setItem(getHighlightsCacheKey(), JSON.stringify(slimHighlightItems(highlightsState)));
     } else {
       localStorage.removeItem(getHighlightsCacheKey());
     }
@@ -293,22 +281,19 @@ const saveHighlightsCache = () => {
 };
 
 // Legacy rc_highlights_* entries persisted full review bodies; one place can
-// hit 3MB and crowd out everything else. Slim them in place once at load.
+// hit 3MB and crowd out everything else. The substring gate skips the parse
+// for already-slim entries so this loop is cheap on every page load.
 (() => {
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (!k?.startsWith('rc_highlights_')) continue;
       const raw = localStorage.getItem(k);
-      if (!raw) continue;
+      if (!raw || !raw.includes('"reviews":[')) continue;
       let parsed: any;
       try { parsed = JSON.parse(raw); } catch { continue; }
-      if (!Array.isArray(parsed?.items) || !parsed.items.some((it: any) => it?.reviews)) continue;
-      const slim = {
-        ...parsed,
-        items: parsed.items.map(({ reviews: _r, ...rest }: any) => rest),
-      };
-      localStorage.setItem(k, JSON.stringify(slim));
+      if (!Array.isArray(parsed?.items)) continue;
+      localStorage.setItem(k, JSON.stringify(slimHighlightItems(parsed)));
     }
   } catch {}
 })();
@@ -783,7 +768,7 @@ const computeHighlights = async (force = false) => {
       return;
     }
     renderHighlights();
-    pushContribution(featureId, { highlights: items });
+    pushContribution({ highlights: items });
   } catch (e) {
     console.error('[highlights] error:', e);
     if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'Failed — retry';
@@ -1118,8 +1103,7 @@ const summarizeActiveChip = async () => {
       renderSummary(body, result);
       sumBtn.textContent = 'Show Reviews';
       chipViewMode = 'summary';
-      const featureId = getFeatureId();
-      if (featureId) pushContribution(featureId, { highlightSummaries: { [h.token]: result } });
+      pushContribution({ highlightSummaries: { [h.token]: result } });
     }
   } catch (e) {
     console.error('[highlights] summary failed', e);
@@ -1327,14 +1311,10 @@ const createUIElements = () => {
   cardEls.filteredSumPanel = filteredSumPanel;
 
   const sumPanel = el('div', 'rc-summary-panel');
+  sumPanel.style.display = summaryCache.all ? 'block' : 'none';
   c.appendChild(sumPanel);
   cardEls.sumPanel = sumPanel;
-  if (summaryCache.all) {
-    sumPanel.style.display = 'block';
-    renderSummary(sumPanel, summaryCache.all);
-  } else {
-    sumPanel.style.display = 'none';
-  }
+  if (summaryCache.all) renderSummary(sumPanel, summaryCache.all);
 
   const sumRow = el('div', 'rc-sum-row');
   const sumBtn = el('button', 'rc-summarize-btn', 'Summarize') as HTMLButtonElement;
@@ -1533,8 +1513,7 @@ const triggerSummarize = async () => {
     if (!customQuestion && typeof result !== 'string') {
       summaryCache.all = result;
       saveSummaryCache();
-      const featureId = getFeatureId();
-      if (featureId) pushContribution(featureId, { summary: result });
+      pushContribution({ summary: result });
     }
     renderSummary(panel, result);
   } catch (e) {
