@@ -8,17 +8,13 @@ const RETRY_STATUSES = new Set([502, 503, 504, 521, 522, 524]);
 
 async function fetchWithRetry(input: RequestInfo, init?: RequestInit, retries = 2): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
-    let resp: Response | null = null;
-    let netErr: Error | null = null;
-    try { resp = await fetch(input, init); }
-    catch (e) { netErr = e instanceof Error ? e : new Error(String(e)); }
-    const retryable = netErr || (resp && RETRY_STATUSES.has(resp.status));
-    if (retryable && attempt < retries) {
-      await new Promise((r) => setTimeout(r, 400 * 2 ** attempt + Math.random() * 200));
-      continue;
+    try {
+      const resp = await fetch(input, init);
+      if (!RETRY_STATUSES.has(resp.status) || attempt >= retries) return resp;
+    } catch (e) {
+      if (attempt >= retries) throw e;
     }
-    if (netErr) throw netErr;
-    return resp!;
+    await new Promise((r) => setTimeout(r, 400 * 2 ** attempt + Math.random() * 200));
   }
 }
 
@@ -26,10 +22,13 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
   const resp = await fetchWithRetry(input, init);
   const ct = resp.headers.get('content-type') ?? '';
   if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
-  const data = await resp.json() as T & { error?: string };
-  if (!resp.ok) throw new Error(data.error || `request failed (${resp.status})`);
+  const data = await resp.json() as T;
+  if (!resp.ok) throw new Error((data as { error?: string }).error || `request failed (${resp.status})`);
   return data;
 }
+
+const postJson = <T>(url: string, body: unknown): Promise<T> =>
+  fetchJson<T>(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 type SummaryHighlight = { text: string; count: number; sentiment: string };
 type Score = {
@@ -346,12 +345,9 @@ async function summarizeActiveChip() {
   setStatus(`Summarizing "${h.label}"…`);
   const t0 = Date.now();
   try {
-    const data = await fetchJson<{ summary?: Summary; error?: string; cached?: boolean }>('/api/highlight-summary', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId: currentFeatureId, token: h.token }),
+    const data = await postJson<{ summary?: Summary; cached?: boolean }>('/api/highlight-summary', {
+      featureId: currentFeatureId, token: h.token,
     });
-    if (data.error) throw new Error(data.error);
     if (data.summary) {
       renderChipSummary(data.summary);
       chipSummarizeBtn.disabled = false;
@@ -373,12 +369,9 @@ async function summarizeActiveSearch() {
   setStatus(`Summarizing "${r.query}"…`);
   const t0 = Date.now();
   try {
-    const data = await fetchJson<SearchResponse>('/api/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId: currentFeatureId, query: r.query, summarize: true }),
+    const data = await postJson<SearchResponse>('/api/search', {
+      featureId: currentFeatureId, query: r.query, summarize: true,
     });
-    if (data.error) throw new Error(data.error);
     if (data.result?.summary) {
       activeSearch = data.result;
       renderChipSummary(data.result.summary);
@@ -399,12 +392,9 @@ async function runSearch(query: string, force = false) {
   setStatus(`Searching "${query}"…`);
   const t0 = Date.now();
   try {
-    const data = await fetchJson<SearchResponse>('/api/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId: currentFeatureId, query, force }),
+    const data = await postJson<SearchResponse>('/api/search', {
+      featureId: currentFeatureId, query, force,
     });
-    if (data.error) throw new Error(data.error);
     if (data.result) {
       showSearchPanel(data.result);
       setStatus(
@@ -439,16 +429,17 @@ async function loadHighlights(force = false) {
     if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
     const data = await resp.json() as HighlightsResponse;
     if (!resp.ok) throw new Error(data.error || `request failed (${resp.status})`);
-    if (data.error) throw new Error(data.error);
-    if (data.highlights && data.highlights.length) {
-      renderHighlights(data.highlights, true);
-      highlightsRefreshBtn.hidden = false;
-    } else {
-      highlightsRow.hidden = true;
-    }
+    if (data.highlights?.length) showHighlights(data.highlights);
+    else highlightsRow.hidden = true;
   } catch (e) {
     showHighlightsLoading(`couldn't load highlights — ${e instanceof Error ? e.message : String(e)}`);
   }
+}
+
+function showHighlights(highlights: Highlight[]) {
+  highlightsRow.hidden = false;
+  renderHighlights(highlights, true);
+  highlightsRefreshBtn.hidden = false;
 }
 
 async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
@@ -495,12 +486,21 @@ async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
   }
 }
 
+const DEFAULT_TITLE = document.title;
+
 function renderScore(data: LookupResponse) {
   result.hidden = false;
   document.body.dataset.state = 'scored';
+  const displayName = data.meta?.canonicalName || data.name || '(unnamed place)';
   const nameEl = $('name') as HTMLAnchorElement;
-  nameEl.textContent = data.meta?.canonicalName || data.name || '(unnamed place)';
+  nameEl.textContent = displayName;
   nameEl.href = data.resolvedUrl ?? `https://www.google.com/maps?q=&ftid=${data.score.featureId}`;
+  document.title = `${displayName} · ${data.score.scorePct}% · TrueScore`;
+  const shareUrl = data.resolvedUrl ?? urlInput.value;
+  if (shareUrl) {
+    const next = `?url=${encodeURIComponent(shareUrl)}`;
+    if (location.search !== next) history.replaceState(null, '', next);
+  }
   renderPlaceMeta(data.meta);
   renderFreshness(data.score.reviews);
   const pctEl = $('scorePct');
@@ -695,11 +695,7 @@ function renderSummaryError(msg: string) {
 
 async function fetchHistogramFor(featureId: string, mergedPct: number) {
   try {
-    const data = await fetchJson<HistogramResponse>('/api/histogram', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId }),
-    });
+    const data = await postJson<HistogramResponse>('/api/histogram', { featureId });
     if (data.overallPct != null) renderOverall(data.overallPct, mergedPct);
   } catch {}
 }
@@ -707,11 +703,7 @@ async function fetchHistogramFor(featureId: string, mergedPct: number) {
 async function fetchSummaryFor(featureId: string, force = false): Promise<{ ok: boolean; ms: number }> {
   const t0 = Date.now();
   try {
-    const data = await fetchJson<SummarizeResponse>('/api/summarize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId, force }),
-    });
+    const data = await postJson<SummarizeResponse>('/api/summarize', { featureId, force });
     if (data.error) {
       renderSummaryError(data.error);
       return { ok: false, ms: Date.now() - t0 };
@@ -737,12 +729,7 @@ form.addEventListener('submit', async (e) => {
   setStatus('Fetching reviews…');
   const t0 = Date.now();
   try {
-    const data = await fetchJson<LookupResponse>('/api/lookup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-    });
-    if (data.error) throw new Error(data.error);
+    const data = await postJson<LookupResponse>('/api/lookup', { url });
     renderScore(data);
     const scoreMs = Date.now() - t0;
     const featureId = data.score.featureId;
@@ -752,13 +739,8 @@ form.addEventListener('submit', async (e) => {
       ? Promise.resolve()
       : fetchHistogramFor(featureId, mergedPct);
     let highlightsTask: Promise<unknown> = Promise.resolve();
-    if (data.highlights?.length) {
-      highlightsRow.hidden = false;
-      renderHighlights(data.highlights, true);
-      highlightsRefreshBtn.hidden = false;
-    } else {
-      highlightsTask = loadHighlights();
-    }
+    if (data.highlights?.length) showHighlights(data.highlights);
+    else highlightsTask = loadHighlights();
 
     if (data.summary) {
       renderSummary(data.summary);
@@ -831,6 +813,8 @@ document.getElementById('brand')?.addEventListener('click', () => {
   result.hidden = true;
   urlInput.value = '';
   setStatus('');
+  document.title = DEFAULT_TITLE;
+  if (location.search) history.replaceState(null, '', location.pathname);
   urlInput.focus();
   loadPlaces();
 });
@@ -896,12 +880,9 @@ askForm.addEventListener('submit', async (e) => {
   answerEl.textContent = '';
   setStatus('Asking…');
   try {
-    const data = await fetchJson<{ answer?: string; error?: string }>('/api/ask', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId: currentFeatureId, question: q }),
+    const data = await postJson<{ answer?: string }>('/api/ask', {
+      featureId: currentFeatureId, question: q,
     });
-    if (data.error) throw new Error(data.error);
     renderMarkdown(answerEl, data.answer ?? '');
     setStatus('');
   } catch (e) {
