@@ -1421,7 +1421,16 @@ const updateUI = () => {
   }
 
   els.countEl.textContent = String(totalCount);
-  els.detailEl.textContent = totalAll > 0 ? `${totalTrusted} trusted of ${totalAll}` : '';
+  const histTotal = getHistogramTotal();
+  const cacheTotal = cachedScoreState?.totalReviewsAtCache ?? null;
+  const parts = [
+    totalAll > 0 ? `${totalTrusted} trusted of ${totalAll}` : '',
+    histTotal != null ? `${histTotal.toLocaleString()} on Google` : '',
+    cacheTotal != null && histTotal != null && cacheTotal !== histTotal
+      ? `cached at ${cacheTotal.toLocaleString()}`
+      : '',
+  ].filter(Boolean);
+  els.detailEl.textContent = parts.join(' · ');
   els.card.classList.toggle('loading', anyFetching);
   els.card.classList.toggle('done', allDone);
 
