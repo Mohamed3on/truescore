@@ -13,6 +13,7 @@ import {
   starScore,
   statsForReviews,
   textReviewsFor,
+  timeAgo,
   type Locale,
   type Review,
   type SortKey,
@@ -272,29 +273,12 @@ const saveHighlightsCache = () => {
 };
 
 const liveNewestHeadId = (): string | null =>
-  Object.keys(scores.newest.reviewMap)[0] || cachedScoreState?.newestHeadId || null;
+  Object.keys(scores.newest.reviewMap)[0] || null;
 
 const liveNewestHeadReview = (): Review | null => {
-  const liveHead = Object.keys(scores.newest.reviewMap)[0];
-  if (liveHead) return scores.newest.reviewMap[liveHead];
-  const cachedHead = cachedScoreState?.newestHeadId;
-  if (cachedHead && cachedScoreState?.reviews?.[cachedHead]) return cachedScoreState.reviews[cachedHead];
-  return null;
-};
-
-const formatRelativeTime = (microsTimestamp: number): string => {
-  const ms = microsTimestamp / 1000;
-  const diff = Date.now() - ms;
-  if (diff < 0) return 'just now';
-  const m = Math.round(diff / 60000);
-  if (m < 60) return m <= 1 ? 'just now' : `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.round(h / 24);
-  if (d < 30) return `${d}d ago`;
-  const mo = Math.round(d / 30);
-  if (mo < 12) return `${mo}mo ago`;
-  return `${Math.round(mo / 12)}y ago`;
+  const id = liveNewestHeadId() ?? cachedScoreState?.newestHeadId;
+  if (!id) return null;
+  return scores.newest.reviewMap[id] ?? cachedScoreState?.reviews?.[id] ?? null;
 };
 
 // Legacy rc_highlights_* entries persisted full review bodies; one place can
@@ -510,22 +494,18 @@ const updateHighlightsStaleBadge = () => {
   badge.style.display = stale ? '' : 'none';
 };
 
-// Called once the first "newest" page comes back. Histogram totals lie when
-// Google trims old reviews while new ones arrive (same total, different feed);
-// the top reviewId of the newest sort doesn't.
+// Histogram totals lie when Google trims old reviews while new ones arrive
+// (same total, different feed); the top reviewId of the newest sort doesn't.
 const reconcileWithLiveHead = (liveHeadId: string) => {
-  if (cachedScoreState) {
-    const cachedHead = cachedScoreState.newestHeadId;
-    if (cachedHead && cachedHead === liveHeadId && isFullyHydrated(cachedScoreState)) {
-      scoreCacheServedFresh = true;
-      for (const k of SORT_KEYS) {
-        if (scores[k].isFetching) abortControllers[k]?.abort();
-        scores[k].isFetching = false;
-        scores[k].done = true;
-        abortControllers[k] = null;
-      }
-    } else if (cachedHead && cachedHead !== liveHeadId) {
-      cachedScoreState = null;
+  const cachedHead = cachedScoreState?.newestHeadId;
+  if (cachedHead && cachedHead !== liveHeadId) cachedScoreState = null;
+  else if (cachedHead === liveHeadId && isFullyHydrated(cachedScoreState)) {
+    scoreCacheServedFresh = true;
+    for (const k of SORT_KEYS) {
+      if (scores[k].isFetching) abortControllers[k]?.abort();
+      scores[k].isFetching = false;
+      scores[k].done = true;
+      abortControllers[k] = null;
     }
   }
   updateHighlightsStaleBadge();
@@ -1430,9 +1410,10 @@ const updateUI = () => {
   const headReview = liveNewestHeadReview();
   const parts = [
     totalAll > 0 ? `${totalTrusted} trusted of ${totalAll}` : '',
-    headReview?.timestamp ? `newest review ${formatRelativeTime(headReview.timestamp)}` : '',
+    headReview?.timestamp ? `newest review ${timeAgo(headReview.timestamp / 1000)}` : '',
   ].filter(Boolean);
-  els.detailEl.textContent = parts.join(' · ');
+  const detailText = parts.join(' · ');
+  if (detailText !== els.detailEl.textContent) els.detailEl.textContent = detailText;
   els.card.classList.toggle('loading', anyFetching);
   els.card.classList.toggle('done', allDone);
 
@@ -1576,11 +1557,8 @@ const observer = new MutationObserver((mutations) => {
     clearCardEls();
     startFetching();
     hydrateFromCloud(featureId);
-    // Race the cache load against fetches: if cache lands first, render aggregates
-    // immediately. reconcileWithLiveHead() will abort in-flight fetches once page 1
-    // of newest confirms the cache's head review ID still matches. Skip if any live
-    // data already arrived — we never want a stale disk read to clobber a fresh
-    // in-memory result.
+    // Skip if any live data already arrived — a stale disk read must not
+    // clobber a fresh in-memory result.
     loadScoreCache(featureId).then((entry) => {
       if (!entry || getFeatureId() !== featureId || cachedScoreState) return;
       if (Object.keys(mergeReviewMaps()).length > 0) return;

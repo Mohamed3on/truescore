@@ -219,3 +219,13 @@ export const overallPctFromHistogram = (h: Histogram): number => {
   if (!total) return 0;
   return Math.round(((h[0] - h[4]) / total) * 100);
 };
+
+export const timeAgo = (ms: number): string => {
+  const sec = Math.max(0, (Date.now() - ms) / 1000);
+  if (sec < 60) return 'just now';
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+  if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}d ago`;
+  if (sec < 86400 * 30) return `${Math.floor(sec / 86400 / 7)}w ago`;
+  return `${Math.floor(sec / 86400 / 30)}mo ago`;
+};

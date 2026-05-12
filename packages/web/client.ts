@@ -1,5 +1,5 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
-import type { Review, SortStats, DayHours, PlaceMeta } from '@truescore/gmaps-shared';
+import { timeAgo, type Review, type SortStats, type DayHours, type PlaceMeta } from '@truescore/gmaps-shared';
 
 type SummaryHighlight = { text: string; count: number; sentiment: string };
 type Score = {
@@ -801,16 +801,6 @@ document.getElementById('brand')?.addEventListener('click', () => {
   urlInput.focus();
   loadPlaces();
 });
-
-function timeAgo(ts: number): string {
-  const sec = Math.max(0, (Date.now() - ts) / 1000);
-  if (sec < 60) return 'just now';
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-  if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}d ago`;
-  if (sec < 86400 * 30) return `${Math.floor(sec / 86400 / 7)}w ago`;
-  return `${Math.floor(sec / 86400 / 30)}mo ago`;
-}
 
 function renderPlaces() {
   placesList.replaceChildren();
