@@ -186,12 +186,12 @@ Bun.serve({
           const cached = cache.get(featureId);
           if (cached) {
             void cache.touch(featureId).catch((e) => console.error('[touch]', e));
-            // Stale-while-revalidate: serve cache immediately, refresh in background.
             void revalidate(featureId, name, resolvedUrl).catch((e) => console.error('[revalidate]', e));
             return json({
               name: cached.name,
               score: cached.score,
               summary: cached.summary,
+              highlights: cached.highlights,
               histogram: cached.histogram,
               overallPct: cached.histogram ? overallPctFromHistogram(cached.histogram) : null,
               meta: cached.meta,

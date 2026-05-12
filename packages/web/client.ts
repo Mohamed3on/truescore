@@ -46,6 +46,7 @@ type LookupResponse = {
   name: string;
   score: Score;
   summary?: Summary;
+  highlights?: Highlight[];
   histogram?: number[];
   overallPct?: number | null;
   meta?: PlaceMeta;
@@ -750,7 +751,13 @@ form.addEventListener('submit', async (e) => {
     const histogramTask = data.overallPct != null
       ? Promise.resolve()
       : fetchHistogramFor(featureId, mergedPct);
-    const highlightsTask = loadHighlights();
+    let highlightsTask: Promise<unknown> = Promise.resolve();
+    if (data.highlights?.length) {
+      renderHighlights(data.highlights, true);
+      highlightsRefreshBtn.hidden = false;
+    } else {
+      highlightsTask = loadHighlights();
+    }
 
     if (data.summary) {
       renderSummary(data.summary);
