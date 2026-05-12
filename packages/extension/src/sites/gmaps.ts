@@ -65,7 +65,7 @@ type Highlight = {
   summary?: SummaryResult;
 };
 type HighlightCandidate = { label: string; count: number; token: string };
-type HighlightsCache = { items: Highlight[]; ts: number; totalReviewsAtCache?: number };
+type HighlightsCache = { items: Highlight[]; ts: number; newestHeadId?: string };
 let activeHighlight: Highlight | null = null;
 let activeLabelSearch: { query: string; reviews: Review[]; summary?: SummaryResult } | null = null;
 let labelSearchSeq = 0;
@@ -106,7 +106,6 @@ let fullPctObserver: MutationObserver | null = null;
 let lastVisibleKey = '';
 let staleHistogramKey: string | null = null;
 let lastHistogramKey: string | null = null;
-let validatedHistogramKey: string | null = null;
 
 const abortControllers: Record<SortKey, AbortController | null> = { relevant: null, newest: null };
 // Summaries persist indefinitely — they're invalidated only by an explicit
@@ -152,17 +151,14 @@ const bridgeStorage = (() => {
 
 type ScoreCacheEntry = {
   ts: number;
-  totalReviewsAtCache: number | null;
+  // Top of the "newest" sort at cache time. If Google's current page-1 newest
+  // first review ID still matches, no new reviews surfaced — cache is fresh.
+  // Catches the case histogram totals miss (3 added + 3 deleted = same total).
+  newestHeadId?: string;
   relevant: ReviewData;
   newest: ReviewData;
   merged: ReviewData;
-  // Merged + deduped review bodies. Optional for backward compat with cache
-  // entries written before this field existed; old entries trigger a refetch
-  // on next visit and get rewritten with the new shape.
   reviews?: Record<string, Review>;
-  // v2: per-sort review IDs so hydration can rebuild each reviewMap without
-  // cross-pollinating sorts. Together with `reviews`, these uniquely describe
-  // both sort-specific maps without duplicating bodies.
   relevantIds?: string[];
   newestIds?: string[];
 };
@@ -170,11 +166,12 @@ type FullScoreCacheEntry = ScoreCacheEntry & {
   reviews: Record<string, Review>;
   relevantIds: string[];
   newestIds: string[];
+  newestHeadId: string;
 };
 const isFullyHydrated = (e: ScoreCacheEntry | null): e is FullScoreCacheEntry =>
-  !!e?.reviews && !!e?.relevantIds && !!e?.newestIds;
+  !!e?.reviews && !!e?.relevantIds && !!e?.newestIds && !!e?.newestHeadId;
 let cachedScoreState: ScoreCacheEntry | null = null;
-// Set when invalidateStaleCaches confirms the cache is fresh and aborts the
+// Set when reconcileWithLiveHead confirms the cache is fresh and aborts the
 // speculative refetches. Tells persistScoreCacheIfReady to skip — otherwise a
 // partial reviewMap from the aborted-mid-pagination fetch would clobber the
 // known-good cache. Reset on featureId change.
@@ -265,15 +262,39 @@ const slimHighlightItems = <T extends { items: any[] }>(state: T): T => ({
 const saveHighlightsCache = () => {
   try {
     if (highlightsState) {
-      if (highlightsState.totalReviewsAtCache == null) {
-        const t = getHistogramTotal();
-        if (t != null) highlightsState.totalReviewsAtCache = t;
-      }
+      const head = liveNewestHeadId();
+      if (head) highlightsState.newestHeadId = head;
       localStorage.setItem(getHighlightsCacheKey(), JSON.stringify(slimHighlightItems(highlightsState)));
     } else {
       localStorage.removeItem(getHighlightsCacheKey());
     }
   } catch {}
+};
+
+const liveNewestHeadId = (): string | null =>
+  Object.keys(scores.newest.reviewMap)[0] || cachedScoreState?.newestHeadId || null;
+
+const liveNewestHeadReview = (): Review | null => {
+  const liveHead = Object.keys(scores.newest.reviewMap)[0];
+  if (liveHead) return scores.newest.reviewMap[liveHead];
+  const cachedHead = cachedScoreState?.newestHeadId;
+  if (cachedHead && cachedScoreState?.reviews?.[cachedHead]) return cachedScoreState.reviews[cachedHead];
+  return null;
+};
+
+const formatRelativeTime = (microsTimestamp: number): string => {
+  const ms = microsTimestamp / 1000;
+  const diff = Date.now() - ms;
+  if (diff < 0) return 'just now';
+  const m = Math.round(diff / 60000);
+  if (m < 60) return m <= 1 ? 'just now' : `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.round(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.round(mo / 12)}y ago`;
 };
 
 // Legacy rc_highlights_* entries persisted full review bodies; one place can
@@ -356,19 +377,19 @@ const persistScoreCacheIfReady = () => {
   if (!Object.keys(liveMerged).length) return;
   const mergedRD = makeReviewData();
   for (const id in liveMerged) processReview(liveMerged[id], mergedRD);
+  const newestIds = Object.keys(scores.newest.reviewMap);
   const entry: ScoreCacheEntry = {
     ts: Date.now(),
-    totalReviewsAtCache: getHistogramTotal(),
+    newestHeadId: newestIds[0],
     relevant: scores.relevant.reviewData,
     newest: scores.newest.reviewData,
     merged: mergedRD,
     reviews: liveMerged,
     relevantIds: Object.keys(scores.relevant.reviewMap),
-    newestIds: Object.keys(scores.newest.reviewMap),
+    newestIds,
   };
-  // Old entries without bodies always re-persist so they get the new shape.
   if (isFullyHydrated(cachedScoreState) &&
-      cachedScoreState.totalReviewsAtCache === entry.totalReviewsAtCache &&
+      cachedScoreState.newestHeadId === entry.newestHeadId &&
       cachedScoreState.merged.totalReviews.total === entry.merged.totalReviews.total) {
     return;
   }
@@ -379,7 +400,6 @@ const persistScoreCacheIfReady = () => {
 const resetScores = () => {
   staleHistogramKey = lastHistogramKey;
   lastHistogramKey = null;
-  validatedHistogramKey = null;
   for (const key of SORT_KEYS) {
     scores[key] = makeState();
     if (abortControllers[key]) { abortControllers[key]!.abort(); abortControllers[key] = null; }
@@ -481,49 +501,34 @@ const readHistogramCounts = () => {
   return Array.from(reviewRows).map((r) => extractNumber(r.getAttribute('aria-label') || ''));
 };
 
-const getHistogramTotal = (): number | null => {
-  const counts = readHistogramCounts();
-  return counts ? counts.reduce((a, b) => a + b, 0) : null;
-};
-
-const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
-
 const updateHighlightsStaleBadge = () => {
   const badge = cardEls.highlightsStale;
   if (!badge) return;
-  const cached = highlightsState?.totalReviewsAtCache;
-  const total = getHistogramTotal();
-  const stale = cached != null && total != null && cached !== total && !!highlightsState?.items.length;
+  const cached = highlightsState?.newestHeadId;
+  const live = liveNewestHeadId();
+  const stale = cached != null && live != null && cached !== live && !!highlightsState?.items.length;
   badge.style.display = stale ? '' : 'none';
 };
 
-const invalidateStaleCaches = (currentTotal: number) => {
-  if (highlightsState?.totalReviewsAtCache != null && highlightsState.totalReviewsAtCache !== currentTotal && highlightsState.items.length) {
-    const drift = Math.abs(currentTotal - highlightsState.totalReviewsAtCache) / highlightsState.totalReviewsAtCache;
-    if (drift > HIGHLIGHTS_DRIFT_THRESHOLD && !highlightsBusy) {
-      void computeHighlights(true);
-    } else {
-      updateHighlightsStaleBadge();
-    }
-  }
-  // SWR: histogram total still matches, cached aggregates are fresh. Only
-  // abort the speculative refetches when bodies are also cached; old entries
-  // need the fetches to keep running so they backfill on next persist.
-  if (cachedScoreState && cachedScoreState.totalReviewsAtCache === currentTotal) {
-    scoreCacheServedFresh = true;
-    if (isFullyHydrated(cachedScoreState)) {
+// Called once the first "newest" page comes back. Histogram totals lie when
+// Google trims old reviews while new ones arrive (same total, different feed);
+// the top reviewId of the newest sort doesn't.
+const reconcileWithLiveHead = (liveHeadId: string) => {
+  if (cachedScoreState) {
+    const cachedHead = cachedScoreState.newestHeadId;
+    if (cachedHead && cachedHead === liveHeadId && isFullyHydrated(cachedScoreState)) {
+      scoreCacheServedFresh = true;
       for (const k of SORT_KEYS) {
         if (scores[k].isFetching) abortControllers[k]?.abort();
         scores[k].isFetching = false;
         scores[k].done = true;
         abortControllers[k] = null;
       }
+    } else if (cachedHead && cachedHead !== liveHeadId) {
+      cachedScoreState = null;
     }
-  } else if (cachedScoreState && cachedScoreState.totalReviewsAtCache != null) {
-    // Total changed → cached score is stale. Drop it; the in-flight fetches
-    // will replace it shortly.
-    cachedScoreState = null;
   }
+  updateHighlightsStaleBadge();
 };
 
 const calculateFullPercentage = () => {
@@ -534,10 +539,6 @@ const calculateFullPercentage = () => {
   const allReviews = counts.reduce((a, b) => a + b, 0);
   if (!allReviews) return null;
   lastHistogramKey = key;
-  if (validatedHistogramKey !== key) {
-    validatedHistogramKey = key;
-    invalidateStaleCaches(allReviews);
-  }
   return toPct((counts[0] - counts[4]) / allReviews);
 };
 
@@ -900,6 +901,11 @@ const fetchAllReviews = async (sortKey: SortKey) => {
       }
       state.pageCount++;
       updateUI();
+
+      if (sortKey === 'newest' && state.pageCount === 1 && reviews[0]?.reviewId) {
+        reconcileWithLiveHead(reviews[0].reviewId);
+        if (scoreCacheServedFresh) break;
+      }
 
       if (state.pageCount >= MIN_PAGES_BEFORE_STABILIZE) {
         const pct = getRoundedPct(sortKey);
@@ -1421,14 +1427,10 @@ const updateUI = () => {
   }
 
   els.countEl.textContent = String(totalCount);
-  const histTotal = getHistogramTotal();
-  const cacheTotal = cachedScoreState?.totalReviewsAtCache ?? null;
+  const headReview = liveNewestHeadReview();
   const parts = [
     totalAll > 0 ? `${totalTrusted} trusted of ${totalAll}` : '',
-    histTotal != null ? `${histTotal.toLocaleString()} on Google` : '',
-    cacheTotal != null && histTotal != null && cacheTotal !== histTotal
-      ? `cached at ${cacheTotal.toLocaleString()}`
-      : '',
+    headReview?.timestamp ? `newest review ${formatRelativeTime(headReview.timestamp)}` : '',
   ].filter(Boolean);
   els.detailEl.textContent = parts.join(' · ');
   els.card.classList.toggle('loading', anyFetching);
@@ -1575,9 +1577,10 @@ const observer = new MutationObserver((mutations) => {
     startFetching();
     hydrateFromCloud(featureId);
     // Race the cache load against fetches: if cache lands first, render aggregates
-    // immediately. invalidateStaleCaches() will abort in-flight fetches once the
-    // histogram confirms the cache is still fresh. Skip if any live data already
-    // arrived — we never want a stale disk read to clobber a fresh in-memory result.
+    // immediately. reconcileWithLiveHead() will abort in-flight fetches once page 1
+    // of newest confirms the cache's head review ID still matches. Skip if any live
+    // data already arrived — we never want a stale disk read to clobber a fresh
+    // in-memory result.
     loadScoreCache(featureId).then((entry) => {
       if (!entry || getFeatureId() !== featureId || cachedScoreState) return;
       if (Object.keys(mergeReviewMaps()).length > 0) return;
