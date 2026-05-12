@@ -753,6 +753,7 @@ form.addEventListener('submit', async (e) => {
       : fetchHistogramFor(featureId, mergedPct);
     let highlightsTask: Promise<unknown> = Promise.resolve();
     if (data.highlights?.length) {
+      highlightsRow.hidden = false;
       renderHighlights(data.highlights, true);
       highlightsRefreshBtn.hidden = false;
     } else {
