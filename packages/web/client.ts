@@ -1,6 +1,36 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
 import { timeAgo, type Review, type SortStats, type DayHours, type PlaceMeta } from '@truescore/gmaps-shared';
 
+// Cloudflare 5xx (502/521/522/524) returns an HTML error page, which would
+// hit resp.json() and surface as the cryptic "Unexpected token '<'". Retry
+// transient failures so the user doesn't have to refresh to recover.
+const RETRY_STATUSES = new Set([502, 503, 504, 521, 522, 524]);
+
+async function fetchWithRetry(input: RequestInfo, init?: RequestInit, retries = 2): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    let resp: Response | null = null;
+    let netErr: Error | null = null;
+    try { resp = await fetch(input, init); }
+    catch (e) { netErr = e instanceof Error ? e : new Error(String(e)); }
+    const retryable = netErr || (resp && RETRY_STATUSES.has(resp.status));
+    if (retryable && attempt < retries) {
+      await new Promise((r) => setTimeout(r, 400 * 2 ** attempt + Math.random() * 200));
+      continue;
+    }
+    if (netErr) throw netErr;
+    return resp!;
+  }
+}
+
+async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+  const resp = await fetchWithRetry(input, init);
+  const ct = resp.headers.get('content-type') ?? '';
+  if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
+  const data = await resp.json() as T & { error?: string };
+  if (!resp.ok) throw new Error(data.error || `request failed (${resp.status})`);
+  return data;
+}
+
 type SummaryHighlight = { text: string; count: number; sentiment: string };
 type Score = {
   featureId: string;
@@ -315,12 +345,11 @@ async function summarizeActiveChip() {
   setStatus(`Summarizing "${h.label}"…`);
   const t0 = Date.now();
   try {
-    const resp = await fetch('/api/highlight-summary', {
+    const data = await fetchJson<{ summary?: Summary; error?: string; cached?: boolean }>('/api/highlight-summary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ featureId: currentFeatureId, token: h.token }),
     });
-    const data = await resp.json() as { summary?: Summary; error?: string; cached?: boolean };
     if (data.error) throw new Error(data.error);
     if (data.summary) {
       renderChipSummary(data.summary);
@@ -343,12 +372,11 @@ async function summarizeActiveSearch() {
   setStatus(`Summarizing "${r.query}"…`);
   const t0 = Date.now();
   try {
-    const resp = await fetch('/api/search', {
+    const data = await fetchJson<SearchResponse>('/api/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ featureId: currentFeatureId, query: r.query, summarize: true }),
     });
-    const data: SearchResponse = await resp.json();
     if (data.error) throw new Error(data.error);
     if (data.result?.summary) {
       activeSearch = data.result;
@@ -370,12 +398,11 @@ async function runSearch(query: string, force = false) {
   setStatus(`Searching "${query}"…`);
   const t0 = Date.now();
   try {
-    const resp = await fetch('/api/search', {
+    const data = await fetchJson<SearchResponse>('/api/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ featureId: currentFeatureId, query, force }),
     });
-    const data: SearchResponse = await resp.json();
     if (data.error) throw new Error(data.error);
     if (data.result) {
       showSearchPanel(data.result);
@@ -397,18 +424,19 @@ async function loadHighlights(force = false) {
   showHighlightsLoading(force ? 'refreshing…' : 'loading highlights…');
   highlightsRefreshBtn.hidden = true;
   try {
-    const resp = await fetch('/api/highlights', {
+    const resp = await fetchWithRetry('/api/highlights', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ featureId: currentFeatureId, force }),
     });
     const ct = resp.headers.get('content-type') ?? '';
-    if (ct.includes('ndjson') && resp.body) {
+    if (resp.ok && ct.includes('ndjson') && resp.body) {
       await consumeHighlightStream(resp.body);
       highlightsRefreshBtn.hidden = false;
       return;
     }
-    const data: HighlightsResponse = await resp.json();
+    if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
+    const data = await resp.json() as HighlightsResponse;
     if (!resp.ok) throw new Error(data.error || `request failed (${resp.status})`);
     if (data.error) throw new Error(data.error);
     if (data.highlights && data.highlights.length) {
@@ -666,12 +694,11 @@ function renderSummaryError(msg: string) {
 
 async function fetchHistogramFor(featureId: string, mergedPct: number) {
   try {
-    const resp = await fetch('/api/histogram', {
+    const data = await fetchJson<HistogramResponse>('/api/histogram', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ featureId }),
     });
-    const data: HistogramResponse = await resp.json();
     if (data.overallPct != null) renderOverall(data.overallPct, mergedPct);
   } catch {}
 }
@@ -679,12 +706,11 @@ async function fetchHistogramFor(featureId: string, mergedPct: number) {
 async function fetchSummaryFor(featureId: string, force = false): Promise<{ ok: boolean; ms: number }> {
   const t0 = Date.now();
   try {
-    const resp = await fetch('/api/summarize', {
+    const data = await fetchJson<SummarizeResponse>('/api/summarize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ featureId, force }),
     });
-    const data: SummarizeResponse = await resp.json();
     if (data.error) {
       renderSummaryError(data.error);
       return { ok: false, ms: Date.now() - t0 };
@@ -710,12 +736,11 @@ form.addEventListener('submit', async (e) => {
   setStatus('Fetching reviews…');
   const t0 = Date.now();
   try {
-    const resp = await fetch('/api/lookup', {
+    const data = await fetchJson<LookupResponse>('/api/lookup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
     });
-    const data: LookupResponse = await resp.json();
     if (data.error) throw new Error(data.error);
     renderScore(data);
     const scoreMs = Date.now() - t0;
@@ -842,8 +867,7 @@ function renderPlaces() {
 
 async function loadPlaces() {
   try {
-    const resp = await fetch('/api/places');
-    const data: PlacesResponse = await resp.json();
+    const data = await fetchJson<PlacesResponse>('/api/places');
     placesCache = data.places ?? [];
     renderPlaces();
   } catch (e) {
@@ -864,14 +888,13 @@ askForm.addEventListener('submit', async (e) => {
   answerEl.textContent = '';
   setStatus('Asking…');
   try {
-    const resp = await fetch('/api/ask', {
+    const data = await fetchJson<{ answer?: string; error?: string }>('/api/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ featureId: currentFeatureId, question: q }),
     });
-    const data = await resp.json();
     if (data.error) throw new Error(data.error);
-    renderMarkdown(answerEl, data.answer);
+    renderMarkdown(answerEl, data.answer ?? '');
     setStatus('');
   } catch (e) {
     setStatus(e instanceof Error ? e.message : String(e), true);
