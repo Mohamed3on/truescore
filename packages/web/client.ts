@@ -130,6 +130,8 @@ let currentMergedPct = 0;
 let baseSummary: Summary | undefined;
 let activeHighlight: Highlight | null = null;
 let activeSearch: SearchResult | null = null;
+let currentHighlights: Highlight[] = [];
+let highlightReviewsInflight: Promise<void> | null = null;
 
 function setStatus(msg: string, isErr = false) {
   status.textContent = msg;
@@ -335,6 +337,16 @@ async function onHighlightClick(h: Highlight) {
     return;
   }
   showChipPanel(h);
+  if (h.reviews) return;
+  while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
+  const loading = document.createElement('div');
+  loading.className = 'chip-loading';
+  loading.textContent = 'loading reviews…';
+  chipBody.appendChild(loading);
+  await ensureHighlightReviews();
+  if (activeHighlight !== h) return;
+  setPanelTitle(h.label.toUpperCase(), h.score?.scorePct ?? 0, h.score?.trustedReviews ?? 0, h.reviews?.length ?? h.count);
+  renderReviewList(h.reviews ?? []);
 }
 
 async function summarizeActiveChip() {
@@ -438,8 +450,38 @@ async function loadHighlights(force = false) {
 
 function showHighlights(highlights: Highlight[]) {
   highlightsRow.hidden = false;
+  currentHighlights = highlights;
   renderHighlights(highlights, true);
   highlightsRefreshBtn.hidden = false;
+}
+
+// /api/lookup returns highlights without per-chip review bodies — fetched
+// here on demand the first time a user opens a chip. /api/highlights cache
+// hit is fast and the result is mutated into the in-memory chips so
+// subsequent clicks are instant.
+async function ensureHighlightReviews(): Promise<void> {
+  if (highlightReviewsInflight) return highlightReviewsInflight;
+  if (!currentFeatureId || !currentHighlights.length) return;
+  if (currentHighlights.every((h) => h.reviews)) return;
+  highlightReviewsInflight = (async () => {
+    try {
+      const resp = await fetchWithRetry('/api/highlights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ featureId: currentFeatureId }),
+      });
+      const ct = resp.headers.get('content-type') ?? '';
+      if (!resp.ok || !ct.includes('json')) return;
+      const data = await resp.json() as HighlightsResponse;
+      const byToken = new Map((data.highlights ?? []).map((h) => [h.token, h.reviews]));
+      for (const h of currentHighlights) {
+        if (!h.reviews) h.reviews = byToken.get(h.token);
+      }
+    } finally {
+      highlightReviewsInflight = null;
+    }
+  })();
+  return highlightReviewsInflight;
 }
 
 async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {

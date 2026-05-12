@@ -187,11 +187,15 @@ Bun.serve({
           if (cached) {
             void cache.touch(featureId).catch((e) => console.error('[touch]', e));
             void revalidate(featureId, name, resolvedUrl).catch((e) => console.error('[revalidate]', e));
+            // Strip per-chip review bodies — they're 10×8×~400 chars and only
+            // needed when a chip is opened. Client lazy-fetches /api/highlights
+            // (cache-hit, fast) on first chip click to fill them in.
+            const slimHighlights = cached.highlights?.map(({ reviews: _r, ...rest }) => rest);
             return json({
               name: cached.name,
               score: cached.score,
               summary: cached.summary,
-              highlights: cached.highlights,
+              highlights: slimHighlights,
               histogram: cached.histogram,
               overallPct: cached.histogram ? overallPctFromHistogram(cached.histogram) : null,
               meta: cached.meta,
