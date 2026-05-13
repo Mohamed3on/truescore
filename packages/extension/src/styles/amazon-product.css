@@ -508,7 +508,23 @@
 }
 .ars-search-input::placeholder { color: #A8A29E; }
 .ars-search-input:focus { border-color: #0F766E; }
+.ars-search-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ars-search-score {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
 .ars-search-summary {
+  flex: 1;
+  min-width: 120px;
   font-size: 11px;
   color: #78716C;
   letter-spacing: 0.02em;
@@ -519,6 +535,8 @@
   font-variant-numeric: tabular-nums;
   margin-right: 2px;
 }
+.ars-search-sum-btn { padding: 5px 10px; font-size: 11px; }
+.ars-search-sum-panel { margin-top: 2px; }
 .ars-search-list {
   display: flex;
   flex-direction: column;

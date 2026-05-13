@@ -1,6 +1,6 @@
 import { addCommas, el, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
-import { buildSummarizeWidget } from '../shared/review-summary';
+import { buildSummarizeWidget, geminiSummarize, renderStructuredSummary } from '../shared/review-summary';
 
 const STAMPED_API_KEY = '8a204db0-ec09-48cf-baed-db3ca2ef99e6';
 const STAMPED_STORE = 'bjj-fanatics.myshopify.com';
@@ -170,7 +170,14 @@ const buildReviewCard = (r: StampedReview, query: string) => {
   return card;
 };
 
-const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
+const searchSummaryPrompt = (query: string) =>
+  `These BJJ instructional reviews all mention "${query}". Surface what reviewers specifically say about "${query}" — what's praised, what's complained about, which volumes/parts/chapters/positions/techniques they reference in connection with it, and whether the coverage of "${query}" is the reason to buy or skip this course.
+
+Cite concrete volumes, chapters, techniques, sweeps, and positions by name. Ignore shipping, delivery, packaging, and seller issues.
+
+The conclusion is the most important field — a punchy verdict on "${query}" at this course: the gist, anything to watch out for, and whether the "${query}" content alone justifies the purchase. Be decisive, no hedging.`;
+
+const buildSearchSection = (wrapper: HTMLElement, info: ProductInfo, bundle: ReviewBundle) => {
   const section = el('div', 'ars-search-section');
   const input = document.createElement('input');
   input.type = 'text';
@@ -178,32 +185,103 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
   input.placeholder = `Search ${addCommas(bundle.reviews.length)} reviews… (e.g. "guard")`;
   section.appendChild(input);
 
-  const summary = el('div', 'ars-search-summary');
-  summary.style.display = 'none';
-  section.appendChild(summary);
+  const header = el('div', 'ars-search-header');
+  header.style.display = 'none';
+  const scoreChip = el('span', 'ars-search-score');
+  const summary = el('span', 'ars-search-summary');
+  const sumBtn = el('button', 'ars-summarize-btn ars-search-sum-btn', '✦ Summarize') as HTMLButtonElement;
+  sumBtn.type = 'button';
+  header.append(scoreChip, summary, sumBtn);
+  section.appendChild(header);
+
+  const sumPanel = el('div', 'ars-summary-panel ars-search-sum-panel');
+  sumPanel.style.display = 'none';
+  section.appendChild(sumPanel);
 
   const list = el('div', 'ars-search-list');
   list.style.display = 'none';
   section.appendChild(list);
 
+  const summaryCache = new Map<string, any>();
   let timer: number | null = null;
+  let currentQuery = '';
+
+  const hideSummary = () => {
+    sumPanel.style.display = 'none';
+    sumPanel.textContent = '';
+    sumBtn.disabled = false;
+    sumBtn.textContent = '✦ Summarize';
+  };
+
+  const renderCached = (query: string, parsed: any) => {
+    sumPanel.style.display = 'block';
+    renderStructuredSummary(sumPanel, parsed, { skipSuspicious: true });
+    sumBtn.disabled = false;
+    sumBtn.textContent = `Re-summarize "${query}"`;
+  };
+
+  sumBtn.addEventListener('click', async () => {
+    const query = currentQuery;
+    if (!query) return;
+    const matches = bundle.reviews.filter(r => reviewHaystack(r).includes(query.toLowerCase()));
+    const texts = matches.map(reviewToText).filter(Boolean);
+    if (!texts.length) {
+      sumPanel.style.display = 'block';
+      sumPanel.textContent = 'No review text to summarize';
+      return;
+    }
+    sumBtn.disabled = true;
+    sumBtn.textContent = '⏳ Summarizing…';
+    sumPanel.style.display = 'block';
+    sumPanel.textContent = 'Summarizing…';
+    try {
+      const parsed = await geminiSummarize(texts, searchSummaryPrompt(query));
+      summaryCache.set(query.toLowerCase(), parsed);
+      if (currentQuery !== query) return;
+      renderCached(query, parsed);
+    } catch (e: any) {
+      sumPanel.textContent = `Error: ${e.message || 'Summarization failed'}`;
+      sumBtn.disabled = false;
+      sumBtn.textContent = `Retry "${query}"`;
+    }
+  });
 
   const render = () => {
     const raw = input.value.trim();
     const q = raw.toLowerCase();
+    currentQuery = raw;
     if (!q) {
-      summary.style.display = 'none';
+      header.style.display = 'none';
       list.style.display = 'none';
+      hideSummary();
       return;
     }
     const matches = bundle.reviews.filter(r => reviewHaystack(r).includes(q));
-    summary.style.display = '';
+
+    header.style.display = '';
     list.style.display = '';
     summary.textContent = '';
     summary.append(
       el('span', 'ars-search-count', addCommas(matches.length)),
       document.createTextNode(` of ${addCommas(bundle.reviews.length)} reviews mention "${raw}"`),
     );
+
+    const scored = matches.length ? computeScore({ total: matches.length, reviews: matches }) : null;
+    if (scored) {
+      const pct = Math.round(scored.nps);
+      scoreChip.textContent = `${pct}%`;
+      scoreChip.style.color = npsColor(scored.nps);
+      scoreChip.style.display = '';
+    } else {
+      scoreChip.style.display = 'none';
+    }
+
+    sumBtn.disabled = matches.length === 0;
+    const cached = summaryCache.get(q);
+    if (cached) renderCached(raw, cached);
+    else hideSummary();
+    if (matches.length) sumBtn.textContent = cached ? `Re-summarize "${raw}"` : `✦ Summarize "${raw}"`;
+
     list.textContent = '';
     if (!matches.length) {
       list.appendChild(el('div', 'ars-search-empty', 'No matching reviews'));
@@ -281,7 +359,7 @@ const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: { score: nu
 
   renderScoreCard(wrapper, scored.score, scored.nps, scored.total);
 
-  buildSearchSection(wrapper, bundle);
+  buildSearchSection(wrapper, info, bundle);
 
   buildSummarizeWidget({
     wrapper,
