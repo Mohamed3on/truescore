@@ -1,5 +1,5 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
-import { timeAgo, type Review, type SortStats, type DayHours, type PlaceMeta } from '@truescore/gmaps-shared';
+import { overallScoreFromHistogram, timeAgo, type Review, type SortStats, type DayHours, type PlaceMeta } from '@truescore/gmaps-shared';
 
 // Cloudflare 5xx (502/521/522/524) returns an HTML error page, which would
 // hit resp.json() and surface as the cryptic "Unexpected token '<'". Retry
@@ -564,6 +564,7 @@ function paintScore(data: { name?: string; score: Score; histogram?: number[]; o
     deltaEl.className = `delta ${delta > 0 ? 'pos' : delta < 0 ? 'neg' : ''}`;
   }
   renderOverall(data.overallPct ?? null, data.score.scorePct);
+  renderOverallScore(data.histogram);
   currentMergedPct = data.score.scorePct;
 }
 
@@ -764,7 +765,7 @@ function renderPlaceMeta(meta: PlaceMeta | undefined) {
     googleEl.hidden = true;
   }
 
-  metaRow.hidden = !(meta?.category || meta?.priceRange || meta?.googleRating != null);
+  metaRow.hidden = !(meta?.category || meta?.priceRange || meta?.googleRating != null) && $('placeOverallScore').hidden;
   showTag(addressEl, meta?.address);
   renderHoursToday(meta);
 }
@@ -795,6 +796,15 @@ function renderOverall(overallPct: number | null, mergedPct: number) {
   el.className = `overall-delta ${diff > 0 ? 'pos' : diff < 0 ? 'neg' : ''}`;
 }
 
+function renderOverallScore(histogram: number[] | undefined | null) {
+  const el = $('placeOverallScore');
+  if (!histogram || !histogram.length) { el.hidden = true; return; }
+  const score = overallScoreFromHistogram(histogram);
+  el.textContent = `score ${score.toLocaleString()}`;
+  el.hidden = false;
+  $('placeMetaRow').hidden = false;
+}
+
 function renderSummary(summary: Summary) {
   $('valueForMoney').textContent = `${summary.valueForMoney}/5`;
   renderMarkdown($('verdict'), summary.verdict);
@@ -821,6 +831,7 @@ async function fetchHistogramFor(featureId: string, mergedPct: number) {
   try {
     const data = await postJson<HistogramResponse>('/api/histogram', { featureId });
     if (data.overallPct != null) renderOverall(data.overallPct, mergedPct);
+    if (data.histogram) renderOverallScore(data.histogram);
   } catch {}
 }
 
@@ -847,6 +858,11 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const url = urlInput.value.trim();
   if (!url) return;
+  // Push a history entry for user-initiated nav so back/forward works. Skip
+  // when already at this URL (initial load with ?url=, popstate replay, or
+  // a duplicate submit).
+  const nextSearch = `?url=${encodeURIComponent(url)}`;
+  if (location.search !== nextSearch) history.pushState(null, '', nextSearch);
   document.body.dataset.state = 'loading';
   goBtn.disabled = true;
   goBtn.textContent = 'FETCHING';
@@ -947,15 +963,31 @@ searchRefreshBtn.addEventListener('click', () => {
 
 chipCloseBtn.addEventListener('click', closeChipPanel);
 
-document.getElementById('brand')?.addEventListener('click', () => {
+function goHome() {
   delete document.body.dataset.state;
   result.hidden = true;
   urlInput.value = '';
   setStatus('');
   document.title = DEFAULT_TITLE;
-  if (location.search) history.replaceState(null, '', location.pathname);
   urlInput.focus();
   loadPlaces();
+}
+
+document.getElementById('brand')?.addEventListener('click', () => {
+  if (location.search) history.pushState(null, '', location.pathname);
+  goHome();
+});
+
+// Browser back/forward — route off the URL bar. Form submit checks
+// location.search to avoid pushing a duplicate entry on replay.
+window.addEventListener('popstate', () => {
+  const u = new URLSearchParams(location.search).get('url');
+  if (u) {
+    urlInput.value = u;
+    form.requestSubmit();
+  } else {
+    goHome();
+  }
 });
 
 function renderPlaces() {

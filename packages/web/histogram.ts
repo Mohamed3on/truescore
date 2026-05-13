@@ -1,7 +1,7 @@
 import { fetchPlacePreview } from './browser';
 import { histogramFromPreview, metaFromPreview, type Histogram, type PlaceMeta } from '@truescore/gmaps-shared';
 
-export { overallPctFromHistogram, type Histogram, type PlaceMeta } from '@truescore/gmaps-shared';
+export { overallPctFromHistogram, overallScoreFromHistogram, type Histogram, type PlaceMeta } from '@truescore/gmaps-shared';
 
 export type PreviewBundle = { histogram: Histogram | null; meta: PlaceMeta };
 

@@ -220,6 +220,16 @@ export const overallPctFromHistogram = (h: Histogram): number => {
   return Math.round(((h[0] - h[4]) / total) * 100);
 };
 
+// (5★ − 1★)² / total — the integer "score" shown next to the place name in
+// the extension's simple-score banner. Always non-negative; magnitude scales
+// with both the gap between 5★/1★ counts and how decisively reviewers chose.
+export const overallScoreFromHistogram = (h: Histogram): number => {
+  const total = h.reduce((a, b) => a + b, 0);
+  if (!total) return 0;
+  const diff = h[0] - h[4];
+  return Math.round((diff * diff) / total);
+};
+
 export const timeAgo = (ms: number): string => {
   const sec = Math.max(0, (Date.now() - ms) / 1000);
   if (sec < 60) return 'just now';

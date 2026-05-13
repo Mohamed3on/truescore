@@ -403,6 +403,13 @@ section#result::before {
 .place-google .star { color: var(--gold); font-size: 12px; }
 .place-google .count { color: var(--t3); }
 
+.place-overall-score {
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--t2);
+}
+
 .place-address {
   font-family: 'Sora', sans-serif;
   font-weight: 300;
