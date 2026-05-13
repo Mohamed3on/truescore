@@ -8,6 +8,8 @@ import {
   chipsFromPreview,
   extractReviewText,
   isTrusted,
+  overallPctFromHistogram,
+  overallScoreFromHistogram,
   PAGE_SIZE,
   parseReviewsResponse,
   starScore,
@@ -559,21 +561,11 @@ const getPlaceInfo = () => {
 };
 
 const injectSimpleScore = (placeDetailsElement: HTMLElement) => {
-  const rows = document.querySelectorAll('tr[role="img"]');
-  const fiveStars = rows[0]?.ariaLabel?.match(/(?<=stars,\s)(\d*),*(\d*)/g)?.[0];
-  const oneStars = rows[4]?.ariaLabel?.match(/(?<=stars,\s)(\d*),*(\d*)/g)?.[0];
-  if (!fiveStars || !oneStars) return;
-
-  const score = Number(fiveStars.split(',').join('')) - Number(oneStars.split(',').join(''));
-  const allReviewsText = (document.querySelector('[jsaction="pane.reviewChart.moreReviews"] button') as HTMLElement)?.innerText;
-  const allReviewsAsNumber = Number(allReviewsText?.match(/\d+/g)?.join('') || 0);
-  const ratio = allReviewsAsNumber ? score / allReviewsAsNumber : 0;
-  const calculatedScore = Math.round(score * ratio);
-  const scorePercentage = toPct(ratio);
-
-  const newElement = document.createElement('div');
-  newElement.className = 'truescore-simple-score';
-  newElement.innerHTML = `score: ${addCommas(calculatedScore)} &mdash; ${scorePercentage}%`;
+  const counts = readHistogramCounts();
+  if (!counts || !counts.reduce((a, b) => a + b, 0)) return;
+  const score = overallScoreFromHistogram(counts);
+  const pct = overallPctFromHistogram(counts);
+  const newElement = el('div', 'truescore-simple-score', `score: ${addCommas(score)} — ${pct}%`);
   placeDetailsElement.appendChild(newElement);
 };
 
