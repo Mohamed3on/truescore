@@ -170,14 +170,7 @@ const buildReviewCard = (r: StampedReview, query: string) => {
   return card;
 };
 
-const searchSummaryPrompt = (query: string) =>
-  `These BJJ instructional reviews all mention "${query}". Surface what reviewers specifically say about "${query}" — what's praised, what's complained about, which volumes/parts/chapters/positions/techniques they reference in connection with it, and whether the coverage of "${query}" is the reason to buy or skip this course.
-
-Cite concrete volumes, chapters, techniques, sweeps, and positions by name. Ignore shipping, delivery, packaging, and seller issues.
-
-The conclusion is the most important field — a punchy verdict on "${query}" at this course: the gist, anything to watch out for, and whether the "${query}" content alone justifies the purchase. Be decisive, no hedging.`;
-
-const buildSearchSection = (wrapper: HTMLElement, info: ProductInfo, bundle: ReviewBundle) => {
+const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
   const section = el('div', 'ars-search-section');
   const input = document.createElement('input');
   input.type = 'text';
@@ -235,7 +228,7 @@ const buildSearchSection = (wrapper: HTMLElement, info: ProductInfo, bundle: Rev
     sumPanel.style.display = 'block';
     sumPanel.textContent = 'Summarizing…';
     try {
-      const parsed = await geminiSummarize(texts, searchSummaryPrompt(query));
+      const parsed = await geminiSummarize(texts, SUMMARY_PROMPT);
       summaryCache.set(query.toLowerCase(), parsed);
       if (currentQuery !== query) return;
       renderCached(query, parsed);
@@ -359,7 +352,7 @@ const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: { score: nu
 
   renderScoreCard(wrapper, scored.score, scored.nps, scored.total);
 
-  buildSearchSection(wrapper, info, bundle);
+  buildSearchSection(wrapper, bundle);
 
   buildSummarizeWidget({
     wrapper,
