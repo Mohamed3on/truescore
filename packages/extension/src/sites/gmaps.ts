@@ -41,6 +41,7 @@ type CardEls = {
   merged?: MergedEls;
   visible?: VisibleEls;
   sumBtn?: HTMLButtonElement;
+  resumBtn?: HTMLButtonElement;
   questionInput?: HTMLInputElement;
   sumPanel?: HTMLElement;
   searchInput?: HTMLInputElement;
@@ -1294,8 +1295,14 @@ const createUIElements = () => {
   const sumBtn = el('button', 'rc-summarize-btn', 'Summarize') as HTMLButtonElement;
   sumBtn.onclick = () => triggerSummarize();
   sumRow.appendChild(sumBtn);
+  const resumBtn = el('button', 'rc-resummarize-btn', '↻') as HTMLButtonElement;
+  resumBtn.type = 'button';
+  resumBtn.title = 'Re-summarize';
+  resumBtn.onclick = () => triggerSummarize();
+  sumRow.appendChild(resumBtn);
   c.appendChild(sumRow);
   cardEls.sumBtn = sumBtn;
+  cardEls.resumBtn = resumBtn;
 
   const questionInput = document.createElement('input');
   questionInput.type = 'text';
@@ -1472,8 +1479,13 @@ const refreshSumBtnState = () => {
   const btn = cardEls.sumBtn;
   if (!btn) return;
   const hasQuestion = !!cardEls.questionInput?.value?.trim();
+  const cached = !!summaryCache.all;
   btn.textContent = hasQuestion ? 'Ask' : 'Summarize';
-  btn.disabled = !hasQuestion && !!summaryCache.all;
+  btn.disabled = !hasQuestion && cached;
+  if (cardEls.resumBtn) {
+    cardEls.resumBtn.hidden = hasQuestion || !cached;
+    cardEls.resumBtn.disabled = false;
+  }
 };
 
 const triggerSummarize = async () => {
@@ -1487,6 +1499,7 @@ const triggerSummarize = async () => {
   if (!texts.length) { panel.textContent = 'No review text available'; panel.className = 'rc-summary-panel'; return; }
 
   if (cardEls.sumBtn) cardEls.sumBtn.disabled = true;
+  if (cardEls.resumBtn) cardEls.resumBtn.disabled = true;
   const customQuestion = cardEls.questionInput?.value?.trim() || null;
   try {
     const result = await summarizeReviews(texts, null, customQuestion);
