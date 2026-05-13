@@ -662,6 +662,14 @@
   padding: 6px;
   font-size: 10px;
 }
+.rc-search-reviews {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  max-height: 360px;
+  overflow-y: auto;
+}
 
 /* Scrollbar */
 #reviews-container::-webkit-scrollbar { width: 4px; }

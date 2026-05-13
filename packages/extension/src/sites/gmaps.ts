@@ -959,29 +959,37 @@ const onChipClick = (h: Highlight) => {
   showChipPanel(h);
 };
 
+const reviewCardEl = (r: Review): HTMLElement => {
+  const card = el('div', 'rc-review');
+  const meta = el('div', 'rc-review-meta');
+  const stars = el('span', 'rc-review-stars', '★'.repeat(r.stars) + '☆'.repeat(Math.max(0, 5 - r.stars)));
+  const trust = el(
+    'span',
+    isTrusted(r.reviewerReviewCount) ? 'rc-review-trust' : 'rc-review-trust dim',
+    `${r.reviewerReviewCount} rev${isTrusted(r.reviewerReviewCount) ? '' : ' · untrusted'}`,
+  );
+  meta.appendChild(stars);
+  meta.appendChild(trust);
+  card.appendChild(meta);
+  const text = el('div', 'rc-review-text');
+  renderMarkdown(text, r.text);
+  card.appendChild(text);
+  return card;
+};
+
+const renderReviewsInto = (container: HTMLElement, reviews: Review[]) => {
+  const sorted = reviews.slice().sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+  for (const r of sorted) {
+    if (!r.text || r.text.length < 10) continue;
+    container.appendChild(reviewCardEl(r));
+  }
+};
+
 const renderChipReviews = (h: Highlight) => {
   const body = cardEls.chipPanelBody;
   if (!body) return;
   body.textContent = '';
-  const reviews = (h.reviews ?? []).slice().sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
-  for (const r of reviews) {
-    if (!r.text || r.text.length < 10) continue;
-    const card = el('div', 'rc-review');
-    const meta = el('div', 'rc-review-meta');
-    const stars = el('span', 'rc-review-stars', '★'.repeat(r.stars) + '☆'.repeat(Math.max(0, 5 - r.stars)));
-    const trust = el(
-      'span',
-      isTrusted(r.reviewerReviewCount) ? 'rc-review-trust' : 'rc-review-trust dim',
-      `${r.reviewerReviewCount} rev${isTrusted(r.reviewerReviewCount) ? '' : ' · untrusted'}`,
-    );
-    meta.appendChild(stars);
-    meta.appendChild(trust);
-    card.appendChild(meta);
-    const text = el('div', 'rc-review-text');
-    renderMarkdown(text, r.text);
-    card.appendChild(text);
-    body.appendChild(card);
-  }
+  renderReviewsInto(body, h.reviews ?? []);
 };
 
 const renderChipTitle = (title: HTMLElement, h: Highlight) => {
@@ -1113,6 +1121,10 @@ const renderLabelSearchResult = () => {
   const sumBtn = el('button', 'rc-summarize-btn', `Summarize "${query}"`) as HTMLButtonElement;
   sumBtn.onclick = () => summarizeLabelSearch();
   res.appendChild(sumBtn);
+
+  const list = el('div', 'rc-search-reviews');
+  renderReviewsInto(list, reviews);
+  res.appendChild(list);
 };
 
 const runLabelSearch = async () => {
