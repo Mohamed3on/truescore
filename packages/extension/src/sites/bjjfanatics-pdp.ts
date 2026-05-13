@@ -128,6 +128,103 @@ const reviewToText = (r: StampedReview): string => {
   return [meta && `[${meta}]`, head].filter(Boolean).join(' ').trim();
 };
 
+const reviewHaystack = (r: StampedReview) =>
+  [r.reviewTitle, r.reviewMessage, ...(r.reviewOptionsList || []).map(o => o.value)]
+    .filter(Boolean).join(' ').toLowerCase();
+
+const appendHighlighted = (parent: HTMLElement, text: string, query: string) => {
+  if (!query) { parent.appendChild(document.createTextNode(text)); return; }
+  const needle = query.toLowerCase();
+  const lower = text.toLowerCase();
+  let i = 0;
+  while (i < text.length) {
+    const idx = lower.indexOf(needle, i);
+    if (idx < 0) { parent.appendChild(document.createTextNode(text.slice(i))); return; }
+    if (idx > i) parent.appendChild(document.createTextNode(text.slice(i, idx)));
+    parent.appendChild(el('mark', 'ars-search-hl', text.slice(idx, idx + needle.length)));
+    i = idx + needle.length;
+  }
+};
+
+const MAX_RENDERED_RESULTS = 50;
+const SEARCH_DEBOUNCE_MS = 120;
+
+const buildReviewCard = (r: StampedReview, query: string) => {
+  const card = el('div', 'ars-search-review');
+  const head = el('div', 'ars-search-review-head');
+  const rating = Math.max(0, Math.min(5, Math.round(r.reviewRating || 0)));
+  head.appendChild(el('span', 'ars-search-stars', '★'.repeat(rating) + '☆'.repeat(5 - rating)));
+  const meta = (r.reviewOptionsList || []).map(o => o.value).filter(Boolean).join(' · ');
+  if (meta) head.appendChild(el('span', 'ars-search-meta', meta));
+  card.appendChild(head);
+  if (r.reviewTitle) {
+    const title = el('div', 'ars-search-title');
+    appendHighlighted(title, r.reviewTitle, query);
+    card.appendChild(title);
+  }
+  if (r.reviewMessage) {
+    const body = el('div', 'ars-search-body');
+    appendHighlighted(body, r.reviewMessage, query);
+    card.appendChild(body);
+  }
+  return card;
+};
+
+const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
+  const section = el('div', 'ars-search-section');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'ars-search-input';
+  input.placeholder = `Search ${addCommas(bundle.reviews.length)} reviews… (e.g. "guard")`;
+  section.appendChild(input);
+
+  const summary = el('div', 'ars-search-summary');
+  summary.style.display = 'none';
+  section.appendChild(summary);
+
+  const list = el('div', 'ars-search-list');
+  list.style.display = 'none';
+  section.appendChild(list);
+
+  let timer: number | null = null;
+
+  const render = () => {
+    const raw = input.value.trim();
+    const q = raw.toLowerCase();
+    if (!q) {
+      summary.style.display = 'none';
+      list.style.display = 'none';
+      return;
+    }
+    const matches = bundle.reviews.filter(r => reviewHaystack(r).includes(q));
+    summary.style.display = '';
+    list.style.display = '';
+    summary.textContent = '';
+    summary.append(
+      el('span', 'ars-search-count', addCommas(matches.length)),
+      document.createTextNode(` of ${addCommas(bundle.reviews.length)} reviews mention "${raw}"`),
+    );
+    list.textContent = '';
+    if (!matches.length) {
+      list.appendChild(el('div', 'ars-search-empty', 'No matching reviews'));
+      return;
+    }
+    const shown = matches.slice(0, MAX_RENDERED_RESULTS);
+    for (const r of shown) list.appendChild(buildReviewCard(r, raw));
+    if (matches.length > shown.length) {
+      list.appendChild(el('div', 'ars-search-truncated',
+        `Showing first ${shown.length} — refine the search to see more.`));
+    }
+  };
+
+  input.addEventListener('input', () => {
+    if (timer != null) clearTimeout(timer);
+    timer = setTimeout(render, SEARCH_DEBOUNCE_MS) as unknown as number;
+  });
+
+  wrapper.appendChild(section);
+};
+
 const SUMMARY_PROMPT = `Analyze these reviews of a BJJ instructional course. Ignore shipping, delivery, packaging, or seller issues — focus ONLY on the course content and instruction.
 
 ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should start with the count, e.g. "(12) Volume 3 (back attacks chapter) — most actionable".
@@ -183,6 +280,8 @@ const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: { score: nu
   wrapper.appendChild(header);
 
   renderScoreCard(wrapper, scored.score, scored.nps, scored.total);
+
+  buildSearchSection(wrapper, bundle);
 
   buildSummarizeWidget({
     wrapper,

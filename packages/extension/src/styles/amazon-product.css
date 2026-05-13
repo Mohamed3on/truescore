@@ -485,6 +485,95 @@
   background: #FEE7DA;
 }
 
+/* Search reviews */
+.ars-search-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed #E7E5E4;
+}
+.ars-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  color: #1C1917;
+  background: #fff;
+  border: 1px solid #E7E5E4;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.ars-search-input::placeholder { color: #A8A29E; }
+.ars-search-input:focus { border-color: #0F766E; }
+.ars-search-summary {
+  font-size: 11px;
+  color: #78716C;
+  letter-spacing: 0.02em;
+}
+.ars-search-count {
+  font-weight: 700;
+  color: #0F766E;
+  font-variant-numeric: tabular-nums;
+  margin-right: 2px;
+}
+.ars-search-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.ars-search-review {
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid #E7E5E4;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #1C1917;
+}
+.ars-search-review-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.ars-search-stars {
+  color: #E8B86D;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+.ars-search-meta {
+  font-size: 10px;
+  color: #A8A29E;
+  letter-spacing: 0.02em;
+}
+.ars-search-title {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.ars-search-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ars-search-hl {
+  background: #FEF3C7;
+  color: #1C1917;
+  padding: 0 2px;
+  border-radius: 2px;
+}
+.ars-search-empty,
+.ars-search-truncated {
+  font-size: 11px;
+  color: #A8A29E;
+  font-style: italic;
+  padding: 4px 0;
+}
+
 /* Accessibility: respect reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .ars-wrapper, .ars-wrapper > .ars-header, .ars-wrapper > .ars-gauge, .ars-wrapper > .ars-stats {
