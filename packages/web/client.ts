@@ -56,7 +56,8 @@ type LookupResponse = {
 };
 type LookupStreamEvent =
   | ({ type: 'lookup' } & LookupResponse)
-  | { type: 'refreshed'; name: string; score: Score; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string };
+  | { type: 'refreshed'; name: string; score: Score; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string }
+  | { type: 'highlights-refreshed'; highlights: Highlight[] };
 type SummarizeResponse = { summary?: Summary; error?: string; cached?: boolean };
 type HistogramResponse = { histogram?: number[]; overallPct?: number; error?: string };
 type ChipState = 'loading' | 'done' | 'error';
@@ -596,52 +597,74 @@ function renderScore(data: LookupResponse) {
   while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
 }
 
+function flashIfChanged(el: HTMLElement, prev: string) {
+  if (el.textContent === prev) return;
+  el.classList.remove('flash');
+  void el.offsetWidth; // restart animation
+  el.classList.add('flash');
+}
+
 async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
+  const freshnessLabel = $('freshnessLabel');
   let buffer = '';
   let cachedTotal = 0;
   let refreshed = false;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buffer.indexOf('\n')) !== -1) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line) continue;
-      const evt = JSON.parse(line) as LookupStreamEvent;
-      if (evt.type === 'lookup') {
-        const scoreMs = Date.now() - t0;
-        cachedTotal = evt.score.totalReviews;
-        renderScore(evt);
-        if (evt.overallPct == null) fetchHistogramFor(evt.score.featureId, evt.score.scorePct);
-        if (evt.highlights?.length) showHighlights(evt.highlights);
-        else loadHighlights();
-        if (evt.summary) {
-          renderSummary(evt.summary);
-          setStatus(`Cached · ${scoreMs}ms`);
-        } else {
-          setStatus(`Score in ${(scoreMs / 1000).toFixed(1)}s · summarizing…`);
-          fetchSummaryFor(evt.score.featureId).then((sum) => {
-            if (!refreshed) {
-              setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
-            }
-          });
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line) continue;
+        const evt = JSON.parse(line) as LookupStreamEvent;
+        if (evt.type === 'lookup') {
+          const scoreMs = Date.now() - t0;
+          cachedTotal = evt.score.totalReviews;
+          renderScore(evt);
+          freshnessLabel.classList.add('rechecking');
+          if (evt.overallPct == null) fetchHistogramFor(evt.score.featureId, evt.score.scorePct);
+          if (evt.highlights?.length) showHighlights(evt.highlights);
+          else loadHighlights();
+          if (evt.summary) {
+            renderSummary(evt.summary);
+            setStatus(`Cached · ${scoreMs}ms`);
+          } else {
+            setStatus(`Score in ${(scoreMs / 1000).toFixed(1)}s · summarizing…`);
+            fetchSummaryFor(evt.score.featureId).then((sum) => {
+              if (!refreshed) {
+                setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
+              }
+            });
+          }
+        } else if (evt.type === 'refreshed') {
+          refreshed = true;
+          freshnessLabel.classList.remove('rechecking');
+          const prevFresh = freshnessLabel.textContent ?? '';
+          const prevScore = $('scorePct').textContent ?? '';
+          const prevReviews = $('reviewsLabel').textContent ?? '';
+          paintScore(evt);
+          flashIfChanged(freshnessLabel, prevFresh);
+          flashIfChanged($('scorePct'), prevScore);
+          flashIfChanged($('reviewsLabel'), prevReviews);
+          if (currentHighlights.length) {
+            renderHighlights(currentHighlights, true);
+            if (activeHighlight) setActiveChip(activeHighlight.token);
+          }
+          const diff = evt.score.totalReviews - cachedTotal;
+          const diffMsg = diff > 0 ? ` (+${diff} new)` : '';
+          setStatus(`Updated with fresh reviews${diffMsg}`);
+        } else if (evt.type === 'highlights-refreshed') {
+          if (evt.highlights?.length) showHighlights(evt.highlights);
         }
-      } else if (evt.type === 'refreshed') {
-        refreshed = true;
-        paintScore(evt);
-        if (currentHighlights.length) {
-          renderHighlights(currentHighlights, true);
-          if (activeHighlight) setActiveChip(activeHighlight.token);
-        }
-        const diff = evt.score.totalReviews - cachedTotal;
-        const diffMsg = diff > 0 ? ` (+${diff} new)` : '';
-        setStatus(`Updated with fresh reviews${diffMsg}`);
       }
     }
+  } finally {
+    freshnessLabel.classList.remove('rechecking');
   }
 }
 

@@ -161,6 +161,7 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
   void cache.touch(featureId).catch((e) => console.error('[touch]', e));
   const slimHighlights = cached.highlights?.map(({ reviews: _r, ...rest }) => rest);
   const cachedScoreTs = cached.scoreTs ?? 0;
+  const cachedHighlightsTs = cached.highlightsTs ?? 0;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const enc = new TextEncoder();
@@ -195,6 +196,21 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
             meta: fresh.meta,
             resolvedUrl: fresh.resolvedUrl ?? mapsUrlFor(featureId),
           });
+        }
+        // If revalidate kicked off a highlights recompute (drift > 1%), keep
+        // the stream open until it lands so the chips stay in sync with the
+        // refreshed score. Recompute is in-flight only on actual drift, so
+        // this path is rare and otherwise zero-cost.
+        const hp = highlightsRecomputeInflight.get(featureId);
+        if (hp) {
+          await hp;
+          const post = cache.get(featureId);
+          if (post?.highlights?.length && (post.highlightsTs ?? 0) > cachedHighlightsTs) {
+            write({
+              type: 'highlights-refreshed',
+              highlights: post.highlights.map(({ reviews: _r, ...rest }) => rest),
+            });
+          }
         }
       } catch (e) {
         console.error('[revalidate]', e);

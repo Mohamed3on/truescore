@@ -494,6 +494,25 @@ section#result::before {
 .delta.neg { color: var(--neg); }
 .delta:empty { display: none; }
 
+.rechecking::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--teal);
+  vertical-align: 2px;
+  animation: blink 1.2s ease-in-out infinite;
+}
+.flash {
+  animation: flash-glow 1.4s ease-out;
+}
+@keyframes flash-glow {
+  0% { text-shadow: 0 0 14px rgba(109, 211, 206, 0.85); }
+  100% { text-shadow: 0 0 0 transparent; }
+}
+
 .overall-delta {
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 500;
