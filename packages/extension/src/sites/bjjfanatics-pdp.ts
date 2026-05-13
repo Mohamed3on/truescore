@@ -1,6 +1,6 @@
 import { addCommas, el, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
-import { buildSummarizeWidget, geminiSummarize, renderStructuredSummary } from '../shared/review-summary';
+import { buildSummarizeWidget, geminiSummarize, renderFreeFormAnswer } from '../shared/review-summary';
 
 const STAMPED_API_KEY = '8a204db0-ec09-48cf-baed-db3ca2ef99e6';
 const STAMPED_STORE = 'bjj-fanatics.myshopify.com';
@@ -195,7 +195,7 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
   list.style.display = 'none';
   section.appendChild(list);
 
-  const summaryCache = new Map<string, any>();
+  const summaryCache = new Map<string, string>();
   let timer: number | null = null;
   let currentQuery = '';
 
@@ -206,9 +206,9 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
     sumBtn.textContent = '✦ Summarize';
   };
 
-  const renderCached = (query: string, parsed: any) => {
+  const renderCached = (query: string, text: string) => {
     sumPanel.style.display = 'block';
-    renderStructuredSummary(sumPanel, parsed, { skipSuspicious: true });
+    renderFreeFormAnswer(sumPanel, text);
     sumBtn.disabled = false;
     sumBtn.textContent = `Re-summarize "${query}"`;
   };
@@ -228,10 +228,10 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
     sumPanel.style.display = 'block';
     sumPanel.textContent = 'Summarizing…';
     try {
-      const parsed = await geminiSummarize(texts, SUMMARY_PROMPT);
-      summaryCache.set(query.toLowerCase(), parsed);
+      const text = await geminiSummarize(texts, FILTERED_SUMMARY_PROMPT, null);
+      summaryCache.set(query.toLowerCase(), text);
       if (currentQuery !== query) return;
-      renderCached(query, parsed);
+      renderCached(query, text);
     } catch (e: any) {
       sumPanel.textContent = `Error: ${e.message || 'Summarization failed'}`;
       sumBtn.disabled = false;
@@ -309,6 +309,8 @@ Each review may be prefixed with [Ranking: BLUE | How old are you?: 33-40 | How 
 If 2+ reviewers mention a specific better alternative course or instructor by name, note it and explain how reviewers compare.
 
 The conclusion is the most important field — write it like a buying verdict, not an essay. Lead with the bottom line: buy or skip, and for whom. Then the single most important takeaway reviewers walked away with, what to watch first, and what this course doesn't deliver so the reader knows when to pass. Be punchy and decisive, cite specific techniques and volumes by name, no hedging like "many reviewers say". Format however reads best — a few short paragraphs, bolded leads, or short bullets are all fine.`;
+
+const FILTERED_SUMMARY_PROMPT = `Summarize these BJJ instructional course reviews. Lead with the bottom line — what most reviewers walk away with. Cite specific volumes, parts, chapters, techniques, sweeps, or positions by name when reviewers mention them. Ignore shipping, delivery, packaging, and seller issues — focus only on the course content. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
 
 const renderScoreCard = (wrapper: HTMLElement, score: number, nps: number, total: number) => {
   const card = document.createElement('a');
