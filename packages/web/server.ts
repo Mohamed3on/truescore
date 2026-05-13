@@ -4,7 +4,7 @@ import { scorePlace, fetchAllForSearch, type Review } from './gmaps';
 import { summarize, ask } from './gemini';
 import { fetchPreviewBundle, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, scoreHighlight, type Highlight } from './highlights';
-import { cache } from './cache';
+import { cache, type CacheEntry } from './cache';
 import index from './index.html';
 
 const json = (v: any, status = 200) =>
@@ -153,6 +153,58 @@ function streamHighlights(name: string, featureId: string, url: string, chips: C
   });
 }
 
+// Cache-hit lookups stream NDJSON: first event is the cached payload (rendered
+// instantly), then we await revalidate and emit a `refreshed` event if the
+// score moved. That way the freshness label / score / histogram update in
+// place without the user needing to refresh.
+function streamCachedLookup(featureId: string, name: string, resolvedUrl: string, cached: CacheEntry): Response {
+  void cache.touch(featureId).catch((e) => console.error('[touch]', e));
+  const slimHighlights = cached.highlights?.map(({ reviews: _r, ...rest }) => rest);
+  const cachedScoreTs = cached.scoreTs ?? 0;
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enc = new TextEncoder();
+      let closed = false;
+      const write = (obj: unknown) => {
+        if (closed) return;
+        try { controller.enqueue(enc.encode(JSON.stringify(obj) + '\n')); }
+        catch { closed = true; }
+      };
+      write({
+        type: 'lookup',
+        name: cached.name,
+        score: cached.score,
+        summary: cached.summary,
+        highlights: slimHighlights,
+        histogram: cached.histogram,
+        overallPct: cached.histogram ? overallPctFromHistogram(cached.histogram) : null,
+        meta: cached.meta,
+        resolvedUrl: cached.resolvedUrl ?? mapsUrlFor(featureId),
+        cached: true,
+      });
+      try {
+        await revalidate(featureId, name, resolvedUrl);
+        const fresh = cache.get(featureId);
+        if (fresh && (fresh.scoreTs ?? 0) > cachedScoreTs) {
+          write({
+            type: 'refreshed',
+            name: fresh.name,
+            score: fresh.score,
+            histogram: fresh.histogram,
+            overallPct: fresh.histogram ? overallPctFromHistogram(fresh.histogram) : null,
+            meta: fresh.meta,
+            resolvedUrl: fresh.resolvedUrl ?? mapsUrlFor(featureId),
+          });
+        }
+      } catch (e) {
+        console.error('[revalidate]', e);
+      }
+      if (!closed) controller.close();
+    },
+  });
+  return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson' } });
+}
+
 function getOrFetchPreviewBundle(featureId: string, url: string): Promise<PreviewBundle> {
   const existing = cache.get(featureId);
   if (existing?.histogram && existing.meta && cache.histogramFresh(existing)) {
@@ -184,25 +236,7 @@ Bun.serve({
           const { featureId, name, resolvedUrl } = await resolvePlace(url);
 
           const cached = cache.get(featureId);
-          if (cached) {
-            void cache.touch(featureId).catch((e) => console.error('[touch]', e));
-            void revalidate(featureId, name, resolvedUrl).catch((e) => console.error('[revalidate]', e));
-            // Strip per-chip review bodies — they're 10×8×~400 chars and only
-            // needed when a chip is opened. Client lazy-fetches /api/highlights
-            // (cache-hit, fast) on first chip click to fill them in.
-            const slimHighlights = cached.highlights?.map(({ reviews: _r, ...rest }) => rest);
-            return json({
-              name: cached.name,
-              score: cached.score,
-              summary: cached.summary,
-              highlights: slimHighlights,
-              histogram: cached.histogram,
-              overallPct: cached.histogram ? overallPctFromHistogram(cached.histogram) : null,
-              meta: cached.meta,
-              resolvedUrl: cached.resolvedUrl ?? mapsUrlFor(featureId),
-              cached: true,
-            });
-          }
+          if (cached) return streamCachedLookup(featureId, name, resolvedUrl, cached);
 
           // Run preview fetch in parallel with the score scrape.
           const bundlePromise = getOrFetchPreviewBundle(featureId, resolvedUrl)

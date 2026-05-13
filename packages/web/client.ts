@@ -54,6 +54,9 @@ type LookupResponse = {
   fetchMs?: number;
   error?: string;
 };
+type LookupStreamEvent =
+  | ({ type: 'lookup' } & LookupResponse)
+  | { type: 'refreshed'; name: string; score: Score; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string };
 type SummarizeResponse = { summary?: Summary; error?: string; cached?: boolean };
 type HistogramResponse = { histogram?: number[]; overallPct?: number; error?: string };
 type ChipState = 'loading' | 'done' | 'error';
@@ -530,19 +533,15 @@ async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
 
 const DEFAULT_TITLE = document.title;
 
-function renderScore(data: LookupResponse) {
-  result.hidden = false;
-  document.body.dataset.state = 'scored';
+// Pure render: header, score numbers, freshness, histogram-derived overall.
+// Safe to re-run on revalidate (no UI state reset) so the freshness label and
+// score can update in place when the server pushes a `refreshed` event.
+function paintScore(data: { name?: string; score: Score; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string }) {
   const displayName = data.meta?.canonicalName || data.name || '(unnamed place)';
   const nameEl = $('name') as HTMLAnchorElement;
   nameEl.textContent = displayName;
   nameEl.href = data.resolvedUrl ?? `https://www.google.com/maps?q=&ftid=${data.score.featureId}`;
   document.title = `${displayName} · ${data.score.scorePct}% · TrueScore`;
-  const shareUrl = data.resolvedUrl ?? urlInput.value;
-  if (shareUrl) {
-    const next = `?url=${encodeURIComponent(shareUrl)}`;
-    if (location.search !== next) history.replaceState(null, '', next);
-  }
   renderPlaceMeta(data.meta);
   renderFreshness(data.score.reviews);
   const pctEl = $('scorePct');
@@ -564,8 +563,19 @@ function renderScore(data: LookupResponse) {
     deltaEl.className = `delta ${delta > 0 ? 'pos' : delta < 0 ? 'neg' : ''}`;
   }
   renderOverall(data.overallPct ?? null, data.score.scorePct);
-  currentFeatureId = data.score.featureId;
   currentMergedPct = data.score.scorePct;
+}
+
+function renderScore(data: LookupResponse) {
+  result.hidden = false;
+  document.body.dataset.state = 'scored';
+  paintScore(data);
+  const shareUrl = data.resolvedUrl ?? urlInput.value;
+  if (shareUrl) {
+    const next = `?url=${encodeURIComponent(shareUrl)}`;
+    if (location.search !== next) history.replaceState(null, '', next);
+  }
+  currentFeatureId = data.score.featureId;
   baseSummary = data.summary;
   activeHighlight = null;
   answerEl.textContent = '';
@@ -584,6 +594,55 @@ function renderScore(data: LookupResponse) {
   while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
   while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
   while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
+}
+
+async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let cachedTotal = 0;
+  let refreshed = false;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      const evt = JSON.parse(line) as LookupStreamEvent;
+      if (evt.type === 'lookup') {
+        const scoreMs = Date.now() - t0;
+        cachedTotal = evt.score.totalReviews;
+        renderScore(evt);
+        if (evt.overallPct == null) fetchHistogramFor(evt.score.featureId, evt.score.scorePct);
+        if (evt.highlights?.length) showHighlights(evt.highlights);
+        else loadHighlights();
+        if (evt.summary) {
+          renderSummary(evt.summary);
+          setStatus(`Cached · ${scoreMs}ms`);
+        } else {
+          setStatus(`Score in ${(scoreMs / 1000).toFixed(1)}s · summarizing…`);
+          fetchSummaryFor(evt.score.featureId).then((sum) => {
+            if (!refreshed) {
+              setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
+            }
+          });
+        }
+      } else if (evt.type === 'refreshed') {
+        refreshed = true;
+        paintScore(evt);
+        if (currentHighlights.length) {
+          renderHighlights(currentHighlights, true);
+          if (activeHighlight) setActiveChip(activeHighlight.token);
+        }
+        const diff = evt.score.totalReviews - cachedTotal;
+        const diffMsg = diff > 0 ? ` (+${diff} new)` : '';
+        setStatus(`Updated with fresh reviews${diffMsg}`);
+      }
+    }
+  }
 }
 
 function formatHourLabel(h: number): string {
@@ -771,7 +830,22 @@ form.addEventListener('submit', async (e) => {
   setStatus('Fetching reviews…');
   const t0 = Date.now();
   try {
-    const data = await postJson<LookupResponse>('/api/lookup', { url });
+    const resp = await fetchWithRetry('/api/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const ct = resp.headers.get('content-type') ?? '';
+    // Cache-hit path streams NDJSON so revalidate can push fresh data without
+    // a manual refresh; cache-miss stays plain JSON.
+    if (resp.ok && ct.includes('ndjson') && resp.body) {
+      await consumeLookupStream(resp.body, t0);
+      return;
+    }
+    if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
+    const data = await resp.json() as LookupResponse;
+    if (!resp.ok) throw new Error(data.error || `request failed (${resp.status})`);
+
     renderScore(data);
     const scoreMs = Date.now() - t0;
     const featureId = data.score.featureId;
@@ -786,7 +860,7 @@ form.addEventListener('submit', async (e) => {
 
     if (data.summary) {
       renderSummary(data.summary);
-      setStatus(data.cached ? `Cached · ${scoreMs}ms` : `Done in ${(scoreMs / 1000).toFixed(1)}s`);
+      setStatus(`Done in ${(scoreMs / 1000).toFixed(1)}s`);
       await Promise.all([histogramTask, highlightsTask]);
       return;
     }
