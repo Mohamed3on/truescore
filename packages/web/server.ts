@@ -1,6 +1,6 @@
 import { statsForReviews, textReviewsFor, type ChipMeta } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
-import { scorePlace, fetchAllForSearch, type Review } from './gmaps';
+import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask } from './gemini';
 import { fetchPreviewBundle, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, scoreHighlight, type Highlight } from './highlights';
@@ -10,14 +10,23 @@ import index from './index.html';
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json' } });
 
-// Extension-facing endpoints only — keeps Lookup/Summarize/etc. same-origin
-// so a drive-by site can't trigger Google fetches or Gemini calls via the
-// user's browser.
+// Extension-facing endpoints. CORS is open so any extension content script can
+// reach us; we don't expose anything that could be abused as a Google-proxy on
+// behalf of a drive-by site (the heavy /api/lookup path still requires a same-
+// origin POST). Stateless `reviews`-in-body endpoints below also need this.
 const corsJson = (v: any, status = 200) =>
   new Response(JSON.stringify(v), {
     status,
     headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
   });
+const corsOptions = () => new Response(null, {
+  headers: {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '86400',
+  },
+});
 
 // Translate proxy / upstream errors into something users can act on, instead
 // of surfacing raw "googleFetch 502 for https://…" strings. Unknown errors
@@ -340,14 +349,7 @@ Bun.serve({
           return corsJson(errBody(e), 400);
         }
       },
-      OPTIONS: () => new Response(null, {
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
-          'Access-Control-Max-Age': '86400',
-        },
-      }),
+      OPTIONS: corsOptions,
     },
     '/api/places': {
       GET: () => {
@@ -379,21 +381,48 @@ Bun.serve({
         }
       },
     },
+    // CORS-allowed. Web calls with just `{ featureId, force? }` and we use
+    // cached entry.score.reviews. The extension calls with `{ featureId,
+    // name, reviews }` (the maps-tab content script already has them) and we
+    // use those directly — same Gemini work, but no need for the server to
+    // have scraped the place first.
     '/api/summarize': {
       POST: async (req) => {
         try {
-          const { featureId, force } = await req.json() as { featureId: string; force?: boolean };
+          const body = await req.json() as {
+            featureId: string;
+            name?: string;
+            reviewTexts?: string[];
+            filter?: string;
+            force?: boolean;
+          };
+          const featureId = body.featureId;
+          if (!featureId) return corsJson({ error: 'missing featureId' }, 400);
+
           const entry = cache.get(featureId);
-          if (!entry) return json({ error: 'look up the place first' }, 404);
-          if (entry.summary && !force) return json({ summary: entry.summary, cached: true });
-          const summary = await summarize(entry.name, textReviewsFor(entry.score.reviews));
-          await cache.putSummary(featureId, summary);
-          return json({ summary, cached: false });
+          const force = !!body.force;
+          const filter = body.filter?.trim() || undefined;
+          // Only the unfiltered place summary participates in the persisted
+          // cache; filtered topic summaries are per-callsite and shouldn't
+          // overwrite the canonical entry.summary slot.
+          if (!filter && entry?.summary && !force) return corsJson({ summary: entry.summary, cached: true });
+
+          const placeName = entry?.name ?? body.name ?? '';
+          // Pre-formatted reviewTexts win (extension already ran textReviewsFor
+          // on the local scrape and shouldn't have to ship the full Review[]).
+          // Falling back to cache lets the web caller keep its old shape.
+          const reviewTexts = body.reviewTexts ?? (entry?.score ? textReviewsFor(entry.score.reviews) : null);
+          if (!reviewTexts?.length) return corsJson({ error: 'no reviews — look up the place first or pass reviewTexts in the body' }, 404);
+
+          const summary = await summarize(placeName, reviewTexts, filter);
+          if (!filter && entry) await cache.putSummary(featureId, summary);
+          return corsJson({ summary, cached: false });
         } catch (e) {
           console.error('[summarize]', e);
-          return json(errBody(e), 400);
+          return corsJson(errBody(e), 400);
         }
       },
+      OPTIONS: corsOptions,
     },
     '/api/highlights': {
       POST: async (req) => {
@@ -418,26 +447,47 @@ Bun.serve({
         }
       },
     },
+    // CORS-allowed. Same dual-mode pattern as /api/summarize: the web caller
+    // omits `reviews`/`label` and we pull both from the cached highlight;
+    // the extension passes them directly so we can summarize chips on places
+    // the server has never scraped.
     '/api/highlight-summary': {
       POST: async (req) => {
         try {
-          const { featureId, token, force } = await req.json() as { featureId: string; token: string; force?: boolean };
+          const body = await req.json() as {
+            featureId: string;
+            token: string;
+            name?: string;
+            label?: string;
+            reviewTexts?: string[];
+            force?: boolean;
+          };
+          const { featureId, token, force } = body;
+          if (!featureId || !token) return corsJson({ error: 'missing featureId or token' }, 400);
+
           const entry = cache.get(featureId);
-          if (!entry) return json({ error: 'look up the place first' }, 404);
-          const highlight = entry.highlights?.find((h) => h.token === token);
-          if (!highlight) return json({ error: 'highlight not found, refresh highlights' }, 404);
-          const cached = entry.highlightSummaries?.[token];
-          if (cached && !force) return json({ summary: cached, label: highlight.label, cached: true });
-          const reviewTexts = textReviewsFor(highlight.reviews ?? []);
-          if (!reviewTexts.length) return json({ error: 'no review text available for this highlight' }, 400);
-          const summary = await summarize(entry.name, reviewTexts, highlight.label);
-          await cache.putHighlightSummary(featureId, token, summary);
-          return json({ summary, label: highlight.label, cached: false });
+          const cached = entry?.highlightSummaries?.[token];
+          if (cached && !force) {
+            const label = entry?.highlights?.find((h) => h.token === token)?.label ?? body.label ?? '';
+            return corsJson({ summary: cached, label, cached: true });
+          }
+
+          const highlight = entry?.highlights?.find((h) => h.token === token);
+          const label = highlight?.label ?? body.label;
+          if (!label) return corsJson({ error: 'missing label (and no cached highlight)' }, 400);
+          const placeName = entry?.name ?? body.name ?? '';
+          const reviewTexts = body.reviewTexts ?? (highlight?.reviews ? textReviewsFor(highlight.reviews) : null);
+          if (!reviewTexts?.length) return corsJson({ error: 'no review text — pass reviewTexts in the body or run highlights first' }, 400);
+
+          const summary = await summarize(placeName, reviewTexts, label);
+          if (entry) await cache.putHighlightSummary(featureId, token, summary);
+          return corsJson({ summary, label, cached: false });
         } catch (e) {
           console.error('[highlight-summary]', e);
-          return json(errBody(e), 400);
+          return corsJson(errBody(e), 400);
         }
       },
+      OPTIONS: corsOptions,
     },
     // Streams: `search-progress` per page (running stats + review list), then
     // `search` with the settled result, then `search-summary` if requested.
@@ -501,19 +551,35 @@ Bun.serve({
         }
       },
     },
+    // CORS-allowed. Web caller passes `{ featureId, question }` and we read
+    // entry.score.reviews from cache; the extension passes `{ name, reviews,
+    // question }` directly so the answer comes from the maps-tab's local
+    // review scrape, no need to round-trip the place through /api/lookup.
     '/api/ask': {
       POST: async (req) => {
         try {
-          const { featureId, question } = await req.json();
-          const entry = cache.get(featureId);
-          if (!entry) return json({ error: 'look up the place first' }, 404);
-          const answer = await ask(entry.name, textReviewsFor(entry.score.reviews), question);
-          return json({ answer });
+          const body = await req.json() as {
+            featureId?: string;
+            name?: string;
+            reviewTexts?: string[];
+            question: string;
+          };
+          const { featureId, question } = body;
+          if (!question) return corsJson({ error: 'missing question' }, 400);
+
+          const entry = featureId ? cache.get(featureId) : null;
+          const placeName = entry?.name ?? body.name ?? '';
+          const reviewTexts = body.reviewTexts ?? (entry?.score ? textReviewsFor(entry.score.reviews) : null);
+          if (!reviewTexts?.length) return corsJson({ error: 'no reviews — look up the place first or pass reviewTexts in the body' }, 404);
+
+          const answer = await ask(placeName, reviewTexts, question);
+          return corsJson({ answer });
         } catch (e) {
           console.error('[ask]', e);
-          return json(errBody(e), 400);
+          return corsJson(errBody(e), 400);
         }
       },
+      OPTIONS: corsOptions,
     },
   },
   development: { hmr: false, console: true },
