@@ -789,34 +789,38 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
   const reviewBlock = reviewTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
 
   const isFreeForm = !!customQuestion;
+  // Each review in `reviewBlock` is prefixed with [YYYY-MM-DD] (or [undated])
+  // so the model can weight recent reviews and flag trajectory shifts.
   let instructions;
   if (customQuestion) {
-    instructions = `You are a local expert helping a tourist decide about ${placeLabel}. Answer their question using only evidence from the reviews above.
+    instructions = `You are a local expert helping a tourist decide about ${placeLabel}. Answer their question using only evidence from the reviews above. Each review starts with [YYYY-MM-DD] — weight recent reviews more heavily and flag if the answer has changed over time.
 
 Question: ${customQuestion}
 
 Quote or paraphrase the most vivid, concrete detail from the reviews — names, numbers, comparisons, warnings, tips. If reviewers disagree, surface the tension. Be direct, opinionated, practical. Keep it concise.`;
   } else if (filterQuery) {
-    instructions = `You are analyzing what visitors to ${placeLabel} say specifically about "${filterQuery}".
+    instructions = `You are analyzing what visitors to ${placeLabel} say specifically about "${filterQuery}". Each review starts with [YYYY-MM-DD] showing when it was posted — treat newer comments as the current state and call out any shift over time.
 
-Surface the most concrete, useful details: what exactly people praise, complain about, compare it to, or warn about regarding "${filterQuery}". Quote memorable phrasing when reviewers say it better than you could. If opinions are split, show both sides. The verdict should be a short summary of "${filterQuery}" at this place — the gist, anything to watch out for, and whether this is the best you can get for the price.`;
+Write a real synthesized summary of "${filterQuery}" at this place:
+- The gist of what people actually think, weighted toward recent reviews.
+- Where opinions split, surface the tension and (when possible) who tends to be on each side.
+- Quote memorable phrasing when reviewers say it better than you could.
+- Anything to watch out for; whether this is the best you can get for the price.
+
+The verdict is this summary — write as much as the place warrants, no length cap. The highlights are the most-mentioned aspects of "${filterQuery}" as short noun phrases with sentiment and count (these render as chips).`;
   } else {
-    instructions = `You are a brutally honest local expert writing a mini-guide to ${placeLabel} for a tourist deciding whether to visit.
+    instructions = `You are a sharp, opinionated local writing a real summary of ${placeLabel} for a friend deciding whether to go. You've read the reviews below — each starts with [YYYY-MM-DD] so you can tell when people thought what. Treat newer reviews as the current truth and explicitly flag any trajectory: a place that was great in 2022 and slipped, one that recovered after a renovation, a regime change visible across the timestamps, etc.
 
-What to extract:
-- The specific things that make this place worth visiting (or not) — name exact dishes, exhibits, views, features, staff behaviors, quirks
-- Standout menu items: which specific dishes/drinks do reviewers rave about or warn against by name? (If this is a restaurant, café, bar, or anywhere with a menu, this is required.)
-- Practical intel: timing, crowds, pricing surprises, what to skip, what's overrated vs underrated
-- Recurring complaints that would actually affect someone's visit
-- Things only regulars or repeat visitors would know
+Write a real synthesized summary, not a feature list:
+- What it's actually like to visit right now — pull together what most reviewers consistently say.
+- Where opinions split, surface the tension and roughly who's on each side (locals vs tourists, weekday vs weekend crowds, etc).
+- Ground the summary in concrete specifics: exact dish names, exhibits, views, staff quirks, recurring complaints. Generic phrases like "great atmosphere" are useless; "rooftop gets packed after 8pm but the ground-floor bar is underrated" is what we want.
+- Standout menu items if relevant — which dishes/drinks reviewers praise or warn against by name (required for restaurants, cafés, bars).
+- Practical intel travelers can act on: timing, crowds, pricing surprises, what to skip, things only regulars know.
 
-Don't be generic. "Great atmosphere" tells me nothing. "Rooftop terrace gets packed after 8pm but the ground floor bar is underrated" tells me everything.
+Don't pad, don't truncate — make the verdict as long as the place actually warrants. The highlights list is the most-mentioned topics as short noun phrases with sentiment and count (these become chips in the UI).
 
-Be concise. Keep the entire response under 200 words.
-
-For the verdict: a short summary — the gist of what visitors say, anything to watch out for, any better alternatives nearby if mentioned, and whether this is the best you can get for the price.
-
-Also rate value for money 1-5 — base this on what reviewers actually say about pricing relative to what they got, not a guess.`;
+Rate value for money 1-5 based on what reviewers actually say about pricing relative to what they got, not a guess.`;
   }
 
   const prompt = `${reviewBlock}\n\n---\n\n${instructions}`;

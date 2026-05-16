@@ -26,8 +26,21 @@ export const TRUSTED_MIN_REVIEWS = 3;
 export const isTrusted = (reviewerReviewCount: number) => reviewerReviewCount >= TRUSTED_MIN_REVIEWS;
 export const starScore = (stars: number): number => (stars === 5 ? 1 : stars === 1 ? -1 : 0);
 
+// Each entry is prefixed with `[YYYY-MM-DD] ` (or `[undated]` when Google's
+// payload didn't carry a timestamp) so a model reading the block knows when
+// each review was posted and can weight recent ones. Google review
+// timestamps come in microseconds; values past ~1e14 get normalized to ms.
 export const textReviewsFor = (reviews: Review[]): string[] =>
-  reviews.map((r) => r.text).filter((t) => t.length > 20).sort((a, b) => b.length - a.length);
+  reviews
+    .filter((r) => r.text.length > 1)
+    .map((r) => {
+      const t = r.timestamp;
+      if (t == null) return `[undated] ${r.text}`;
+      const ms = t > 1e14 ? t / 1000 : t;
+      const date = new Date(ms).toISOString().slice(0, 10);
+      return `[${date}] ${r.text}`;
+    })
+    .sort((a, b) => b.length - a.length);
 
 const localeQuery = (locale: Locale = {}) => `hl=${locale.hl || 'en'}&gl=${locale.gl || ''}`;
 
