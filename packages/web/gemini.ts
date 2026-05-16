@@ -5,48 +5,38 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODE
 export type Highlight = { text: string; count: number; sentiment: string };
 export type Summary = { highlights: Highlight[]; verdict: string; valueForMoney: number };
 
+// The goal is to surface what multiple reviewers agree on — that's the
+// signal worth keeping. Dates are included so the model can break ties
+// when reviewers contradict each other on facts, not so it writes about
+// trajectory.
+const HIGHLIGHT_RULES = `Highlights are short specific chips, ≤4 words each. Sentiment is positive / negative / neutral. Count is roughly how many reviews mention it.
+GOOD: "Otzarreta beech forest" · "€9.95 sandwich" · "no cell in valleys" · "mastiff guard dogs"
+BAD: "scenic mountain hiking" · "good value" · "friendly staff" · "weak cell service"`;
+
+const RECENCY_NOTE = `Reviews are prefixed [YYYY-MM-DD]. If reviewers disagree on facts (price, hours, quality), trust the more recent one — otherwise recency doesn't matter much.`;
+
+const KNOWLEDGE_NOTE = `Reviews are the main source. If they don't cover something but you have reliable general knowledge about the place (history, location context, well-known facts the reviews didn't mention), you can fold it in.`;
+
 export async function summarize(placeName: string, reviewTexts: string[], filterQuery?: string): Promise<Summary> {
   const block = reviewTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
   const place = placeName || 'this place';
-  // Each review is prefixed with `[YYYY-MM-DD]` (or `[undated]`) so the model
-  // can weight by recency and flag trajectory shifts.
   const instructions = filterQuery
-    ? `You are analyzing what visitors to ${place} say specifically about "${filterQuery}". Each review starts with [YYYY-MM-DD] showing when it was posted — treat newer comments as the current state and call out any shift over time.
+    ? `Summarize what reviewers say about "${filterQuery}" at ${place} from the reviews below. Surface the details multiple reviewers agree on; skip one-off opinions.
 
-Write a synthesized summary of "${filterQuery}" at this place. Format the verdict as Markdown so it's scannable, not a wall of text:
-- Open with a 1-2 sentence overall take specific to "${filterQuery}" here (not a generic intro).
-- Use **bold** to call out the specific details that matter — names, dishes, hours, prices, surprises.
-- Use \`### \` subheads (e.g., \`### Praised\`, \`### Catches\`, \`### Then vs Now\`) only when the content actually splits into sections. Skip subheads if you'd just have one tiny bullet under each.
-- Use \`- \` bulleted lists for parallel items (multiple complaints, multiple recommendations).
-- Quote memorable reviewer phrasing inline when they put it better than you could.
-- If there's a clear trajectory across the dates, flag it explicitly.
+${RECENCY_NOTE}
 
-Don't pad and don't truncate — as long or short as the topic warrants.
+${KNOWLEDGE_NOTE}
 
-The highlights field is the chips that render under the verdict. Each must be a SHORT (≤4 words), SPECIFIC noun phrase a reader can act on. Prefer "fishmonger missing" over "limited selection", "cashier rudeness 2020-22" over "rude staff", "Sunday brunch overpriced" over "expensive". Avoid generic adjective pairs like "good and friendly X" — pick the sharper angle. Sentiment is positive/negative/neutral.`
-    : `You are a sharp, opinionated local writing a real summary of ${place} for a friend deciding whether to go. You've read the reviews below — each starts with [YYYY-MM-DD] so you can tell when people thought what. Treat newer reviews as the current truth and explicitly flag any trajectory across the timestamps (slipped after a renovation, recovered, staff turnover, price hikes, etc).
+${HIGHLIGHT_RULES}`
+    : `Summarize ${place} from the reviews below. Surface the details multiple reviewers agree on — that's the signal worth keeping. Skip one-off opinions.
 
-Format the verdict as Markdown so it's scannable, not a wall of text. Pick the structure that fits the place — don't force every section, but make sure the result isn't one giant paragraph:
-- Open with a 1-2 sentence overall take that's specific to this place (skip the "this is a place that..." preamble).
-- Use **bold** liberally on the concrete details that actually matter: dish names, hours, prices, named staff, specific quirks.
-- Use \`### \` subheads (e.g., \`### The Good\`, \`### The Catches\`, \`### Practical Intel\`, \`### Then vs Now\`, \`### Standout Dishes\`) when the content naturally splits. Skip a subhead if you'd only have a one-line bullet under it.
-- Use \`- \` bulleted lists for parallel items — things to skip, recommended orders, recurring complaints, time-of-day tips.
-- Quote memorable reviewer phrasing inline ("...") when they put it better than you could.
-- For restaurants / cafés / bars: a \`### Standout Dishes\` section listing items by name with whether reviewers praise or warn against them is required.
-- For trajectory shifts: a \`### Then vs Now\` section anchored in dates from the timestamps.
+${RECENCY_NOTE}
 
-Don't pad, don't truncate — make the verdict as long as the place actually warrants. Skip sections that don't apply. Avoid generic phrases like "great atmosphere" — they tell the reader nothing.
+${KNOWLEDGE_NOTE}
 
-The highlights field renders as compact chips under the verdict. Each must be a SHORT (≤4 words), SPECIFIC noun phrase a reader can immediately understand and act on. Prefer:
-- "summer overcrowding" over "small size"
-- "cashier rudeness 2020-22" over "unfriendly staff"
-- "no fresh fishmonger" over "limited selection"
-- "€9.95 sandwich deal" over "good value"
-- "weekday queues short" over "fast service"
+${HIGHLIGHT_RULES}
 
-Avoid generic adjective pairs ("friendly and helpful X"). Pick the sharpest, most concrete angle. Sentiment is positive/negative/neutral. Count is roughly how many reviews mention it.
-
-Rate value for money 1-5 based on what reviewers actually say about pricing relative to what they got, not a guess.`;
+Rate value for money 1-5 based on what reviewers actually say about pricing relative to what they got.`;
   const prompt = `${block}\n\n---\n\n${instructions}`;
 
   const resp = await fetch(ENDPOINT, {
@@ -86,11 +76,13 @@ Rate value for money 1-5 based on what reviewers actually say about pricing rela
 }
 
 const ASK_PROMPT = (placeName: string, block: string, question: string) =>
-  `${block}\n\n---\n\nYou are a local expert helping a tourist decide about ${placeName || 'this place'}. Answer their question using only evidence from the reviews above. Each review starts with [YYYY-MM-DD] — weight recent reviews more heavily and flag if the answer has changed over time.
+  `${block}\n\n---\n\nAnswer this question about ${placeName || 'this place'} based on the reviews above. Be direct, concrete, brief.
 
-Question: ${question}
+${RECENCY_NOTE}
 
-Format the answer as Markdown so it's scannable. Use **bold** on the specific details that matter (names, dishes, prices, hours). Use \`- \` bullets when listing parallel points. Use \`### \` subheads if the answer splits into a few angles (skip subheads for short answers). Quote memorable reviewer phrasing inline. If reviewers disagree, surface the tension and say who's on each side. Be direct, opinionated, practical, concrete — no generic phrases.`;
+${KNOWLEDGE_NOTE}
+
+Question: ${question}`;
 
 export async function ask(placeName: string, reviewTexts: string[], question: string): Promise<string> {
   const block = reviewTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
@@ -110,4 +102,3 @@ export async function ask(placeName: string, reviewTexts: string[], question: st
   if (!text) throw new Error(data.error?.message || 'empty Gemini response');
   return text;
 }
-
