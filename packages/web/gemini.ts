@@ -9,23 +9,24 @@ const RECENCY_NOTE = `Reviews are prefixed [YYYY-MM-DD]. If reviewers disagree o
 
 const KNOWLEDGE_NOTE = `Reviews are the primary source. If they're silent on something and you have reliable general knowledge about the place (history, location context, well-known facts), you can fold it in.`;
 
-// Gemini's structured-JSON mode collapses \n\n inside string fields, so the
-// verdict (prose) and highlights/value (structured) are fetched in two
-// parallel calls. Verdict stays as natural multi-paragraph markdown.
+// Gemini's structured-JSON mode strips \n\n inside string fields, so the
+// prose verdict and structured highlights/value run as two parallel calls.
+// Input tokens overlap (same review block both times) but output is clean
+// markdown for the verdict and clean schema-validated JSON for the rest.
 function verdictInstructions(place: string, filterQuery?: string): string {
   return filterQuery
-    ? `You are a brutally honest local. Tell me what reviewers actually say about "${filterQuery}" at ${place}. Surface the details multiple reviewers agree on — drop one-off opinions.
+    ? `You are a brutally honest local. Tell me what reviewers actually say about "${filterQuery}" at ${place}. Surface the details multiple reviewers agree on; drop one-off opinions.
 
-Write 2-3 short paragraphs separated by blank lines. Be concise — every sentence earns its place. Use **bold** for the specifics that matter (names, prices, hours, dates). No headings, no bullet lists, no preamble — just prose paragraphs.
+Write 2-3 short paragraphs separated by blank lines. Be concise. Use **bold** for the specifics that matter (names, prices, hours, dates). No headings, no bullets — Markdown prose only.
 
-Be direct, opinionated, concrete. Quote vivid reviewer phrasing inline ("...") when it lands. If opinions split, surface the tension.
+Be direct, opinionated, concrete. Quote vivid reviewer phrasing inline ("..."). If opinions split, surface the tension.
 
 ${RECENCY_NOTE}
 
 ${KNOWLEDGE_NOTE}
 
-Output only the verdict text. Start with the first paragraph. Do not include "Here's the summary" or any framing.`
-    : `You are a brutally honest local writing a mini-guide to ${place} for a friend deciding whether to visit. Surface only the details multiple reviewers agree on. Drop one-off opinions. Use **bold** for the specifics that matter (named landmarks, prices, hours, dishes).
+Output only the verdict text. Start with the first paragraph — no framing.`
+    : `You are a brutally honest local writing a mini-guide to ${place} for a friend deciding whether to visit. Surface only the details multiple reviewers agree on. Drop one-off opinions. Use **bold** for the specifics that matter.
 
 Write THREE short paragraphs, separated by a blank line.
 
@@ -41,7 +42,7 @@ ${RECENCY_NOTE}
 
 ${KNOWLEDGE_NOTE}
 
-Output only the verdict text — no framing, no "Here's the summary".`;
+Output only the verdict text. Start with the first paragraph — no framing.`;
 }
 
 function structuredInstructions(place: string, filterQuery?: string): string {

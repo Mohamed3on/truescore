@@ -808,10 +808,11 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
   const data = await post<{ summary: SummaryResult }>('/api/summarize', {
     featureId, name, reviewTexts,
     filter: filterQuery ?? undefined,
-    // Filtered topic summaries don't share the place-level cache slot, but we
-    // still want a fresh run each time the user asks (the cached one might be
-    // for a different filter).
-    force: !!filterQuery,
+    // Extension manages its own client-side cache (summaryCache.all,
+    // h.summary, search.summary). When it calls summarizeReviews, intent is
+    // always "compute fresh" — Resummarize/refresh-search/highlight-summarize
+    // all flow here. Server-side cache is for the web SPA.
+    force: true,
   });
   return data.summary;
 };
