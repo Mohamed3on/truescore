@@ -66,19 +66,20 @@ Also rate value for money 1-5 — base this on what reviewers actually say about
   return JSON.parse(text);
 }
 
-export async function ask(placeName: string, reviewTexts: string[], question: string): Promise<string> {
-  const block = reviewTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
-  const prompt = `${block}\n\n---\n\nYou are a local expert helping a tourist decide about ${placeName || 'this place'}. Answer their question using only evidence from the reviews above.
+const ASK_PROMPT = (placeName: string, block: string, question: string) =>
+  `${block}\n\n---\n\nYou are a local expert helping a tourist decide about ${placeName || 'this place'}. Answer their question using only evidence from the reviews above.
 
 Question: ${question}
 
 Quote or paraphrase the most vivid, concrete detail from the reviews — names, numbers, comparisons, warnings, tips. If reviewers disagree, surface the tension. Be direct, opinionated, practical. Keep it concise.`;
 
+export async function ask(placeName: string, reviewTexts: string[], question: string): Promise<string> {
+  const block = reviewTexts.map((t, i) => `${i + 1}. ${t}`).join('\n');
   const resp = await fetch(ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts: [{ text: ASK_PROMPT(placeName, block, question) }] }],
       generationConfig: {
         maxOutputTokens: 32768,
         thinkingConfig: { thinkingLevel: 'MINIMAL' },
@@ -90,3 +91,4 @@ Quote or paraphrase the most vivid, concrete detail from the reviews — names, 
   if (!text) throw new Error(data.error?.message || 'empty Gemini response');
   return text;
 }
+

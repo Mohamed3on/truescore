@@ -35,6 +35,33 @@ function friendlyError(e: unknown): string {
 const errBody = (e: unknown) => ({ error: friendlyError(e) });
 const mapsUrlFor = (featureId: string) => `https://www.google.com/maps?q=&ftid=${featureId}`;
 
+// NDJSON streaming response. The producer pushes one JSON object per line via
+// `write`; if it throws, we emit a final `{type:'error'}` event so the client
+// always gets a defined terminus. The `closed` flag silently swallows writes
+// after the consumer aborts so partial sends never throw downstream.
+type StreamWriter = (obj: unknown) => void;
+function ndjsonStream(producer: (write: StreamWriter) => Promise<void>): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enc = new TextEncoder();
+      let closed = false;
+      const write: StreamWriter = (obj) => {
+        if (closed) return;
+        try { controller.enqueue(enc.encode(JSON.stringify(obj) + '\n')); }
+        catch { closed = true; }
+      };
+      try {
+        await producer(write);
+      } catch (e) {
+        console.error('[stream]', e);
+        write({ type: 'error', error: friendlyError(e) });
+      }
+      if (!closed) controller.close();
+    },
+  });
+  return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson' } });
+}
+
 const PORT = Number(process.env.PORT || 3000);
 
 const previewInflight = new Map<string, Promise<PreviewBundle>>();
@@ -103,57 +130,40 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
 }
 
 // Cache only on full success so the next request retries cleanly when any
-// chip failed. The `closed` flag protects the cache write from being lost
-// if the consumer aborts mid-stream — without it, the first failed enqueue
-// would reject Promise.all before we could persist.
+// chip failed.
 function streamHighlights(name: string, featureId: string, url: string, chips: ChipMeta[]): Response {
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const enc = new TextEncoder();
-      let closed = false;
-      const write = (obj: unknown) => {
-        if (closed) return;
-        try { controller.enqueue(enc.encode(JSON.stringify(obj) + '\n')); }
-        catch { closed = true; }
-      };
+  return ndjsonStream(async (write) => {
+    write({ type: 'chips', chips });
 
-      write({ type: 'chips', chips });
-
-      const successes: Highlight[] = [];
-      let failures = 0;
-      await Promise.all(chips.map(async (chip) => {
-        try {
-          const h = await scoreHighlight(featureId, chip);
-          successes.push(h);
-          write({ type: 'chip', highlight: h });
-        } catch (e) {
-          failures++;
-          console.warn(`[highlights] ${name} (${featureId}): chip "${chip.label}" failed:`, e);
-          write({ type: 'chip-error', token: chip.token, label: chip.label, error: friendlyError(e) });
-        }
-      }));
-
-      const totalFetched = successes.reduce((a, h) => a + (h.fetched ?? 0), 0);
-      const cacheable = failures === 0 && totalFetched > 0;
-      if (cacheable) {
-        await cache.putHighlights(featureId, successes);
-      } else if (totalFetched === 0 && failures === 0) {
-        console.warn(
-          `[highlights] ${name} (${featureId}): all ${chips.length} chips fetched 0 reviews ` +
-            `(likely upstream throttle). chips=[${chips.map((c) => c.label).join(', ')}] url=${url}`,
-        );
+    const successes: Highlight[] = [];
+    let failures = 0;
+    await Promise.all(chips.map(async (chip) => {
+      try {
+        const h = await scoreHighlight(featureId, chip);
+        successes.push(h);
+        write({ type: 'chip', highlight: h });
+      } catch (e) {
+        failures++;
+        console.warn(`[highlights] ${name} (${featureId}): chip "${chip.label}" failed:`, e);
+        write({ type: 'chip-error', token: chip.token, label: chip.label, error: friendlyError(e) });
       }
-      const tag = failures
-        ? `${successes.length}/${chips.length} ok, ${failures} failed`
-        : `${chips.length} chips`;
-      console.log(`[highlights] ${name} (${featureId}): ${tag}, ${totalFetched} reviews${cacheable ? '' : ' (not cached)'}`);
+    }));
 
-      write({ type: 'done', failures, totalFetched, cached: cacheable });
-      if (!closed) controller.close();
-    },
-  });
-  return new Response(stream, {
-    headers: { 'Content-Type': 'application/x-ndjson' },
+    const totalFetched = successes.reduce((a, h) => a + (h.fetched ?? 0), 0);
+    const cacheable = failures === 0 && totalFetched > 0;
+    if (cacheable) {
+      await cache.putHighlights(featureId, successes);
+    } else if (totalFetched === 0 && failures === 0) {
+      console.warn(
+        `[highlights] ${name} (${featureId}): all ${chips.length} chips fetched 0 reviews ` +
+          `(likely upstream throttle). chips=[${chips.map((c) => c.label).join(', ')}] url=${url}`,
+      );
+    }
+    const tag = failures
+      ? `${successes.length}/${chips.length} ok, ${failures} failed`
+      : `${chips.length} chips`;
+    console.log(`[highlights] ${name} (${featureId}): ${tag}, ${totalFetched} reviews${cacheable ? '' : ' (not cached)'}`);
+    write({ type: 'done', failures, totalFetched, cached: cacheable });
   });
 }
 
@@ -166,63 +176,91 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
   const slimHighlights = cached.highlights?.map(({ reviews: _r, ...rest }) => rest);
   const cachedScoreTs = cached.scoreTs ?? 0;
   const cachedHighlightsTs = cached.highlightsTs ?? 0;
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const enc = new TextEncoder();
-      let closed = false;
-      const write = (obj: unknown) => {
-        if (closed) return;
-        try { controller.enqueue(enc.encode(JSON.stringify(obj) + '\n')); }
-        catch { closed = true; }
-      };
-      write({
-        type: 'lookup',
-        name: cached.name,
-        score: cached.score,
-        summary: cached.summary,
-        highlights: slimHighlights,
-        histogram: cached.histogram,
-        overallPct: cached.histogram ? overallPctFromHistogram(cached.histogram) : null,
-        meta: cached.meta,
-        resolvedUrl: cached.resolvedUrl ?? mapsUrlFor(featureId),
-        cached: true,
-      });
-      try {
-        await revalidate(featureId, name, resolvedUrl);
-        const fresh = cache.get(featureId);
-        if (fresh && (fresh.scoreTs ?? 0) > cachedScoreTs) {
+  return ndjsonStream(async (write) => {
+    write({
+      type: 'lookup',
+      name: cached.name,
+      score: cached.score,
+      summary: cached.summary,
+      highlights: slimHighlights,
+      histogram: cached.histogram,
+      overallPct: cached.histogram ? overallPctFromHistogram(cached.histogram) : null,
+      meta: cached.meta,
+      resolvedUrl: cached.resolvedUrl ?? mapsUrlFor(featureId),
+      cached: true,
+    });
+    try {
+      await revalidate(featureId, name, resolvedUrl);
+      const fresh = cache.get(featureId);
+      if (fresh && (fresh.scoreTs ?? 0) > cachedScoreTs) {
+        write({
+          type: 'refreshed',
+          name: fresh.name,
+          score: fresh.score,
+          histogram: fresh.histogram,
+          overallPct: fresh.histogram ? overallPctFromHistogram(fresh.histogram) : null,
+          meta: fresh.meta,
+          resolvedUrl: fresh.resolvedUrl ?? mapsUrlFor(featureId),
+        });
+      }
+      // If revalidate kicked off a highlights recompute (drift > 1%), keep
+      // the stream open until it lands so the chips stay in sync with the
+      // refreshed score. Recompute is in-flight only on actual drift, so
+      // this path is rare and otherwise zero-cost.
+      const hp = highlightsRecomputeInflight.get(featureId);
+      if (hp) {
+        await hp;
+        const post = cache.get(featureId);
+        if (post?.highlights?.length && (post.highlightsTs ?? 0) > cachedHighlightsTs) {
           write({
-            type: 'refreshed',
-            name: fresh.name,
-            score: fresh.score,
-            histogram: fresh.histogram,
-            overallPct: fresh.histogram ? overallPctFromHistogram(fresh.histogram) : null,
-            meta: fresh.meta,
-            resolvedUrl: fresh.resolvedUrl ?? mapsUrlFor(featureId),
+            type: 'highlights-refreshed',
+            highlights: post.highlights.map(({ reviews: _r, ...rest }) => rest),
           });
         }
-        // If revalidate kicked off a highlights recompute (drift > 1%), keep
-        // the stream open until it lands so the chips stay in sync with the
-        // refreshed score. Recompute is in-flight only on actual drift, so
-        // this path is rare and otherwise zero-cost.
-        const hp = highlightsRecomputeInflight.get(featureId);
-        if (hp) {
-          await hp;
-          const post = cache.get(featureId);
-          if (post?.highlights?.length && (post.highlightsTs ?? 0) > cachedHighlightsTs) {
-            write({
-              type: 'highlights-refreshed',
-              highlights: post.highlights.map(({ reviews: _r, ...rest }) => rest),
-            });
-          }
-        }
-      } catch (e) {
-        console.error('[revalidate]', e);
       }
-      if (!closed) controller.close();
-    },
+    } catch (e) {
+      console.error('[revalidate]', e);
+    }
   });
-  return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson' } });
+}
+
+// Cache-miss lookups stream progressively: `place` immediately after resolve
+// (so the page header swaps in), `preview` whenever the preview RPC lands
+// (histogram + meta — usually well before the score scrape), `score-progress`
+// after each scorePlace page (relevant/newest paginating in parallel), and
+// `score` once both sorts settle. The client renders each chunk in place.
+function streamFreshLookup(featureId: string, name: string, resolvedUrl: string): Response {
+  return ndjsonStream(async (write) => {
+    write({ type: 'place', name, featureId, resolvedUrl });
+    const t0 = Date.now();
+
+    // Run preview in parallel with the score scrape, but emit each as soon as
+    // it lands instead of awaiting both. Preview failures degrade to a
+    // null-histogram event so the client clears its loading skeleton.
+    const previewPromise = getOrFetchPreviewBundle(featureId, resolvedUrl)
+      .then((bundle) => {
+        write({
+          type: 'preview',
+          histogram: bundle.histogram,
+          overallPct: bundle.histogram ? overallPctFromHistogram(bundle.histogram) : null,
+          meta: bundle.meta,
+        });
+        return bundle;
+      })
+      .catch((e) => {
+        console.error('[preview]', e);
+        write({ type: 'preview', histogram: null, overallPct: null, meta: {} });
+        return { histogram: null, meta: {} } as PreviewBundle;
+      });
+
+    const score = await scorePlace(featureId, (partial) => {
+      write({ type: 'score-progress', score: partial });
+    });
+    const bundle = await previewPromise;
+    const currentTotal = bundle.histogram ? bundle.histogram.reduce((a, b) => a + b, 0) : null;
+    await cache.putScore(featureId, name, score, currentTotal, resolvedUrl);
+    write({ type: 'score', score, fetchMs: Date.now() - t0 });
+  });
 }
 
 function getOrFetchPreviewBundle(featureId: string, url: string): Promise<PreviewBundle> {
@@ -254,29 +292,9 @@ Bun.serve({
         try {
           const { url } = await req.json();
           const { featureId, name, resolvedUrl } = await resolvePlace(url);
-
           const cached = cache.get(featureId);
           if (cached) return streamCachedLookup(featureId, name, resolvedUrl, cached);
-
-          // Run preview fetch in parallel with the score scrape.
-          const bundlePromise = getOrFetchPreviewBundle(featureId, resolvedUrl)
-            .catch((e) => { console.error('[preview]', e); return { histogram: null, meta: {} } as PreviewBundle; });
-          const t0 = Date.now();
-          const score = await scorePlace(featureId);
-          const { histogram, meta } = await bundlePromise;
-          const currentTotal = histogram ? histogram.reduce((a, b) => a + b, 0) : null;
-          await cache.putScore(featureId, name, score, currentTotal, resolvedUrl);
-          return json({
-            name,
-            score,
-            summary: undefined,
-            histogram,
-            overallPct: histogram ? overallPctFromHistogram(histogram) : null,
-            meta,
-            resolvedUrl,
-            fetchMs: Date.now() - t0,
-            cached: false,
-          });
+          return streamFreshLookup(featureId, name, resolvedUrl);
         } catch (e) {
           console.error(`[lookup] ${e instanceof Error ? e.message : e}`);
           return json(errBody(e), 400);
@@ -421,41 +439,62 @@ Bun.serve({
         }
       },
     },
+    // Streams: `search-progress` per page (running stats + review list), then
+    // `search` with the settled result, then `search-summary` if requested.
+    // Cache hits emit a single `search` event so the client uses one consumer.
     '/api/search': {
       POST: async (req) => {
+        let featureId = '';
+        let term = '';
         try {
-          const { featureId, query, force, summarize: doSummarize } = await req.json() as {
+          const body = await req.json() as {
             featureId: string;
             query: string;
             force?: boolean;
             summarize?: boolean;
           };
-          const term = (query ?? '').trim();
+          featureId = body.featureId;
+          term = (body.query ?? '').trim();
           if (!term) return json({ error: 'empty query' }, 400);
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
 
           const key = term.toLowerCase();
           const cached = entry.searches?.[key];
-          if (cached && !force && (!doSummarize || cached.summary)) {
-            return json({ result: cached, cached: true });
-          }
+          const doSummarize = !!body.summarize;
+          const force = !!body.force;
+          const placeName = entry.name;
 
-          let result = cached && !force ? cached : null;
-          if (!result) {
-            const reviews = await fetchAllForSearch(featureId, term);
-            result = { query: term, ...statsForReviews(reviews), reviews, ts: Date.now() };
-          }
+          return ndjsonStream(async (write) => {
+            try {
+              if (cached && !force && (!doSummarize || cached.summary)) {
+                write({ type: 'search', result: cached, cached: true });
+                return;
+              }
 
-          if (doSummarize && (!result.summary || force)) {
-            const reviewTexts = textReviewsFor(result.reviews);
-            if (reviewTexts.length) {
-              result.summary = await summarize(entry.name, reviewTexts, term);
+              let result = cached && !force ? cached : null;
+              if (!result) {
+                const reviews = await fetchAllForSearch(featureId, term, (_, rs) => {
+                  const stats = statsForReviews(rs);
+                  write({ type: 'search-progress', query: term, ...stats });
+                });
+                result = { query: term, ...statsForReviews(reviews), reviews, ts: Date.now() };
+              }
+              write({ type: 'search', result, cached: false });
+
+              if (doSummarize && (!result.summary || force)) {
+                const reviewTexts = textReviewsFor(result.reviews);
+                if (reviewTexts.length) {
+                  result.summary = await summarize(placeName, reviewTexts, term);
+                  write({ type: 'search-summary', summary: result.summary });
+                }
+              }
+              await cache.putSearch(featureId, term, result);
+            } catch (e) {
+              console.error(`[search] "${term}" (${featureId}):`, e);
+              write({ type: 'error', error: friendlyError(e) });
             }
-          }
-
-          await cache.putSearch(featureId, term, result);
-          return json({ result, cached: false });
+          });
         } catch (e) {
           console.error('[search]', e);
           return json(errBody(e), 400);

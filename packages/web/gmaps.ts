@@ -28,7 +28,11 @@ const buildUrlForSearch = (featureId: string, query: string, cursor = '') => {
   return `https://www.google.com/maps/rpc/listugcposts?authuser=0&hl=en&gl=&pb=${pb}`;
 };
 
-async function fetchSort(featureId: string, sort: SortKey): Promise<Review[]> {
+// Called once after every page lands so the caller can emit interim state.
+// `reviews` is the running accumulator (deduped), not just the latest page.
+export type SortPageCallback = (sort: SortKey, reviews: Review[]) => void;
+
+async function fetchSort(featureId: string, sort: SortKey, onPage?: SortPageCallback): Promise<Review[]> {
   const collected = new Map<string, Review>();
   let cursor = '';
   let lastPct: number | null = null;
@@ -37,6 +41,7 @@ async function fetchSort(featureId: string, sort: SortKey): Promise<Review[]> {
     const { reviews, nextCursor } = parseReviewsResponse(text);
     if (!reviews.length) break;
     for (const r of reviews) collected.set(r.reviewId, r);
+    onPage?.(sort, [...collected.values()]);
     if (pageIdx + 1 >= MIN_PAGES_BEFORE_STABILIZE) {
       const pct = scorePct([...collected.values()]);
       if (lastPct !== null && Math.abs(pct - lastPct) <= 1) break;
@@ -58,7 +63,17 @@ export type ScoreResult = {
   reviews: Review[];
 };
 
-export async function fetchAllForSearch(featureId: string, query: string): Promise<Review[]> {
+export type PartialScore = Omit<ScoreResult, 'reviews'>;
+
+// Callback receives a fully merged snapshot (relevant ∪ newest, deduped) after
+// every page from either sort. Suitable for streaming `score-progress` events.
+export type ScoreProgressCallback = (partial: PartialScore) => void;
+
+export async function fetchAllForSearch(
+  featureId: string,
+  query: string,
+  onPage?: SortPageCallback,
+): Promise<Review[]> {
   const collected = new Map<string, Review>();
   let cursor = '';
   for (let i = 0; i < TOKEN_MAX_PAGES; i++) {
@@ -66,6 +81,7 @@ export async function fetchAllForSearch(featureId: string, query: string): Promi
     const { reviews, nextCursor } = parseReviewsResponse(text);
     if (!reviews.length) break;
     for (const r of reviews) collected.set(r.reviewId, r);
+    onPage?.('relevant', [...collected.values()]);
     if (!nextCursor) break;
     cursor = nextCursor;
   }
@@ -86,10 +102,32 @@ export async function fetchAllForToken(featureId: string, token: string): Promis
   return [...collected.values()];
 }
 
-export async function scorePlace(featureId: string): Promise<ScoreResult> {
+export async function scorePlace(
+  featureId: string,
+  onProgress?: ScoreProgressCallback,
+): Promise<ScoreResult> {
+  let latestRelevant: Review[] = [];
+  let latestNewest: Review[] = [];
+
+  const emit = () => {
+    if (!onProgress) return;
+    const merged = new Map<string, Review>();
+    for (const r of [...latestRelevant, ...latestNewest]) merged.set(r.reviewId, r);
+    const all = [...merged.values()];
+    const m = statsForReviews(all);
+    onProgress({
+      featureId,
+      totalReviews: m.totalReviews,
+      trustedReviews: m.trustedReviews,
+      scorePct: m.scorePct,
+      relevant: statsForReviews(latestRelevant),
+      newest: statsForReviews(latestNewest),
+    });
+  };
+
   const [relevant, newest] = await Promise.all([
-    fetchSort(featureId, 'relevant'),
-    fetchSort(featureId, 'newest'),
+    fetchSort(featureId, 'relevant', (_, reviews) => { latestRelevant = reviews; emit(); }),
+    fetchSort(featureId, 'newest', (_, reviews) => { latestNewest = reviews; emit(); }),
   ]);
   const merged = new Map<string, Review>();
   for (const r of [...relevant, ...newest]) merged.set(r.reviewId, r);

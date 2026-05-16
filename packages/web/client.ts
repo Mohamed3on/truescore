@@ -30,6 +30,46 @@ async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> 
 const postJson = <T>(url: string, body: unknown): Promise<T> =>
   fetchJson<T>(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
+// Stream NDJSON events from a fetch response body. Each JSON-line yields as
+// one event; partial lines accumulate in a buffer until the next newline.
+// Used by /api/lookup, /api/search, /api/highlights, /api/ask.
+async function* readNdjson<T>(body: ReadableStream<Uint8Array>): AsyncGenerator<T> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (line) yield JSON.parse(line) as T;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function postNdjson(url: string, body: unknown): Promise<Response> {
+  const resp = await fetchWithRetry(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const ct = resp.headers.get('content-type') ?? '';
+  if (!resp.ok && ct.includes('json') && !ct.includes('ndjson')) {
+    const data = await resp.json().catch(() => null);
+    throw new Error(data?.error || `request failed (${resp.status})`);
+  }
+  if (!resp.ok) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
+  if (!ct.includes('ndjson') || !resp.body) throw new Error('expected NDJSON stream');
+  return resp;
+}
+
 type SummaryHighlight = { text: string; count: number; sentiment: string };
 type Score = {
   featureId: string;
@@ -54,10 +94,19 @@ type LookupResponse = {
   fetchMs?: number;
   error?: string;
 };
+// Score data emitted during streaming. The progressive `score-progress`
+// events omit the per-review array (we don't ship 100+ review objects on
+// each page tick); the final `score` event is the full Score.
+type PartialScore = Omit<Score, 'reviews'>;
 type LookupStreamEvent =
   | ({ type: 'lookup' } & LookupResponse)
   | { type: 'refreshed'; name: string; score: Score; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string }
-  | { type: 'highlights-refreshed'; highlights: Highlight[] };
+  | { type: 'highlights-refreshed'; highlights: Highlight[] }
+  | { type: 'place'; name: string; featureId: string; resolvedUrl: string }
+  | { type: 'preview'; histogram: number[] | null; overallPct: number | null; meta?: PlaceMeta }
+  | { type: 'score-progress'; score: PartialScore }
+  | { type: 'score'; score: Score; fetchMs: number }
+  | { type: 'error'; error: string };
 type SummarizeResponse = { summary?: Summary; error?: string; cached?: boolean };
 type HistogramResponse = { histogram?: number[]; overallPct?: number; error?: string };
 type ChipState = 'loading' | 'done' | 'error';
@@ -85,6 +134,12 @@ type SearchResult = {
   summary?: Summary;
 };
 type SearchResponse = { result?: SearchResult; cached?: boolean; error?: string };
+type SearchStats = { totalReviews: number; trustedReviews: number; scorePct: number };
+type SearchStreamEvent =
+  | ({ type: 'search-progress'; query: string } & SearchStats)
+  | { type: 'search'; result: SearchResult; cached: boolean }
+  | { type: 'search-summary'; summary: Summary }
+  | { type: 'error'; error: string };
 type PlaceItem = {
   featureId: string;
   name: string;
@@ -385,15 +440,29 @@ async function summarizeActiveSearch() {
   setStatus(`Summarizing "${r.query}"…`);
   const t0 = Date.now();
   try {
-    const data = await postJson<SearchResponse>('/api/search', {
+    const resp = await postNdjson('/api/search', {
       featureId: currentFeatureId, query: r.query, summarize: true,
     });
-    if (data.result?.summary) {
-      activeSearch = data.result;
-      renderChipSummary(data.result.summary);
-      chipSummarizeBtn.disabled = false;
-      chipSummarizeBtn.textContent = 'SHOW REVIEWS';
-      setStatus(`"${r.query}" summarized${data.cached ? ' (cached)' : ` in ${((Date.now() - t0) / 1000).toFixed(1)}s`}`);
+    let result: SearchResult | null = null;
+    let cached = false;
+    for await (const evt of readNdjson<SearchStreamEvent>(resp.body!)) {
+      if (evt.type === 'search') {
+        result = evt.result;
+        cached = evt.cached;
+      } else if (evt.type === 'search-summary') {
+        if (result) {
+          result.summary = evt.summary;
+          activeSearch = result;
+        }
+        renderChipSummary(evt.summary);
+      } else if (evt.type === 'error') {
+        throw new Error(evt.error);
+      }
+    }
+    chipSummarizeBtn.disabled = false;
+    chipSummarizeBtn.textContent = result?.summary ? 'SHOW REVIEWS' : 'SUMMARIZE';
+    if (result?.summary) {
+      setStatus(`"${r.query}" summarized${cached ? ' (cached)' : ` in ${((Date.now() - t0) / 1000).toFixed(1)}s`}`);
     }
   } catch (e) {
     setStatus(e instanceof Error ? e.message : String(e), true);
@@ -408,16 +477,25 @@ async function runSearch(query: string, force = false) {
   setStatus(`Searching "${query}"…`);
   const t0 = Date.now();
   try {
-    const data = await postJson<SearchResponse>('/api/search', {
+    const resp = await postNdjson('/api/search', {
       featureId: currentFeatureId, query, force,
     });
-    if (data.result) {
-      showSearchPanel(data.result);
-      setStatus(
-        data.cached
-          ? `"${query}" cached · ${data.result.totalReviews} reviews · ${data.result.scorePct}%`
-          : `"${query}" · ${data.result.totalReviews} reviews · ${data.result.scorePct}% in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
-      );
+    for await (const evt of readNdjson<SearchStreamEvent>(resp.body!)) {
+      if (evt.type === 'search-progress') {
+        // Per-page progress: same `Searching "x" · N reviews · P%` shape so
+        // the user sees the search count climb instead of staring at a fixed
+        // spinner.
+        setStatus(`Searching "${query}" · ${evt.totalReviews} reviews · ${evt.scorePct}%`);
+      } else if (evt.type === 'search') {
+        showSearchPanel(evt.result);
+        setStatus(
+          evt.cached
+            ? `"${query}" cached · ${evt.result.totalReviews} reviews · ${evt.result.scorePct}%`
+            : `"${query}" · ${evt.result.totalReviews} reviews · ${evt.result.scorePct}% in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
+        );
+      } else if (evt.type === 'error') {
+        throw new Error(evt.error);
+      }
     }
   } catch (e) {
     setStatus(e instanceof Error ? e.message : String(e), true);
@@ -537,49 +615,77 @@ const DEFAULT_TITLE = document.title;
 // Pure render: header, score numbers, freshness, histogram-derived overall.
 // Safe to re-run on revalidate (no UI state reset) so the freshness label and
 // score can update in place when the server pushes a `refreshed` event.
-function paintScore(data: { name?: string; score: Score; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string }) {
+// Paints whichever subset of {place, preview, score} is currently in hand.
+// Called both with full data (cache-hit `lookup` event, cache-miss `score`
+// event) and partial data (cache-miss `place` / `preview` / `score-progress`).
+// Missing fields render as em-dashes / hidden blocks so the user sees a
+// stable layout that fills in instead of swapping wholesale.
+type PaintData = {
+  name?: string;
+  featureId?: string;
+  score?: PartialScore | Score;
+  histogram?: number[] | null;
+  overallPct?: number | null;
+  meta?: PlaceMeta | null;
+  resolvedUrl?: string;
+};
+function paintScore(data: PaintData) {
+  const featureId = data.score?.featureId ?? data.featureId;
   const displayName = data.meta?.canonicalName || data.name || '(unnamed place)';
   const nameEl = $('name') as HTMLAnchorElement;
   nameEl.textContent = displayName;
-  nameEl.href = data.resolvedUrl ?? `https://www.google.com/maps?q=&ftid=${data.score.featureId}`;
-  document.title = `${displayName} · ${data.score.scorePct}% · TrueScore`;
-  renderPlaceMeta(data.meta);
-  renderFreshness(data.score.reviews);
-  const pctEl = $('scorePct');
-  pctEl.textContent = `${data.score.scorePct}`;
-  pctEl.className = `score-num ${scoreClass(data.score.scorePct)}`;
-  const trustedPct = data.score.totalReviews
-    ? Math.round((data.score.trustedReviews / data.score.totalReviews) * 100)
-    : 0;
-  $('reviewsLabel').textContent =
-    `${data.score.totalReviews} · ${data.score.trustedReviews} (${trustedPct}%)`;
-  $('relevantPct').textContent = `${data.score.relevant.scorePct}%`;
-  $('newestPct').textContent = `${data.score.newest.scorePct}%`;
-  const delta = data.score.newest.scorePct - data.score.relevant.scorePct;
-  const deltaEl = $('newestDelta');
-  if (data.score.newest.trustedReviews === 0 || data.score.relevant.trustedReviews === 0) {
-    deltaEl.textContent = '';
-  } else {
-    deltaEl.textContent = delta === 0 ? '' : `${delta > 0 ? '+' : ''}${delta}`;
-    deltaEl.className = `delta ${delta > 0 ? 'pos' : delta < 0 ? 'neg' : ''}`;
+  if (data.resolvedUrl) nameEl.href = data.resolvedUrl;
+  else if (featureId) nameEl.href = `https://www.google.com/maps?q=&ftid=${featureId}`;
+  document.title = data.score
+    ? `${displayName} · ${data.score.scorePct}% · TrueScore`
+    : `${displayName} · TrueScore`;
+  renderPlaceMeta(data.meta ?? undefined);
+  if (data.score && 'reviews' in data.score && data.score.reviews) {
+    renderFreshness(data.score.reviews);
   }
-  renderOverall(data.overallPct ?? null, data.score.scorePct);
-  renderOverallScore(data.histogram);
-  currentMergedPct = data.score.scorePct;
+  const pctEl = $('scorePct');
+  if (data.score) {
+    pctEl.textContent = `${data.score.scorePct}`;
+    pctEl.className = `score-num ${scoreClass(data.score.scorePct)}`;
+    const trustedPct = data.score.totalReviews
+      ? Math.round((data.score.trustedReviews / data.score.totalReviews) * 100)
+      : 0;
+    $('reviewsLabel').textContent =
+      `${data.score.totalReviews} · ${data.score.trustedReviews} (${trustedPct}%)`;
+    $('relevantPct').textContent = `${data.score.relevant.scorePct}%`;
+    $('newestPct').textContent = `${data.score.newest.scorePct}%`;
+    const delta = data.score.newest.scorePct - data.score.relevant.scorePct;
+    const deltaEl = $('newestDelta');
+    if (data.score.newest.trustedReviews === 0 || data.score.relevant.trustedReviews === 0) {
+      deltaEl.textContent = '';
+    } else {
+      deltaEl.textContent = delta === 0 ? '' : `${delta > 0 ? '+' : ''}${delta}`;
+      deltaEl.className = `delta ${delta > 0 ? 'pos' : delta < 0 ? 'neg' : ''}`;
+    }
+    currentMergedPct = data.score.scorePct;
+  } else {
+    pctEl.textContent = '—';
+    pctEl.className = 'score-num';
+    $('reviewsLabel').textContent = '—';
+    $('relevantPct').textContent = '—';
+    $('newestPct').textContent = '—';
+    $('newestDelta').textContent = '';
+  }
+  renderOverallScore(data.histogram ?? null);
+  renderOverall(data.overallPct ?? null, data.score?.scorePct ?? 0);
 }
 
-function renderScore(data: LookupResponse) {
+// One-time setup for a new lookup: show the result panel, wipe the previous
+// place's data, prep skeletons. Both the cache-hit `lookup` event and the
+// cache-miss `place` event flow through this before painting whatever data
+// they have. Subsequent `score-progress` / `preview` ticks just re-paint.
+function initResultPanel(featureId: string, resolvedUrl?: string) {
   result.hidden = false;
   document.body.dataset.state = 'scored';
-  paintScore(data);
-  const shareUrl = data.resolvedUrl ?? urlInput.value;
-  if (shareUrl) {
-    const next = `?url=${encodeURIComponent(shareUrl)}`;
-    if (location.search !== next) history.replaceState(null, '', next);
-  }
-  currentFeatureId = data.score.featureId;
-  baseSummary = data.summary;
+  currentFeatureId = featureId;
+  baseSummary = undefined;
   activeHighlight = null;
+  activeSearch = null;
   answerEl.textContent = '';
   questionInput.value = '';
   $('valueForMoney').textContent = '—';
@@ -592,10 +698,24 @@ function renderScore(data: LookupResponse) {
   searchForm.hidden = false;
   searchInput.value = '';
   searchRefreshBtn.hidden = true;
-  activeSearch = null;
   while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
   while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
   while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
+  // Wipe the previous place's meta/freshness so a fresh-lookup sequence
+  // doesn't show stale photo + address until `preview` lands.
+  renderPlaceMeta(undefined);
+  renderFreshness([]);
+  const shareUrl = resolvedUrl ?? urlInput.value;
+  if (shareUrl) {
+    const next = `?url=${encodeURIComponent(shareUrl)}`;
+    if (location.search !== next) history.replaceState(null, '', next);
+  }
+}
+
+function renderScore(data: LookupResponse) {
+  initResultPanel(data.score.featureId, data.resolvedUrl);
+  baseSummary = data.summary;
+  paintScore(data);
 }
 
 function flashIfChanged(el: HTMLElement, prev: string) {
@@ -606,62 +726,96 @@ function flashIfChanged(el: HTMLElement, prev: string) {
 }
 
 async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number): Promise<void> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
   const freshnessLabel = $('freshnessLabel');
-  let buffer = '';
+  // Accumulator for cache-miss progressive events. The server emits these in
+  // arbitrary order (preview lands ~500ms-1s, score-progress every 1-2s) so
+  // we merge each into `acc` and repaint with whatever's accumulated so far.
+  const acc: PaintData = {};
   let cachedTotal = 0;
   let refreshed = false;
+  let summaryKicked = false;
+
   try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line) continue;
-        const evt = JSON.parse(line) as LookupStreamEvent;
-        if (evt.type === 'lookup') {
-          const scoreMs = Date.now() - t0;
-          cachedTotal = evt.score.totalReviews;
-          renderScore(evt);
-          freshnessLabel.classList.add('rechecking');
-          if (evt.overallPct == null) fetchHistogramFor(evt.score.featureId, evt.score.scorePct);
-          if (evt.highlights?.length) showHighlights(evt.highlights);
-          else loadHighlights();
-          if (evt.summary) {
-            renderSummary(evt.summary);
-            setStatus(`Cached · ${scoreMs}ms`);
-          } else {
-            setStatus(`Score in ${(scoreMs / 1000).toFixed(1)}s · summarizing…`);
-            fetchSummaryFor(evt.score.featureId).then((sum) => {
-              if (!refreshed) {
-                setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
-              }
-            });
-          }
-        } else if (evt.type === 'refreshed') {
-          refreshed = true;
-          freshnessLabel.classList.remove('rechecking');
-          const prevFresh = freshnessLabel.textContent ?? '';
-          const prevScore = $('scorePct').textContent ?? '';
-          const prevReviews = $('reviewsLabel').textContent ?? '';
-          paintScore(evt);
-          flashIfChanged(freshnessLabel, prevFresh);
-          flashIfChanged($('scorePct'), prevScore);
-          flashIfChanged($('reviewsLabel'), prevReviews);
-          if (currentHighlights.length) {
-            renderHighlights(currentHighlights, true);
-            if (activeHighlight) setActiveChip(activeHighlight.token);
-          }
-          const diff = evt.score.totalReviews - cachedTotal;
-          const diffMsg = diff > 0 ? ` (+${diff} new)` : '';
-          setStatus(`Updated with fresh reviews${diffMsg}`);
-        } else if (evt.type === 'highlights-refreshed') {
-          if (evt.highlights?.length) showHighlights(evt.highlights);
+    for await (const evt of readNdjson<LookupStreamEvent>(body)) {
+      if (evt.type === 'lookup') {
+        const scoreMs = Date.now() - t0;
+        cachedTotal = evt.score.totalReviews;
+        renderScore(evt);
+        freshnessLabel.classList.add('rechecking');
+        if (evt.overallPct == null) fetchHistogramFor(evt.score.featureId, evt.score.scorePct);
+        if (evt.highlights?.length) showHighlights(evt.highlights);
+        else loadHighlights();
+        if (evt.summary) {
+          renderSummary(evt.summary);
+          setStatus(`Cached · ${scoreMs}ms`);
+        } else {
+          setStatus(`Score in ${(scoreMs / 1000).toFixed(1)}s · summarizing…`);
+          fetchSummaryFor(evt.score.featureId).then((sum) => {
+            if (!refreshed) {
+              setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
+            }
+          });
         }
+      } else if (evt.type === 'refreshed') {
+        refreshed = true;
+        freshnessLabel.classList.remove('rechecking');
+        const prevFresh = freshnessLabel.textContent ?? '';
+        const prevScore = $('scorePct').textContent ?? '';
+        const prevReviews = $('reviewsLabel').textContent ?? '';
+        paintScore(evt);
+        flashIfChanged(freshnessLabel, prevFresh);
+        flashIfChanged($('scorePct'), prevScore);
+        flashIfChanged($('reviewsLabel'), prevReviews);
+        if (currentHighlights.length) {
+          renderHighlights(currentHighlights, true);
+          if (activeHighlight) setActiveChip(activeHighlight.token);
+        }
+        const diff = evt.score.totalReviews - cachedTotal;
+        const diffMsg = diff > 0 ? ` (+${diff} new)` : '';
+        setStatus(`Updated with fresh reviews${diffMsg}`);
+      } else if (evt.type === 'highlights-refreshed') {
+        if (evt.highlights?.length) showHighlights(evt.highlights);
+      } else if (evt.type === 'place') {
+        // First event on a cache-miss lookup: clear the panel, swap in the
+        // name immediately so the user gets visual confirmation while the
+        // preview + score scrapes are still pending.
+        initResultPanel(evt.featureId, evt.resolvedUrl);
+        acc.name = evt.name;
+        acc.featureId = evt.featureId;
+        acc.resolvedUrl = evt.resolvedUrl;
+        paintScore(acc);
+        setStatus('Reading reviews…');
+      } else if (evt.type === 'preview') {
+        // Histogram + meta arrive together off a single preview RPC, usually
+        // well before scorePlace finishes. Paint them in place.
+        acc.histogram = evt.histogram;
+        acc.overallPct = evt.overallPct;
+        acc.meta = evt.meta ?? null;
+        paintScore(acc);
+      } else if (evt.type === 'score-progress') {
+        // Every page of either sort. The number visibly settles as both
+        // sorts converge — same UX as the extension's per-page repaint.
+        acc.score = evt.score;
+        paintScore(acc);
+        setStatus(`Scoring · ${evt.score.totalReviews} reviews so far…`);
+      } else if (evt.type === 'score') {
+        acc.score = evt.score;
+        paintScore(acc);
+        renderFreshness(evt.score.reviews);
+        const featureId = evt.score.featureId;
+        // Kick off summary + highlights now that we know the place is real
+        // and the score has settled. Idempotent (summaryKicked guards reruns
+        // if a future server change ever re-emits `score`).
+        if (!summaryKicked) {
+          summaryKicked = true;
+          loadHighlights();
+          setStatus(`Score in ${(evt.fetchMs / 1000).toFixed(1)}s · summarizing…`);
+          fetchSummaryFor(featureId).then((sum) => {
+            setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
+          });
+        }
+      } else if (evt.type === 'error') {
+        throw new Error(evt.error || 'lookup failed');
       }
     }
   } finally {
@@ -866,47 +1020,11 @@ form.addEventListener('submit', async (e) => {
   document.body.dataset.state = 'loading';
   goBtn.disabled = true;
   goBtn.textContent = 'FETCHING';
-  setStatus('Fetching reviews…');
+  setStatus('Resolving link…');
   const t0 = Date.now();
   try {
-    const resp = await fetchWithRetry('/api/lookup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-    });
-    const ct = resp.headers.get('content-type') ?? '';
-    // Cache-hit path streams NDJSON so revalidate can push fresh data without
-    // a manual refresh; cache-miss stays plain JSON.
-    if (resp.ok && ct.includes('ndjson') && resp.body) {
-      await consumeLookupStream(resp.body, t0);
-      return;
-    }
-    if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
-    const data = await resp.json() as LookupResponse;
-    if (!resp.ok) throw new Error(data.error || `request failed (${resp.status})`);
-
-    renderScore(data);
-    const scoreMs = Date.now() - t0;
-    const featureId = data.score.featureId;
-    const mergedPct = data.score.scorePct;
-
-    const histogramTask = data.overallPct != null
-      ? Promise.resolve()
-      : fetchHistogramFor(featureId, mergedPct);
-    let highlightsTask: Promise<unknown> = Promise.resolve();
-    if (data.highlights?.length) showHighlights(data.highlights);
-    else highlightsTask = loadHighlights();
-
-    if (data.summary) {
-      renderSummary(data.summary);
-      setStatus(`Done in ${(scoreMs / 1000).toFixed(1)}s`);
-      await Promise.all([histogramTask, highlightsTask]);
-      return;
-    }
-
-    setStatus(`Score in ${(scoreMs / 1000).toFixed(1)}s · summarizing…`);
-    const [sum] = await Promise.all([fetchSummaryFor(featureId), histogramTask, highlightsTask]);
-    setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
+    const resp = await postNdjson('/api/lookup', { url });
+    await consumeLookupStream(resp.body!, t0);
   } catch (e) {
     delete document.body.dataset.state;
     setStatus(e instanceof Error ? e.message : String(e), true);
