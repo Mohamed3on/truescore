@@ -707,11 +707,79 @@ section#result::before {
 
 .verdict {
   font-size: 14px;
+  line-height: 1.55;
   color: var(--t1);
   margin-bottom: 18px;
-  white-space: pre-wrap;
 }
 .verdict:empty { display: none; }
+
+/* Markdown rendered inside .verdict / .answer / .chip-panel .verdict.
+   The custom renderer in markdown.ts emits <h2>/<h3>/<p>/<ul>/<ol>/<li>/
+   <strong>/<em>/<code> — these styles keep them from looking like raw
+   browser defaults inside the dark glass panels. */
+.verdict h2, .verdict h3,
+.answer h2, .answer h3 {
+  font-family: 'Sora', sans-serif;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin: 18px 0 6px;
+}
+.verdict > :first-child,
+.answer > :first-child { margin-top: 0; }
+.verdict p, .answer p { margin: 0 0 10px; }
+.verdict p:last-child, .answer p:last-child,
+.verdict ul:last-child, .answer ul:last-child,
+.verdict ol:last-child, .answer ol:last-child { margin-bottom: 0; }
+.verdict ul, .verdict ol,
+.answer ul, .answer ol {
+  list-style: none;
+  padding: 0;
+  margin: 2px 0 10px;
+}
+.verdict ul li, .answer ul li {
+  position: relative;
+  padding-left: 14px;
+  margin: 3px 0;
+}
+.verdict ul li::before, .answer ul li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--t3);
+}
+.verdict ol, .answer ol { counter-reset: md-list; }
+.verdict ol li, .answer ol li {
+  counter-increment: md-list;
+  position: relative;
+  padding-left: 22px;
+  margin: 3px 0;
+}
+.verdict ol li::before, .answer ol li::before {
+  content: counter(md-list) ".";
+  position: absolute;
+  left: 0;
+  color: var(--t3);
+  font-family: 'IBM Plex Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.verdict strong, .answer strong { font-weight: 600; color: #fff; }
+.verdict em, .answer em { font-style: italic; }
+.verdict code, .answer code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  color: var(--t1);
+}
 
 .highlights {
   list-style: none;
@@ -752,8 +820,8 @@ section#result::before {
 .answer {
   margin-top: 14px;
   font-size: 14px;
+  line-height: 1.55;
   color: var(--t1);
-  white-space: pre-wrap;
 }
 
 .status {
