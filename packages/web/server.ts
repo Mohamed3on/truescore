@@ -43,8 +43,12 @@ const highlightsRecomputeInflight = new Map<string, Promise<void>>();
 
 const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
 
-async function recomputeHighlights(featureId: string, name: string, url: string): Promise<void> {
-  const chips = await harvestTokens(url);
+// Always harvest chips off the canonical /maps?q=&ftid=… URL. The share-link
+// redirect target carries a session fingerprint (shh/lucs/g_ep/skid) that
+// pushes Google's preview RPC into A-B buckets where the chip slot is empty —
+// retries thrash and sometimes give up. The bare ftid URL avoids that.
+async function recomputeHighlights(featureId: string, name: string): Promise<void> {
+  const chips = await harvestTokens(mapsUrlFor(featureId));
   if (!chips.length) return;
   const successes: Highlight[] = [];
   let failures = 0;
@@ -87,7 +91,7 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
     if (hadHighlights && prevTotal != null) {
       const drift = Math.abs(currentTotal - prevTotal) / prevTotal;
       if (drift > HIGHLIGHTS_DRIFT_THRESHOLD && !highlightsRecomputeInflight.has(featureId)) {
-        const hp = recomputeHighlights(featureId, name, resolvedUrl)
+        const hp = recomputeHighlights(featureId, name)
           .catch((e) => console.error(`[recompute-highlights] ${name} (${featureId}):`, e))
           .finally(() => highlightsRecomputeInflight.delete(featureId));
         highlightsRecomputeInflight.set(featureId, hp);
@@ -274,7 +278,7 @@ Bun.serve({
             cached: false,
           });
         } catch (e) {
-          console.error('[lookup]', e);
+          console.error(`[lookup] ${e instanceof Error ? e.message : e}`);
           return json(errBody(e), 400);
         }
       },
@@ -382,7 +386,7 @@ Bun.serve({
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
           if (entry.highlights && !body.force) return json({ highlights: entry.highlights, cached: true });
-          const url = entry.resolvedUrl ?? mapsUrlFor(featureId);
+          const url = mapsUrlFor(featureId);
           const chips = await harvestTokens(url);
           if (!chips.length) {
             console.warn(`[highlights] ${entry.name} (${featureId}): preview returned no chips after retries — ${url}`);
