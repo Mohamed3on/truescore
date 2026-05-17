@@ -15,9 +15,7 @@ const KNOWLEDGE_NOTE = `Reviews are the primary source. If they're silent on som
 // markdown for the verdict and clean schema-validated JSON for the rest.
 function verdictInstructions(place: string, filterQuery?: string): string {
   const subject = filterQuery ? `"${filterQuery}" at ${place}` : place;
-  return `Write a verdict on ${subject} based on the reviews above. Under 300 words. Surface what multiple reviewers agree on; drop one-off opinions. Name specifics (prices, dishes, hours, distances, place names). Use **bold** for the details that matter. Quote reviewer phrasing inline ("...") when it sharpens a point — sparingly. Markdown prose only — no headings, no bullets, no rigid structure.
-
-Neutral, informational tone. No persona, no "listen", no "you go to X", no "no-brainer", no breezy second-person, no addressing the reader. Don't pretend to be a friend or a local. Just state what the reviews show.
+  return `Write a verdict on ${subject} based on the reviews above. Under 300 words. Neutral, informational tone — not a persona, not addressing the reader. Surface what multiple reviewers agree on; drop one-off opinions. Name specifics (prices, dishes, hours, distances, place names). Use **bold** for the details that matter. Markdown prose only — no headings, no bullets, no rigid structure.
 
 ${RECENCY_NOTE}
 
