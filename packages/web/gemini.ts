@@ -61,7 +61,7 @@ export async function summarize(placeName: string, reviewTexts: string[], filter
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
 
-  const verdictPrompt = `${block}\n\n---\n\nWrite a tight verdict on ${subject} from the reviews. Target ~120 words; hard cap 180. Neutral tone — no persona, no addressing the reader. Skip describing what the place is. Focus on what reviewers agree on: standouts, dealbreakers, tips, whether it's recommended. **Bold** specifics. Markdown prose only — no headings, no bullets.
+  const verdictPrompt = `${block}\n\n---\n\nWrite a verdict on ${subject} from the reviews, around 200 words. Neutral tone — no persona, no addressing the reader. Skip describing what the place is. Focus on what reviewers agree on: standouts, dealbreakers, tips, whether it's recommended. **Bold** specifics. Markdown prose only — no headings, no bullets.
 
 ${NOTES}
 
