@@ -594,6 +594,8 @@ section#result::before {
 .chip-panel-title .pct.neg { color: var(--neg); }
 .chip-panel-title .pct.mid { color: var(--mid); }
 .chip-body { display: flex; flex-direction: column; gap: 10px; }
+.chip-panel .ask { padding-top: 0; border-top: none; margin-bottom: 12px; }
+.chip-body .answer { margin-top: 0; }
 .review-card {
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.02);
