@@ -563,6 +563,7 @@ Bun.serve({
             name?: string;
             reviewTexts?: string[];
             question: string;
+            filter?: string;
           };
           const { featureId, question } = body;
           if (!question) return corsJson({ error: 'missing question' }, 400);
@@ -572,7 +573,7 @@ Bun.serve({
           const reviewTexts = body.reviewTexts ?? (entry?.score ? textReviewsFor(entry.score.reviews) : null);
           if (!reviewTexts?.length) return corsJson({ error: 'no reviews — look up the place first or pass reviewTexts in the body' }, 404);
 
-          const answer = await ask(placeName, reviewTexts, question);
+          const answer = await ask(placeName, reviewTexts, question, body.filter?.trim() || undefined);
           return corsJson({ answer });
         } catch (e) {
           console.error('[ask]', e);

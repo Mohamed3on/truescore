@@ -248,32 +248,28 @@
   margin-top: 2px;
 }
 
-/* Visible-on-screen reviews score */
+/* Visible-on-screen reviews score — compact caption */
 .rc-visible {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 6px;
   margin-top: 4px;
-  padding: 6px 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 10px;
-  font-size: 11px;
+  padding: 0 2px;
+  font-size: 9px;
 }
 .rc-visible-label {
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.35);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 10px;
+  letter-spacing: 0.08em;
 }
 .rc-visible-pct {
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 14px;
+  font-size: 10px;
   font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
 }
 .rc-visible-detail {
-  color: rgba(255, 255, 255, 0.35);
-  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
   margin-left: auto;
 }
 

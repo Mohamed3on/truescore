@@ -802,6 +802,7 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
   if (customQuestion) {
     const data = await post<{ answer: string }>('/api/ask', {
       featureId, name, reviewTexts, question: customQuestion,
+      filter: filterQuery ?? undefined,
     });
     return data.answer;
   }
