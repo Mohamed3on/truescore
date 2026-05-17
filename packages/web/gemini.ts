@@ -62,7 +62,7 @@ export async function summarize(placeName: string, reviewTexts: string[], filter
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
 
-  const verdictPrompt = `${block}\n\n---\n\nWrite a tight verdict on ${subject}. Target ~150 words; hard cap 200. Neutral, informational tone — not a persona, not addressing the reader. Surface only what multiple reviewers agree on. Drop background, encyclopedia framing, and one-off opinions. **Bold** the specifics that matter (prices, hours, dishes, distances, names). Markdown prose only — no headings, no bullets.
+  const verdictPrompt = `${block}\n\n---\n\nWrite a tight verdict on ${subject}. Target ~150 words; hard cap 200. Neutral, informational tone — not a persona, not addressing the reader. Surface only what multiple reviewers agree on. Drop background, encyclopedia framing, and one-off opinions. **Bold** the specifics that matter (prices, hours, names, distances, numbers). Markdown prose only — no headings, no bullets.
 
 ${NOTES}
 
@@ -88,7 +88,7 @@ ${NOTES}`;
 
 export async function ask(placeName: string, reviewTexts: string[], question: string, filterQuery?: string): Promise<string> {
   const subject = subjectOf(placeName, filterQuery);
-  const prompt = `${reviewBlock(reviewTexts)}\n\n---\n\nAnswer the question below about ${subject} using the reviews above. Neutral, direct tone — answer the question, no preamble, no persona. Be concise. Name specifics (prices, dishes, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree, say so. If the reviews don't cover it, say that.
+  const prompt = `${reviewBlock(reviewTexts)}\n\n---\n\nAnswer the question below about ${subject} using the reviews above. Neutral, direct tone — answer the question, no preamble, no persona. Be concise. Name specifics (prices, hours, names, numbers) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree, say so. If the reviews don't cover it, say that.
 
 ${NOTES}
 
