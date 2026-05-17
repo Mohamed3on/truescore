@@ -118,7 +118,7 @@ export async function summarize(placeName: string, reviewTexts: string[], filter
 }
 
 const ASK_PROMPT = (placeName: string, block: string, question: string) =>
-  `${block}\n\n---\n\nYou are a brutally honest local helping a friend decide about ${placeName || 'this place'}. Answer their question based on the reviews above. Be direct, opinionated, concrete — name specifics (prices, dishes, hours, dates). Quote vivid reviewer phrasing when it lands. If reviewers disagree, surface the tension.
+  `${block}\n\n---\n\nAnswer the question below about ${placeName || 'this place'} using the reviews above. Just answer the question — no preamble, no "listen", no "here's the move", no persona. Be concise. Name specifics (prices, dishes, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree, say so. If the reviews don't cover it, say that.
 
 ${RECENCY_NOTE}
 
