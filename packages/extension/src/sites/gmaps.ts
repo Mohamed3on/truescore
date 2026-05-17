@@ -1082,6 +1082,7 @@ const askActiveChip = async () => {
     const result = await summarizeReviews(texts, h.label, q);
     body.className = 'rc-chip-body';
     renderSummary(body, result);
+    input.value = '';
   } catch (e) {
     console.error('[chip] ask failed', e);
     body.textContent = 'Ask failed';
@@ -1205,6 +1206,7 @@ const askLabelSearch = async () => {
     const result = await summarizeReviews(texts, search.query, q);
     panel.className = 'rc-summary-panel';
     renderSummary(panel, result);
+    if (cardEls.searchQuestionInput) cardEls.searchQuestionInput.value = '';
   } catch (e) {
     console.error('[label search] ask failed', e);
     panel.textContent = 'Ask failed';

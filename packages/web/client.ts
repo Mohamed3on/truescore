@@ -349,6 +349,7 @@ async function askChipPanel() {
     answer.className = 'answer';
     renderMarkdown(answer, data.answer ?? '');
     chipBody.appendChild(answer);
+    chipQuestionInput.value = '';
     setStatus('');
   } catch (e) {
     setStatus(e instanceof Error ? e.message : String(e), true);
