@@ -800,12 +800,10 @@ section#result::before {
   padding: 6px 0;
   border-bottom: 1px solid var(--t5);
 }
-.highlights .h-text { flex: 1; line-height: 1.45; }
-.highlights .h-text.pos .h-title { color: var(--pos); }
-.highlights .h-text.neg .h-title { color: var(--neg); }
-.highlights .h-text.neutral .h-title { color: var(--t1); }
-.highlights .h-title { font-weight: 600; }
-.highlights .h-desc { color: var(--t3); }
+.highlights .h-text { flex: 1; line-height: 1.45; font-weight: 500; }
+.highlights .h-text.pos { color: var(--pos); }
+.highlights .h-text.neg { color: var(--neg); }
+.highlights .h-text.neutral { color: var(--t1); }
 .highlights .h-count {
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 500;

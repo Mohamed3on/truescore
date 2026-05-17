@@ -70,7 +70,7 @@ async function postNdjson(url: string, body: unknown): Promise<Response> {
   return resp;
 }
 
-type SummaryHighlight = { text: string; description?: string; count: number; sentiment: string };
+type SummaryHighlight = { text: string; count: number; sentiment: string };
 type Score = {
   featureId: string;
   totalReviews: number;
@@ -1007,16 +1007,7 @@ function renderSummary(summary: Summary) {
     const li = document.createElement('li');
     const text = document.createElement('span');
     text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
-    const title = document.createElement('span');
-    title.className = 'h-title';
-    renderMarkdownInline(title, h.text);
-    text.appendChild(title);
-    if (h.description) {
-      const desc = document.createElement('span');
-      desc.className = 'h-desc';
-      renderMarkdownInline(desc, h.description);
-      text.append(' ', desc);
-    }
+    renderMarkdownInline(text, h.text);
     const count = document.createElement('span');
     count.className = 'h-count';
     count.textContent = `×${h.count}`;

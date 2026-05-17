@@ -2,7 +2,7 @@ const KEY = process.env.GEMINI_API_KEY!;
 const MODEL = 'gemini-3-flash-preview';
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
 
-export type Highlight = { text: string; description?: string; count: number; sentiment: string };
+export type Highlight = { text: string; count: number; sentiment: string };
 export type Summary = { highlights: Highlight[]; verdict: string; valueForMoney: number };
 
 const NOTES = `Reviews are prefixed [YYYY-MM-DD]. If reviewers disagree on facts (price, hours, quality), trust the more recent one — otherwise recency doesn't matter.
@@ -18,7 +18,6 @@ const HIGHLIGHTS_SCHEMA = {
         type: 'OBJECT',
         properties: {
           text: { type: 'STRING' },
-          description: { type: 'STRING' },
           count: { type: 'INTEGER' },
           sentiment: { type: 'STRING' },
         },
@@ -70,7 +69,7 @@ Output only the verdict — no framing.`;
 
   const structuredPrompt = `${block}\n\n---\n\nExtract highlights about ${subject} and rate value for money 1-5 from what reviewers say about pricing.
 
-Each highlight: text (specific named thing, ≤6 words), description (one sentence with concrete specifics — numbers, names, conditions; don't repeat the title), count (roughly how many reviews mention it), sentiment ("positive" / "negative" / "neutral"). Avoid generic adjectives — favor specific named things.
+Each highlight: text (one concrete line with specifics — numbers, names, conditions; ≤20 words), count (roughly how many reviews mention it), sentiment ("positive" / "negative" / "neutral"). Avoid generic adjectives — favor specific named things and concrete details.
 
 ${NOTES}`;
 
