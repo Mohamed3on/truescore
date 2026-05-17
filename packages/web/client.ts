@@ -1,5 +1,5 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
-import { overallScoreFromHistogram, timeAgo, type Review, type SortStats, type DayHours, type PlaceMeta } from '@truescore/gmaps-shared';
+import { overallScoreFromHistogram, textReviewsFor, timeAgo, type Review, type SortStats, type DayHours, type PlaceMeta } from '@truescore/gmaps-shared';
 
 // Cloudflare 5xx (502/521/522/524) returns an HTML error page, which would
 // hit resp.json() and surface as the cryptic "Unexpected token '<'". Retry
@@ -173,6 +173,9 @@ const chipPanelTitle = $('chipPanelTitle') as HTMLElement;
 const chipBody = $('chipBody') as HTMLElement;
 const chipSummarizeBtn = $('chipSummarize') as HTMLButtonElement;
 const chipCloseBtn = $('chipClose') as HTMLButtonElement;
+const chipAskForm = $('chipAskForm') as HTMLFormElement;
+const chipQuestionInput = $('chipQuestion') as HTMLInputElement;
+const chipAskBtn = $('chipAskBtn') as HTMLButtonElement;
 const verdictRow = document.querySelector('.verdict-row') as HTMLElement;
 const highlightsListEl = $('highlights') as HTMLElement;
 const placesSection = $('places') as HTMLElement;
@@ -305,6 +308,7 @@ function showChipPanel(h: Highlight) {
   resummarizeBtn.style.display = 'none';
   chipSummarizeBtn.disabled = false;
   chipSummarizeBtn.textContent = 'SUMMARIZE';
+  chipQuestionInput.value = '';
   chipPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
@@ -317,7 +321,40 @@ function closeChipPanel() {
   highlightsListEl.style.display = '';
   resummarizeBtn.style.display = '';
   searchInput.value = '';
+  chipQuestionInput.value = '';
   setStatus('');
+}
+
+async function askChipPanel() {
+  const q = chipQuestionInput.value.trim();
+  if (!q || !currentFeatureId) return;
+  const reviews = activeHighlight?.reviews ?? activeSearch?.reviews;
+  const filter = activeHighlight?.label ?? activeSearch?.query;
+  if (!reviews || !filter) return;
+  const reviewTexts = textReviewsFor(reviews);
+  if (!reviewTexts.length) { setStatus('No review text available', true); return; }
+  chipAskBtn.disabled = true;
+  setStatus(`Asking about "${filter}"…`);
+  while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
+  const loading = document.createElement('div');
+  loading.className = 'chip-loading';
+  loading.textContent = 'asking…';
+  chipBody.appendChild(loading);
+  try {
+    const data = await postJson<{ answer?: string }>('/api/ask', {
+      featureId: currentFeatureId, question: q, filter, reviewTexts,
+    });
+    while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
+    const answer = document.createElement('div');
+    answer.className = 'answer';
+    renderMarkdown(answer, data.answer ?? '');
+    chipBody.appendChild(answer);
+    setStatus('');
+  } catch (e) {
+    setStatus(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    chipAskBtn.disabled = false;
+  }
 }
 
 function showSearchPanel(r: SearchResult) {
@@ -330,6 +367,7 @@ function showSearchPanel(r: SearchResult) {
   highlightsListEl.style.display = 'none';
   resummarizeBtn.style.display = 'none';
   chipSummarizeBtn.disabled = false;
+  chipQuestionInput.value = '';
   if (r.summary) {
     chipSummarizeBtn.textContent = 'SHOW REVIEWS';
     renderChipSummary(r.summary);
@@ -1169,6 +1207,8 @@ placesToggle.addEventListener('click', () => {
   placesExpanded = !placesExpanded;
   renderPlaces();
 });
+
+chipAskForm.addEventListener('submit', (e) => { e.preventDefault(); askChipPanel(); });
 
 askForm.addEventListener('submit', async (e) => {
   e.preventDefault();

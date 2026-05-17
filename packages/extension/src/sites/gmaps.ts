@@ -55,6 +55,8 @@ type CardEls = {
   chipPanelBody?: HTMLElement;
   chipSummarizeBtn?: HTMLButtonElement;
   chipCloseBtn?: HTMLButtonElement;
+  chipQuestionInput?: HTMLInputElement;
+  searchQuestionInput?: HTMLInputElement;
 };
 
 type HighlightStats = SortStats;
@@ -985,6 +987,7 @@ const showChipPanel = (h: Highlight) => {
   panel.style.display = 'block';
   chipViewMode = h.summary ? 'summary' : 'reviews';
   sumBtn.textContent = h.summary ? 'Show Reviews' : 'Summarize';
+  if (cardEls.chipQuestionInput) cardEls.chipQuestionInput.value = '';
   if (h.summary) renderSummary(body, h.summary);
   else renderChipReviews(h);
 
@@ -1065,6 +1068,27 @@ const summarizeActiveChip = async () => {
   }
 };
 
+const askActiveChip = async () => {
+  const h = activeHighlight;
+  const body = cardEls.chipPanelBody;
+  const input = cardEls.chipQuestionInput;
+  const q = input?.value?.trim();
+  if (!h || !body || !q) return;
+  const texts = textReviewsFor(h.reviews ?? []);
+  if (!texts.length) { body.textContent = 'No review text available'; return; }
+  body.textContent = 'Asking…';
+  body.className = 'rc-chip-body loading';
+  try {
+    const result = await summarizeReviews(texts, h.label, q);
+    body.className = 'rc-chip-body';
+    renderSummary(body, result);
+  } catch (e) {
+    console.error('[chip] ask failed', e);
+    body.textContent = 'Ask failed';
+    body.className = 'rc-chip-body';
+  }
+};
+
 const renderLabelSearchResult = () => {
   const res = cardEls.searchResults;
   const panel = cardEls.filteredSumPanel;
@@ -1088,6 +1112,16 @@ const renderLabelSearchResult = () => {
   const sumBtn = el('button', 'rc-summarize-btn', `Summarize "${query}"`) as HTMLButtonElement;
   sumBtn.onclick = () => summarizeLabelSearch();
   res.appendChild(sumBtn);
+
+  const questionInput = document.createElement('input');
+  questionInput.type = 'text';
+  questionInput.placeholder = `Ask about "${query}" reviews… (Enter)`;
+  questionInput.className = 'rc-question-input';
+  questionInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') askLabelSearch();
+  });
+  res.appendChild(questionInput);
+  cardEls.searchQuestionInput = questionInput;
 
   const list = el('div', 'rc-search-reviews');
   renderReviewsInto(list, reviews);
@@ -1153,6 +1187,27 @@ const summarizeLabelSearch = async () => {
   } catch (e) {
     console.error('[label search] summary failed', e);
     panel.textContent = 'Summarization failed';
+    panel.className = 'rc-summary-panel';
+  }
+};
+
+const askLabelSearch = async () => {
+  const search = activeLabelSearch;
+  const panel = cardEls.filteredSumPanel;
+  const q = cardEls.searchQuestionInput?.value?.trim();
+  if (!search || !panel || !q) return;
+  const texts = textReviewsFor(search.reviews);
+  panel.style.display = 'block';
+  panel.textContent = 'Asking…';
+  panel.className = 'rc-summary-panel loading';
+  if (!texts.length) { panel.textContent = 'No review text available'; panel.className = 'rc-summary-panel'; return; }
+  try {
+    const result = await summarizeReviews(texts, search.query, q);
+    panel.className = 'rc-summary-panel';
+    renderSummary(panel, result);
+  } catch (e) {
+    console.error('[label search] ask failed', e);
+    panel.textContent = 'Ask failed';
     panel.className = 'rc-summary-panel';
   }
 };
@@ -1309,6 +1364,14 @@ const createUIElements = () => {
   chipHeader.appendChild(chipSumBtn);
   chipHeader.appendChild(chipCloseBtn);
   chipPanel.appendChild(chipHeader);
+  const chipQuestionInput = document.createElement('input');
+  chipQuestionInput.type = 'text';
+  chipQuestionInput.placeholder = 'Ask about these reviews… (Enter)';
+  chipQuestionInput.className = 'rc-question-input';
+  chipQuestionInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') askActiveChip();
+  });
+  chipPanel.appendChild(chipQuestionInput);
   const chipBody = el('div', 'rc-chip-body');
   chipPanel.appendChild(chipBody);
   c.appendChild(chipPanel);
@@ -1317,6 +1380,7 @@ const createUIElements = () => {
   cardEls.chipPanelBody = chipBody;
   cardEls.chipSummarizeBtn = chipSumBtn;
   cardEls.chipCloseBtn = chipCloseBtn;
+  cardEls.chipQuestionInput = chipQuestionInput;
 
   document.body.appendChild(c);
 };
