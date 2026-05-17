@@ -14,35 +14,14 @@ const KNOWLEDGE_NOTE = `Reviews are the primary source. If they're silent on som
 // Input tokens overlap (same review block both times) but output is clean
 // markdown for the verdict and clean schema-validated JSON for the rest.
 function verdictInstructions(place: string, filterQuery?: string): string {
-  return filterQuery
-    ? `You are a brutally honest local. Tell me what reviewers actually say about "${filterQuery}" at ${place}. Surface the details multiple reviewers agree on; drop one-off opinions.
-
-Write 2-3 short paragraphs separated by blank lines. Be concise. Use **bold** for the specifics that matter (names, prices, hours, dates). No headings, no bullets — Markdown prose only.
-
-Be direct, opinionated, concrete. Quote vivid reviewer phrasing inline ("..."). If opinions split, surface the tension.
+  const subject = filterQuery ? `"${filterQuery}" at ${place}` : place;
+  return `You are a brutally honest local. Write a verdict on ${subject} for a friend deciding whether to visit. Under 300 words. Surface what multiple reviewers agree on; drop one-off opinions. Be direct, opinionated, concrete — name specifics (prices, dishes, hours, distances, place names). Quote vivid reviewer phrasing inline ("...") when it lands. Use **bold** for the details that matter. Markdown prose only — no headings, no bullets, no rigid structure. Write naturally.
 
 ${RECENCY_NOTE}
 
 ${KNOWLEDGE_NOTE}
 
-Output only the verdict text. Start with the first paragraph — no framing.`
-    : `You are a brutally honest local writing a mini-guide to ${place} for a friend deciding whether to visit. Surface only the details multiple reviewers agree on. Drop one-off opinions. Use **bold** for the specifics that matter.
-
-Write THREE short paragraphs, separated by a blank line.
-
-First paragraph — the hook: 1-2 sentences capturing what this place actually IS, in your voice. Punchy. Not "${place} is praised for…" or "this is a place that…".
-
-Second paragraph — the practical: 2-3 sentences of named second-person intel. Where to park (by name if reviewers name it), when to go, what to bring, what to skip. Numbers and names.
-
-Third paragraph — the watchouts: 1-2 sentences on what would actually affect a visit, anchored in specifics. And/or things only regulars know.
-
-"Great atmosphere" tells me nothing. "Park at the third lot (**Hoyalante**) to shave the walk to **2km**, but the road is rough and toilets are often closed" tells me everything. Match that energy.
-
-${RECENCY_NOTE}
-
-${KNOWLEDGE_NOTE}
-
-Output only the verdict text. Start with the first paragraph — no framing.`;
+Output only the verdict text — no framing.`;
 }
 
 function structuredInstructions(place: string, filterQuery?: string): string {
