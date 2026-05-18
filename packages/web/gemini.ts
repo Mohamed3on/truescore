@@ -5,9 +5,7 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODE
 export type Highlight = { text: string; count: number; sentiment: string };
 export type Summary = { highlights: Highlight[]; verdict: string; valueForMoney: number };
 
-const NOTES = `If reviewers disagree on facts (price, hours, quality), trust the more recent one — otherwise recency doesn't matter.
-
-Reviews are the primary source. If they're silent on something and you have reliable general knowledge about the place (history, location context, well-known facts), you can fold it in.`;
+const NOTES = `On factual disagreements (price, hours), trust the more recent review. Reviews come first; fold in general knowledge where they're silent.`;
 
 const HIGHLIGHTS_SCHEMA = {
   type: 'OBJECT',
@@ -61,13 +59,13 @@ export async function summarize(placeName: string, reviewTexts: string[], filter
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
 
-  const verdictPrompt = `${block}\n\n---\n\nWrite a short verdict on ${subject} from the reviews — standouts, caveats, recommendation. **Bold** specifics. Markdown prose, no headings or bullets.
+  const verdictPrompt = `${block}\n\n---\n\nWrite a short verdict on ${subject} — standouts, caveats, recommendation. **Bold** specifics. Markdown prose, no headings or bullets.
 
 ${NOTES}`;
 
-  const structuredPrompt = `${block}\n\n---\n\nExtract highlights about ${subject} and rate value for money 1-5 from what reviewers say about pricing.
+  const structuredPrompt = `${block}\n\n---\n\nExtract highlights about ${subject} and rate value for money 1-5 from pricing mentions.
 
-Each highlight: text (one concrete line with specifics — numbers, names, conditions; ≤20 words), count (roughly how many reviews mention it), sentiment ("positive" / "negative" / "neutral"). Avoid generic adjectives — favor specific named things and concrete details.
+Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), count (reviews mentioning it), sentiment (positive/negative/neutral).
 
 ${NOTES}`;
 
@@ -85,7 +83,7 @@ ${NOTES}`;
 
 export async function ask(placeName: string, reviewTexts: string[], question: string, filterQuery?: string): Promise<string> {
   const subject = subjectOf(placeName, filterQuery);
-  const prompt = `${reviewBlock(reviewTexts)}\n\n---\n\nAnswer the question below about ${subject} using the reviews above. Neutral, direct tone — answer the question, no preamble, no persona. Be concise. Name specifics (prices, hours, names, numbers) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree, say so. If the reviews don't cover it, say that.
+  const prompt = `${reviewBlock(reviewTexts)}\n\n---\n\nAnswer about ${subject} using the reviews. Be concise. Name specifics (prices, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree or don't cover it, say so.
 
 ${NOTES}
 
