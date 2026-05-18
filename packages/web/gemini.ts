@@ -61,11 +61,9 @@ export async function summarize(placeName: string, reviewTexts: string[], filter
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
 
-  const verdictPrompt = `${block}\n\n---\n\nWrite a verdict on ${subject} from the reviews, around 200 words. Neutral tone — no persona, no addressing the reader. Skip describing what the place is. Focus on what reviewers agree on: standouts, dealbreakers, tips, whether it's recommended. **Bold** specifics. Markdown prose only — no headings, no bullets.
+  const verdictPrompt = `${block}\n\n---\n\nWrite a short verdict on ${subject} from the reviews — standouts, dealbreakers, recommendation. **Bold** specifics. Markdown prose, no headings or bullets.
 
-${NOTES}
-
-Output only the verdict — no framing.`;
+${NOTES}`;
 
   const structuredPrompt = `${block}\n\n---\n\nExtract highlights about ${subject} and rate value for money 1-5 from what reviewers say about pricing.
 
