@@ -32,7 +32,6 @@ await esbuild.build({
     'src/sites/dm-pdp.ts',
     'src/sites/dm-plp.ts',
     'src/sites/bjjfanatics-pdp.ts',
-    'src/sites/bjjfanatics-search.ts',
     'src/sites/goodreads.ts',
     'src/sites/gmaps.ts',
     'src/sites/gmaps-bridge.ts',

@@ -170,11 +170,6 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://bjjfanatics.com/*"],
-      "js": ["sites/bjjfanatics-search.js"],
-      "run_at": "document_idle"
-    },
-    {
       "matches": ["*://*.goodreads.com/book/show/*"],
       "js": ["sites/goodreads.js"],
       "run_at": "document_end"

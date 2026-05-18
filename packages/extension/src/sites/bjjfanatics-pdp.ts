@@ -293,6 +293,16 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
     timer = setTimeout(render, SEARCH_DEBOUNCE_MS) as unknown as number;
   });
 
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+      e.preventDefault();
+      e.stopPropagation();
+      input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      input.focus();
+      input.select();
+    }
+  }, true);
+
   wrapper.appendChild(section);
 };
 
