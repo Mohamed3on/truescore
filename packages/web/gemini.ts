@@ -5,7 +5,7 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODE
 export type Highlight = { text: string; count: number; sentiment: string };
 export type Summary = { highlights: Highlight[]; verdict: string; valueForMoney: number };
 
-const NOTES = `Reviews are prefixed [YYYY-MM-DD]. If reviewers disagree on facts (price, hours, quality), trust the more recent one — otherwise recency doesn't matter.
+const NOTES = `If reviewers disagree on facts (price, hours, quality), trust the more recent one — otherwise recency doesn't matter.
 
 Reviews are the primary source. If they're silent on something and you have reliable general knowledge about the place (history, location context, well-known facts), you can fold it in.`;
 
