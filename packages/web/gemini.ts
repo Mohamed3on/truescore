@@ -61,7 +61,7 @@ export async function summarize(placeName: string, reviewTexts: string[], filter
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
 
-  const verdictPrompt = `${block}\n\n---\n\nWrite a short verdict on ${subject} from the reviews — standouts, dealbreakers, recommendation. **Bold** specifics. Markdown prose, no headings or bullets.
+  const verdictPrompt = `${block}\n\n---\n\nWrite a short verdict on ${subject} from the reviews — standouts, caveats, recommendation. **Bold** specifics. Markdown prose, no headings or bullets.
 
 ${NOTES}`;
 
