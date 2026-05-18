@@ -1214,6 +1214,7 @@ askForm.addEventListener('submit', async (e) => {
       featureId: currentFeatureId, question: q,
     });
     renderMarkdown(answerEl, data.answer ?? '');
+    questionInput.value = '';
     setStatus('');
   } catch (e) {
     setStatus(e instanceof Error ? e.message : String(e), true);
