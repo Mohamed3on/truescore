@@ -1,5 +1,5 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
-import { overallScoreFromHistogram, textReviewsFor, timeAgo, type Review, type SortStats, type DayHours, type PlaceMeta } from '@truescore/gmaps-shared';
+import { overallScoreFromHistogram, reviewAge, textReviewsFor, timeAgo, type Review, type SortStats, type DayHours, type PlaceMeta } from '@truescore/gmaps-shared';
 
 // Cloudflare 5xx (502/521/522/524) returns an HTML error page, which would
 // hit resp.json() and surface as the cryptic "Unexpected token '<'". Retry
@@ -391,11 +391,10 @@ function renderReviewList(reviews: Review[]) {
     const stars = document.createElement('span');
     stars.className = 'review-stars';
     stars.textContent = starString(r.stars);
-    const trust = document.createElement('span');
-    const isTrustedRev = r.reviewerReviewCount >= 3;
-    trust.className = isTrustedRev ? 'review-trusted' : 'review-untrusted';
-    trust.textContent = `${r.reviewerReviewCount} rev${isTrustedRev ? '' : ' · untrusted'}`;
-    meta.append(stars, trust);
+    const age = document.createElement('span');
+    age.className = 'review-age';
+    age.textContent = reviewAge(r.timestamp);
+    meta.append(stars, age);
     const text = document.createElement('p');
     text.className = 'review-text';
     text.textContent = r.text;

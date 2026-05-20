@@ -614,8 +614,7 @@ section#result::before {
   color: var(--t3);
 }
 .review-stars { color: var(--gold); letter-spacing: 0.1em; font-size: 11px; }
-.review-trusted { color: var(--t3); }
-.review-untrusted { color: var(--t4); }
+.review-age { color: var(--t3); }
 .review-text {
   margin: 0;
   font-size: 13px;

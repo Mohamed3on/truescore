@@ -250,5 +250,11 @@ export const timeAgo = (ms: number): string => {
   if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
   if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}d ago`;
   if (sec < 86400 * 30) return `${Math.floor(sec / 86400 / 7)}w ago`;
-  return `${Math.floor(sec / 86400 / 30)}mo ago`;
+  if (sec < 86400 * 365) return `${Math.floor(sec / 86400 / 30)}mo ago`;
+  return `${Math.floor(sec / 86400 / 365)}y ago`;
 };
+
+// Google review timestamps come in microseconds (values past ~1e14); normalise
+// to ms and render a compact age. Empty string when the payload was undated.
+export const reviewAge = (timestamp: number | null): string =>
+  timestamp == null ? '' : timeAgo(timestamp > 1e14 ? timestamp / 1000 : timestamp);

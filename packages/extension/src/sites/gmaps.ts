@@ -11,6 +11,7 @@ import {
   overallScoreFromHistogram,
   PAGE_SIZE,
   parseReviewsResponse,
+  reviewAge,
   starScore,
   statsForReviews,
   textReviewsFor,
@@ -932,13 +933,9 @@ const reviewCardEl = (r: Review): HTMLElement => {
   const card = el('div', 'rc-review');
   const meta = el('div', 'rc-review-meta');
   const stars = el('span', 'rc-review-stars', '★'.repeat(r.stars) + '☆'.repeat(Math.max(0, 5 - r.stars)));
-  const trust = el(
-    'span',
-    isTrusted(r.reviewerReviewCount) ? 'rc-review-trust' : 'rc-review-trust dim',
-    `${r.reviewerReviewCount} rev${isTrusted(r.reviewerReviewCount) ? '' : ' · untrusted'}`,
-  );
+  const age = el('span', 'rc-review-age', reviewAge(r.timestamp));
   meta.appendChild(stars);
-  meta.appendChild(trust);
+  meta.appendChild(age);
   card.appendChild(meta);
   const text = el('div', 'rc-review-text');
   renderMarkdown(text, r.text);

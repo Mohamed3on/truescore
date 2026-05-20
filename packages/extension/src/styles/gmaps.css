@@ -601,7 +601,7 @@
   color: rgba(255, 255, 255, 0.4);
 }
 .rc-review-stars { color: #E8B86D; letter-spacing: 0.1em; font-size: 10px; }
-.rc-review-trust.dim { color: rgba(255, 255, 255, 0.3); }
+.rc-review-age { color: rgba(255, 255, 255, 0.3); }
 .rc-review-text {
   font-family: 'Sora', system-ui, sans-serif;
   font-size: 12px;
