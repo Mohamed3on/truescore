@@ -42,6 +42,14 @@ export const textReviewsFor = (reviews: Review[]): string[] =>
     })
     .sort((a, b) => b.length - a.length);
 
+// Reviews for the label-search and highlight panels: drop ones too short to be
+// worth a card, newest first. Web and extension render the cards differently
+// but agree on which reviews to show and in what order.
+export const sortedDisplayReviews = (reviews: Review[]): Review[] =>
+  reviews
+    .filter((r) => r.text.length >= 10)
+    .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+
 const localeQuery = (locale: Locale = {}) => `hl=${locale.hl || 'en'}&gl=${locale.gl || ''}`;
 
 export const buildListUrl = (featureId: string, sort: SortKey, cursor = '', locale: Locale = {}) => {

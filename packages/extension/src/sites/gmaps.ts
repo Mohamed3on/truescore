@@ -12,6 +12,7 @@ import {
   PAGE_SIZE,
   parseReviewsResponse,
   reviewAge,
+  sortedDisplayReviews,
   starScore,
   statsForReviews,
   textReviewsFor,
@@ -944,9 +945,7 @@ const reviewCardEl = (r: Review): HTMLElement => {
 };
 
 const renderReviewsInto = (container: HTMLElement, reviews: Review[]) => {
-  const sorted = reviews.slice().sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
-  for (const r of sorted) {
-    if (!r.text || r.text.length < 10) continue;
+  for (const r of sortedDisplayReviews(reviews)) {
     container.appendChild(reviewCardEl(r));
   }
 };
