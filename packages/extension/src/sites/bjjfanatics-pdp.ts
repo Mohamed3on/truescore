@@ -382,6 +382,16 @@ const findAnchor = (): Element | null =>
   document.querySelector('h1.product-title')?.parentElement ||
   document.getElementById('stamped-main-widget');
 
+// BJJ Fanatics ships the per-volume chapter/timestamp tables collapsed behind
+// accordions. Force every one open by replicating the site's own open-state class.
+const openCourseAccordions = () => {
+  for (const title of document.querySelectorAll('.product__course-title')) {
+    title.classList.add('product__course-title--opened');
+  }
+};
+
+openCourseAccordions();
+
 (async function main() {
   if (document.querySelector('.ars-wrapper')) return;
   const info = getProductInfo();
