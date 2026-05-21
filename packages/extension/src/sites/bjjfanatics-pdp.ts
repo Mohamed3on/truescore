@@ -353,7 +353,12 @@ const renderScoreCard = (wrapper: HTMLElement, score: number, nps: number, total
   wrapper.append(card, stats);
 };
 
-const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: { score: number; nps: number; total: number }) => {
+const buildPanel = (
+  info: ProductInfo,
+  bundle: ReviewBundle,
+  scored: { score: number; nps: number; total: number },
+  courseContent: string,
+) => {
   const wrapper = el('div', 'ars-wrapper');
 
   const header = el('div', 'ars-header');
@@ -369,9 +374,12 @@ const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: { score: nu
   buildSummarizeWidget({
     wrapper,
     cacheKey: `bjj-summary-${info.id}`,
-    summaryPrompt: SUMMARY_PROMPT,
+    summaryPrompt: courseContent
+      ? `${SUMMARY_PROMPT}\n\nCOURSE CONTENTS — the official volume/chapter breakdown with timestamps. Use it to translate vague reviewer references ("the leg lock part", "volume 3") into specific named chapters, and to judge which advertised sections reviewers actually praise or skip:\n\n${courseContent}`
+      : SUMMARY_PROMPT,
     fetchReviews: async () => bundle.reviews.map(reviewToText).filter(Boolean),
     skipSuspicious: true,
+    autoSummarize: true,
   });
 
   return wrapper;
@@ -390,6 +398,25 @@ const openCourseAccordions = () => {
   }
 };
 
+// Flatten the per-volume chapter/timestamp tables into plain text so the
+// summarizer can map vague reviewer mentions to specific volumes and chapters.
+const getCourseContent = (): string => {
+  const root = document.getElementById('contents');
+  if (!root) return '';
+  const blocks: string[] = [];
+  for (const title of root.querySelectorAll('.product__course-title')) {
+    const rows = Array.from(title.nextElementSibling?.querySelectorAll('table tr') || [])
+      .map((tr) =>
+        Array.from(tr.querySelectorAll('td'))
+          .map((td) => td.textContent?.trim().replace(/\s+/g, ' '))
+          .filter(Boolean)
+          .join('  —  '))
+      .filter(Boolean);
+    if (rows.length) blocks.push(`${title.textContent?.trim()}\n${rows.join('\n')}`);
+  }
+  return blocks.join('\n\n');
+};
+
 openCourseAccordions();
 
 (async function main() {
@@ -400,15 +427,24 @@ openCourseAccordions();
   const anchor = findAnchor();
   if (!anchor) return;
 
-  let bundle: ReviewBundle;
-  try {
-    bundle = await fetchAllReviews(info);
-  } catch {
-    return;
-  }
-  const scored = computeScore(bundle);
-  if (!scored || scored.total < 5) return;
+  const courseContent = getCourseContent();
 
-  const panel = buildPanel(info, bundle, scored);
-  anchor.after(panel);
+  const render = (bundle: ReviewBundle) => {
+    const scored = computeScore(bundle);
+    if (!scored || scored.total < 5) return;
+    document.querySelector('.ars-wrapper')?.remove();
+    anchor.after(buildPanel(info, bundle, scored, courseContent));
+  };
+
+  // Paint instantly from cache; the Stamped API is cold-start slow (~9s first
+  // hit), so blocking the panel on it makes the widget feel absent.
+  const cached = cacheGet(`bjj-reviews-${info.id}`, REVIEWS_CACHE_MS) as ReviewBundle | null;
+  if (cached?.reviews.length) render(cached);
+
+  // Then confirm against the API in the background, re-rendering only if the
+  // review count actually moved since the cached snapshot.
+  try {
+    const fresh = await fetchAllReviews(info);
+    if (!cached || fresh.total !== cached.total) render(fresh);
+  } catch {}
 })();

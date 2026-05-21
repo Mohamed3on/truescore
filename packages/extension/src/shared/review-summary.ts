@@ -167,6 +167,7 @@ interface SummarizeWidgetOpts {
   cacheMeta?: any;
   alternates?: AlternatesConfig;
   skipSuspicious?: boolean;
+  autoSummarize?: boolean;
 }
 
 const collectAlternates = (prefix: string, currentKey: string): AlternateEntry[] => {
@@ -210,6 +211,7 @@ export const buildSummarizeWidget = ({
   cacheMeta,
   alternates,
   skipSuspicious,
+  autoSummarize,
 }: SummarizeWidgetOpts) => {
   const renderOpts = { skipSuspicious };
   const questionRow = document.createElement('div');
@@ -362,5 +364,13 @@ export const buildSummarizeWidget = ({
   if (alternates) {
     const altRow = renderAlternatesRow(alternates, cacheKey);
     if (altRow) wrapper.appendChild(altRow);
+  }
+
+  // Auto-summarize on landing — skip silently if a summary is already cached
+  // or no Gemini key is set (the manual button stays available either way).
+  if (autoSummarize && !cached?.parsed) {
+    getGeminiApiKey().then((key) => {
+      if (key && !questionInput.value.trim()) summarizeBtn.click();
+    });
   }
 };

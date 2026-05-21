@@ -167,7 +167,7 @@
       "matches": ["*://bjjfanatics.com/products/*"],
       "js": ["sites/bjjfanatics-pdp.js"],
       "css": ["sites/amazon-product.css"],
-      "run_at": "document_idle"
+      "run_at": "document_end"
     },
     {
       "matches": ["*://*.goodreads.com/book/show/*"],
