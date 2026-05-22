@@ -83,7 +83,7 @@ const FALLBACK_TOPIC_FILTERS: TopicFilter[] = [
 
 const SUMMARY_PROMPT = `Analyze these hotel reviews. Focus on the stay itself: rooms, beds, cleanliness, noise, staff, breakfast, amenities, location, and value. Ignore booking flow, flights, transfers, or anything unrelated to the actual hotel experience.
 
-ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should start with the count, e.g. "(12) Rooms are clean but noticeably compact".
+ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should be one concrete point, e.g. "Rooms are clean but noticeably compact".
 
 If 2+ reviewers mention a specific better nearby alternative hotel, apartment, or chain, note it and explain the comparison.
 

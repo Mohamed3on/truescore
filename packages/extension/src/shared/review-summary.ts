@@ -24,7 +24,8 @@ export const renderStructuredSummary = (
     for (const item of items) {
       const bullet = document.createElement('div');
       bullet.className = 'ars-section-item';
-      renderMarkdownInline(bullet, item);
+      // Strip any leading "(12) " count prefix left over from cached summaries.
+      renderMarkdownInline(bullet, item.replace(/^\s*\(\d+\)\s*/, ''));
       section.appendChild(bullet);
     }
     container.appendChild(section);

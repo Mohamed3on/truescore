@@ -406,7 +406,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     scores.recent.percentage = scores.recent.percentage || (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
     const SUMMARY_PROMPT = `Analyze these Amazon product reviews. Ignore anything about shipping, delivery, packaging, or seller issues \u2014 focus ONLY on the product itself. Skip generic praise like "great product".
 
-ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should start with the count, e.g. "(12) Too sweet for some tastes".
+ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should be one concrete point, e.g. "Too sweet for some tastes".
 
 If 2+ reviewers mention a specific better alternative product, note it and explain how reviewers compare it to this product (e.g. what's better/worse about the alternative).
 

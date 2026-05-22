@@ -803,13 +803,6 @@ section#result::before {
 .highlights .h-text.pos { color: var(--pos); }
 .highlights .h-text.neg { color: var(--neg); }
 .highlights .h-text.neutral { color: var(--t1); }
-.highlights .h-count {
-  font-family: 'IBM Plex Mono', monospace;
-  font-weight: 500;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--t3);
-}
 
 .ask {
   display: flex;

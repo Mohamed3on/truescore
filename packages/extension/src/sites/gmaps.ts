@@ -35,7 +35,7 @@ type ReviewData = {
   totalReviews: Record<Period, number>;
 };
 type SortState = { reviewMap: Record<string, Review>; reviewData: ReviewData; isFetching: boolean; done: boolean; cursor: string; pageCount: number };
-type SummaryResult = { highlights?: { text: string; count: number; sentiment: string }[]; verdict?: string; valueForMoney?: number };
+type SummaryResult = { highlights?: { text: string; sentiment: string }[]; verdict?: string; valueForMoney?: number };
 type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
 type VisibleEls = { row: HTMLElement; pctEl: HTMLElement; detailEl: HTMLElement };
 type CardEls = {
@@ -1522,10 +1522,8 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   if (result.highlights?.length) {
     for (const h of result.highlights) {
       const row = el('div', `rc-highlight ${h.sentiment}`);
-      const badge = el('span', 'rc-h-count', `${h.count}x`);
-      row.appendChild(badge);
       const text = el('span', 'rc-h-text');
-      renderMarkdownInline(text, ` ${h.text}`);
+      renderMarkdownInline(text, h.text);
       row.appendChild(text);
       panel.appendChild(row);
     }

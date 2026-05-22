@@ -70,7 +70,7 @@ async function postNdjson(url: string, body: unknown): Promise<Response> {
   return resp;
 }
 
-type SummaryHighlight = { text: string; count: number; sentiment: string };
+type SummaryHighlight = { text: string; sentiment: string };
 type Score = {
   featureId: string;
   totalReviews: number;
@@ -415,10 +415,7 @@ function renderChipSummary(summary: Summary) {
       const text = document.createElement('span');
       text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
       renderMarkdownInline(text, h.text);
-      const count = document.createElement('span');
-      count.className = 'h-count';
-      count.textContent = `×${h.count}`;
-      li.append(text, count);
+      li.appendChild(text);
       ul.appendChild(li);
     }
     chipBody.appendChild(ul);
@@ -1005,10 +1002,7 @@ function renderSummary(summary: Summary) {
     const text = document.createElement('span');
     text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
     renderMarkdownInline(text, h.text);
-    const count = document.createElement('span');
-    count.className = 'h-count';
-    count.textContent = `×${h.count}`;
-    li.append(text, count);
+    li.appendChild(text);
     highlightsListEl.appendChild(li);
   }
 }

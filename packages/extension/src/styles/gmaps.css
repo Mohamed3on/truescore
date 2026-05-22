@@ -379,20 +379,6 @@
 .rc-highlight.positive { color: #4ADE80; }
 .rc-highlight.negative { color: #F87171; }
 
-.rc-h-count {
-  display: inline-block;
-  min-width: 24px;
-  padding: 1px 5px;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 9px;
-  font-weight: 600;
-  text-align: center;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 4px;
-  color: rgba(255, 255, 255, 0.4);
-  margin-right: 4px;
-}
-
 .rc-value {
   margin-top: 8px;
   font-size: 11px;
