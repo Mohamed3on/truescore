@@ -185,13 +185,18 @@ const saveScoreCache = (featureId: string, entry: ScoreCacheEntry) =>
   bridgeStorage.set(`${SCORE_CACHE_PREFIX}${featureId}`, entry);
 
 let highlightsState: HighlightsCache | null = null;
-let highlightsBusy = false;
+// featureId whose highlights are currently being computed — a per-place mutex,
+// so an SPA nav can start the new place's compute while the old run winds down.
+let highlightsComputingFor: string | null = null;
 const getHighlightsCacheKey = () => `${HIGHLIGHTS_CACHE_PREFIX}${lastFeatureId || 'default'}`;
 const loadHighlightsCache = () => {
   try { highlightsState = JSON.parse(localStorage.getItem(getHighlightsCacheKey()) as string) || null; }
   catch { highlightsState = null; }
 };
 const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
+// Bounds the cloud-cache GET so a slow/hung server can't delay auto-highlights
+// (which now waits on the cloud hydrate) indefinitely.
+const CLOUD_FETCH_TIMEOUT_MS = 5000;
 
 type CloudCache = {
   summary?: SummaryResult;
@@ -201,7 +206,9 @@ type CloudCache = {
 
 const fetchCloudCache = async (featureId: string): Promise<CloudCache | null> => {
   try {
-    const resp = await fetch(`${TRUESCORE_API_BASE}/api/cached?featureId=${encodeURIComponent(featureId)}`);
+    const resp = await fetch(`${TRUESCORE_API_BASE}/api/cached?featureId=${encodeURIComponent(featureId)}`, {
+      signal: AbortSignal.timeout(CLOUD_FETCH_TIMEOUT_MS),
+    });
     if (!resp.ok) return null;
     const data = await resp.json();
     return data?.found ? data as CloudCache : null;
@@ -223,11 +230,15 @@ const pushContribution = (patch: {
   }).catch((e) => console.warn('[gmaps] contribute failed', e));
 };
 
+// Resolves when the in-flight cloud hydrate settles. The auto-highlights
+// trigger waits on it so a cloud hit isn't clobbered by a local recompute.
+let cloudHydratePromise: Promise<void> = Promise.resolve();
+
 const hydrateFromCloud = (featureId: string) => {
   const needSummary = !summaryCache.all;
   const needHighlights = !highlightsState?.items?.length;
   if (!needSummary && !needHighlights) return;
-  fetchCloudCache(featureId).then((cloud) => {
+  cloudHydratePromise = fetchCloudCache(featureId).then((cloud) => {
     if (!cloud) return;
     if (getFeatureId() !== featureId || lastFeatureId !== featureId) return;
     let touchedSummary = false;
@@ -685,12 +696,16 @@ const fetchAllForSearch = async (featureId: string, query: string): Promise<Revi
 
 const computeHighlights = async (force = false) => {
   const featureId = getFeatureId();
-  if (!featureId || highlightsBusy) return;
+  if (!featureId || highlightsComputingFor === featureId) return;
   if (!force && highlightsState && highlightsState.items.length) {
     renderHighlights();
     return;
   }
-  highlightsBusy = true;
+  highlightsComputingFor = featureId;
+  // True only while the user is still on the place this run started for — an
+  // SPA navigation mid-fetch must not write this place's highlights into the
+  // next place's cache, cloud entry, or panel.
+  const stillCurrent = () => getFeatureId() === featureId;
   if (cardEls.highlightsBtn) {
     cardEls.highlightsBtn.disabled = true;
     cardEls.highlightsBtn.textContent = 'Computing…';
@@ -707,6 +722,7 @@ const computeHighlights = async (force = false) => {
   }
   try {
     const chips = await harvestHighlightsFromPreview();
+    if (!stillCurrent()) return;
     if (!chips.length) {
       if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'No highlights';
       return;
@@ -720,6 +736,7 @@ const computeHighlights = async (force = false) => {
     await Promise.all(chips.map((chip) => limit(async () => {
       try {
         const reviews = await fetchAllForToken(featureId, chip.token);
+        if (!stillCurrent()) return;
         const item = { ...chip, fetched: reviews.length, score: statsForReviews(reviews), reviews };
         items.push(item);
         highlightsState = { items: [...items], ts: Date.now() };
@@ -729,10 +746,11 @@ const computeHighlights = async (force = false) => {
         console.error('[highlights] fetch failed for', chip.label, e);
       } finally {
         completed++;
-        if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = `Computing ${completed}/${chips.length}`;
+        if (stillCurrent() && cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = `Computing ${completed}/${chips.length}`;
       }
     })));
 
+    if (!stillCurrent()) return;
     if (!items.length) {
       if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'No highlights';
       return;
@@ -741,9 +759,9 @@ const computeHighlights = async (force = false) => {
     pushContribution({ highlights: items });
   } catch (e) {
     console.error('[highlights] error:', e);
-    if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'Failed — retry';
+    if (stillCurrent() && cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'Failed — retry';
   } finally {
-    highlightsBusy = false;
+    if (highlightsComputingFor === featureId) highlightsComputingFor = null;
     // Resume parent's main-score fetches that we paused.
     for (const k of pausedSorts) {
       if (!scores[k].done) fetchAllReviews(k);
@@ -867,10 +885,13 @@ const fetchAllReviews = async (sortKey: SortKey) => {
   abortControllers[sortKey] = null;
   updateUI();
   persistScoreCacheIfReady();
-  // Compute highlights automatically once both score sorts finish — running
-  // after (not during) the score fetch keeps chip RPCs from pausing the hero
-  // metric. No-ops when highlights are already cached or in flight.
-  if (scores.relevant.done && scores.newest.done) computeHighlights();
+  // Highlights compute automatically once both score sorts finish — after, not
+  // during, so chip RPCs don't pause the hero metric. Wait for the in-flight
+  // cloud hydrate first so a cloud hit (with summaries) isn't clobbered by a
+  // redundant recompute; computeHighlights no-ops if highlights already exist.
+  if (scores.relevant.done && scores.newest.done) {
+    cloudHydratePromise.then(() => computeHighlights());
+  }
 };
 
 const startFetching = () => {
