@@ -867,6 +867,10 @@ const fetchAllReviews = async (sortKey: SortKey) => {
   abortControllers[sortKey] = null;
   updateUI();
   persistScoreCacheIfReady();
+  // Compute highlights automatically once both score sorts finish — running
+  // after (not during) the score fetch keeps chip RPCs from pausing the hero
+  // metric. No-ops when highlights are already cached or in flight.
+  if (scores.relevant.done && scores.newest.done) computeHighlights();
 };
 
 const startFetching = () => {
