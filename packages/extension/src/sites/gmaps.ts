@@ -1523,7 +1523,7 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
     for (const h of result.highlights) {
       const row = el('div', `rc-highlight ${h.sentiment}`);
       const text = el('span', 'rc-h-text');
-      renderMarkdownInline(text, h.text);
+      renderMarkdownInline(text, h.text ?? '');
       row.appendChild(text);
       panel.appendChild(row);
     }

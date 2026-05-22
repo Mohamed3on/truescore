@@ -414,7 +414,7 @@ function renderChipSummary(summary: Summary) {
       const li = document.createElement('li');
       const text = document.createElement('span');
       text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
-      renderMarkdownInline(text, h.text);
+      renderMarkdownInline(text, h.text ?? '');
       li.appendChild(text);
       ul.appendChild(li);
     }
@@ -1001,7 +1001,7 @@ function renderSummary(summary: Summary) {
     const li = document.createElement('li');
     const text = document.createElement('span');
     text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
-    renderMarkdownInline(text, h.text);
+    renderMarkdownInline(text, h.text ?? '');
     li.appendChild(text);
     highlightsListEl.appendChild(li);
   }
