@@ -43,8 +43,7 @@ async function call(prompt: string, maxTokens: number, schema?: object): Promise
   return text;
 }
 
-const reviewBlock = (texts: string[]) =>
-  texts.map((t, i) => `${i + 1}. ${t}`).join('\n');
+const reviewBlock = (texts: string[]) => texts.join('\n\n');
 
 const subjectOf = (place: string, filter?: string) => {
   const p = place || 'this place';
