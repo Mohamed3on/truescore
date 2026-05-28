@@ -1,5 +1,11 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
-import { overallScoreFromHistogram, reviewAge, sortedDisplayReviews, textReviewsFor, timeAgo, type Review, type SortStats, type DayHours, type PlaceMeta } from '@truescore/gmaps-shared';
+import {
+  overallScoreFromHistogram, reviewAge, sortedDisplayReviews, textReviewsFor, timeAgo,
+  type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
+  type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
+  type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
+  type SortStats, type Summary,
+} from '@truescore/gmaps-shared';
 
 // Cloudflare 5xx (502/521/522/524) returns an HTML error page, which would
 // hit resp.json() and surface as the cryptic "Unexpected token '<'". Retry
@@ -70,84 +76,9 @@ async function postNdjson(url: string, body: unknown): Promise<Response> {
   return resp;
 }
 
-type SummaryHighlight = { text: string; sentiment: string };
-type Score = {
-  featureId: string;
-  totalReviews: number;
-  trustedReviews: number;
-  scorePct: number;
-  relevant: SortStats;
-  newest: SortStats;
-  reviews: Review[];
-};
-type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney: number };
-type LookupResponse = {
-  name: string;
-  score: Score;
-  summary?: Summary;
-  highlights?: Highlight[];
-  histogram?: number[];
-  overallPct?: number | null;
-  meta?: PlaceMeta;
-  resolvedUrl?: string;
-  cached?: boolean;
-  fetchMs?: number;
-  error?: string;
-};
-// Score data emitted during streaming. The progressive `score-progress`
-// events omit the per-review array (we don't ship 100+ review objects on
-// each page tick); the final `score` event is the full Score.
-type PartialScore = Omit<Score, 'reviews'>;
-type LookupStreamEvent =
-  | ({ type: 'lookup' } & LookupResponse)
-  | { type: 'refreshed'; name: string; score: Score; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string }
-  | { type: 'highlights-refreshed'; highlights: Highlight[] }
-  | { type: 'place'; name: string; featureId: string; resolvedUrl: string }
-  | { type: 'preview'; histogram: number[] | null; overallPct: number | null; meta?: PlaceMeta }
-  | { type: 'score-progress'; score: PartialScore }
-  | { type: 'score'; score: Score; fetchMs: number }
-  | { type: 'error'; error: string };
-type SummarizeResponse = { summary?: Summary; error?: string; cached?: boolean };
-type HistogramResponse = { histogram?: number[]; overallPct?: number; error?: string };
+// Client-only: the wire Chip plus per-chip UI status while its score streams.
 type ChipState = 'loading' | 'done' | 'error';
-type Highlight = {
-  label: string;
-  count: number;
-  token: string;
-  score?: SortStats;
-  reviews?: Review[];
-  state?: ChipState;
-  error?: string;
-};
-type HighlightsResponse = { highlights?: Highlight[]; cached?: boolean; error?: string };
-type HighlightStreamEvent =
-  | { type: 'chips'; chips: { label: string; count: number; token: string }[] }
-  | { type: 'chip'; highlight: Highlight }
-  | { type: 'chip-error'; token: string; label: string; error: string }
-  | { type: 'done'; failures: number; totalFetched: number; cached: boolean };
-type SearchResult = {
-  query: string;
-  totalReviews: number;
-  trustedReviews: number;
-  scorePct: number;
-  reviews: Review[];
-  summary?: Summary;
-};
-type SearchResponse = { result?: SearchResult; cached?: boolean; error?: string };
-type SearchStats = { totalReviews: number; trustedReviews: number; scorePct: number };
-type SearchStreamEvent =
-  | ({ type: 'search-progress'; query: string } & SearchStats)
-  | { type: 'search'; result: SearchResult; cached: boolean }
-  | { type: 'search-summary'; summary: Summary }
-  | { type: 'error'; error: string };
-type PlaceItem = {
-  featureId: string;
-  name: string;
-  scorePct: number;
-  resolvedUrl: string;
-  lastAccessTs: number;
-};
-type PlacesResponse = { places?: PlaceItem[]; error?: string };
+type UiChip = Chip & { state?: ChipState; error?: string };
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -190,9 +121,9 @@ let placesExpanded = false;
 let currentFeatureId = '';
 let currentMergedPct = 0;
 let baseSummary: Summary | undefined;
-let activeHighlight: Highlight | null = null;
+let activeHighlight: UiChip | null = null;
 let activeSearch: SearchResult | null = null;
-let currentHighlights: Highlight[] = [];
+let currentHighlights: UiChip[] = [];
 let highlightReviewsInflight: Promise<void> | null = null;
 
 function setStatus(msg: string, isErr = false) {
@@ -210,13 +141,13 @@ function chipClass(pct: number, overall: number) {
   return pct >= overall ? 'pos' : 'neg';
 }
 
-function renderHighlights(highlights: Highlight[], sort = false) {
+function renderHighlights(highlights: UiChip[], sort = false) {
   while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
-  const weight = (h: Highlight) => {
+  const weight = (h: UiChip) => {
     const r = (h.score?.scorePct ?? 0) / 100;
     return r * Math.abs(r) * h.count;
   };
-  const isAbove = (h: Highlight) => (h.score?.scorePct ?? 0) >= currentMergedPct;
+  const isAbove = (h: UiChip) => (h.score?.scorePct ?? 0) >= currentMergedPct;
   const list = sort
     ? [...highlights].sort((a, b) => {
         const above = Number(isAbove(b)) - Number(isAbove(a));
@@ -296,7 +227,7 @@ function setPanelTitle(label: string, scorePct: number, trusted: number, total: 
   chipPanelTitle.append(pctSpan, document.createTextNode(` · ${trusted} trusted of ${total}`));
 }
 
-function showChipPanel(h: Highlight) {
+function showChipPanel(h: UiChip) {
   activeHighlight = h;
   setActiveChip(h.token);
   const score = h.score?.scorePct ?? 0;
@@ -427,7 +358,7 @@ function renderChipSummary(summary: Summary) {
   }
 }
 
-async function onHighlightClick(h: Highlight) {
+async function onHighlightClick(h: UiChip) {
   if (!currentFeatureId) return;
   if (activeHighlight?.token === h.token) {
     closeChipPanel();
@@ -483,7 +414,7 @@ async function summarizeActiveSearch() {
     });
     let result: SearchResult | null = null;
     let cached = false;
-    for await (const evt of readNdjson<SearchStreamEvent>(resp.body!)) {
+    for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
       if (evt.type === 'search') {
         result = evt.result;
         cached = evt.cached;
@@ -518,7 +449,7 @@ async function runSearch(query: string, force = false) {
     const resp = await postNdjson('/api/search', {
       featureId: currentFeatureId, query, force,
     });
-    for await (const evt of readNdjson<SearchStreamEvent>(resp.body!)) {
+    for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
       if (evt.type === 'search-progress') {
         // Per-page progress: same `Searching "x" · N reviews · P%` shape so
         // the user sees the search count climb instead of staring at a fixed
@@ -568,7 +499,7 @@ async function loadHighlights(force = false) {
   }
 }
 
-function showHighlights(highlights: Highlight[]) {
+function showHighlights(highlights: UiChip[]) {
   highlightsRow.hidden = false;
   currentHighlights = highlights;
   renderHighlights(highlights, true);
@@ -605,9 +536,9 @@ async function ensureHighlightReviews(): Promise<void> {
 }
 
 async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
-  const chipMap = new Map<string, Highlight>();
+  const chipMap = new Map<string, UiChip>();
   let lastFailures = 0;
-  for await (const evt of readNdjson<HighlightStreamEvent>(body)) {
+  for await (const evt of readNdjson<HighlightEvent>(body)) {
     switch (evt.type) {
       case 'chips':
         chipMap.clear();
@@ -737,7 +668,7 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   }
 }
 
-function renderScore(data: LookupResponse) {
+function renderScore(data: LookupPayload) {
   initResultPanel(data.score.featureId, data.resolvedUrl);
   baseSummary = data.summary;
   paintScore(data);
@@ -761,7 +692,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
   let summaryKicked = false;
 
   try {
-    for await (const evt of readNdjson<LookupStreamEvent>(body)) {
+    for await (const evt of readNdjson<LookupEvent>(body)) {
       if (evt.type === 'lookup') {
         const scoreMs = Date.now() - t0;
         cachedTotal = evt.score.totalReviews;

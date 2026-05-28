@@ -1,9 +1,10 @@
+import type { Summary, SummaryHighlight } from '@truescore/gmaps-shared';
+
+export type { Summary, SummaryHighlight };
+
 const KEY = process.env.GEMINI_API_KEY!;
 const MODEL = 'gemini-3-flash-preview';
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${KEY}`;
-
-export type Highlight = { text: string; sentiment: string };
-export type Summary = { highlights: Highlight[]; verdict: string; valueForMoney: number };
 
 const NOTES = `On factual disagreements (price, hours), trust the more recent review. Reviews come first; fold in general knowledge where they're silent.`;
 
@@ -47,12 +48,12 @@ async function call(prompt: string, maxTokens: number, schema?: object): Promise
 // mid-array → "Unterminated string" / "Expected '}'"). Salvage the complete
 // highlight objects instead of failing the whole summary — the verdict is a
 // separate call and is always worth returning.
-function parseStructured(text: string): { highlights: Highlight[]; valueForMoney: number } {
+function parseStructured(text: string): { highlights: SummaryHighlight[]; valueForMoney: number } {
   try {
     const p = JSON.parse(text);
     return { highlights: p.highlights ?? [], valueForMoney: p.valueForMoney ?? 3 };
   } catch {
-    const highlights: Highlight[] = [];
+    const highlights: SummaryHighlight[] = [];
     for (const m of text.matchAll(/\{[^{}]*"text"[^{}]*\}/g)) {
       try { highlights.push(JSON.parse(m[0])); } catch {}
     }

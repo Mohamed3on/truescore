@@ -1,16 +1,6 @@
-import { chipsFromPreview, statsForReviews, type ChipMeta, type Review, type SortStats } from '@truescore/gmaps-shared';
+import { chipsFromPreview, statsForReviews, type Chip, type ChipMeta } from '@truescore/gmaps-shared';
 import { fetchPlacePreview } from './browser';
 import { fetchAllForToken } from './gmaps';
-
-export type HighlightStats = SortStats;
-export type Highlight = {
-  label: string;
-  count: number;
-  token: string;
-  fetched?: number;
-  score?: HighlightStats;
-  reviews?: Review[];
-};
 
 const HARVEST_ATTEMPTS = 3;
 const HARVEST_DELAY_MS = 400;
@@ -52,7 +42,7 @@ function describePreviewShape(preview: unknown): string {
   return `data[6][153][0] empty array (len=${chipList.length})`;
 }
 
-export async function scoreHighlight(featureId: string, chip: ChipMeta): Promise<Highlight> {
+export async function scoreHighlight(featureId: string, chip: ChipMeta): Promise<Chip> {
   const reviews = await fetchAllForToken(featureId, chip.token);
   return {
     ...chip,

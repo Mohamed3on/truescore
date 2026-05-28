@@ -2,8 +2,7 @@ import { homedir } from 'os';
 import { Database } from 'bun:sqlite';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './gemini';
-import type { Highlight } from './highlights';
-import type { PlaceMeta } from './histogram';
+import type { Chip, PlaceMeta } from '@truescore/gmaps-shared';
 
 const LEGACY_JSON_PATH = process.env.TRUESCORE_CACHE_PATH || `${homedir()}/.truescore-cache.json`;
 const DB_PATH = process.env.TRUESCORE_CACHE_DB_PATH || LEGACY_JSON_PATH.replace(/\.json$/, '') + '.sqlite';
@@ -19,7 +18,7 @@ export type CacheEntry = {
   totalReviewsAtCache?: number;
   summary?: Summary;
   summaryTs?: number;
-  highlights?: Highlight[];
+  highlights?: Chip[];
   highlightsTs?: number;
   highlightSummaries?: Record<string, Summary>; // keyed by token
   searches?: Record<string, SearchResult>; // keyed by lowercase query
@@ -138,7 +137,7 @@ export const cache = {
     if (!existing) return;
     persist(featureId, { ...existing, summary, summaryTs: Date.now() });
   },
-  async putHighlights(featureId: string, highlights: Highlight[]) {
+  async putHighlights(featureId: string, highlights: Chip[]) {
     const existing = store.get(featureId);
     if (!existing) return;
     persist(featureId, { ...existing, highlights, highlightsTs: Date.now() });
@@ -157,7 +156,7 @@ export const cache = {
   },
   async putContribution(featureId: string, name: string, patch: {
     summary?: Summary;
-    highlights?: Highlight[];
+    highlights?: Chip[];
     highlightSummaries?: Record<string, Summary>;
   }) {
     ensureEntry(featureId, name);

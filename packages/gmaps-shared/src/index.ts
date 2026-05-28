@@ -270,3 +270,7 @@ export const reviewAge = (timestamp: number | null): string =>
 // Review-collection loop (paginate → dedup → stop), shared by web + extension.
 // Defined after the schema/scoring fns above; it consumes them at call time.
 export * from './collect';
+
+// The truescore-web HTTP contract (request / response / stream-event shapes),
+// shared by the server, the web client, and the extension.
+export * from './wire';

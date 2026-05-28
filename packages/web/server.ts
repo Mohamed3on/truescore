@@ -1,9 +1,25 @@
-import { statsForReviews, textReviewsFor, type ChipMeta } from '@truescore/gmaps-shared';
+import {
+  statsForReviews,
+  textReviewsFor,
+  type AskResponse,
+  type CachedResponse,
+  type Chip,
+  type ChipMeta,
+  type ContributeResponse,
+  type HighlightEvent,
+  type HighlightSummaryResponse,
+  type HighlightsResponse,
+  type HistogramResponse,
+  type LookupEvent,
+  type PlacesResponse,
+  type SearchEvent,
+  type SummarizeResponse,
+} from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask } from './gemini';
 import { fetchPreviewBundle, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
-import { harvestTokens, scoreHighlight, type Highlight } from './highlights';
+import { harvestTokens, scoreHighlight } from './highlights';
 import { cache, type CacheEntry } from './cache';
 import index from './index.html';
 
@@ -48,22 +64,24 @@ const mapsUrlFor = (featureId: string) => `https://www.google.com/maps?q=&ftid=$
 // `write`; if it throws, we emit a final `{type:'error'}` event so the client
 // always gets a defined terminus. The `closed` flag silently swallows writes
 // after the consumer aborts so partial sends never throw downstream.
-type StreamWriter = (obj: unknown) => void;
-function ndjsonStream(producer: (write: StreamWriter) => Promise<void>): Response {
+function ndjsonStream<E extends { type: string }>(producer: (write: (event: E) => void) => Promise<void>): Response {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const enc = new TextEncoder();
       let closed = false;
-      const write: StreamWriter = (obj) => {
+      const enqueue = (obj: unknown) => {
         if (closed) return;
         try { controller.enqueue(enc.encode(JSON.stringify(obj) + '\n')); }
         catch { closed = true; }
       };
+      // Producer writes are checked against the event union E; the catch emits
+      // the `error` variant every union carries, through the untyped enqueue.
+      const write: (event: E) => void = enqueue;
       try {
         await producer(write);
       } catch (e) {
         console.error('[stream]', e);
-        write({ type: 'error', error: friendlyError(e) });
+        enqueue({ type: 'error', error: friendlyError(e) });
       }
       if (!closed) controller.close();
     },
@@ -86,7 +104,7 @@ const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
 async function recomputeHighlights(featureId: string, name: string): Promise<void> {
   const chips = await harvestTokens(mapsUrlFor(featureId));
   if (!chips.length) return;
-  const successes: Highlight[] = [];
+  const successes: Chip[] = [];
   let failures = 0;
   await Promise.all(chips.map(async (chip) => {
     try {
@@ -141,10 +159,10 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
 // Cache only on full success so the next request retries cleanly when any
 // chip failed.
 function streamHighlights(name: string, featureId: string, url: string, chips: ChipMeta[]): Response {
-  return ndjsonStream(async (write) => {
+  return ndjsonStream<HighlightEvent>(async (write) => {
     write({ type: 'chips', chips });
 
-    const successes: Highlight[] = [];
+    const successes: Chip[] = [];
     let failures = 0;
     await Promise.all(chips.map(async (chip) => {
       try {
@@ -185,7 +203,7 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
   const slimHighlights = cached.highlights?.map(({ reviews: _r, ...rest }) => rest);
   const cachedScoreTs = cached.scoreTs ?? 0;
   const cachedHighlightsTs = cached.highlightsTs ?? 0;
-  return ndjsonStream(async (write) => {
+  return ndjsonStream<LookupEvent>(async (write) => {
     write({
       type: 'lookup',
       name: cached.name,
@@ -239,7 +257,7 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
 // after each scorePlace page (relevant/newest paginating in parallel), and
 // `score` once both sorts settle. The client renders each chunk in place.
 function streamFreshLookup(featureId: string, name: string, resolvedUrl: string): Response {
-  return ndjsonStream(async (write) => {
+  return ndjsonStream<LookupEvent>(async (write) => {
     write({ type: 'place', name, featureId, resolvedUrl });
     const t0 = Date.now();
 
@@ -323,7 +341,7 @@ Bun.serve({
           summary: entry.summary,
           highlights: entry.highlights,
           highlightSummaries: entry.highlightSummaries,
-        });
+        } satisfies CachedResponse);
       },
     },
     // Extension uploads what it just generated so the next visitor (any
@@ -343,7 +361,7 @@ Bun.serve({
           if (!featureId || !name) return corsJson({ error: 'missing featureId or name' }, 400);
           if (!summary && !highlights && !highlightSummaries) return corsJson({ error: 'nothing to contribute' }, 400);
           await cache.putContribution(featureId, name, { summary, highlights, highlightSummaries });
-          return corsJson({ ok: true });
+          return corsJson({ ok: true } satisfies ContributeResponse);
         } catch (e) {
           console.error('[contribute]', e);
           return corsJson(errBody(e), 400);
@@ -362,7 +380,7 @@ Bun.serve({
             lastAccessTs: e.lastAccessTs ?? e.scoreTs,
           }))
           .sort((a, b) => b.lastAccessTs - a.lastAccessTs);
-        return json({ places });
+        return json({ places } satisfies PlacesResponse);
       },
     },
     '/api/histogram': {
@@ -374,7 +392,7 @@ Bun.serve({
           const url = entry.resolvedUrl ?? mapsUrlFor(featureId);
           const { histogram } = await getOrFetchPreviewBundle(featureId, url);
           if (!histogram) return json({ error: 'histogram unavailable' }, 500);
-          return json({ histogram, overallPct: overallPctFromHistogram(histogram), cached: cache.histogramFresh(entry) });
+          return json({ histogram, overallPct: overallPctFromHistogram(histogram), cached: cache.histogramFresh(entry) } satisfies HistogramResponse);
         } catch (e) {
           console.error('[histogram]', e);
           return json(errBody(e), 400);
@@ -405,7 +423,7 @@ Bun.serve({
           // Only the unfiltered place summary participates in the persisted
           // cache; filtered topic summaries are per-callsite and shouldn't
           // overwrite the canonical entry.summary slot.
-          if (!filter && entry?.summary && !force) return corsJson({ summary: entry.summary, cached: true });
+          if (!filter && entry?.summary && !force) return corsJson({ summary: entry.summary, cached: true } satisfies SummarizeResponse);
 
           const placeName = entry?.name ?? body.name ?? '';
           // Pre-formatted reviewTexts win (extension already ran textReviewsFor
@@ -416,7 +434,7 @@ Bun.serve({
 
           const summary = await summarize(placeName, reviewTexts, filter);
           if (!filter && entry) await cache.putSummary(featureId, summary);
-          return corsJson({ summary, cached: false });
+          return corsJson({ summary, cached: false } satisfies SummarizeResponse);
         } catch (e) {
           console.error('[summarize]', e);
           return corsJson(errBody(e), 400);
@@ -432,7 +450,7 @@ Bun.serve({
           featureId = body.featureId;
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
-          if (entry.highlights && !body.force) return json({ highlights: entry.highlights, cached: true });
+          if (entry.highlights && !body.force) return json({ highlights: entry.highlights, cached: true } satisfies HighlightsResponse);
           const url = mapsUrlFor(featureId);
           const chips = await harvestTokens(url);
           if (!chips.length) {
@@ -469,7 +487,7 @@ Bun.serve({
           const cached = entry?.highlightSummaries?.[token];
           if (cached && !force) {
             const label = entry?.highlights?.find((h) => h.token === token)?.label ?? body.label ?? '';
-            return corsJson({ summary: cached, label, cached: true });
+            return corsJson({ summary: cached, label, cached: true } satisfies HighlightSummaryResponse);
           }
 
           const highlight = entry?.highlights?.find((h) => h.token === token);
@@ -481,7 +499,7 @@ Bun.serve({
 
           const summary = await summarize(placeName, reviewTexts, label);
           if (entry) await cache.putHighlightSummary(featureId, token, summary);
-          return corsJson({ summary, label, cached: false });
+          return corsJson({ summary, label, cached: false } satisfies HighlightSummaryResponse);
         } catch (e) {
           console.error('[highlight-summary]', e);
           return corsJson(errBody(e), 400);
@@ -515,7 +533,7 @@ Bun.serve({
           const force = !!body.force;
           const placeName = entry.name;
 
-          return ndjsonStream(async (write) => {
+          return ndjsonStream<SearchEvent>(async (write) => {
             try {
               if (cached && !force && (!doSummarize || cached.summary)) {
                 write({ type: 'search', result: cached, cached: true });
@@ -574,7 +592,7 @@ Bun.serve({
           if (!reviewTexts?.length) return corsJson({ error: 'no reviews — look up the place first or pass reviewTexts in the body' }, 404);
 
           const answer = await ask(placeName, reviewTexts, question, body.filter?.trim() || undefined);
-          return corsJson({ answer });
+          return corsJson({ answer } satisfies AskResponse);
         } catch (e) {
           console.error('[ask]', e);
           return corsJson(errBody(e), 400);
