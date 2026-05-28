@@ -40,18 +40,15 @@ jobs:
         run: ./deploy/sync.sh
 
       - name: Smoke test
-        # Retry: the first lookup after a restart is cold (bakes cookies, fetches
-        # Google via the residential proxy) and can transiently 522, so a single
-        # curl -sf races the warm-up. Still fails red on a genuine breakage.
+        # Hit the live service over SSH against localhost. Cloudflare serves the
+        # runner IP a 403 managed challenge, and the origin is firewalled to
+        # Cloudflare IPs, so SSH is the only path in. Retry to ride out the cold
+        # first lookup (cookie bake + Google fetch via the residential proxy).
         run: |
           for i in $(seq 1 6); do
-            code=$(curl -s --max-time 30 -o /tmp/resp.json -w '%{http_code}' \
-              -X POST https://truescore.mohamed3on.com/api/lookup \
-              -H 'Content-Type: application/json' \
-              -d '{"url":"https://www.google.com/maps/place/Eiffel+Tower/@48.8583701,2.2922873,17z/data=!4m6!3m5!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0"}')
-            if [ "$code" = 200 ] && jq -e '.score.scorePct >= 0' /tmp/resp.json >/dev/null; then
+            if ssh root@65.108.153.112 'curl -s --max-time 30 -X POST http://localhost/api/lookup -H "Content-Type: application/json" -d "{\"url\":\"https://www.google.com/maps/place/Eiffel+Tower/@48.8583701,2.2922873,17z/data=!4m6!3m5!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0\"}" | grep -qE "\"scorePct\":[0-9]+"'; then
               echo "smoke test passed (attempt $i)"; exit 0
             fi
-            echo "attempt $i: HTTP $code — retrying in 10s"; sleep 10
+            echo "attempt $i failed — retrying in 10s"; sleep 10
           done
-          echo "smoke test failed after 6 attempts"; cat /tmp/resp.json; exit 1
+          echo "smoke test failed after 6 attempts"; exit 1
