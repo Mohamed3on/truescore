@@ -47,6 +47,38 @@ ssh root@65.108.153.112 'rm -f /var/lib/truescore/cache.sqlite* && systemctl res
 ssh root@65.108.153.112 'rm /var/lib/truescore/cookies.json && systemctl restart truescore'
 ```
 
+## Residential proxy (Decodo)
+
+All Google fetches in `browser.ts` go through a Decodo residential proxy, set in `/opt/truescore/.env`:
+
+```bash
+TRUESCORE_PROXY_SERVER=http://gate.decodo.com:7000     # rotating gateway
+TRUESCORE_PROXY_USER=user-<decodo-id>-continent-eu     # rotating, EU exits
+TRUESCORE_PROXY_PASS=<decodo-password>
+```
+
+Use the **rotating** gateway (`gate.decodo.com:7000`), not a sticky session. It hands out a fresh EU IP per request, so a dead exit IP costs only one request - the `googleFetch` retry lands on a new IP - and the ~13 concurrent fetches per lookup (preview + relevant + newest + 10 chips) spread across IPs instead of hammering one. `http` is the fastest scheme and safe here: HTTPS targets are TLS-tunneled end-to-end via CONNECT regardless of scheme, and the only payload is public reviews.
+
+### "Google is busy upstream" / repeated 502 or 522
+
+This is a `googleFetch` 5xx from the **proxy**, not a Google outage - the public site and *cached* places keep working (cache skips the proxy) while *fresh* lookups fail. `CONNECT tunnel failed, 502` means the exit IP is dead; `522` is a Cloudflare connection-timeout, usually under the concurrent fan-out.
+
+Reproduce from the box - fetch Google through the proxy:
+
+```bash
+ssh root@65.108.153.112 'set -a; . /opt/truescore/.env; set +a
+  curl -sS -x "$TRUESCORE_PROXY_SERVER" -U "$TRUESCORE_PROXY_USER:$TRUESCORE_PROXY_PASS" \
+    --max-time 20 -o /dev/null -w "HTTP %{http_code}\n" https://www.google.com/maps?hl=en'
+```
+
+`200` on a single request but failures under load means rate-limiting; failures on *every* request means a dead endpoint - point `TRUESCORE_PROXY_SERVER`/`TRUESCORE_PROXY_USER` at a known-good endpoint and `systemctl restart truescore`.
+
+### Endpoint reference
+
+- **Rotating (preferred):** `http://gate.decodo.com:7000`, username `user-<decodo-id>-continent-eu`. Username params (`continent-eu`, `sessionduration-N`) are honored here.
+- **Sticky pool:** ports `gate.decodo.com:10001`-`10010`, bare username `<decodo-id>`. Each port is one fixed exit IP and **ignores** the geo param (the port pins the IP).
+- **Avoid** a single long sticky session (`...-sessionduration-60` on one port): if that IP dies, every fresh lookup fails until it rotates. This caused a full outage on 2026-05-28.
+
 ## Deploy code changes
 
 From the repo root locally:
