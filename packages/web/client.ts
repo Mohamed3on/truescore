@@ -401,6 +401,18 @@ function renderReviewList(reviews: Review[]) {
   }
 }
 
+// One <li><span class="h-text {sentiment}"> per highlight, appended to ul.
+function renderHighlightList(ul: HTMLElement, highlights: Summary['highlights']) {
+  for (const h of highlights) {
+    const li = document.createElement('li');
+    const text = document.createElement('span');
+    text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
+    renderMarkdownInline(text, h.text ?? '');
+    li.appendChild(text);
+    ul.appendChild(li);
+  }
+}
+
 function renderChipSummary(summary: Summary) {
   while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
   const verdict = document.createElement('div');
@@ -410,14 +422,7 @@ function renderChipSummary(summary: Summary) {
   if (summary.highlights?.length) {
     const ul = document.createElement('ul');
     ul.className = 'highlights';
-    for (const h of summary.highlights) {
-      const li = document.createElement('li');
-      const text = document.createElement('span');
-      text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
-      renderMarkdownInline(text, h.text ?? '');
-      li.appendChild(text);
-      ul.appendChild(li);
-    }
+    renderHighlightList(ul, summary.highlights);
     chipBody.appendChild(ul);
   }
 }
@@ -600,42 +605,29 @@ async function ensureHighlightReviews(): Promise<void> {
 }
 
 async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
   const chipMap = new Map<string, Highlight>();
-  let buffer = '';
   let lastFailures = 0;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buffer.indexOf('\n')) !== -1) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line) continue;
-      const evt = JSON.parse(line) as HighlightStreamEvent;
-      switch (evt.type) {
-        case 'chips':
-          chipMap.clear();
-          for (const c of evt.chips) chipMap.set(c.token, { ...c, state: 'loading' });
-          renderHighlights([...chipMap.values()]);
-          break;
-        case 'chip':
-          chipMap.set(evt.highlight.token, { ...evt.highlight, state: 'done' });
-          renderHighlights([...chipMap.values()]);
-          break;
-        case 'chip-error': {
-          const existing = chipMap.get(evt.token) ?? { token: evt.token, label: evt.label, count: 0 };
-          chipMap.set(evt.token, { ...existing, state: 'error', error: evt.error });
-          renderHighlights([...chipMap.values()]);
-          break;
-        }
-        case 'done':
-          lastFailures = evt.failures;
-          renderHighlights([...chipMap.values()], true);
-          break;
+  for await (const evt of readNdjson<HighlightStreamEvent>(body)) {
+    switch (evt.type) {
+      case 'chips':
+        chipMap.clear();
+        for (const c of evt.chips) chipMap.set(c.token, { ...c, state: 'loading' });
+        renderHighlights([...chipMap.values()]);
+        break;
+      case 'chip':
+        chipMap.set(evt.highlight.token, { ...evt.highlight, state: 'done' });
+        renderHighlights([...chipMap.values()]);
+        break;
+      case 'chip-error': {
+        const existing = chipMap.get(evt.token) ?? { token: evt.token, label: evt.label, count: 0 };
+        chipMap.set(evt.token, { ...existing, state: 'error', error: evt.error });
+        renderHighlights([...chipMap.values()]);
+        break;
       }
+      case 'done':
+        lastFailures = evt.failures;
+        renderHighlights([...chipMap.values()], true);
+        break;
     }
   }
   if (lastFailures > 0) {
@@ -997,14 +989,7 @@ function renderSummary(summary: Summary) {
   renderMarkdown($('verdict'), summary.verdict);
   resummarizeBtn.hidden = false;
   while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
-  for (const h of summary.highlights) {
-    const li = document.createElement('li');
-    const text = document.createElement('span');
-    text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
-    renderMarkdownInline(text, h.text ?? '');
-    li.appendChild(text);
-    highlightsListEl.appendChild(li);
-  }
+  renderHighlightList(highlightsListEl, summary.highlights);
 }
 
 function renderSummaryError(msg: string) {
