@@ -266,3 +266,7 @@ export const timeAgo = (ms: number): string => {
 // to ms and render a compact age. Empty string when the payload was undated.
 export const reviewAge = (timestamp: number | null): string =>
   timestamp == null ? '' : timeAgo(timestamp > 1e14 ? timestamp / 1000 : timestamp);
+
+// Review-collection loop (paginate → dedup → stop), shared by web + extension.
+// Defined after the schema/scoring fns above; it consumes them at call time.
+export * from './collect';
