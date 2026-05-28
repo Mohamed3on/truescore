@@ -1110,7 +1110,7 @@ const renderLabelSearchResult = () => {
   res.appendChild(header);
 
   const sumBtn = el('button', 'rc-summarize-btn', `Summarize "${query}"`) as HTMLButtonElement;
-  sumBtn.onclick = () => summarizeLabelSearch();
+  sumBtn.onclick = () => summarizeLabelSearch(sumBtn);
   res.appendChild(sumBtn);
 
   const questionInput = document.createElement('input');
@@ -1163,7 +1163,7 @@ const runLabelSearch = async () => {
   }
 };
 
-const summarizeLabelSearch = async () => {
+const summarizeLabelSearch = async (btn?: HTMLButtonElement) => {
   const search = activeLabelSearch;
   const panel = cardEls.filteredSumPanel;
   if (!search || !panel) return;
@@ -1177,6 +1177,7 @@ const summarizeLabelSearch = async () => {
     return;
   }
 
+  if (btn) { btn.disabled = true; btn.textContent = 'Summarizing…'; }
   try {
     const result = await summarizeReviews(texts, search.query, null);
     if (typeof result === 'object') {
@@ -1188,6 +1189,8 @@ const summarizeLabelSearch = async () => {
     console.error('[label search] summary failed', e);
     panel.textContent = 'Summarization failed';
     panel.className = 'rc-summary-panel';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = `Summarize "${search.query}"`; }
   }
 };
 
