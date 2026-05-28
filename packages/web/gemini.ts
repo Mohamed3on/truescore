@@ -43,6 +43,25 @@ async function call(prompt: string, maxTokens: number, schema?: object): Promise
   return text;
 }
 
+// Gemini occasionally truncates the structured JSON at maxOutputTokens (cut
+// mid-array → "Unterminated string" / "Expected '}'"). Salvage the complete
+// highlight objects instead of failing the whole summary — the verdict is a
+// separate call and is always worth returning.
+function parseStructured(text: string): { highlights: Highlight[]; valueForMoney: number } {
+  try {
+    const p = JSON.parse(text);
+    return { highlights: p.highlights ?? [], valueForMoney: p.valueForMoney ?? 3 };
+  } catch {
+    const highlights: Highlight[] = [];
+    for (const m of text.matchAll(/\{[^{}]*"text"[^{}]*\}/g)) {
+      try { highlights.push(JSON.parse(m[0])); } catch {}
+    }
+    const vfm = text.match(/"valueForMoney"\s*:\s*(\d+)/);
+    console.warn(`[summarize] structured JSON truncated; salvaged ${highlights.length} highlights`);
+    return { highlights, valueForMoney: vfm ? Number(vfm[1]) : 3 };
+  }
+}
+
 const reviewBlock = (texts: string[]) => texts.join('\n\n');
 
 const subjectOf = (place: string, filter?: string) => {
@@ -71,12 +90,8 @@ ${NOTES}`;
     call(verdictPrompt, 1024),
     call(structuredPrompt, 8192, HIGHLIGHTS_SCHEMA),
   ]);
-  const parsed = JSON.parse(structuredText);
-  return {
-    verdict: verdict.trim(),
-    highlights: parsed.highlights ?? [],
-    valueForMoney: parsed.valueForMoney ?? 3,
-  };
+  const { highlights, valueForMoney } = parseStructured(structuredText);
+  return { verdict: verdict.trim(), highlights, valueForMoney };
 }
 
 export async function ask(placeName: string, reviewTexts: string[], question: string, filterQuery?: string): Promise<string> {
