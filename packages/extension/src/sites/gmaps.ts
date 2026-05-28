@@ -2,15 +2,15 @@ import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/u
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX } from '../shared/cache-keys';
 import {
-  buildListUrl,
-  buildTokenUrl,
   chipsFromPreview,
+  collectPaged,
+  collectSort,
+  collectToken,
   extractReviewText,
   isTrusted,
   overallPctFromHistogram,
   overallScoreFromHistogram,
   PAGE_SIZE,
-  parseReviewsResponse,
   reviewAge,
   sortedDisplayReviews,
   starScore,
@@ -21,6 +21,7 @@ import {
   type Review,
   type SortKey,
   type SortStats,
+  type Transport,
 } from '@truescore/gmaps-shared';
 
 const TIME_PERIODS = ['total', 'inPastYear', 'inPastMonth'] as const;
@@ -591,8 +592,8 @@ const localeFromDom = (): Locale => ({
   gl: location.href.match(/gl=([a-zA-Z]{2})/)?.[1] || '',
 });
 
-const buildUrl = (featureId: string, sort: SortKey, cursor = '') =>
-  buildListUrl(featureId, sort, cursor, localeFromDom());
+// Extension transport: fetch from the maps tab on the user's own session.
+const tabTransport: Transport = (url, init) => fetch(url, init).then((r) => r.text());
 
 const buildUrlForSearch = (featureId: string, query: string, cursor = '') => {
   const { hl = 'en', gl = '' } = localeFromDom();
@@ -607,9 +608,6 @@ const buildUrlForSearch = (featureId: string, query: string, cursor = '') => {
   ].join('');
   return `https://www.google.com/maps/rpc/listugcposts?authuser=0&hl=${hl}&gl=${gl}&pb=${pb}`;
 };
-
-const buildUrlForToken = (featureId: string, token: string, cursor = '') =>
-  buildTokenUrl(featureId, token, cursor, localeFromDom());
 
 const PREVIEW_WAIT_MS = 3000;
 
@@ -653,35 +651,12 @@ const fetchPlacePreviewActive = async (placeUrl: string): Promise<any | null> =>
   }
 };
 
-const fetchAllForToken = async (featureId: string, token: string): Promise<Review[]> => {
-  const collected = new Map<string, Review>();
-  let cursor = '';
-  for (let i = 0; i < 30; i++) {
-    const url = buildUrlForToken(featureId, token, cursor);
-    const resp = await fetch(url);
-    const text = await resp.text();
-    const { reviews, nextCursor } = parseReviewsResponse(text);
-    if (!reviews.length) break;
-    for (const r of reviews) collected.set(r.reviewId, r);
-    if (!nextCursor) break;
-    cursor = nextCursor;
-  }
-  return [...collected.values()];
-};
+const fetchAllForToken = (featureId: string, token: string): Promise<Review[]> =>
+  collectToken(featureId, token, tabTransport, { locale: localeFromDom() });
 
 const fetchAllForSearch = async (featureId: string, query: string): Promise<Review[]> => {
-  const collected = new Map<string, Review>();
-  let cursor = '';
-  for (let i = 0; i < 30; i++) {
-    const url = buildUrlForSearch(featureId, query, cursor);
-    const resp = await fetch(url);
-    const { reviews, nextCursor } = parseReviewsResponse(await resp.text());
-    if (!reviews.length) break;
-    for (const r of reviews) collected.set(r.reviewId, r);
-    if (!nextCursor) break;
-    cursor = nextCursor;
-  }
-  return [...collected.values()];
+  const { reviews } = await collectPaged((c) => buildUrlForSearch(featureId, query, c), tabTransport, { maxPages: 30 });
+  return reviews;
 };
 
 (window as any).__truescoreGmaps = {
@@ -852,31 +827,34 @@ const fetchAllReviews = async (sortKey: SortKey) => {
 
   let lastPct: number | null = null;
   try {
-    while (state.isFetching) {
-      const url = buildUrl(featureId, sortKey, state.cursor);
-      const resp = await fetch(url, { signal: controller.signal });
-      const { reviews, nextCursor } = parseReviewsResponse(await resp.text());
+    // Shared cursor loop; the extension keeps its own stop policy (period-aware
+    // stabilization on getRoundedPct, page-1 live-head reconcile) and per-review
+    // time-period bucketing in onPage, and pauses via the AbortSignal.
+    await collectSort(featureId, sortKey, tabTransport, {
+      startCursor: state.cursor,
+      signal: controller.signal,
+      locale: localeFromDom(),
+      stabilize: false,
+      onPage: (_running, { index, nextCursor, pageReviews }) => {
+        for (const r of pageReviews) {
+          if (!state.reviewMap[r.reviewId]) { state.reviewMap[r.reviewId] = r; processReview(r, state.reviewData); }
+        }
+        state.pageCount = index + 1;
+        if (nextCursor) state.cursor = nextCursor;
+        updateUI();
 
-      if (!reviews.length) break;
-      for (const r of reviews) {
-        if (!state.reviewMap[r.reviewId]) { state.reviewMap[r.reviewId] = r; processReview(r, state.reviewData); }
-      }
-      state.pageCount++;
-      updateUI();
+        if (sortKey === 'newest' && index === 0 && pageReviews[0]?.reviewId) {
+          reconcileWithLiveHead(pageReviews[0].reviewId);
+          if (scoreCacheServedFresh) return 'stop';
+        }
 
-      if (sortKey === 'newest' && state.pageCount === 1 && reviews[0]?.reviewId) {
-        reconcileWithLiveHead(reviews[0].reviewId);
-        if (scoreCacheServedFresh) break;
-      }
-
-      if (state.pageCount >= MIN_PAGES_BEFORE_STABILIZE) {
-        const pct = getRoundedPct(sortKey);
-        if (lastPct !== null && Math.abs(pct - lastPct) <= 1) break;
-        lastPct = pct;
-      }
-      if (!nextCursor) break;
-      state.cursor = nextCursor;
-    }
+        if (state.pageCount >= MIN_PAGES_BEFORE_STABILIZE) {
+          const pct = getRoundedPct(sortKey);
+          if (lastPct !== null && Math.abs(pct - lastPct) <= 1) return 'stop';
+          lastPct = pct;
+        }
+      },
+    });
   } catch (e: any) {
     if (e.name !== 'AbortError') console.error(`[Reviews] ${sortKey} error:`, e);
   }
