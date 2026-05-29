@@ -22,29 +22,149 @@ const getRatingPercentages = (root: Document | HTMLElement = document) => {
   return { fiveStars: values[0], oneStars: values[values.length - 1] };
 };
 
+// Amazon separates variation attributes with an <i class="a-icon-text-separator"> element
+// (e.g. "Size: L | Colour: White / Black"). Serialize the strip to clean text, using a
+// private delimiter between attributes so each "Dimension: value" pair stays whole.
+const VAR_SEP = '•';
+const cleanFormatStrip = (el: Element) => {
+  let out = '';
+  for (const node of el.childNodes) {
+    out += node.nodeType === Node.TEXT_NODE ? node.textContent ?? '' : VAR_SEP;
+  }
+  return out
+    .replaceAll(' Name:', ':')          // some locales label dimensions "Size Name:" etc.
+    .replace(/\s*•\s*/g, VAR_SEP)  // drop whitespace hugging the delimiter
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+// Fallback for strips without separator elements: "Color: Space Gray Size: 256 GB".
+// Keys are single tokens; values run until the next key, so multi-word values survive.
+const VAR_PAIR_RE = /([A-Za-z][\w.\/-]*):\s*([^:]*?)(?=\s+[A-Za-z][\w.\/-]*:|$)/g;
+const parseVariation = (text: string): [string, string][] => {
+  const pairs: [string, string][] = [];
+  if (text.includes(VAR_SEP)) {
+    for (const seg of text.split(VAR_SEP)) {
+      const c = seg.indexOf(':');
+      if (c <= 0) continue;
+      const dim = seg.slice(0, c).trim();
+      const val = seg.slice(c + 1).trim();
+      if (dim && val) pairs.push([dim, val]);
+    }
+    return pairs;
+  }
+  for (const m of text.matchAll(VAR_PAIR_RE)) {
+    const dim = m[1].trim();
+    const val = m[2].trim();
+    if (dim && val) pairs.push([dim, val]);
+  }
+  return pairs;
+};
+
 const injectBestFormats = (formatRatings: Record<string, number>) => {
-  const sortedFormats = Object.entries(formatRatings)
-    .sort((a, b) => b[1] - a[1]);
+  const combos = Object.entries(formatRatings);
+  if (!combos.length) return;
 
-  if (!sortedFormats.length) return;
-
-  const table = document.createElement('table');
-  table.className = 'format-table';
-  const header = table.createTHead();
-  const row = header.insertRow(0);
-  row.insertCell(0).textContent = 'Variation';
-  row.insertCell(1).textContent = 'Sentiment';
-  const body = table.createTBody();
-  sortedFormats.forEach(([name, score]) => {
-    const tr = body.insertRow();
-    tr.insertCell().innerHTML = name;
-    const scoreCell = tr.insertCell();
-    scoreCell.textContent = (score > 0 ? '+' : '') + score;
-    scoreCell.className = score > 0 ? 'ars-fmt-pos' : score < 0 ? 'ars-fmt-neg' : '';
+  // Re-aggregate the full-combination scores into per-dimension tallies so we can
+  // surface the best-performing color, size, etc. on their own — not just the best
+  // exact combination. Net sentiment per dimension value = sum over every combo it appears in.
+  const dims = new Map<string, Map<string, number>>();
+  let multiDim = false;
+  const specificRows: [string, number][] = combos.map(([raw, score]) => {
+    const pairs = parseVariation(raw);
+    if (pairs.length > 1) multiDim = true;
+    for (const [dim, val] of pairs) {
+      let m = dims.get(dim);
+      if (!m) dims.set(dim, (m = new Map()));
+      m.set(val, (m.get(val) ?? 0) + score);
+    }
+    return [raw.replaceAll(VAR_SEP, ' | '), score];
   });
 
+  // A dimension is worth its own tab only if it has ≥2 values to compare.
+  const compareDims = [...dims.entries()]
+    .filter(([, vals]) => vals.size >= 2)
+    .sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]));
+
+  const showTabs = compareDims.length >= 2 || (compareDims.length === 1 && multiDim);
+
+  const byScore = (a: [string, number], b: [string, number]) => b[1] - a[1];
+  // Specific (exact combination) leads; per-dimension breakdowns follow as extra tabs.
+  const tabs: { label: string; rows: [string, number][] }[] = showTabs
+    ? [
+        { label: 'Specific', rows: specificRows.slice().sort(byScore) },
+        ...compareDims.map(([dim, vals]) => ({ label: dim, rows: [...vals.entries()].sort(byScore) })),
+      ]
+    : [{ label: '', rows: specificRows.slice().sort(byScore) }];
+
+  const box = document.createElement('div');
+  box.className = 'ars-variations';
+
+  const head = document.createElement('div');
+  head.className = 'ars-var-head';
+  const title = document.createElement('span');
+  title.className = 'ars-var-title';
+  title.textContent = 'Best by variation';
+  head.appendChild(title);
+  box.appendChild(head);
+
+  const panel = document.createElement('div');
+  panel.className = 'ars-var-panel';
+
+  const renderPanel = (rows: [string, number][]) => {
+    panel.replaceChildren();
+    const maxAbs = rows.reduce((m, [, s]) => Math.max(m, Math.abs(s)), 0) || 1;
+    rows.forEach(([name, score], i) => {
+      const sign = score > 0 ? 'ars-fmt-pos' : score < 0 ? 'ars-fmt-neg' : '';
+      const row = document.createElement('div');
+      row.className = 'ars-var-row' + (i === 0 && score > 0 ? ' ars-var-best' : '');
+      row.style.animationDelay = `${Math.min(i, 12) * 30}ms`;
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'ars-var-name';
+      nameEl.textContent = name;
+
+      const track = document.createElement('span');
+      track.className = 'ars-var-track';
+      const fill = document.createElement('i');
+      fill.className = `ars-var-fill ${sign}`;
+      fill.style.width = `${(Math.abs(score) / maxAbs) * 100}%`;
+      track.appendChild(fill);
+
+      const scoreEl = document.createElement('span');
+      scoreEl.className = `ars-var-score ${sign}`;
+      scoreEl.textContent = (score > 0 ? '+' : '') + score;
+
+      row.append(nameEl, track, scoreEl);
+      panel.appendChild(row);
+    });
+  };
+
+  if (showTabs) {
+    const tabBar = document.createElement('div');
+    tabBar.className = 'ars-var-tabs';
+    tabBar.setAttribute('role', 'tablist');
+    tabs.forEach((tab, i) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ars-var-tab' + (i === 0 ? ' is-active' : '');
+      btn.setAttribute('role', 'tab');
+      btn.textContent = tab.label;
+      btn.addEventListener('click', () => {
+        tabBar.querySelectorAll('.ars-var-tab').forEach((b) => b.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        renderPanel(tab.rows);
+      });
+      tabBar.appendChild(btn);
+    });
+    head.appendChild(tabBar);
+  }
+
+  box.appendChild(panel);
+  renderPanel(tabs[0].rows);
+
   const buyBox = document.querySelector('#desktop_buybox');
-  if (buyBox) buyBox.parentNode!.insertBefore(table, buyBox);
+  if (buyBox) buyBox.parentNode!.insertBefore(box, buyBox);
 };
 
 const setTotalRatingsScore = (totalRatingPercentages: { fiveStars: number; oneStars: number }, elementToReplace: HTMLElement, numOfRatings: any) => {
@@ -71,7 +191,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   };
   const formatRatings: Record<string, number> = {};
 
-  const scoresCacheKey = `ars-scores-${cacheASIN}`;
+  const scoresCacheKey = `ars-scores-v2-${cacheASIN}`;
   const cachedScores = cacheGet(scoresCacheKey, THREE_DAYS);
   let usedCache = false;
 
@@ -318,8 +438,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
         if (rating === 5 || rating === 1) {
           if (format) {
-            const cleanedFormat = format.innerHTML.replaceAll(' Name:', ':');
-            formatRatings[cleanedFormat] = (formatRatings[cleanedFormat] ?? 0) + starRatingsToLikeDislikeMapping[rating];
+            const cleanedFormat = cleanFormatStrip(format);
+            if (cleanedFormat) formatRatings[cleanedFormat] = (formatRatings[cleanedFormat] ?? 0) + starRatingsToLikeDislikeMapping[rating];
           }
           scores.recent.absolute += starRatingsToLikeDislikeMapping[rating];
         }
@@ -457,16 +577,16 @@ const getParentASIN = () => {
 
   // Re-attach when variant switch removes our widget
   const wrapper = document.querySelector('.ars-wrapper');
-  const formatTable = document.querySelector('.format-table');
+  const variations = document.querySelector('.ars-variations');
   if (!wrapper) return;
 
   const observer = new MutationObserver(() => {
     if (!document.contains(wrapper)) {
       const target = document.getElementById('averageCustomerReviews');
       if (target) target.appendChild(wrapper);
-      if (formatTable) {
+      if (variations) {
         const buyBox = document.querySelector('#desktop_buybox');
-        if (buyBox) buyBox.parentNode!.insertBefore(formatTable, buyBox);
+        if (buyBox) buyBox.parentNode!.insertBefore(variations, buyBox);
       }
     }
   });
