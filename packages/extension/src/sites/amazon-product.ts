@@ -89,13 +89,14 @@ const injectBestFormats = (formatRatings: Record<string, number>) => {
   const showTabs = compareDims.length >= 2 || (compareDims.length === 1 && multiDim);
 
   const byScore = (a: [string, number], b: [string, number]) => b[1] - a[1];
+  const specific = specificRows.sort(byScore);
   // Specific (exact combination) leads; per-dimension breakdowns follow as extra tabs.
   const tabs: { label: string; rows: [string, number][] }[] = showTabs
     ? [
-        { label: 'Specific', rows: specificRows.slice().sort(byScore) },
+        { label: 'Specific', rows: specific },
         ...compareDims.map(([dim, vals]) => ({ label: dim, rows: [...vals.entries()].sort(byScore) })),
       ]
-    : [{ label: '', rows: specificRows.slice().sort(byScore) }];
+    : [{ label: '', rows: specific }];
 
   const box = document.createElement('div');
   box.className = 'ars-variations';
