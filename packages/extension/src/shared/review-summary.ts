@@ -164,6 +164,7 @@ interface SummarizeWidgetOpts {
   fetchReviews: () => Promise<string[]>;
   questionPlaceholder?: string;
   questionPrompt?: string;
+  context?: string;
   cacheMeta?: any;
   alternates?: AlternatesConfig;
   skipSuspicious?: boolean;
@@ -208,12 +209,18 @@ export const buildSummarizeWidget = ({
   fetchReviews,
   questionPlaceholder = 'Ask about this product\u2026',
   questionPrompt = QUESTION_PROMPT,
+  context,
   cacheMeta,
   alternates,
   skipSuspicious,
   autoSummarize,
 }: SummarizeWidgetOpts) => {
   const renderOpts = { skipSuspicious };
+  // Reference material (e.g. a course's volume/chapter breakdown) appended to
+  // both the structured-summary prompt and every Ask, so questions can map vague
+  // reviewer mentions to specific named sections too — not just the summary.
+  const withContext = (prompt: string) => (context ? `${prompt}\n\n${context}` : prompt);
+
   const questionRow = document.createElement('div');
   questionRow.className = 'ars-question-row';
   const questionInput = document.createElement('input');
@@ -223,73 +230,100 @@ export const buildSummarizeWidget = ({
   questionRow.appendChild(questionInput);
   wrapper.appendChild(questionRow);
 
+  const summarizeBtn = document.createElement('button');
+  summarizeBtn.className = 'ars-summarize-btn';
+
+  // "Summarized on …" + Re-summarize. Shown only while the panel holds the
+  // structured summary — never beside a Q&A answer, where "Re-summarize" would
+  // be the wrong label and the wrong action.
+  const dateRow = el('div', 'ars-summary-meta');
+  dateRow.style.display = 'none';
+  const dateLabel = el('div', 'ars-summary-date');
+  const reBtn = document.createElement('button');
+  reBtn.className = 'ars-resummarize-btn';
+  reBtn.textContent = '\u21BB Re-summarize';
+  reBtn.addEventListener('click', () => runSummary(reBtn));
+  dateRow.append(dateLabel, reBtn);
+
   const summaryPanel = document.createElement('div');
   summaryPanel.className = 'ars-summary-panel';
   summaryPanel.style.display = 'none';
 
-  const runSummarize = async (btn: HTMLButtonElement) => {
-    const question = questionInput.value.trim();
+  // What summaryPanel currently shows, so the controls stay honest: the date row
+  // belongs to a summary, the Ask button to a question.
+  let panelMode: 'none' | 'summary' | 'answer' = 'none';
+  let summaryTs = 0;
 
-    if (question) {
-      const hit = loadQAs(cacheKey).find((e) => e.q.toLowerCase() === question.toLowerCase());
-      if (hit) {
-        renderFreeFormAnswer(summaryPanel, hit.a);
-        summaryPanel.style.display = 'block';
-        return hit.ts;
-      }
-    }
-
-    btn.disabled = true;
-    btn.textContent = '\u23F3 Fetching reviews\u2026';
-    try {
-      const reviews = [...await fetchReviews()];
-      if (!reviews.length) throw new Error('No reviews found');
-      reviews.sort((a, b) => b.length - a.length);
-      btn.textContent = '\u23F3 Summarizing\u2026';
-
-      const ts = Date.now();
-      if (question) {
-        const answer = await geminiSummarize(reviews, `${questionPrompt}\n\nQuestion: ${question}`, null);
-        bumpRateLimit();
-        saveQA(cacheKey, { q: question, a: answer, ts });
-        renderFreeFormAnswer(summaryPanel, answer);
-        renderQAHistory();
-      } else {
-        const parsed = await geminiSummarize(reviews, summaryPrompt);
-        bumpRateLimit();
-        localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts, meta: cacheMeta }));
-        renderStructuredSummary(summaryPanel, parsed, renderOpts);
-      }
-      summaryPanel.style.display = 'block';
-      return ts;
-    } catch (e: any) {
-      summaryPanel.textContent = `Error: ${e.message}`;
-      summaryPanel.style.display = 'block';
-      btn.disabled = false;
-      btn.textContent = question ? 'Ask' : '\u2726 Summarize Reviews';
-      return null;
+  const syncControls = () => {
+    const asking = !!questionInput.value.trim();
+    summarizeBtn.textContent = asking ? 'Ask' : '\u2726 Summarize Reviews';
+    // Hide the redundant Summarize button only once the summary is on screen.
+    summarizeBtn.style.display = !asking && panelMode === 'summary' ? 'none' : '';
+    const showDate = !asking && panelMode === 'summary';
+    dateRow.style.display = showDate ? '' : 'none';
+    if (showDate) {
+      dateLabel.textContent = `Summarized on ${new Date(summaryTs).toLocaleDateString()}`;
+      reBtn.style.display = checkRateLimit().count < RL_MAX ? '' : 'none';
     }
   };
 
-  const showDateRow = (ts: number) => {
-    const row = document.createElement('div');
-    row.className = 'ars-summary-meta';
-    const dateLabel = document.createElement('div');
-    dateLabel.className = 'ars-summary-date';
-    dateLabel.textContent = `Summarized on ${new Date(ts).toLocaleDateString()}`;
-    row.appendChild(dateLabel);
-    if (checkRateLimit().count < RL_MAX) {
-      const reBtn = document.createElement('button');
-      reBtn.className = 'ars-resummarize-btn';
-      reBtn.textContent = '\u21BB Re-summarize';
-      reBtn.addEventListener('click', async () => {
-        const newTs = await runSummarize(reBtn);
-        if (newTs) row.replaceWith(showDateRow(newTs));
-      });
-      row.appendChild(reBtn);
+  const loadReviews = async () => {
+    const reviews = [...await fetchReviews()];
+    if (!reviews.length) throw new Error('No reviews found');
+    reviews.sort((a, b) => b.length - a.length);
+    return reviews;
+  };
+
+  const runSummary = async (btn: HTMLButtonElement) => {
+    btn.disabled = true;
+    btn.textContent = '\u23F3 Fetching reviews\u2026';
+    try {
+      const reviews = await loadReviews();
+      btn.textContent = '\u23F3 Summarizing\u2026';
+      const parsed = await geminiSummarize(reviews, withContext(summaryPrompt));
+      bumpRateLimit();
+      summaryTs = Date.now();
+      localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta }));
+      renderStructuredSummary(summaryPanel, parsed, renderOpts);
+      summaryPanel.style.display = 'block';
+      panelMode = 'summary';
+    } catch (e: any) {
+      summaryPanel.textContent = `Error: ${e.message}`;
+      summaryPanel.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      syncControls();
     }
-    wrapper.appendChild(row);
-    return row;
+  };
+
+  const runAsk = async (btn: HTMLButtonElement, question: string) => {
+    const hit = loadQAs(cacheKey).find((e) => e.q.toLowerCase() === question.toLowerCase());
+    if (hit) {
+      renderFreeFormAnswer(summaryPanel, hit.a);
+      summaryPanel.style.display = 'block';
+      panelMode = 'answer';
+      syncControls();
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = '\u23F3 Fetching reviews\u2026';
+    try {
+      const reviews = await loadReviews();
+      btn.textContent = '\u23F3 Asking\u2026';
+      const answer = await geminiSummarize(reviews, `${withContext(questionPrompt)}\n\nQuestion: ${question}`, null);
+      bumpRateLimit();
+      saveQA(cacheKey, { q: question, a: answer, ts: Date.now() });
+      renderFreeFormAnswer(summaryPanel, answer);
+      summaryPanel.style.display = 'block';
+      panelMode = 'answer';
+      renderQAHistory();
+    } catch (e: any) {
+      summaryPanel.textContent = `Error: ${e.message}`;
+      summaryPanel.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      syncControls();
+    }
   };
 
   const qaHistoryRow = el('div', 'ars-alternates ars-qa-history');
@@ -318,30 +352,24 @@ export const buildSummarizeWidget = ({
       chip.appendChild(remove);
       chip.addEventListener('click', () => {
         questionInput.value = item.q;
-        summarizeBtn.textContent = 'Ask';
         renderFreeFormAnswer(summaryPanel, item.a);
         summaryPanel.style.display = 'block';
+        panelMode = 'answer';
+        syncControls();
       });
       qaHistoryRow.appendChild(chip);
     }
   };
 
-  const summarizeBtn = document.createElement('button');
-  summarizeBtn.className = 'ars-summarize-btn';
-  summarizeBtn.textContent = '\u2726 Summarize Reviews';
-
-  questionInput.addEventListener('input', () => {
-    summarizeBtn.textContent = questionInput.value.trim() ? 'Ask' : '\u2726 Summarize Reviews';
-  });
+  questionInput.addEventListener('input', syncControls);
   questionInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') summarizeBtn.click();
   });
-  summarizeBtn.addEventListener('click', async () => {
-    const ts = await runSummarize(summarizeBtn);
-    if (ts && !questionInput.value.trim()) summarizeBtn.replaceWith(showDateRow(ts));
-    else if (ts) { summarizeBtn.disabled = false; summarizeBtn.textContent = 'Ask'; }
+  summarizeBtn.addEventListener('click', () => {
+    const question = questionInput.value.trim();
+    if (question) runAsk(summarizeBtn, question);
+    else runSummary(summarizeBtn);
   });
-
   questionRow.appendChild(summarizeBtn);
 
   // Restore cached summary
@@ -351,15 +379,17 @@ export const buildSummarizeWidget = ({
     try { cached = JSON.parse(rawCache); } catch (_) {}
   }
   if (cached?.parsed) {
-    showDateRow(cached.ts);
+    summaryTs = cached.ts;
     renderStructuredSummary(summaryPanel, cached.parsed, renderOpts);
     summaryPanel.style.display = 'block';
+    panelMode = 'summary';
   }
 
+  wrapper.appendChild(dateRow);
   wrapper.appendChild(summaryPanel);
-
   wrapper.appendChild(qaHistoryRow);
   renderQAHistory();
+  syncControls();
 
   if (alternates) {
     const altRow = renderAlternatesRow(alternates, cacheKey);
