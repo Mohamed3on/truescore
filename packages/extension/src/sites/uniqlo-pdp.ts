@@ -2,7 +2,7 @@ import { addCommas, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { setupSpaInjector } from '../shared/spa-injector';
 
-const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const MAX_PAGES = 4; // 25 reviews/page — 100 reviews is plenty for the variation breakdown
 
 const getLocale = () => {
@@ -18,7 +18,7 @@ const extractProductId = () => {
 
 // One round-trip: fetch all MAX_PAGES in parallel (the API caps `limit` at 25, so 4 pages =
 // 100 reviews). Page 0's response also carries the aggregate `rating`. Reviews are deduped by
-// id in case the API clamps an out-of-range offset. Cached 30 days, so it's paid once per product.
+// id in case the API clamps an out-of-range offset. Cached a week, so it's paid ~once per product.
 const fetchReviewData = async (country: string, lang: string, productId: string) => {
   const cacheKey = `nps_uniqlo_v2_${productId}`;
   const cached = cacheGet(cacheKey, CACHE_TTL);
