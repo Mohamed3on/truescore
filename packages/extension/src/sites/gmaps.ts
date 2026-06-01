@@ -11,6 +11,7 @@ import {
   overallPctFromHistogram,
   overallScoreFromHistogram,
   PAGE_SIZE,
+  parseOrQuery,
   reviewAge,
   sortedDisplayReviews,
   starScore,
@@ -654,9 +655,18 @@ const fetchPlacePreviewActive = async (placeUrl: string): Promise<any | null> =>
 const fetchAllForToken = (featureId: string, token: string): Promise<Review[]> =>
   collectToken(featureId, token, tabTransport, { locale: localeFromDom() });
 
+// Gmail-style ` OR ` splits the query: one Google search per term in parallel,
+// merged + deduped by reviewId so the panel scores reviews matching ANY term.
+// A plain query is just the single-term case.
 const fetchAllForSearch = async (featureId: string, query: string): Promise<Review[]> => {
-  const { reviews } = await collectPaged((c) => buildUrlForSearch(featureId, query, c), tabTransport, { maxPages: 30 });
-  return reviews;
+  const settled = await Promise.all(
+    parseOrQuery(query).map((term) =>
+      collectPaged((c) => buildUrlForSearch(featureId, term, c), tabTransport, { maxPages: 30 }),
+    ),
+  );
+  const m = new Map<string, Review>();
+  for (const { reviews } of settled) for (const r of reviews) m.set(r.reviewId, r);
+  return [...m.values()];
 };
 
 (window as any).__truescoreGmaps = {
@@ -1299,7 +1309,7 @@ const createUIElements = () => {
   const searchSec = el('div', 'rc-search-section');
   const searchInput = document.createElement('input');
   searchInput.type = 'text';
-  searchInput.placeholder = 'Label search reviews… (Enter)';
+  searchInput.placeholder = 'Label search… wifi OR parking (Enter)';
   searchInput.className = 'rc-search-input';
   searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') runLabelSearch();

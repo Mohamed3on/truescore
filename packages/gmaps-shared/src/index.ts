@@ -50,6 +50,19 @@ export const sortedDisplayReviews = (reviews: Review[]): Review[] =>
     .filter((r) => r.text.length >= 10)
     .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
 
+// Split a review-search query on the Gmail-style ` OR ` operator (any case)
+// into distinct non-empty terms: "breakfast OR parking" → ["breakfast",
+// "parking"], a plain query → one term, "" → []. Server-side searches (Google
+// RPC) run one upstream search per term and merge; client-side searches match
+// ANY term. Capped so an OR chain can't fan out into unbounded upstream calls.
+export const MAX_OR_TERMS = 6;
+export const parseOrQuery = (query: string): string[] =>
+  query
+    .split(/\s+OR\s+/i)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .slice(0, MAX_OR_TERMS);
+
 const localeQuery = (locale: Locale = {}) => `hl=${locale.hl || 'en'}&gl=${locale.gl || ''}`;
 
 export const buildListUrl = (featureId: string, sort: SortKey, cursor = '', locale: Locale = {}) => {

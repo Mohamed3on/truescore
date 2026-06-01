@@ -1,6 +1,7 @@
 import { addCommas, el, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget, geminiSummarize, renderFreeFormAnswer } from '../shared/review-summary';
+import { parseOrQuery } from '@truescore/gmaps-shared';
 
 const STAMPED_API_KEY = '8a204db0-ec09-48cf-baed-db3ca2ef99e6';
 const STAMPED_STORE = 'bjj-fanatics.myshopify.com';
@@ -132,24 +133,37 @@ const reviewHaystack = (r: StampedReview) =>
   [r.reviewTitle, r.reviewMessage, ...(r.reviewOptionsList || []).map(o => o.value)]
     .filter(Boolean).join(' ').toLowerCase();
 
-const appendHighlighted = (parent: HTMLElement, text: string, query: string) => {
-  if (!query) { parent.appendChild(document.createTextNode(text)); return; }
-  const needle = query.toLowerCase();
+// `terms` are lowercased OR-terms; a review matches if its text contains ANY of
+// them. parseOrQuery splits the Gmail-style ` OR ` operator (any case).
+const queryTerms = (query: string) => parseOrQuery(query).map(t => t.toLowerCase());
+const matchesTerms = (r: StampedReview, terms: string[]) => {
+  const h = reviewHaystack(r);
+  return terms.some(t => h.includes(t));
+};
+
+// Highlight every occurrence of ANY term. At each position take the
+// earliest-starting match (longest on ties) so overlapping terms don't double-wrap.
+const appendHighlighted = (parent: HTMLElement, text: string, terms: string[]) => {
+  if (!terms.length) { parent.appendChild(document.createTextNode(text)); return; }
   const lower = text.toLowerCase();
   let i = 0;
   while (i < text.length) {
-    const idx = lower.indexOf(needle, i);
-    if (idx < 0) { parent.appendChild(document.createTextNode(text.slice(i))); return; }
-    if (idx > i) parent.appendChild(document.createTextNode(text.slice(i, idx)));
-    parent.appendChild(el('mark', 'ars-search-hl', text.slice(idx, idx + needle.length)));
-    i = idx + needle.length;
+    let best = -1, bestLen = 0;
+    for (const t of terms) {
+      const idx = lower.indexOf(t, i);
+      if (idx >= 0 && (best < 0 || idx < best || (idx === best && t.length > bestLen))) { best = idx; bestLen = t.length; }
+    }
+    if (best < 0) { parent.appendChild(document.createTextNode(text.slice(i))); return; }
+    if (best > i) parent.appendChild(document.createTextNode(text.slice(i, best)));
+    parent.appendChild(el('mark', 'ars-search-hl', text.slice(best, best + bestLen)));
+    i = best + bestLen;
   }
 };
 
 const MAX_RENDERED_RESULTS = 50;
 const SEARCH_DEBOUNCE_MS = 120;
 
-const buildReviewCard = (r: StampedReview, query: string) => {
+const buildReviewCard = (r: StampedReview, terms: string[]) => {
   const card = el('div', 'ars-search-review');
   const head = el('div', 'ars-search-review-head');
   const rating = Math.max(0, Math.min(5, Math.round(r.reviewRating || 0)));
@@ -159,12 +173,12 @@ const buildReviewCard = (r: StampedReview, query: string) => {
   card.appendChild(head);
   if (r.reviewTitle) {
     const title = el('div', 'ars-search-title');
-    appendHighlighted(title, r.reviewTitle, query);
+    appendHighlighted(title, r.reviewTitle, terms);
     card.appendChild(title);
   }
   if (r.reviewMessage) {
     const body = el('div', 'ars-search-body');
-    appendHighlighted(body, r.reviewMessage, query);
+    appendHighlighted(body, r.reviewMessage, terms);
     card.appendChild(body);
   }
   return card;
@@ -175,7 +189,7 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'ars-search-input';
-  input.placeholder = `Search ${addCommas(bundle.reviews.length)} reviews… (e.g. "guard")`;
+  input.placeholder = `Search ${addCommas(bundle.reviews.length)} reviews… (e.g. "guard OR mount")`;
   section.appendChild(input);
 
   const header = el('div', 'ars-search-header');
@@ -216,7 +230,7 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
   sumBtn.addEventListener('click', async () => {
     const query = currentQuery;
     if (!query) return;
-    const matches = bundle.reviews.filter(r => reviewHaystack(r).includes(query.toLowerCase()));
+    const matches = bundle.reviews.filter(r => matchesTerms(r, queryTerms(query)));
     const texts = matches.map(reviewToText).filter(Boolean);
     if (!texts.length) {
       sumPanel.style.display = 'block';
@@ -249,7 +263,8 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
       hideSummary();
       return;
     }
-    const matches = bundle.reviews.filter(r => reviewHaystack(r).includes(q));
+    const terms = queryTerms(raw);
+    const matches = bundle.reviews.filter(r => matchesTerms(r, terms));
 
     header.style.display = '';
     list.style.display = '';
@@ -281,7 +296,7 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
       return;
     }
     const shown = matches.slice(0, MAX_RENDERED_RESULTS);
-    for (const r of shown) list.appendChild(buildReviewCard(r, raw));
+    for (const r of shown) list.appendChild(buildReviewCard(r, terms));
     if (matches.length > shown.length) {
       list.appendChild(el('div', 'ars-search-truncated',
         `Showing first ${shown.length} — refine the search to see more.`));

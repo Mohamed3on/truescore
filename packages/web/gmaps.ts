@@ -1,5 +1,6 @@
 import {
   PAGE_SIZE,
+  parseOrQuery,
   statsForReviews,
   collectSort,
   collectToken,
@@ -52,16 +53,33 @@ export type PartialScore = Omit<ScoreResult, 'reviews'>;
 // every page from either sort. Suitable for streaming `score-progress` events.
 export type ScoreProgressCallback = (partial: PartialScore) => void;
 
+// `query` may use the Gmail-style ` OR ` operator. Each term becomes its own
+// Google search, run in parallel; results merge + dedup by reviewId so the
+// score reflects reviews matching ANY term. A plain query is the single-term
+// case and behaves exactly as before. `onPage` fires after every page from any
+// term with the merged running set, so the streamed count climbs across terms.
 export async function fetchAllForSearch(
   featureId: string,
   query: string,
   onPage?: SortPageCallback,
 ): Promise<Review[]> {
-  const { reviews } = await collectPaged((c) => buildUrlForSearch(featureId, query, c), transport, {
-    maxPages: 30,
-    onPage: onPage ? (running) => { onPage('relevant', running); } : undefined,
-  });
-  return reviews;
+  const terms = parseOrQuery(query);
+  const running: Review[][] = terms.map(() => []);
+  const merged = (): Review[] => {
+    const m = new Map<string, Review>();
+    for (const rs of running) for (const r of rs) m.set(r.reviewId, r);
+    return [...m.values()];
+  };
+  const settled = await Promise.all(
+    terms.map((term, i) =>
+      collectPaged((c) => buildUrlForSearch(featureId, term, c), transport, {
+        maxPages: 30,
+        onPage: (rs) => { running[i] = rs; onPage?.('relevant', merged()); },
+      }),
+    ),
+  );
+  settled.forEach((res, i) => { running[i] = res.reviews; });
+  return merged();
 }
 
 export async function fetchAllForToken(featureId: string, token: string): Promise<Review[]> {
