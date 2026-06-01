@@ -50,6 +50,15 @@ export const sortedDisplayReviews = (reviews: Review[]): Review[] =>
     .filter((r) => r.text.length >= 10)
     .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
 
+// Union review lists into one set, deduped by reviewId (last write wins) — the
+// fold that pairs with the collection loop: relevant∪newest, or an OR-search
+// fan-out, collapsed to a single deduped list.
+export const mergeByReviewId = (...lists: Review[][]): Review[] => {
+  const m = new Map<string, Review>();
+  for (const list of lists) for (const r of list) m.set(r.reviewId, r);
+  return [...m.values()];
+};
+
 // Split a review-search query on the Gmail-style ` OR ` operator (any case)
 // into distinct non-empty terms: "breakfast OR parking" → ["breakfast",
 // "parking"], a plain query → one term, "" → []. Server-side searches (Google

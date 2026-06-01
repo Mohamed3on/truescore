@@ -1,6 +1,7 @@
 import {
   PAGE_SIZE,
   parseOrQuery,
+  mergeByReviewId,
   statsForReviews,
   collectSort,
   collectToken,
@@ -83,9 +84,7 @@ export async function scorePlace(
 
   const emit = () => {
     if (!onProgress) return;
-    const merged = new Map<string, Review>();
-    for (const r of [...latestRelevant, ...latestNewest]) merged.set(r.reviewId, r);
-    const all = [...merged.values()];
+    const all = mergeByReviewId(latestRelevant, latestNewest);
     const m = statsForReviews(all);
     onProgress({
       featureId,
@@ -101,9 +100,7 @@ export async function scorePlace(
     collectSort(featureId, 'relevant', transport, { onPage: (rs) => { latestRelevant = rs; emit(); } }).then((r) => r.reviews),
     collectSort(featureId, 'newest', transport, { onPage: (rs) => { latestNewest = rs; emit(); } }).then((r) => r.reviews),
   ]);
-  const merged = new Map<string, Review>();
-  for (const r of [...relevant, ...newest]) merged.set(r.reviewId, r);
-  const all = [...merged.values()];
+  const all = mergeByReviewId(relevant, newest);
   const m = statsForReviews(all);
   return {
     featureId,
