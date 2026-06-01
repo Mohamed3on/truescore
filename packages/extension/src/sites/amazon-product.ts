@@ -1,6 +1,7 @@
 import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas } from '../shared/utils';
 import { buildSummarizeWidget } from '../shared/review-summary';
+import { renderVariationCard, type VarDim } from '../shared/variation-table';
 
 const NUMBER_OF_PAGES_TO_PARSE = 10;
 
@@ -89,81 +90,18 @@ const injectBestFormats = (formatRatings: Record<string, number>) => {
   const showTabs = compareDims.length >= 2 || (compareDims.length === 1 && multiDim);
 
   const byScore = (a: [string, number], b: [string, number]) => b[1] - a[1];
-  const specific = specificRows.sort(byScore);
+  const toRows = (entries: [string, number][]) => entries.map(([label, score]) => ({ label, score }));
+  const specific = toRows(specificRows.sort(byScore));
+
   // Specific (exact combination) leads; per-dimension breakdowns follow as extra tabs.
-  const tabs: { label: string; rows: [string, number][] }[] = showTabs
+  const varDims: VarDim[] = showTabs
     ? [
         { label: 'Specific', rows: specific },
-        ...compareDims.map(([dim, vals]) => ({ label: dim, rows: [...vals.entries()].sort(byScore) })),
+        ...compareDims.map(([dim, vals]) => ({ label: dim, rows: toRows([...vals.entries()].sort(byScore)) })),
       ]
     : [{ label: '', rows: specific }];
 
-  const box = document.createElement('div');
-  box.className = 'ars-variations';
-
-  const head = document.createElement('div');
-  head.className = 'ars-var-head';
-  const title = document.createElement('span');
-  title.className = 'ars-var-title';
-  title.textContent = 'Best by variation';
-  head.appendChild(title);
-  box.appendChild(head);
-
-  const panel = document.createElement('div');
-  panel.className = 'ars-var-panel';
-
-  const renderPanel = (rows: [string, number][]) => {
-    panel.replaceChildren();
-    const maxAbs = rows.reduce((m, [, s]) => Math.max(m, Math.abs(s)), 0) || 1;
-    rows.forEach(([name, score], i) => {
-      const sign = score > 0 ? 'ars-fmt-pos' : score < 0 ? 'ars-fmt-neg' : '';
-      const row = document.createElement('div');
-      row.className = 'ars-var-row' + (i === 0 && score > 0 ? ' ars-var-best' : '');
-      row.style.animationDelay = `${Math.min(i, 12) * 30}ms`;
-
-      const nameEl = document.createElement('span');
-      nameEl.className = 'ars-var-name';
-      nameEl.textContent = name;
-
-      const track = document.createElement('span');
-      track.className = 'ars-var-track';
-      const fill = document.createElement('i');
-      fill.className = `ars-var-fill ${sign}`;
-      fill.style.width = `${(Math.abs(score) / maxAbs) * 100}%`;
-      track.appendChild(fill);
-
-      const scoreEl = document.createElement('span');
-      scoreEl.className = `ars-var-score ${sign}`;
-      scoreEl.textContent = (score > 0 ? '+' : '') + score;
-
-      row.append(nameEl, track, scoreEl);
-      panel.appendChild(row);
-    });
-  };
-
-  if (showTabs) {
-    const tabBar = document.createElement('div');
-    tabBar.className = 'ars-var-tabs';
-    tabBar.setAttribute('role', 'tablist');
-    tabs.forEach((tab, i) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'ars-var-tab' + (i === 0 ? ' is-active' : '');
-      btn.setAttribute('role', 'tab');
-      btn.textContent = tab.label;
-      btn.addEventListener('click', () => {
-        tabBar.querySelectorAll('.ars-var-tab').forEach((b) => b.classList.remove('is-active'));
-        btn.classList.add('is-active');
-        renderPanel(tab.rows);
-      });
-      tabBar.appendChild(btn);
-    });
-    head.appendChild(tabBar);
-  }
-
-  box.appendChild(panel);
-  renderPanel(tabs[0].rows);
-
+  const box = renderVariationCard(varDims, { animate: true });
   const buyBox = document.querySelector('#desktop_buybox');
   if (buyBox) buyBox.parentNode!.insertBefore(box, buyBox);
 };
@@ -578,7 +516,7 @@ const getParentASIN = () => {
 
   // Re-attach when variant switch removes our widget
   const wrapper = document.querySelector('.ars-wrapper');
-  const variations = document.querySelector('.ars-variations');
+  const variations = document.querySelector('.ts-var');
   if (!wrapper) return;
 
   const observer = new MutationObserver(() => {

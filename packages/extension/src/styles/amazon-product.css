@@ -375,111 +375,6 @@
   color: #1C1917;
 }
 
-/* Variation breakdown — best-performing value per dimension, tab through */
-.ars-variations {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  margin: 12px 0;
-  width: 100%;
-  max-width: 360px;
-  background: #FAFAF9;
-  border: 1px solid #E7E5E4;
-  border-radius: 8px;
-  overflow: hidden;
-  animation: ars-enter 0.4s cubic-bezier(0.25, 1, 0.5, 1);
-}
-.ars-var-head { padding: 10px 12px 0; }
-.ars-var-title {
-  display: block;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #A8A29E;
-}
-.ars-var-tabs {
-  display: flex;
-  gap: 2px;
-  margin-top: 8px;
-  border-bottom: 1px solid #E7E5E4;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.ars-var-tabs::-webkit-scrollbar { display: none; }
-.ars-var-tab {
-  appearance: none;
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  padding: 6px 10px;
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  color: #A8A29E;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-.ars-var-tab:hover { color: #57534E; }
-.ars-var-tab.is-active { color: #0F766E; border-bottom-color: #0F766E; }
-
-.ars-var-panel {
-  display: flex;
-  flex-direction: column;
-  padding: 6px 12px 10px;
-}
-.ars-var-row {
-  display: grid;
-  grid-template-columns: 1fr 64px auto;
-  align-items: center;
-  gap: 10px;
-  padding: 5px 0;
-  border-bottom: 1px solid #F5F5F4;
-  animation: ars-var-row-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.ars-var-row:last-child { border-bottom: none; }
-.ars-var-name {
-  min-width: 0;
-  font-size: 12.5px;
-  line-height: 1.35;
-  color: #44403C;
-  overflow-wrap: anywhere;
-}
-.ars-var-best .ars-var-name { font-weight: 700; color: #1C1917; }
-.ars-var-best .ars-var-name::before {
-  content: "\25C6";
-  color: #0F766E;
-  font-size: 9px;
-  margin-right: 5px;
-  vertical-align: 1px;
-}
-.ars-var-track {
-  height: 5px;
-  background: #EFEDEC;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.ars-var-fill {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-}
-.ars-var-fill.ars-fmt-pos { background: #16A34A; }
-.ars-var-fill.ars-fmt-neg { background: #DC2626; }
-.ars-var-score {
-  font-size: 12.5px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  color: #78716C;
-}
-@keyframes ars-var-row-in {
-  from { opacity: 0; transform: translateX(-4px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-.ars-fmt-pos { color: #15803D; }
-.ars-fmt-neg { color: #DC2626; }
-
 /* Cached pill rows: alternates + recent questions */
 .ars-alternates {
   display: flex;
@@ -670,5 +565,4 @@
   .ars-stat-val.ars-bump { animation: none; }
   .ars-scan-spinner { animation: none; }
   .ars-scan-spinner.ars-scan-done { animation: none; opacity: 0; }
-  .ars-variations, .ars-var-row { animation: none; }
 }

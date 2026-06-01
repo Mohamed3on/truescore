@@ -1,6 +1,7 @@
 import { addCommas, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { setupSpaInjector } from '../shared/spa-injector';
+import { renderVariationCard, type VarDim } from '../shared/variation-table';
 
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const MAX_PAGES = 4; // 25 reviews/page — 100 reviews is plenty for the variation breakdown
@@ -94,13 +95,13 @@ const colorCode = (name: string) => {
 
 const fitText = (fit: number) => (fit < 2.4 ? 'runs small' : fit > 3.6 ? 'runs large' : 'true to size');
 
-interface VarRow { label: string; net: number; n: number; fit: number | null; }
+interface DimStat { label: string; net: number; n: number; fit: number | null; }
 
 const aggregate = (
   reviews: any[],
   keyFn: (r: any) => string,
   labelFn: (r: any) => string
-): VarRow[] => {
+): DimStat[] => {
   const groups = new Map<string, { net: number; n: number; fitSum: number; fitN: number; labels: Map<string, number> }>();
   for (const r of reviews) {
     const key = keyFn(r);
@@ -124,37 +125,6 @@ const aggregate = (
     .sort((a, b) => b.net - a.net || b.n - a.n);
 };
 
-const VAR_STYLE_ID = 'uq-var-styles';
-const ensureVarStyles = () => {
-  if (document.getElementById(VAR_STYLE_ID)) return;
-  const s = document.createElement('style');
-  s.id = VAR_STYLE_ID;
-  s.textContent = `
-.uq-var{margin-top:14px;background:#fff;border:1px solid #E7E5E4;border-radius:8px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
-.uq-var-head{padding:10px 12px 0}
-.uq-var-title{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#A8A29E}
-.uq-var-tabs{display:flex;gap:2px;margin-top:8px;border-bottom:1px solid #E7E5E4}
-.uq-var-tab{appearance:none;background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;padding:6px 10px;font-family:inherit;font-size:12px;font-weight:600;color:#A8A29E;cursor:pointer;transition:color .15s,border-color .15s}
-.uq-var-tab:hover{color:#57534E}
-.uq-var-tab.is-active{color:#0F766E;border-bottom-color:#0F766E}
-.uq-var-panel{display:flex;flex-direction:column;padding:6px 12px 10px}
-.uq-var-row{display:grid;grid-template-columns:1fr 56px auto;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #F5F5F4}
-.uq-var-row:last-child{border-bottom:none}
-.uq-var-name{display:flex;flex-direction:column;gap:1px;min-width:0}
-.uq-var-val{font-size:12.5px;color:#44403C;overflow-wrap:anywhere}
-.uq-var-best .uq-var-val{font-weight:700;color:#1C1917}
-.uq-var-best .uq-var-val::before{content:"\\25C6";color:#0F766E;font-size:9px;margin-right:5px;vertical-align:1px}
-.uq-var-fit{font-size:10px;color:#A8A29E;letter-spacing:.01em}
-.uq-var-track{height:5px;background:#EFEDEC;border-radius:3px;overflow:hidden}
-.uq-var-fill{display:block;height:100%;border-radius:3px}
-.uq-var-fill.pos{background:#16A34A}
-.uq-var-fill.neg{background:#DC2626}
-.uq-var-score{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;color:#78716C}
-.uq-var-score.pos{color:#15803D}
-.uq-var-score.neg{color:#DC2626}`;
-  document.head.appendChild(s);
-};
-
 const buildVariations = (reviews: any[]): HTMLElement | null => {
   if (!reviews?.length) return null;
 
@@ -164,79 +134,17 @@ const buildVariations = (reviews: any[]): HTMLElement | null => {
   ].filter((d) => d.rows.length >= 2);
 
   if (!dims.length) return null;
-  ensureVarStyles();
 
-  const box = document.createElement('div');
-  box.className = 'uq-var';
-  const head = document.createElement('div');
-  head.className = 'uq-var-head';
-  const title = document.createElement('span');
-  title.className = 'uq-var-title';
-  title.textContent = 'Best by variation';
-  head.appendChild(title);
-  box.appendChild(head);
+  const varDims: VarDim[] = dims.map((d) => ({
+    label: d.label,
+    rows: d.rows.map((r) => ({
+      label: r.label,
+      score: r.net,
+      meta: `${r.n} review${r.n === 1 ? '' : 's'}` + (r.fit != null && r.n >= 3 ? ` · ${fitText(r.fit)}` : ''),
+    })),
+  }));
 
-  const panel = document.createElement('div');
-  panel.className = 'uq-var-panel';
-
-  const renderPanel = (rows: VarRow[]) => {
-    panel.replaceChildren();
-    const maxAbs = rows.reduce((m, r) => Math.max(m, Math.abs(r.net)), 0) || 1;
-    rows.forEach((r, i) => {
-      const sign = r.net > 0 ? 'pos' : r.net < 0 ? 'neg' : '';
-      const row = document.createElement('div');
-      row.className = 'uq-var-row' + (i === 0 && r.net > 0 ? ' uq-var-best' : '');
-
-      const name = document.createElement('span');
-      name.className = 'uq-var-name';
-      const val = document.createElement('span');
-      val.className = 'uq-var-val';
-      val.textContent = r.label;
-      const meta = document.createElement('span');
-      meta.className = 'uq-var-fit';
-      meta.textContent =
-        `${r.n} review${r.n === 1 ? '' : 's'}` + (r.fit != null && r.n >= 3 ? ` · ${fitText(r.fit)}` : '');
-      name.append(val, meta);
-
-      const track = document.createElement('span');
-      track.className = 'uq-var-track';
-      const fill = document.createElement('i');
-      fill.className = 'uq-var-fill ' + sign;
-      fill.style.width = `${(Math.abs(r.net) / maxAbs) * 100}%`;
-      track.appendChild(fill);
-
-      const score = document.createElement('span');
-      score.className = 'uq-var-score ' + sign;
-      score.textContent = (r.net > 0 ? '+' : '') + r.net;
-
-      row.append(name, track, score);
-      panel.appendChild(row);
-    });
-  };
-
-  if (dims.length > 1) {
-    const tabs = document.createElement('div');
-    tabs.className = 'uq-var-tabs';
-    tabs.setAttribute('role', 'tablist');
-    dims.forEach((dim, i) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'uq-var-tab' + (i === 0 ? ' is-active' : '');
-      btn.setAttribute('role', 'tab');
-      btn.textContent = dim.label;
-      btn.addEventListener('click', () => {
-        tabs.querySelectorAll('.uq-var-tab').forEach((b) => b.classList.remove('is-active'));
-        btn.classList.add('is-active');
-        renderPanel(dim.rows);
-      });
-      tabs.appendChild(btn);
-    });
-    head.appendChild(tabs);
-  }
-
-  box.appendChild(panel);
-  renderPanel(dims[0].rows);
-  return box;
+  return renderVariationCard(varDims);
 };
 
 const renderInsights = (ratingEl: Element, rating: any, reviews: any[]) => {
