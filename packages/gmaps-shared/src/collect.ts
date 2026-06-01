@@ -75,3 +75,32 @@ export async function collectToken(featureId: string, token: string, transport: 
   const { reviews } = await collectPaged((c) => buildTokenUrl(featureId, token, c, locale), transport, { maxPages: 30, ...rest });
   return reviews;
 }
+
+// OR-search fan-out: run one paged search per term in parallel and union the
+// results, deduped by reviewId — the kernel both packages' search paths would
+// otherwise duplicate above collectPaged (cf. collectToken). The search URL is
+// deliberately not shared (each package owns its pb encoding), so the caller
+// passes `urlFor(term, cursor)`. `onMerged`, if given, fires after every page
+// with the running union so a caller can stream progress; the union grows
+// incrementally from each page, and the snapshot spread is paid only when a
+// caller is listening. A plain (single-term) query is just the N=1 case.
+export async function collectSearchTerms(
+  terms: string[],
+  urlFor: (term: string, cursor: string) => string,
+  transport: Transport,
+  onMerged?: (merged: Review[]) => void,
+): Promise<Review[]> {
+  const union = new Map<string, Review>();
+  await Promise.all(
+    terms.map((term) =>
+      collectPaged((c) => urlFor(term, c), transport, {
+        maxPages: 30,
+        onPage: (_running, { pageReviews }) => {
+          for (const r of pageReviews) union.set(r.reviewId, r);
+          onMerged?.([...union.values()]);
+        },
+      }),
+    ),
+  );
+  return [...union.values()];
+}

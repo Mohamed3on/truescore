@@ -3,7 +3,7 @@ import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../s
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX } from '../shared/cache-keys';
 import {
   chipsFromPreview,
-  collectPaged,
+  collectSearchTerms,
   collectSort,
   collectToken,
   extractReviewText,
@@ -655,19 +655,10 @@ const fetchPlacePreviewActive = async (placeUrl: string): Promise<any | null> =>
 const fetchAllForToken = (featureId: string, token: string): Promise<Review[]> =>
   collectToken(featureId, token, tabTransport, { locale: localeFromDom() });
 
-// Gmail-style ` OR ` splits the query: one Google search per term in parallel,
-// merged + deduped by reviewId so the panel scores reviews matching ANY term.
-// A plain query is just the single-term case.
-const fetchAllForSearch = async (featureId: string, query: string): Promise<Review[]> => {
-  const settled = await Promise.all(
-    parseOrQuery(query).map((term) =>
-      collectPaged((c) => buildUrlForSearch(featureId, term, c), tabTransport, { maxPages: 30 }),
-    ),
-  );
-  const m = new Map<string, Review>();
-  for (const { reviews } of settled) for (const r of reviews) m.set(r.reviewId, r);
-  return [...m.values()];
-};
+// Gmail-style ` OR ` splits the query; collectSearchTerms runs one Google
+// search per term in parallel and merges by reviewId (plain query → N=1).
+const fetchAllForSearch = (featureId: string, query: string): Promise<Review[]> =>
+  collectSearchTerms(parseOrQuery(query), (term, c) => buildUrlForSearch(featureId, term, c), tabTransport);
 
 (window as any).__truescoreGmaps = {
   ...((window as any).__truescoreGmaps || {}),
