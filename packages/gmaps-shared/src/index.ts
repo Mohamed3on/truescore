@@ -12,6 +12,10 @@ export type Review = {
   reviewerReviewCount: number;
   timestamp: number | null;
   text: string;
+  // Exact words Google flagged as matching the active search/highlight, sliced
+  // from `text`. Absent when none (incl. a shown translation, which carries no
+  // offsets — see matchTermsFromEntry). Used only to highlight matches in the UI.
+  matchTerms?: string[];
 };
 
 export type SortKey = 'relevant' | 'newest';
@@ -108,15 +112,40 @@ export const buildTokenUrl = (featureId: string, token: string, cursor = '', loc
 // Review text lives at r[2][15]: an array of [text, mentions, range] tuples.
 // [0] is the original-language text; [1] (if present) is the translation in the
 // requested locale (`hl=en` → English). Prefer the translation when both exist.
-export const extractReviewText = (r: any): string => {
+const hasText = (entry: any): boolean => typeof entry?.[0] === 'string' && entry[0].length > 0;
+
+// The tuple we actually display — and whose [1] match offsets therefore line up
+// with the shown text. Google fills offsets only on the original, so a shown
+// translation carries none and highlighting falls back to the query term.
+const pickTextEntry = (r: any): any[] | null => {
   const arr = r?.[2]?.[15];
-  if (!Array.isArray(arr) || arr.length === 0) return '';
-  const pick = (entry: any): string => {
-    const t = entry?.[0];
-    return typeof t === 'string' && t.length > 0 ? t : '';
-  };
-  const translated = arr.length > 1 ? pick(arr[1]) : '';
-  return translated || pick(arr[0]);
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  if (arr.length > 1 && hasText(arr[1])) return arr[1];
+  return hasText(arr[0]) ? arr[0] : null;
+};
+
+export const extractReviewText = (r: any): string => {
+  const t = pickTextEntry(r)?.[0];
+  return typeof t === 'string' ? t : '';
+};
+
+// Exact matched words, sliced from the displayed text using the offsets in
+// entry[1]: [start, end] for a label search, [start, end, null, [[[token]]]] for
+// a highlight chip — both read via [0]/[1]. Empty when the entry has no offsets.
+const matchTermsFromEntry = (entry: any[] | null): string[] => {
+  const text = entry?.[0];
+  const spans = entry?.[1];
+  if (typeof text !== 'string' || !Array.isArray(spans)) return [];
+  const out: string[] = [];
+  for (const m of spans) {
+    const s = m?.[0];
+    const e = m?.[1];
+    if (typeof s === 'number' && typeof e === 'number' && e > s) {
+      const w = text.slice(s, e).trim();
+      if (w) out.push(w);
+    }
+  }
+  return out;
 };
 
 export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCursor: string | null } => {
@@ -133,8 +162,10 @@ export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCur
     const stars = r[2]?.[0]?.[0];
     const reviewerReviewCount = r[1]?.[4]?.[5]?.[5] || 1;
     const timestamp = r[1]?.[2] ?? null;
-    const text = extractReviewText(r);
-    if (reviewId && stars) reviews.push({ reviewId, stars, reviewerReviewCount, timestamp, text });
+    const entry = pickTextEntry(r);
+    const text = typeof entry?.[0] === 'string' ? entry[0] : '';
+    const matchTerms = matchTermsFromEntry(entry);
+    if (reviewId && stars) reviews.push({ reviewId, stars, reviewerReviewCount, timestamp, text, ...(matchTerms.length ? { matchTerms } : {}) });
   }
   return { reviews, nextCursor: data[1] || null };
 };

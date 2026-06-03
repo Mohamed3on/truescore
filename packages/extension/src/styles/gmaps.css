@@ -571,6 +571,13 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+.rc-mark {
+  background: rgba(232, 184, 109, 0.2);
+  color: #f5ce92;
+  font-weight: 700;
+  border-radius: 3px;
+  padding: 0 3px;
+}
 .rc-search-section {
   margin-top: 18px;
   padding-top: 12px;

@@ -911,7 +911,38 @@ const onChipClick = (h: Highlight) => {
   showChipPanel(h);
 };
 
-const reviewCardEl = (r: Review): HTMLElement => {
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Wrap occurrences of `terms` (case-insensitive) in <mark> by walking the
+// already-rendered text nodes — keeps markdown/escaping intact and never
+// re-parses the review as HTML.
+const highlightTerms = (root: HTMLElement, terms: string[]) => {
+  const uniq = [...new Set(terms.map((t) => t.trim().toLowerCase()).filter((t) => t.length >= 2))];
+  if (!uniq.length) return;
+  uniq.sort((a, b) => b.length - a.length); // longest first, so phrases win over their words
+  const re = new RegExp(uniq.map(escapeRegExp).join('|'), 'gi');
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n as Text);
+  for (const node of nodes) {
+    const s = node.nodeValue ?? '';
+    re.lastIndex = 0;
+    if (!re.test(s)) continue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    re.lastIndex = 0;
+    for (let m = re.exec(s); m; m = re.exec(s)) {
+      if (m.index > last) frag.appendChild(document.createTextNode(s.slice(last, m.index)));
+      frag.appendChild(el('mark', 'rc-mark', m[0]));
+      last = m.index + m[0].length;
+      if (re.lastIndex === m.index) re.lastIndex++;
+    }
+    if (last < s.length) frag.appendChild(document.createTextNode(s.slice(last)));
+    node.parentNode?.replaceChild(frag, node);
+  }
+};
+
+const reviewCardEl = (r: Review, fallbackTerms: string[] = []): HTMLElement => {
   const card = el('div', 'rc-review');
   const meta = el('div', 'rc-review-meta');
   const stars = el('span', 'rc-review-stars', '★'.repeat(r.stars) + '☆'.repeat(Math.max(0, 5 - r.stars)));
@@ -921,13 +952,17 @@ const reviewCardEl = (r: Review): HTMLElement => {
   card.appendChild(meta);
   const text = el('div', 'rc-review-text');
   renderMarkdown(text, r.text);
+  // Prefer the exact spans Google flagged (present on same-language reviews);
+  // fall back to the query/label words when the shown text is a translation.
+  highlightTerms(text, r.matchTerms?.length ? r.matchTerms : fallbackTerms);
   card.appendChild(text);
   return card;
 };
 
-const renderReviewsInto = (container: HTMLElement, reviews: Review[]) => {
+const renderReviewsInto = (container: HTMLElement, reviews: Review[], terms: string[] = []) => {
+  const fallback = terms.flatMap((t) => t.split(/\s+/)).map((t) => t.trim()).filter(Boolean);
   for (const r of sortedDisplayReviews(reviews)) {
-    container.appendChild(reviewCardEl(r));
+    container.appendChild(reviewCardEl(r, fallback));
   }
 };
 
@@ -935,7 +970,7 @@ const renderChipReviews = (h: Highlight) => {
   const body = cardEls.chipPanelBody;
   if (!body) return;
   body.textContent = '';
-  renderReviewsInto(body, h.reviews ?? []);
+  renderReviewsInto(body, h.reviews ?? [], [h.label]);
 };
 
 const renderChipTitle = (title: HTMLElement, h: Highlight) => {
@@ -1104,7 +1139,7 @@ const renderLabelSearchResult = () => {
   cardEls.searchQuestionInput = questionInput;
 
   const list = el('div', 'rc-search-reviews');
-  renderReviewsInto(list, reviews);
+  renderReviewsInto(list, reviews, parseOrQuery(query));
   res.appendChild(list);
 };
 
