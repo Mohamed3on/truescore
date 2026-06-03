@@ -482,6 +482,11 @@ const RED = { r: 248, g: 113, b: 113 };
 const AMBER = { r: 251, g: 191, b: 36 };
 const GREEN = { r: 74, g: 222, b: 128 };
 const DEEP_GREEN = { r: 34, g: 197, b: 94 };
+// Comparison gradient: 0 → red, 0.5 → amber (parity), 1 → green.
+const COMPARE_STOPS: ColorStop[] = [{ at: 0, ...RED }, { at: 0.5, ...AMBER }, { at: 1, ...GREEN }];
+// Absolute net-polarity gradient (raw ∈ −1..1): scores cluster high, so the
+// meaningful band is ~0.6–1.0 — ≤60 red, 70 amber, 80 green, 90+ deepens.
+const ABSOLUTE_STOPS: ColorStop[] = [{ at: 0.6, ...RED }, { at: 0.7, ...AMBER }, { at: 0.8, ...GREEN }, { at: 1, ...DEEP_GREEN }];
 
 const lerpStops = (stops: ColorStop[], at: number) => {
   const p = Math.max(0, Math.min(1, at));
@@ -492,15 +497,10 @@ const lerpStops = (stops: ColorStop[], at: number) => {
   return `rgb(${Math.round(lo.r + (hi.r - lo.r) * t)},${Math.round(lo.g + (hi.g - lo.g) * t)},${Math.round(lo.b + (hi.b - lo.b) * t)})`;
 };
 
-// Comparison gradient: 0 → red, 0.5 → amber (neutral), 1 → green. Fed normalized
-// diffs (vs the place overall), so the midpoint is the anchor.
-const getScoreColor = (pct: number) =>
-  lerpStops([{ at: 0, ...RED }, { at: 0.5, ...AMBER }, { at: 1, ...GREEN }], pct);
-
-// Absolute net-polarity gradient (raw ∈ −1..1). Scores cluster high, so the
-// meaningful band is ~0.6–1.0: ≤60 red, 70 amber, 80 green, 90+ deepens.
-const getAbsoluteScoreColor = (raw: number) =>
-  lerpStops([{ at: 0.6, ...RED }, { at: 0.7, ...AMBER }, { at: 0.8, ...GREEN }, { at: 1, ...DEEP_GREEN }], raw);
+// Color a score by its signed diff vs a reference, over a ±10pt window
+// (≤−10 red, 0 amber/parity, ≥+10 green). lerpStops clamps, so no extra guard.
+const getDiffColor = (diff: number) => lerpStops(COMPARE_STOPS, (diff + 10) / 20);
+const getAbsoluteScoreColor = (raw: number) => lerpStops(ABSOLUTE_STOPS, raw);
 
 const readHistogramCounts = () => {
   const reviewRows = document.querySelectorAll('tr[role="img"]');
@@ -1112,8 +1112,7 @@ const renderLabelSearchResult = () => {
   // Color by how this query scores vs the place overall (like the chips / main
   // number); the % label itself stays absolute.
   const overall = toPct(getMergedStats().mergedPct);
-  const diffNorm = Math.max(0, Math.min(1, (score.scorePct - overall + 10) / 20));
-  const color = getScoreColor(diffNorm);
+  const color = getDiffColor(score.scorePct - overall);
 
   res.style.display = 'block';
   res.textContent = '';
@@ -1438,8 +1437,7 @@ const updateUI = () => {
 
     if (fullPct !== null) {
       const diff = mergedRound - fullPct;
-      const diffNorm = Math.max(0, Math.min(1, (diff + 10) / 20));
-      const color = getScoreColor(diffNorm);
+      const color = getDiffColor(diff);
       els.pctEl.style.color = color;
       els.pctEl.style.textShadow = `0 0 24px ${color}40`;
       const sign = diff > 0 ? '+' : '';
