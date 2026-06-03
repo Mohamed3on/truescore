@@ -16,11 +16,19 @@ const respond = (id: string, value: unknown) => {
 document.addEventListener(STORAGE_GET, (e) => {
   const { id, key } = (e as CustomEvent).detail || {};
   if (!id || !key) return;
-  chrome.storage.local.get(key, (items) => respond(id, items?.[key] ?? null));
+  try {
+    chrome.storage.local.get(key, (items) => respond(id, items?.[key] ?? null));
+  } catch {
+    respond(id, null); // context invalidated (extension reloaded) — fail fast
+  }
 });
 
 document.addEventListener(STORAGE_SET, (e) => {
   const { id, key, value } = (e as CustomEvent).detail || {};
   if (!id || !key) return;
-  chrome.storage.local.set({ [key]: value }, () => respond(id, true));
+  try {
+    chrome.storage.local.set({ [key]: value }, () => respond(id, true));
+  } catch {
+    respond(id, false);
+  }
 });
