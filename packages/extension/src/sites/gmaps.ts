@@ -39,10 +39,8 @@ type ReviewData = {
 type SortState = { reviewMap: Record<string, Review>; reviewData: ReviewData; isFetching: boolean; done: boolean; cursor: string; pageCount: number };
 type SummaryResult = { highlights?: { text: string; sentiment: string }[]; verdict?: string; valueForMoney?: number };
 type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
-type VisibleEls = { row: HTMLElement; pctEl: HTMLElement; detailEl: HTMLElement };
 type CardEls = {
   merged?: MergedEls;
-  visible?: VisibleEls;
   sumBtn?: HTMLButtonElement;
   resumBtn?: HTMLButtonElement;
   questionInput?: HTMLInputElement;
@@ -109,7 +107,6 @@ let lastFeatureId = '';
 let lastUrl = '';
 let chipViewMode: 'reviews' | 'summary' = 'reviews';
 let fullPctObserver: MutationObserver | null = null;
-let lastVisibleKey = '';
 let staleHistogramKey: string | null = null;
 let lastHistogramKey: string | null = null;
 
@@ -405,7 +402,6 @@ const resetScores = () => {
     if (abortControllers[key]) { abortControllers[key]!.abort(); abortControllers[key] = null; }
   }
   if (fullPctObserver) { fullPctObserver.disconnect(); fullPctObserver = null; }
-  lastVisibleKey = '';
   cachedScoreState = null;
   scoreCacheServedFresh = false;
   stopAutoScroll();
@@ -547,36 +543,6 @@ const calculateFullPercentage = () => {
   if (!allReviews) return null;
   lastHistogramKey = key;
   return toPct((counts[0] - counts[4]) / allReviews);
-};
-
-const visibleReviewStats = new WeakMap<Element, { stars: number; count: number }>();
-const readVisibleStats = (el: Element) => {
-  const cached = visibleReviewStats.get(el);
-  if (cached) return cached;
-  const starLabel = el.querySelector('span[role="img"][aria-label*="star"]')?.getAttribute('aria-label') || '';
-  const fractionText = el.querySelector('.fzvQIb')?.textContent || '';
-  const stars = parseInt(starLabel.match(/(\d+)\s*star/)?.[1] || fractionText.match(/(\d+)\s*\/\s*5/)?.[1] || '0', 10);
-  const reviewerText = el.querySelector('.RfnDt')?.textContent?.replace(/,/g, '') || '';
-  const count = parseInt(reviewerText.match(/(\d+)\s*review/)?.[1] || '1', 10);
-  const stats = { stars, count };
-  if (stars) visibleReviewStats.set(el, stats);
-  return stats;
-};
-
-const getVisibleScore = () => {
-  const reviewEls = document.querySelectorAll('.jftiEf[data-review-id]');
-  if (!reviewEls.length) return null;
-  let total = 0, trusted = 0, score = 0;
-  for (const el of reviewEls) {
-    const { stars, count } = readVisibleStats(el);
-    if (!stars) continue;
-    total++;
-    if (isTrusted(count)) {
-      trusted++;
-      score += starScore(stars);
-    }
-  }
-  return { total, trusted, pct: trusted ? toPct(score / trusted) : 0, raw: trusted ? score / trusted : 0 };
 };
 
 const getPlaceInfo = () => {
@@ -1276,17 +1242,6 @@ const createUIElements = () => {
   c.appendChild(card);
   cardEls.merged = { card, pctEl, barFill, countEl, diffEl, detailEl, tooltip };
 
-  const visRow = el('div', 'rc-visible');
-  const visLabel = el('span', 'rc-visible-label', 'Visible');
-  const visPctEl = el('span', 'rc-visible-pct', '—');
-  const visDetailEl = el('span', 'rc-visible-detail', '');
-  visRow.appendChild(visLabel);
-  visRow.appendChild(visPctEl);
-  visRow.appendChild(visDetailEl);
-  visRow.style.display = 'none';
-  c.appendChild(visRow);
-  cardEls.visible = { row: visRow, pctEl: visPctEl, detailEl: visDetailEl };
-
   const hlSec = el('div', 'rc-highlights-section');
   const hlHeader = el('div', 'rc-highlights-header');
   const hlTitleWrap = el('div', 'rc-highlights-title-wrap');
@@ -1475,27 +1430,6 @@ const updateUI = () => {
   if (detailText !== els.detailEl.textContent) els.detailEl.textContent = detailText;
   els.card.classList.toggle('loading', anyFetching);
   els.card.classList.toggle('done', allDone);
-
-  updateVisibleScore();
-};
-
-const updateVisibleScore = () => {
-  const v = cardEls.visible;
-  if (!v) return;
-  const s = getVisibleScore();
-  const key = s && s.total ? `${s.total}|${s.trusted}|${s.pct}` : '';
-  if (key === lastVisibleKey) return;
-  lastVisibleKey = key;
-  if (!key || !s) { v.row.style.display = 'none'; return; }
-  v.row.style.display = '';
-  if (s.trusted) {
-    v.pctEl.textContent = `${s.pct}%`;
-    v.pctEl.style.color = getAbsoluteScoreColor(s.raw);
-  } else {
-    v.pctEl.textContent = '—';
-    v.pctEl.style.color = '#888';
-  }
-  v.detailEl.textContent = `${s.trusted} trusted of ${s.total}`;
 };
 
 const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
@@ -1576,26 +1510,13 @@ const triggerSummarize = async () => {
   }
 };
 
-const observer = new MutationObserver((mutations) => {
+const observer = new MutationObserver(() => {
   const url = location.href;
 
   const placeDetails = document.querySelector<HTMLElement>('.dmRWX');
   if (placeDetails && !placeDetails.querySelector('.truescore-simple-score')) {
     injectSimpleScore(placeDetails);
   }
-
-  let reviewsChanged = false;
-  outer: for (const m of mutations) {
-    for (const nodes of [m.addedNodes, m.removedNodes]) {
-      for (const n of nodes) {
-        if (n instanceof Element && (n.classList.contains('jftiEf') || n.querySelector('.jftiEf'))) {
-          reviewsChanged = true;
-          break outer;
-        }
-      }
-    }
-  }
-  if (reviewsChanged) updateVisibleScore();
 
   if (url === lastUrl) return;
   lastUrl = url;
