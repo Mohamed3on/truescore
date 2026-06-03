@@ -124,11 +124,6 @@ const pickTextEntry = (r: any): any[] | null => {
   return hasText(arr[0]) ? arr[0] : null;
 };
 
-export const extractReviewText = (r: any): string => {
-  const t = pickTextEntry(r)?.[0];
-  return typeof t === 'string' ? t : '';
-};
-
 // Exact matched words, sliced from the displayed text using the offsets in
 // entry[1]: [start, end] for a label search, [start, end, null, [[[token]]]] for
 // a highlight chip — both read via [0]/[1]. Empty when the entry has no offsets.
@@ -168,6 +163,18 @@ export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCur
     if (reviewId && stars) reviews.push({ reviewId, stars, reviewerReviewCount, timestamp, text, ...(matchTerms.length ? { matchTerms } : {}) });
   }
   return { reviews, nextCursor: data[1] || null };
+};
+
+// Compile a case-insensitive matcher for `terms` — deduped, trimmed, dropping
+// any under 2 chars, longest first so a phrase wins over its own words. Returns
+// null when nothing is left to match. Pure string logic shared by both UIs;
+// each owns how it applies the regex to its own DOM.
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const compileMatchRegex = (terms: string[]): RegExp | null => {
+  const uniq = [...new Set(terms.map((t) => t.trim().toLowerCase()).filter((t) => t.length >= 2))];
+  if (!uniq.length) return null;
+  uniq.sort((a, b) => b.length - a.length);
+  return new RegExp(uniq.map(escapeRegExp).join('|'), 'gi');
 };
 
 export const statsForReviews = (reviews: Review[]): SortStats => {

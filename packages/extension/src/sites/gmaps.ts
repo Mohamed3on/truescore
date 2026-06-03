@@ -6,7 +6,7 @@ import {
   collectSearchTerms,
   collectSort,
   collectToken,
-  extractReviewText,
+  compileMatchRegex,
   isTrusted,
   overallPctFromHistogram,
   overallScoreFromHistogram,
@@ -911,34 +911,29 @@ const onChipClick = (h: Highlight) => {
   showChipPanel(h);
 };
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 // Wrap occurrences of `terms` (case-insensitive) in <mark> by walking the
 // already-rendered text nodes — keeps markdown/escaping intact and never
-// re-parses the review as HTML.
+// re-parses the review as HTML. Only nodes that actually match are rebuilt.
 const highlightTerms = (root: HTMLElement, terms: string[]) => {
-  const uniq = [...new Set(terms.map((t) => t.trim().toLowerCase()).filter((t) => t.length >= 2))];
-  if (!uniq.length) return;
-  uniq.sort((a, b) => b.length - a.length); // longest first, so phrases win over their words
-  const re = new RegExp(uniq.map(escapeRegExp).join('|'), 'gi');
+  const re = compileMatchRegex(terms);
+  if (!re) return;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
   for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n as Text);
   for (const node of nodes) {
     const s = node.nodeValue ?? '';
-    re.lastIndex = 0;
-    if (!re.test(s)) continue;
-    const frag = document.createDocumentFragment();
     let last = 0;
-    re.lastIndex = 0;
+    let frag: DocumentFragment | null = null;
     for (let m = re.exec(s); m; m = re.exec(s)) {
+      frag ??= document.createDocumentFragment();
       if (m.index > last) frag.appendChild(document.createTextNode(s.slice(last, m.index)));
       frag.appendChild(el('mark', 'rc-mark', m[0]));
       last = m.index + m[0].length;
-      if (re.lastIndex === m.index) re.lastIndex++;
     }
-    if (last < s.length) frag.appendChild(document.createTextNode(s.slice(last)));
-    node.parentNode?.replaceChild(frag, node);
+    if (frag) {
+      if (last < s.length) frag.appendChild(document.createTextNode(s.slice(last)));
+      node.parentNode?.replaceChild(frag, node);
+    }
   }
 };
 

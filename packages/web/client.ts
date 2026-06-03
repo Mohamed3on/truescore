@@ -1,6 +1,6 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
 import {
-  overallScoreFromHistogram, parseOrQuery, reviewAge, sortedDisplayReviews, textReviewsFor, timeAgo,
+  compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, sortedDisplayReviews, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
@@ -310,16 +310,12 @@ function showSearchPanel(r: SearchResult) {
   chipPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 // Fill `target` with `text`, wrapping case-insensitive occurrences of `terms`
 // in <mark class="review-mark">. Review text is plain (no markdown), so build
 // the nodes directly rather than walking a rendered tree.
 function highlightInto(target: HTMLElement, text: string, terms: string[]) {
-  const uniq = [...new Set(terms.map((t) => t.trim().toLowerCase()).filter((t) => t.length >= 2))];
-  if (!uniq.length) { target.textContent = text; return; }
-  uniq.sort((a, b) => b.length - a.length); // longest first, so phrases win over their words
-  const re = new RegExp(uniq.map(escapeRegExp).join('|'), 'gi');
+  const re = compileMatchRegex(terms);
+  if (!re) { target.textContent = text; return; }
   let last = 0;
   for (let m = re.exec(text); m; m = re.exec(text)) {
     if (m.index > last) target.appendChild(document.createTextNode(text.slice(last, m.index)));
@@ -328,7 +324,6 @@ function highlightInto(target: HTMLElement, text: string, terms: string[]) {
     mark.textContent = m[0];
     target.appendChild(mark);
     last = m.index + m[0].length;
-    if (re.lastIndex === m.index) re.lastIndex++;
   }
   if (last < text.length) target.appendChild(document.createTextNode(text.slice(last)));
 }
