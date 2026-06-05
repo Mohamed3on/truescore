@@ -285,8 +285,19 @@ const saveHighlightsCache = () => {
   } catch {}
 };
 
-const liveNewestHeadId = (): string | null =>
-  Object.keys(scores.newest.reviewMap)[0] || null;
+// The newest review we pulled, by timestamp — NOT Object.keys()[0]. The disk
+// cache restore pre-seeds newest.reviewMap with the cached (older) reviews and
+// the live refetch appends genuinely-newer ones after them, so insertion order
+// would report the stale cached head as "newest" even after fresh reviews land.
+const liveNewestHeadId = (): string | null => {
+  let bestId: string | null = null;
+  let bestTs = -Infinity;
+  for (const id in scores.newest.reviewMap) {
+    const ts = scores.newest.reviewMap[id].timestamp ?? -Infinity;
+    if (ts > bestTs) { bestTs = ts; bestId = id; }
+  }
+  return bestId;
+};
 
 const liveNewestHeadReview = (): Review | null => {
   const id = liveNewestHeadId() ?? cachedScoreState?.newestHeadId;
@@ -377,7 +388,7 @@ const persistScoreCacheIfReady = () => {
   const newestIds = Object.keys(scores.newest.reviewMap);
   const entry: ScoreCacheEntry = {
     ts: Date.now(),
-    newestHeadId: newestIds[0],
+    newestHeadId: liveNewestHeadId() ?? newestIds[0],
     relevant: scores.relevant.reviewData,
     newest: scores.newest.reviewData,
     merged: mergedRD,
