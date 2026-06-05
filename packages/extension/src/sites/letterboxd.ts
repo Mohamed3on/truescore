@@ -1,6 +1,7 @@
 import { cacheGet, cacheSet } from '../shared/cache';
+import { geminiSummarize } from '../shared/review-summary';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
-import { addCommas, el } from '../shared/utils';
+import { addCommas, el, renderMarkdownInline } from '../shared/utils';
 
 // =============================================================================
 // Configuration
@@ -9,8 +10,10 @@ const CONFIG = {
   CACHE_EXPIRY_MS: 7 * 24 * 60 * 60 * 1000, // 1 week
   RECENT_RATINGS_CACHE_MS: 12 * 60 * 60 * 1000, // 12 hours
   SIMILAR_PICKS_CACHE_MS: 7 * 24 * 60 * 60 * 1000, // 1 week
+  SUMMARY_CACHE_MS: 7 * 24 * 60 * 60 * 1000, // 1 week
   RUNTIME_TOLERANCE: 10, // ±10 minutes
   MAX_SIMILAR_PAGES: 3,
+  RECENT_REVIEW_PAGES: 8, // reviews/by/added pages scanned for AI summary text
   MAX_CONCURRENCY: 10,
   DEBUG: false,
 };
@@ -142,6 +145,73 @@ const STYLES = `
   .lbx-dot-done { background: #00e054; }
   .lbx-dot-active { background: #40bcf4; }
   .lbx-dot-pending { background: #456; }
+  .lbx-summary {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #456;
+  }
+  .lbx-summary-head {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin: 0 0 .7rem 0;
+  }
+  .lbx-summary-header {
+    font-size: .85rem;
+    font-weight: 600;
+    color: #9ab;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    margin: 0;
+  }
+  .lbx-summary-header::before {
+    content: '◈';
+    color: #00e054;
+    margin-right: .4em;
+    font-size: .9em;
+  }
+  .lbx-summary-relink {
+    margin-left: auto;
+    color: #567;
+    font-size: .75rem;
+    cursor: pointer;
+    user-select: none;
+    transition: color .15s ease;
+  }
+  .lbx-summary-relink:hover { color: #9ab; }
+  .lbx-summary-btn {
+    background: transparent;
+    border: 1px solid #456;
+    color: #9ab;
+    font: inherit;
+    font-size: .85rem;
+    font-weight: 600;
+    padding: .4rem .85rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease;
+  }
+  .lbx-summary-btn:hover:not(:disabled) { border-color: #00e054; color: #00e054; }
+  .lbx-summary-btn:disabled { opacity: .55; cursor: default; }
+  .lbx-summary-body {
+    color: #9ab;
+    font-size: .9rem;
+    line-height: 1.5;
+  }
+  .lbx-summary-sec + .lbx-summary-sec { margin-top: .65rem; }
+  .lbx-summary-label {
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: #678;
+    margin-bottom: .12rem;
+  }
+  .lbx-summary-text strong { color: #cde; font-weight: 600; }
+  .lbx-summary-text em { color: #bcd; font-style: italic; }
+  .lbx-summary-text a { color: #40bcf4; text-decoration: none; }
+  .lbx-summary-text a:hover { text-decoration: underline; }
+  .lbx-summary-error { color: #e54; font-size: .85rem; }
 `;
 
 function injectStyles() {
@@ -258,6 +328,8 @@ const getCachedRecentRatings = (slug: string) => cacheGet(`lbx_recent_${slug}`, 
 const setCachedRecentRatings = (slug: string, data: any) => cacheSet(`lbx_recent_${slug}`, data);
 const getCachedSimilarPicks = (slug: string) => cacheGet(`lbx_similar_v2_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
 const setCachedSimilarPicks = (slug: string, data: any) => cacheSet(`lbx_similar_v2_${slug}`, data);
+const getCachedSummary = (slug: string) => cacheGet(`lbx_summary_${slug}`, CONFIG.SUMMARY_CACHE_MS);
+const setCachedSummary = (slug: string, data: any) => cacheSet(`lbx_summary_${slug}`, data);
 
 (function purgeOrphanedCacheKeys() {
   if (localStorage.getItem('lbx_purged_v2')) return;
@@ -435,6 +507,119 @@ async function getRecentRatingsSummary(slug: string | null = null) {
 
   setCachedRecentRatings(effectiveSlug, recentRatings);
   return recentRatings;
+}
+
+// =============================================================================
+// Recent-review AI summary
+// =============================================================================
+
+type FilmSummary = { summary: string; recommendation: string; dislikes?: string; audience: string };
+
+const SUMMARY_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    summary: { type: 'string' as const, description: '1 to 2 sentences on the overall sentiment and what reviewers make of the film.' },
+    recommendation: { type: 'string' as const, description: 'The verdict: is it worth watching, and how strongly do reviewers recommend it.' },
+    dislikes: { type: 'string' as const, description: "What people most commonly didn't enjoy. Empty string if there is no shared complaint." },
+    audience: { type: 'string' as const, description: "Who it's for and who it's not for." },
+  },
+  required: ['summary', 'recommendation', 'audience'],
+};
+
+const SUMMARY_PROMPT = `Summarize these recent Letterboxd reviews for someone deciding whether to watch this film. Be concise and specific to THIS film (performances, direction, writing, pacing, tone). Only use points raised by multiple reviewers; ignore Letterboxd in-jokes and contentless one-liners. You may use **bold** for emphasis. Each field is one or two short sentences, no preamble.`;
+
+/** Fetches recent-review prose (skipping rating-only entries) for summarization */
+async function fetchRecentReviewTexts(slug: string): Promise<string[]> {
+  const parser = new DOMParser();
+  const pages = await Promise.all(
+    Array.from({ length: CONFIG.RECENT_REVIEW_PAGES }, (_, i) =>
+      throttledFetch(`https://letterboxd.com/film/${slug}/reviews/by/added/page/${i + 1}/`, { credentials: 'include' })
+        .then((r) => r.text())
+        .catch(() => '')
+    )
+  );
+  const texts: string[] = [];
+  const seen = new Set<string>();
+  for (const html of pages) {
+    const doc = parser.parseFromString(html, 'text/html');
+    doc.querySelectorAll('.js-review-body').forEach((body) => {
+      const text = body.textContent?.trim().replace(/\s+/g, ' ') ?? '';
+      if (text.length >= 20 && !seen.has(text)) { seen.add(text); texts.push(text); }
+    });
+  }
+  return texts;
+}
+
+/** Renders the structured summary as labeled sections (inline markdown per field) */
+function renderSummary(body: HTMLElement, data: FilmSummary) {
+  body.textContent = '';
+  const sections: [string, string | undefined][] = [
+    ['Summary', data.summary],
+    ['Verdict', data.recommendation],
+    ['Didn’t enjoy', data.dislikes],
+    ['Who it’s for', data.audience],
+  ];
+  for (const [label, value] of sections) {
+    if (!value?.trim()) continue;
+    const sec = el('div', 'lbx-summary-sec');
+    sec.append(el('div', 'lbx-summary-label', label));
+    const text = el('div', 'lbx-summary-text');
+    renderMarkdownInline(text, value);
+    sec.append(text);
+    body.append(sec);
+  }
+}
+
+/** Mounts the recent-review AI summary section after `anchor`; returns the section. */
+function displaySummary(slug: string, anchor: HTMLElement): HTMLElement {
+  const section = el('section', 'lbx-summary');
+  const head = el('div', 'lbx-summary-head');
+  head.append(el('h3', 'lbx-summary-header', 'Recent Reviews'));
+  const body = el('div', 'lbx-summary-body');
+  section.append(head, body);
+  anchor.after(section);
+
+  let relink: HTMLElement | null = null;
+  const showRelink = () => {
+    if (relink) return;
+    relink = el('span', 'lbx-summary-relink', '↻ Re-summarize');
+    relink.addEventListener('click', () => summarize());
+    head.append(relink);
+  };
+
+  const showButton = (label: string) => {
+    body.textContent = '';
+    const btn = el('button', 'lbx-summary-btn', label) as HTMLButtonElement;
+    btn.addEventListener('click', () => summarize());
+    body.append(btn);
+  };
+
+  const summarize = async () => {
+    relink?.remove();
+    relink = null;
+    body.textContent = '';
+    body.append(el('div', 'lbx-progress', '⏳ Reading recent reviews…'));
+    try {
+      const texts = await fetchRecentReviewTexts(slug);
+      if (!texts.length) throw new Error('No written reviews found yet.');
+      body.textContent = '';
+      body.append(el('div', 'lbx-progress', '✦ Summarizing…'));
+      const data = (await geminiSummarize(texts, SUMMARY_PROMPT, SUMMARY_SCHEMA)) as FilmSummary;
+      setCachedSummary(slug, data);
+      renderSummary(body, data);
+      showRelink();
+    } catch (e: any) {
+      body.textContent = '';
+      body.append(el('div', 'lbx-summary-error', e.message));
+      showButton('↻ Try again');
+    }
+  };
+
+  const cached = getCachedSummary(slug) as FilmSummary | null;
+  if (cached?.summary) { renderSummary(body, cached); showRelink(); }
+  else showButton('✦ Summarize recent reviews');
+
+  return section;
 }
 
 // =============================================================================
@@ -810,8 +995,11 @@ async function run(ratings: number[]) {
     return recentRatings;
   });
 
+  // AI summary of recent reviews sits between the trending line and Similar Picks.
+  const summaryAnchor = currentSlug ? displaySummary(currentSlug, trendingElement) : trendingElement;
+
   const similarPicksPromise = currentSlug && currentRuntime
-    ? displaySimilarPicks(currentSlug, scorePromise, currentRuntime, trendingElement, recentRatingsPromise)
+    ? displaySimilarPicks(currentSlug, scorePromise, currentRuntime, summaryAnchor, recentRatingsPromise)
     : Promise.resolve();
 
   await Promise.all([recentRatingsPromise, similarPicksPromise]);
