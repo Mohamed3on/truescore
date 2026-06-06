@@ -21,6 +21,7 @@ import { summarize, ask } from './gemini';
 import { fetchPreviewBundle, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, scoreHighlight } from './highlights';
 import { cache, type CacheEntry } from './cache';
+import { createInflight } from './inflight';
 import index from './index.html';
 
 const json = (v: any, status = 200) =>
@@ -91,9 +92,9 @@ function ndjsonStream<E extends { type: string }>(producer: (write: (event: E) =
 
 const PORT = Number(process.env.PORT || 3000);
 
-const previewInflight = new Map<string, Promise<PreviewBundle>>();
-const revalidateInflight = new Map<string, Promise<void>>();
-const highlightsRecomputeInflight = new Map<string, Promise<void>>();
+const previewInflight = createInflight<PreviewBundle>();
+const revalidateInflight = createInflight<void>();
+const highlightsRecomputeInflight = createInflight<void>();
 
 const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
 
@@ -127,9 +128,7 @@ async function recomputeHighlights(featureId: string, name: string): Promise<voi
 // cached `totalReviewsAtCache`, and re-score if Google has new reviews.
 // Highlights are recomputed in the background only when drift exceeds 1%.
 function revalidate(featureId: string, name: string, resolvedUrl: string): Promise<void> {
-  const existing = revalidateInflight.get(featureId);
-  if (existing) return existing;
-  const p = (async () => {
+  return revalidateInflight.run(featureId, async () => {
     const bundle = await getOrFetchPreviewBundle(featureId, resolvedUrl).catch(() => null);
     const histogram = bundle?.histogram ?? null;
     const currentTotal = histogram ? histogram.reduce((a, b) => a + b, 0) : null;
@@ -144,16 +143,15 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
 
     if (hadHighlights && prevTotal != null) {
       const drift = Math.abs(currentTotal - prevTotal) / prevTotal;
-      if (drift > HIGHLIGHTS_DRIFT_THRESHOLD && !highlightsRecomputeInflight.has(featureId)) {
-        const hp = recomputeHighlights(featureId, name)
-          .catch((e) => console.error(`[recompute-highlights] ${name} (${featureId}):`, e))
-          .finally(() => highlightsRecomputeInflight.delete(featureId));
-        highlightsRecomputeInflight.set(featureId, hp);
+      // run() no-ops if a recompute is already in flight; streamCachedLookup
+      // peeks the same key to await it. The catch keeps that await from throwing.
+      if (drift > HIGHLIGHTS_DRIFT_THRESHOLD) {
+        highlightsRecomputeInflight.run(featureId, () =>
+          recomputeHighlights(featureId, name).catch((e) =>
+            console.error(`[recompute-highlights] ${name} (${featureId}):`, e)));
       }
     }
-  })().finally(() => revalidateInflight.delete(featureId));
-  revalidateInflight.set(featureId, p);
-  return p;
+  });
 }
 
 // Cache only on full success so the next request retries cleanly when any
@@ -234,7 +232,7 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
       // the stream open until it lands so the chips stay in sync with the
       // refreshed score. Recompute is in-flight only on actual drift, so
       // this path is rare and otherwise zero-cost.
-      const hp = highlightsRecomputeInflight.get(featureId);
+      const hp = highlightsRecomputeInflight.peek(featureId);
       if (hp) {
         await hp;
         const post = cache.get(featureId);
@@ -295,19 +293,11 @@ function getOrFetchPreviewBundle(featureId: string, url: string): Promise<Previe
   if (existing?.histogram && existing.meta && cache.histogramFresh(existing)) {
     return Promise.resolve({ histogram: existing.histogram, meta: existing.meta });
   }
-  const inflight = previewInflight.get(featureId);
-  if (inflight) return inflight;
-  const p = (async () => {
-    try {
-      const bundle = await fetchPreviewBundle(url);
-      await cache.putPreviewBundle(featureId, bundle);
-      return bundle;
-    } finally {
-      previewInflight.delete(featureId);
-    }
-  })();
-  previewInflight.set(featureId, p);
-  return p;
+  return previewInflight.run(featureId, async () => {
+    const bundle = await fetchPreviewBundle(url);
+    await cache.putPreviewBundle(featureId, bundle);
+    return bundle;
+  });
 }
 
 Bun.serve({
