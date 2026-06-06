@@ -54,6 +54,21 @@ export const sortedDisplayReviews = (reviews: Review[]): Review[] =>
     .filter((r) => r.text.length >= 10)
     .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
 
+// '★'×n + '☆'×(5−n) — review stars and the 1–5 value rating both render it.
+export const starString = (stars: number): string =>
+  '★'.repeat(stars) + '☆'.repeat(Math.max(0, 5 - stars));
+
+// Order topic chips for display: those scoring at-or-above the place's overall
+// score first, then by impact = (pct/100)·|pct/100|·count — polarity-signed,
+// weighted by how many reviews back the chip. Returns a new array. Shared
+// because web and extension reverse-engineered the identical ordering.
+export type ChipLike = { score?: { scorePct: number } | null; count: number };
+export const sortChipsByImpact = <T extends ChipLike>(chips: T[], overallPct: number): T[] => {
+  const impact = (c: T) => { const r = (c.score?.scorePct ?? 0) / 100; return r * Math.abs(r) * c.count; };
+  const above = (c: T) => (c.score?.scorePct ?? 0) >= overallPct;
+  return [...chips].sort((a, b) => (Number(above(b)) - Number(above(a))) || (impact(b) - impact(a)));
+};
+
 // Union review lists into one set, deduped by reviewId (last write wins) — the
 // fold that pairs with the collection loop: relevant∪newest, or an OR-search
 // fan-out, collapsed to a single deduped list.

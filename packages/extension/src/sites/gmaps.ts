@@ -13,7 +13,9 @@ import {
   PAGE_SIZE,
   parseOrQuery,
   reviewAge,
+  sortChipsByImpact,
   sortedDisplayReviews,
+  starString,
   statsForReviews,
   textReviewsFor,
   timeAgo,
@@ -724,16 +726,8 @@ const renderHighlights = () => {
     btn.textContent = 'Refresh';
   }
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
-  const weight = (h: Highlight) => {
-    const r = (h.score?.scorePct ?? 0) / 100;
-    return r * Math.abs(r) * h.count;
-  };
   const isAbove = (h: Highlight) => (h.score?.scorePct ?? 0) >= overall;
-  const sorted = [...highlightsState.items].sort((a, b) => {
-    const above = Number(isAbove(b)) - Number(isAbove(a));
-    if (above !== 0) return above;
-    return weight(b) - weight(a);
-  });
+  const sorted = sortChipsByImpact(highlightsState.items, overall);
   for (const h of sorted) {
     const chip = el('button', 'rc-chip') as HTMLButtonElement;
     chip.type = 'button';
@@ -789,7 +783,7 @@ const highlightTerms = (root: HTMLElement, terms: string[]) => {
 const reviewCardEl = (r: Review, fallbackTerms: string[] = []): HTMLElement => {
   const card = el('div', 'rc-review');
   const meta = el('div', 'rc-review-meta');
-  const stars = el('span', 'rc-review-stars', '★'.repeat(r.stars) + '☆'.repeat(Math.max(0, 5 - r.stars)));
+  const stars = el('span', 'rc-review-stars', starString(r.stars));
   const age = el('span', 'rc-review-age', reviewAge(r.timestamp));
   meta.appendChild(stars);
   meta.appendChild(age);
@@ -1336,7 +1330,7 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   }
   if (result.valueForMoney) {
     const v = Math.max(1, Math.min(5, result.valueForMoney));
-    panel.appendChild(el('div', 'rc-value', `Value for money: ${'★'.repeat(v)}${'☆'.repeat(5 - v)}`));
+    panel.appendChild(el('div', 'rc-value', `Value for money: ${starString(v)}`));
   }
   if (!result.highlights?.length && !result.verdict) {
     panel.textContent = 'No highlights found';

@@ -1,6 +1,6 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
 import {
-  compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, sortedDisplayReviews, textReviewsFor, timeAgo,
+  compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
@@ -143,18 +143,7 @@ function chipClass(pct: number, overall: number) {
 
 function renderHighlights(highlights: UiChip[], sort = false) {
   while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
-  const weight = (h: UiChip) => {
-    const r = (h.score?.scorePct ?? 0) / 100;
-    return r * Math.abs(r) * h.count;
-  };
-  const isAbove = (h: UiChip) => (h.score?.scorePct ?? 0) >= currentMergedPct;
-  const list = sort
-    ? [...highlights].sort((a, b) => {
-        const above = Number(isAbove(b)) - Number(isAbove(a));
-        if (above !== 0) return above;
-        return weight(b) - weight(a);
-      })
-    : highlights;
+  const list = sort ? sortChipsByImpact(highlights, currentMergedPct) : highlights;
   for (const h of list) {
     const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
     const btn = document.createElement('button');
@@ -210,10 +199,6 @@ function setActiveChip(token?: string) {
   highlightsList.querySelectorAll<HTMLButtonElement>('.chip').forEach((c) => {
     c.classList.toggle('active', c.dataset.token === token);
   });
-}
-
-function starString(stars: number) {
-  return '★'.repeat(stars) + '☆'.repeat(Math.max(0, 5 - stars));
 }
 
 function setPanelTitle(label: string, scorePct: number, trusted: number, total: number) {
