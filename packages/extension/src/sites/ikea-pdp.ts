@@ -1,5 +1,6 @@
 import { addCommas, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
+import { setupSpaInjector } from '../shared/spa-injector';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 
@@ -91,31 +92,22 @@ const buildInsightsPanel = (data: any) => {
   return host;
 };
 
-let generation = 0;
-
 const cleanup = () => {
-  document.querySelectorAll('.nps-insights').forEach(el => el.remove());
-  document.querySelectorAll('.nps-score-badge').forEach(el => el.remove());
+  document.querySelectorAll('.nps-insights').forEach((el) => el.remove());
+  document.querySelectorAll('.nps-score-badge').forEach((el) => el.remove());
 };
 
-const init = async () => {
-  const locale = getLocale();
-  const itemNo = extractItemNo();
-  if (!locale || !itemNo) return;
-
-  const gen = ++generation;
-  cleanup();
-
-  const data = await fetchRating(locale.country, locale.lang, itemNo);
-  if (gen !== generation || !data) return;
-
-  const scoreData = getScore(data);
-  const panel = buildInsightsPanel(data);
-
-  const obs = new MutationObserver(() => {
-    if (gen !== generation) { obs.disconnect(); return; }
-    obs.disconnect();
-
+setupSpaInjector({
+  match: () => getLocale() && extractItemNo(),
+  load: async () => {
+    const locale = getLocale();
+    const itemNo = extractItemNo();
+    if (!locale || !itemNo) return null;
+    const data = await fetchRating(locale.country, locale.lang, itemNo);
+    if (!data) return null;
+    return { scoreData: getScore(data), panel: buildInsightsPanel(data) };
+  },
+  inject: ({ scoreData, panel }) => {
     if (scoreData) {
       const ratingBtn = document.querySelector('button.pipf-rating');
       if (ratingBtn && !ratingBtn.querySelector('.nps-score-badge')) appendScore(ratingBtn, scoreData);
@@ -124,21 +116,6 @@ const init = async () => {
       const ugc = document.querySelector('.js-ugc-container');
       if (ugc) ugc.after(panel);
     }
-
-    obs.observe(document.body, { childList: true, subtree: true });
-  });
-
-  // Initial injection
-  if (scoreData) {
-    const ratingBtn = document.querySelector('button.pipf-rating');
-    if (ratingBtn) appendScore(ratingBtn, scoreData);
-  }
-  if (panel) {
-    const ugc = document.querySelector('.js-ugc-container');
-    if (ugc) ugc.after(panel);
-  }
-
-  obs.observe(document.body, { childList: true, subtree: true });
-};
-
-init();
+  },
+  cleanup,
+});
