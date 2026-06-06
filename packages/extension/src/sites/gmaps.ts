@@ -1,20 +1,19 @@
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX } from '../shared/cache-keys';
+import { createScoreStore, type Period } from '../shared/score-store';
 import {
   chipsFromPreview,
   collectSearchTerms,
   collectSort,
   collectToken,
   compileMatchRegex,
-  isTrusted,
   overallPctFromHistogram,
   overallScoreFromHistogram,
   PAGE_SIZE,
   parseOrQuery,
   reviewAge,
   sortedDisplayReviews,
-  starScore,
   statsForReviews,
   textReviewsFor,
   timeAgo,
@@ -25,18 +24,11 @@ import {
   type Transport,
 } from '@truescore/gmaps-shared';
 
-const TIME_PERIODS = ['total', 'inPastYear', 'inPastMonth'] as const;
 const SORT_KEYS = ['relevant', 'newest'] as const;
 const MIN_PAGES_BEFORE_STABILIZE = 2;
 const HIGHLIGHT_FETCH_CONCURRENCY = 3;
 
-type Period = (typeof TIME_PERIODS)[number];
-type ReviewData = {
-  reviewsScores: Record<Period, number>;
-  trustedReviews: Record<Period, number>;
-  totalReviews: Record<Period, number>;
-};
-type SortState = { reviewMap: Record<string, Review>; reviewData: ReviewData; isFetching: boolean; done: boolean; cursor: string; pageCount: number };
+type FetchState = { isFetching: boolean; done: boolean; cursor: string; pageCount: number };
 type SummaryResult = { highlights?: { text: string; sentiment: string }[]; verdict?: string; valueForMoney?: number };
 type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
 type CardEls = {
@@ -152,36 +144,12 @@ const bridgeStorage = (() => {
   };
 })();
 
-type ScoreCacheEntry = {
-  ts: number;
-  // Top of the "newest" sort at cache time. If Google's current page-1 newest
-  // first review ID still matches, no new reviews surfaced — cache is fresh.
-  // Catches the case histogram totals miss (3 added + 3 deleted = same total).
-  newestHeadId?: string;
-  relevant: ReviewData;
-  newest: ReviewData;
-  merged: ReviewData;
-  reviews?: Record<string, Review>;
-  relevantIds?: string[];
-  newestIds?: string[];
-};
-type FullScoreCacheEntry = ScoreCacheEntry & {
-  reviews: Record<string, Review>;
-  relevantIds: string[];
-  newestIds: string[];
-  newestHeadId: string;
-};
-const isFullyHydrated = (e: ScoreCacheEntry | null): e is FullScoreCacheEntry =>
-  !!e?.reviews && !!e?.relevantIds && !!e?.newestIds && !!e?.newestHeadId;
-let cachedScoreState: ScoreCacheEntry | null = null;
-// Set when reconcileWithLiveHead confirms the cache is fresh and aborts the
-// speculative refetches. Tells persistScoreCacheIfReady to skip — otherwise a
-// partial reviewMap from the aborted-mid-pagination fetch would clobber the
-// known-good cache. Reset on featureId change.
-let scoreCacheServedFresh = false;
-const loadScoreCache = (featureId: string) => bridgeStorage.get<ScoreCacheEntry>(`${SCORE_CACHE_PREFIX}${featureId}`);
-const saveScoreCache = (featureId: string, entry: ScoreCacheEntry) =>
-  bridgeStorage.set(`${SCORE_CACHE_PREFIX}${featureId}`, entry);
+// Owns the review data, per-period aggregates, cached entry, and freshness
+// verdict — the hydrate → ingest → reconcile → persist cycle that produced the
+// insertion-order head bug. Storage is the gmaps-bridge chrome.storage proxy;
+// the clock is Date.now. gmaps keeps the fetch lifecycle (fetchState, below)
+// and all DOM.
+const store = createScoreStore({ storage: bridgeStorage, now: Date.now });
 
 let highlightsState: HighlightsCache | null = null;
 // featureId whose highlights are currently being computed — a per-place mutex,
@@ -276,7 +244,7 @@ const slimHighlightItems = <T extends { items: any[] }>(state: T): T => ({
 const saveHighlightsCache = () => {
   try {
     if (highlightsState) {
-      const head = liveNewestHeadId();
+      const head = store.newestHeadId();
       if (head) highlightsState.newestHeadId = head;
       localStorage.setItem(getHighlightsCacheKey(), JSON.stringify(slimHighlightItems(highlightsState)));
     } else {
@@ -285,25 +253,6 @@ const saveHighlightsCache = () => {
   } catch {}
 };
 
-// The newest review we pulled, by timestamp — NOT Object.keys()[0]. The disk
-// cache restore pre-seeds newest.reviewMap with the cached (older) reviews and
-// the live refetch appends genuinely-newer ones after them, so insertion order
-// would report the stale cached head as "newest" even after fresh reviews land.
-const liveNewestHeadId = (): string | null => {
-  let bestId: string | null = null;
-  let bestTs = -Infinity;
-  for (const id in scores.newest.reviewMap) {
-    const ts = scores.newest.reviewMap[id].timestamp ?? -Infinity;
-    if (ts > bestTs) { bestTs = ts; bestId = id; }
-  }
-  return bestId;
-};
-
-const liveNewestHeadReview = (): Review | null => {
-  const id = liveNewestHeadId() ?? cachedScoreState?.newestHeadId;
-  if (!id) return null;
-  return scores.newest.reviewMap[id] ?? cachedScoreState?.reviews?.[id] ?? null;
-};
 
 // Legacy rc_highlights_* entries persisted full review bodies; one place can
 // hit 3MB and crowd out everything else. The substring gate skips the parse
@@ -323,98 +272,20 @@ const liveNewestHeadReview = (): Review | null => {
   } catch {}
 })();
 
-const makeReviewData = (): ReviewData => ({
-  reviewsScores: { total: 0, inPastYear: 0, inPastMonth: 0 },
-  trustedReviews: { total: 0, inPastYear: 0, inPastMonth: 0 },
-  totalReviews: { total: 0, inPastYear: 0, inPastMonth: 0 },
-});
-
-const makeState = (): SortState => ({ reviewMap: {}, reviewData: makeReviewData(), isFetching: false, done: false, cursor: '', pageCount: 0 });
-const scores: Record<SortKey, SortState> = { relevant: makeState(), newest: makeState() };
+const makeFetchState = (): FetchState => ({ isFetching: false, done: false, cursor: '', pageCount: 0 });
+const fetchState: Record<SortKey, FetchState> = { relevant: makeFetchState(), newest: makeFetchState() };
 
 const toPct = (ratio: number) => Math.round(ratio * 100);
-const getScorePercentage = (sortKey: SortKey) => {
-  const live = scores[sortKey].reviewData;
-  if (live.totalReviews.total === 0 && cachedScoreState) {
-    const c = cachedScoreState[sortKey];
-    return c.reviewsScores[currentOption] / c.trustedReviews[currentOption] || 0;
-  }
-  return live.reviewsScores[currentOption] / live.trustedReviews[currentOption] || 0;
-};
-const getRoundedPct = (sortKey: SortKey) => toPct(getScorePercentage(sortKey));
-
-const getMergedStats = () => {
-  const merged = mergeReviewMaps();
-  const liveCount = Object.keys(merged).length;
-
-  if (liveCount === 0 && cachedScoreState) {
-    const m = cachedScoreState.merged;
-    const trusted = m.trustedReviews[currentOption];
-    return {
-      totalCount: m.totalReviews.total,
-      totalAll: m.totalReviews[currentOption],
-      totalTrusted: trusted,
-      mergedPct: trusted ? m.reviewsScores[currentOption] / trusted : 0,
-    };
-  }
-
-  let totalAll = 0, totalTrusted = 0, totalScore = 0;
-  for (const id in merged) {
-    const r = merged[id];
-    if (!classifyTimePeriod(r.timestamp)[currentOption]) continue;
-    totalAll++;
-    if (isTrusted(r.reviewerReviewCount)) {
-      totalTrusted++;
-      totalScore += starScore(r.stars);
-    }
-  }
-  return {
-    totalCount: liveCount,
-    totalAll,
-    totalTrusted,
-    mergedPct: totalTrusted ? totalScore / totalTrusted : 0,
-  };
-};
-
-const persistScoreCacheIfReady = () => {
-  const featureId = getFeatureId();
-  if (!featureId) return;
-  if (scoreCacheServedFresh && isFullyHydrated(cachedScoreState)) return;
-  if (!scores.relevant.done || !scores.newest.done) return;
-  const liveMerged = mergeReviewMaps();
-  if (!Object.keys(liveMerged).length) return;
-  const mergedRD = makeReviewData();
-  for (const id in liveMerged) processReview(liveMerged[id], mergedRD);
-  const newestIds = Object.keys(scores.newest.reviewMap);
-  const entry: ScoreCacheEntry = {
-    ts: Date.now(),
-    newestHeadId: liveNewestHeadId() ?? newestIds[0],
-    relevant: scores.relevant.reviewData,
-    newest: scores.newest.reviewData,
-    merged: mergedRD,
-    reviews: liveMerged,
-    relevantIds: Object.keys(scores.relevant.reviewMap),
-    newestIds,
-  };
-  if (isFullyHydrated(cachedScoreState) &&
-      cachedScoreState.newestHeadId === entry.newestHeadId &&
-      cachedScoreState.merged.totalReviews.total === entry.merged.totalReviews.total) {
-    return;
-  }
-  cachedScoreState = entry;
-  saveScoreCache(featureId, entry).catch((e) => console.warn('[gmaps] persist score cache failed', e));
-};
 
 const resetScores = () => {
   staleHistogramKey = lastHistogramKey;
   lastHistogramKey = null;
+  store.reset();
   for (const key of SORT_KEYS) {
-    scores[key] = makeState();
+    fetchState[key] = makeFetchState();
     if (abortControllers[key]) { abortControllers[key]!.abort(); abortControllers[key] = null; }
   }
   if (fullPctObserver) { fullPctObserver.disconnect(); fullPctObserver = null; }
-  cachedScoreState = null;
-  scoreCacheServedFresh = false;
   stopAutoScroll();
 };
 
@@ -523,7 +394,7 @@ const updateHighlightsStaleBadge = () => {
   const badge = cardEls.highlightsStale;
   if (!badge) return;
   const cached = highlightsState?.newestHeadId;
-  const live = liveNewestHeadId();
+  const live = store.newestHeadId();
   const stale = cached != null && live != null && cached !== live && !!highlightsState?.items.length;
   badge.style.display = stale ? '' : 'none';
 };
@@ -531,14 +402,13 @@ const updateHighlightsStaleBadge = () => {
 // Histogram totals lie when Google trims old reviews while new ones arrive
 // (same total, different feed); the top reviewId of the newest sort doesn't.
 const reconcileWithLiveHead = (liveHeadId: string) => {
-  const cachedHead = cachedScoreState?.newestHeadId;
-  if (cachedHead && cachedHead !== liveHeadId) cachedScoreState = null;
-  else if (cachedHead === liveHeadId && isFullyHydrated(cachedScoreState)) {
-    scoreCacheServedFresh = true;
+  // store.reconcile drops a stale cache or marks a matching one served-fresh; on
+  // fresh we abort both speculative refetches (the fetch lifecycle stays here).
+  if (store.reconcile(liveHeadId) === 'fresh') {
     for (const k of SORT_KEYS) {
-      if (scores[k].isFetching) abortControllers[k]?.abort();
-      scores[k].isFetching = false;
-      scores[k].done = true;
+      if (fetchState[k].isFetching) abortControllers[k]?.abort();
+      fetchState[k].isFetching = false;
+      fetchState[k].done = true;
       abortControllers[k] = null;
     }
   }
@@ -678,9 +548,9 @@ const computeHighlights = async (force = false) => {
   // the regular score requests on the same google.com connection.
   const pausedSorts: SortKey[] = [];
   for (const k of SORT_KEYS) {
-    if (scores[k].isFetching) {
+    if (fetchState[k].isFetching) {
       abortControllers[k]?.abort();
-      scores[k].isFetching = false;
+      fetchState[k].isFetching = false;
       pausedSorts.push(k);
     }
   }
@@ -728,40 +598,9 @@ const computeHighlights = async (force = false) => {
     if (highlightsComputingFor === featureId) highlightsComputingFor = null;
     // Resume parent's main-score fetches that we paused.
     for (const k of pausedSorts) {
-      if (!scores[k].done) fetchAllReviews(k);
+      if (!fetchState[k].done) fetchAllReviews(k);
     }
   }
-};
-
-const classifyTimePeriod = (timestamp: number | null): Record<Period, boolean> => {
-  if (!timestamp) return { total: true, inPastYear: false, inPastMonth: false };
-  const t = timestamp / 1000;
-  const now = Date.now();
-  return { total: true, inPastYear: t >= now - 365 * 86400000, inPastMonth: t >= now - 30 * 86400000 };
-};
-
-const processReview = (review: Review, rd: ReviewData) => {
-  const trusted = isTrusted(review.reviewerReviewCount);
-  const periods = classifyTimePeriod(review.timestamp);
-  const contribution = starScore(review.stars);
-  for (const period of TIME_PERIODS) {
-    if (!periods[period]) continue;
-    rd.totalReviews[period]++;
-    if (trusted) {
-      rd.trustedReviews[period]++;
-      rd.reviewsScores[period] += contribution;
-    }
-  }
-};
-
-const mergeReviewMaps = (): Record<string, Review> => {
-  const merged: Record<string, Review> = {};
-  for (const key of SORT_KEYS) {
-    for (const id in scores[key].reviewMap) {
-      if (!merged[id]) merged[id] = scores[key].reviewMap[id];
-    }
-  }
-  return merged;
 };
 
 // All Gemini work happens server-side (truescore-web) so the model, prompts,
@@ -806,9 +645,9 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
 
 const fetchAllReviews = async (sortKey: SortKey) => {
   const featureId = getFeatureId();
-  if (!featureId || scores[sortKey].isFetching) return;
+  if (!featureId || fetchState[sortKey].isFetching) return;
 
-  const state = scores[sortKey];
+  const state = fetchState[sortKey];
   state.isFetching = true;
   state.done = false;
   const controller = new AbortController();
@@ -817,28 +656,26 @@ const fetchAllReviews = async (sortKey: SortKey) => {
   let lastPct: number | null = null;
   try {
     // Shared cursor loop; the extension keeps its own stop policy (period-aware
-    // stabilization on getRoundedPct, page-1 live-head reconcile) and per-review
-    // time-period bucketing in onPage, and pauses via the AbortSignal.
+    // stabilization on store.scorePct, page-1 live-head reconcile) and per-review
+    // time-period bucketing via store.ingest, and pauses via the AbortSignal.
     await collectSort(featureId, sortKey, tabTransport, {
       startCursor: state.cursor,
       signal: controller.signal,
       locale: localeFromDom(),
       stabilize: false,
       onPage: (_running, { index, nextCursor, pageReviews }) => {
-        for (const r of pageReviews) {
-          if (!state.reviewMap[r.reviewId]) { state.reviewMap[r.reviewId] = r; processReview(r, state.reviewData); }
-        }
+        store.ingest(sortKey, pageReviews);
         state.pageCount = index + 1;
         if (nextCursor) state.cursor = nextCursor;
         updateUI();
 
         if (sortKey === 'newest' && index === 0 && pageReviews[0]?.reviewId) {
           reconcileWithLiveHead(pageReviews[0].reviewId);
-          if (scoreCacheServedFresh) return 'stop';
+          if (store.servedFresh()) return 'stop';
         }
 
         if (state.pageCount >= MIN_PAGES_BEFORE_STABILIZE) {
-          const pct = getRoundedPct(sortKey);
+          const pct = toPct(store.scorePct(sortKey, currentOption));
           if (lastPct !== null && Math.abs(pct - lastPct) <= 1) return 'stop';
           lastPct = pct;
         }
@@ -851,12 +688,13 @@ const fetchAllReviews = async (sortKey: SortKey) => {
   state.done = true;
   abortControllers[sortKey] = null;
   updateUI();
-  persistScoreCacheIfReady();
   // Highlights compute automatically once both score sorts finish — after, not
   // during, so chip RPCs don't pause the hero metric. Wait for the in-flight
   // cloud hydrate first so a cloud hit (with summaries) isn't clobbered by a
   // redundant recompute; computeHighlights no-ops if highlights already exist.
-  if (scores.relevant.done && scores.newest.done) {
+  if (fetchState.relevant.done && fetchState.newest.done) {
+    const fid = getFeatureId();
+    if (fid) store.persistIfReady(`${SCORE_CACHE_PREFIX}${fid}`).catch((e) => console.warn('[gmaps] persist score cache failed', e));
     cloudHydratePromise.then(() => computeHighlights());
   }
 };
@@ -885,7 +723,7 @@ const renderHighlights = () => {
     btn.disabled = false;
     btn.textContent = 'Refresh';
   }
-  const overall = toPct(getMergedStats().mergedPct);
+  const overall = toPct(store.mergedStats(currentOption).mergedPct);
   const weight = (h: Highlight) => {
     const r = (h.score?.scorePct ?? 0) / 100;
     return r * Math.abs(r) * h.count;
@@ -1118,7 +956,7 @@ const renderLabelSearchResult = () => {
   const score = statsForReviews(reviews);
   // Color by how this query scores vs the place overall (like the chips / main
   // number); the % label itself stays absolute.
-  const overall = toPct(getMergedStats().mergedPct);
+  const overall = toPct(store.mergedStats(currentOption).mergedPct);
   const color = getDiffColor(score.scorePct - overall);
 
   res.style.display = 'block';
@@ -1400,11 +1238,11 @@ const createUIElements = () => {
 };
 
 const updateUI = () => {
-  const { totalCount, totalAll, totalTrusted, mergedPct } = getMergedStats();
+  const { totalCount, totalAll, totalTrusted, mergedPct } = store.mergedStats(currentOption);
   let anyFetching = false, allDone = true;
   for (const k of SORT_KEYS) {
-    if (scores[k].isFetching) anyFetching = true;
-    if (!scores[k].done) allDone = false;
+    if (fetchState[k].isFetching) anyFetching = true;
+    if (!fetchState[k].done) allDone = false;
   }
   if (!totalCount || !document.querySelector('.jANrlb')) return;
   if (!document.querySelector('#reviews-container')) createUIElements();
@@ -1425,10 +1263,9 @@ const updateUI = () => {
   } else {
     const mergedRound = toPct(mergedPct);
     els.pctEl.childNodes[0].textContent = `${mergedRound}%`;
-    const sortTotal = (k: SortKey) =>
-      scores[k].reviewData.totalReviews[currentOption] || cachedScoreState?.[k].totalReviews[currentOption] || 0;
-    const relLabel = sortTotal('relevant') ? `${getRoundedPct('relevant')}%` : '—';
-    const newLabel = sortTotal('newest') ? `${getRoundedPct('newest')}%` : '—';
+    const sortTotal = (k: SortKey) => store.sortTotal(k, currentOption);
+    const relLabel = sortTotal('relevant') ? `${toPct(store.scorePct('relevant', currentOption))}%` : '—';
+    const newLabel = sortTotal('newest') ? `${toPct(store.scorePct('newest', currentOption))}%` : '—';
     els.tooltip.textContent = `Relevant: ${relLabel} · Newest: ${newLabel}`;
 
     if (fullPct !== null) {
@@ -1462,7 +1299,7 @@ const updateUI = () => {
   }
 
   els.countEl.textContent = String(totalCount);
-  const headReview = liveNewestHeadReview();
+  const headReview = store.newestHeadReview();
   const parts = [
     totalAll > 0 ? `${totalTrusted} trusted of ${totalAll}` : '',
     headReview?.timestamp ? `newest review ${timeAgo(headReview.timestamp / 1000)}` : '',
@@ -1506,7 +1343,7 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   }
 };
 
-const collectReviewTexts = (): string[] => textReviewsFor(Object.values(mergeReviewMaps()));
+const collectReviewTexts = (): string[] => textReviewsFor(Object.values(store.mergedReviews()));
 
 const refreshSumBtnState = () => {
   const btn = cardEls.sumBtn;
@@ -1582,34 +1419,16 @@ const observer = new MutationObserver(() => {
     clearCardEls();
     startFetching();
     hydrateFromCloud(featureId);
-    // Skip if any live data already arrived — a stale disk read must not
-    // clobber a fresh in-memory result.
-    loadScoreCache(featureId).then((entry) => {
-      if (!entry || getFeatureId() !== featureId || cachedScoreState) return;
-      if (Object.keys(mergeReviewMaps()).length > 0) return;
-      cachedScoreState = entry;
-      if (isFullyHydrated(entry)) {
-        // Restore reviewData too — otherwise the live refetch's dedup-skip of
-        // cached reviews leaves them out of per-sort aggregates.
-        const pickFrom = (ids: string[]) => {
-          const out: Record<string, Review> = {};
-          for (const id of ids) {
-            const r = entry.reviews[id];
-            if (r) out[id] = r;
-          }
-          return out;
-        };
-        scores.relevant.reviewMap = pickFrom(entry.relevantIds);
-        scores.newest.reviewMap = pickFrom(entry.newestIds);
-        scores.relevant.reviewData = structuredClone(entry.relevant);
-        scores.newest.reviewData = structuredClone(entry.newest);
-      }
-      updateUI();
-    }).catch((e) => console.warn('[gmaps] load score cache failed', e));
+    // Skip if live data already arrived — a stale disk read must not clobber a
+    // fresh in-memory result. store.loadCache applies that guard, the still-
+    // current featureId check, and the reviewData restore internally.
+    store.loadCache(`${SCORE_CACHE_PREFIX}${featureId}`, () => getFeatureId() === featureId)
+      .then((hydrated) => { if (hydrated) updateUI(); })
+      .catch((e) => console.warn('[gmaps] load score cache failed', e));
   }
   if (!document.querySelector('#reviews-container')) {
     updateUI();
-    if (!scores.relevant.isFetching && !scores.relevant.done) startFetching();
+    if (!fetchState.relevant.isFetching && !fetchState.relevant.done) startFetching();
   }
 });
 
