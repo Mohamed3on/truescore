@@ -91,6 +91,20 @@ export const parseOrQuery = (query: string): string[] =>
     .filter(Boolean)
     .slice(0, MAX_OR_TERMS);
 
+// Strip combining diacritics so accented spellings fold to ASCII: "açaí" →
+// "acai", "jalapeño" → "jalapeno". NFD separates each base letter from its
+// accent; we drop the accent marks (U+0300–U+036F).
+export const stripAccents = (s: string): string =>
+  s.normalize('NFD').replace(/\p{Diacritic}/gu, '');
+
+// Search query for a keyword: if it's accented, OR in the folded spelling so
+// reviews written either way are caught ("açaí" → "açaí OR acai"). Plain ASCII
+// is returned unchanged. The OR fans out through the same parseOrQuery path.
+export const accentVariantQuery = (term: string): string => {
+  const folded = stripAccents(term);
+  return folded === term ? term : `${term} OR ${folded}`;
+};
+
 const localeQuery = (locale: Locale = {}) => `hl=${locale.hl || 'en'}&gl=${locale.gl || ''}`;
 
 export const buildListUrl = (featureId: string, sort: SortKey, cursor = '', locale: Locale = {}) => {

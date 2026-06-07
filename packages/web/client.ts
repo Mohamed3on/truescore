@@ -1,6 +1,6 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
 import {
-  compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  accentVariantQuery, compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
@@ -228,7 +228,7 @@ function renderDishes() {
 
 async function scoreDish(featureId: string, d: DishChip) {
   try {
-    const resp = await postNdjson('/api/search', { featureId, query: d.item });
+    const resp = await postNdjson('/api/search', { featureId, query: accentVariantQuery(d.item) });
     let result: SearchResult | null = null;
     for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
       if (evt.type === 'search') result = evt.result;

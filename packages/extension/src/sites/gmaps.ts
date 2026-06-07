@@ -3,6 +3,7 @@ import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../s
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import {
+  accentVariantQuery,
   chipsFromPreview,
   collectSearchTerms,
   collectSort,
@@ -1327,7 +1328,7 @@ const paintDishChip = (pct: HTMLElement, count: HTMLElement, stats: SortStats, o
 const triggerDishSearch = (item: string) => {
   const input = cardEls.searchInput;
   if (!input) return;
-  input.value = item;
+  input.value = accentVariantQuery(item);
   input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   runLabelSearch();
 };
@@ -1374,7 +1375,7 @@ const ensureDishScores = (featureId: string, items: string[]) => {
     dishScoreInflight.add(key);
     limit(async () => {
       try {
-        const stats = statsForReviews(await fetchAllForSearch(featureId, item));
+        const stats = statsForReviews(await fetchAllForSearch(featureId, accentVariantQuery(item)));
         dishScoreCache.set(key, stats);
         if (getFeatureId() === featureId) redrawDishes();
       } catch (e) {

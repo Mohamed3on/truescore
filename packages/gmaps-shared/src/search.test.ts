@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { parseOrQuery, mergeByReviewId, collectSearchTerms, type Review } from './index';
+import { parseOrQuery, accentVariantQuery, stripAccents, mergeByReviewId, collectSearchTerms, type Review } from './index';
 
 const review = (id: string, stars = 5, count = 9): Review =>
   ({ reviewId: id, stars, reviewerReviewCount: count, timestamp: 1_700_000_000_000, text: `text-${id}` });
@@ -30,6 +30,25 @@ describe('parseOrQuery', () => {
 
   test('caps fan-out at MAX_OR_TERMS (6)', () => {
     expect(parseOrQuery('a OR b OR c OR d OR e OR f OR g OR h')).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+  });
+});
+
+describe('accentVariantQuery', () => {
+  test('strips combining diacritics to ASCII', () => {
+    expect(stripAccents('açaí')).toBe('acai');
+    expect(stripAccents('jalapeño')).toBe('jalapeno');
+    expect(stripAccents('crème brûlée')).toBe('creme brulee');
+  });
+
+  test('accented term → "term OR folded" so both spellings are caught', () => {
+    expect(accentVariantQuery('açaí')).toBe('açaí OR acai');
+    // The result feeds parseOrQuery, which yields both spellings as terms.
+    expect(parseOrQuery(accentVariantQuery('açaí'))).toEqual(['açaí', 'acai']);
+  });
+
+  test('plain ASCII term is returned unchanged', () => {
+    expect(accentVariantQuery('burger')).toBe('burger');
+    expect(accentVariantQuery('dirty burger')).toBe('dirty burger');
   });
 });
 
