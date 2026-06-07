@@ -198,8 +198,14 @@ function renderHighlights(highlights: UiChip[], sort = false) {
 // search's panel on click — the same flow as typing the dish into the searchbox.
 function renderDishes() {
   while (dishesList.firstChild) dishesList.removeChild(dishesList.firstChild);
-  dishesRow.hidden = dishChips.length === 0;
-  for (const d of dishChips) {
+  // Show only dishes confirmed with ≥2 reviews mentioning them, most-mentioned
+  // first. Unscored / low-mention / errored chips aren't shown.
+  const shown = dishChips
+    .filter((d) => d.result && d.result.totalReviews >= 2)
+    .sort((a, b) => b.result!.totalReviews - a.result!.totalReviews);
+  dishesRow.hidden = shown.length === 0;
+  for (const d of shown) {
+    const r = d.result!;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'chip';
@@ -208,29 +214,14 @@ function renderDishes() {
     label.textContent = d.item;
     btn.appendChild(label);
     const pct = document.createElement('span');
-    if (d.state === 'done' && d.result) {
-      pct.className = `pct ${chipClass(d.result.scorePct, currentMergedPct)}`;
-      pct.textContent = d.result.trustedReviews ? `${d.result.scorePct}%` : '—';
-      const r = d.result;
-      btn.addEventListener('click', () => showSearchPanel(r));
-    } else if (d.state === 'error') {
-      btn.classList.add('errored');
-      btn.disabled = true;
-      pct.className = 'pct neg';
-      pct.textContent = '✗';
-    } else {
-      btn.classList.add('loading');
-      btn.disabled = true;
-      pct.className = 'pct chip-pending';
-      pct.textContent = '…';
-    }
+    pct.className = `pct ${chipClass(r.scorePct, currentMergedPct)}`;
+    pct.textContent = r.trustedReviews ? `${r.scorePct}%` : '—';
     btn.appendChild(pct);
-    if (d.state === 'done' && d.result) {
-      const count = document.createElement('span');
-      count.className = 'count';
-      count.textContent = `·${d.result.totalReviews}`;
-      btn.appendChild(count);
-    }
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = `·${r.totalReviews}`;
+    btn.appendChild(count);
+    btn.addEventListener('click', () => showSearchPanel(r));
     dishesList.appendChild(btn);
   }
 }

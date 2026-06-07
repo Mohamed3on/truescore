@@ -72,12 +72,13 @@ let activeLabelSearch: { query: string; reviews: Review[]; summary?: SummaryResu
 let labelSearchSeq = 0;
 
 // Label-search scores for the summary's praised-dish chips, keyed
-// `${featureId}|${item}` so re-renders of the summary panel reuse them instead
-// of refetching. `dishEls` maps the current render's chips back to their % and
-// count spans so a score landing late paints in place without a full re-render.
+// `${featureId}|${item}` so re-renders reuse them instead of refetching.
+// `dishCtx` holds the current summary panel + items so a score landing late can
+// rebuild the chip row (filter to ≥2 mentions, sort by count) without a full
+// summary re-render.
 const dishScoreCache = new Map<string, SortStats>();
 const dishScoreInflight = new Set<string>();
-let dishEls = new Map<string, { pct: HTMLElement; count: HTMLElement }>();
+let dishCtx: { panel: HTMLElement; items: string[]; featureId: string } | null = null;
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -1315,42 +1316,12 @@ const updateUI = () => {
 
 // Praised dishes from the summary, as chips below the highlights. Each is
 // auto-scored by a label search; clicking one runs that search in the searchbox.
-type DishEls = { pct: HTMLElement; count: HTMLElement };
-const paintDishChip = (els: DishEls, stats: SortStats, overall: number) => {
-  if (stats.trustedReviews) {
-    els.pct.textContent = `${stats.scorePct}%`;
-    // Binary green/red like the topic chips, not getDiffColor's relative
-    // gradient — that can't reach green when the place overall is already high.
-    els.pct.style.color = stats.scorePct >= overall ? '#4ADE80' : '#F87171';
-  } else {
-    els.pct.textContent = '—';
-    els.pct.style.color = '#888';
-  }
-  els.count.textContent = `·${stats.totalReviews}`;
-};
-
-const ensureDishScores = (featureId: string, items: string[], overall: number) => {
-  const limit = createLimiter(HIGHLIGHT_FETCH_CONCURRENCY);
-  for (const item of items) {
-    const key = `${featureId}|${item.toLowerCase()}`;
-    if (dishScoreCache.has(key) || dishScoreInflight.has(key)) continue;
-    dishScoreInflight.add(key);
-    limit(async () => {
-      try {
-        const stats = statsForReviews(await fetchAllForSearch(featureId, item));
-        dishScoreCache.set(key, stats);
-        if (getFeatureId() !== featureId) return;
-        const els = dishEls.get(item.toLowerCase());
-        if (els?.pct.isConnected) paintDishChip(els, stats, overall);
-      } catch (e) {
-        console.error('[dishes] score failed for', item, e);
-        const els = dishEls.get(item.toLowerCase());
-        if (els?.pct.isConnected) els.pct.textContent = '✗';
-      } finally {
-        dishScoreInflight.delete(key);
-      }
-    });
-  }
+const paintDishChip = (pct: HTMLElement, count: HTMLElement, stats: SortStats, overall: number) => {
+  pct.textContent = `${stats.scorePct}%`;
+  // Binary green/red like the topic chips, not getDiffColor's relative gradient —
+  // that can't reach green when the place overall is already high.
+  pct.style.color = stats.scorePct >= overall ? '#4ADE80' : '#F87171';
+  count.textContent = `·${stats.totalReviews}`;
 };
 
 const triggerDishSearch = (item: string) => {
@@ -1361,31 +1332,65 @@ const triggerDishSearch = (item: string) => {
   runLabelSearch();
 };
 
-const renderDishChips = (panel: HTMLElement, items: string[]) => {
-  const featureId = getFeatureId();
+// Rebuild the dish chips from whatever scores have landed: only dishes with ≥2
+// reviews mentioning them, most-mentioned first. Re-run as each label search
+// resolves, so chips reveal and reorder in place.
+const redrawDishes = () => {
+  if (!dishCtx) return;
+  const { panel, items, featureId } = dishCtx;
+  panel.querySelector('.rc-dishes')?.remove();
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
+  const scored = items
+    .map((item) => ({ item, stats: dishScoreCache.get(`${featureId}|${item.toLowerCase()}`) }))
+    .filter((x): x is { item: string; stats: SortStats } => !!x.stats && x.stats.totalReviews >= 2)
+    .sort((a, b) => b.stats.totalReviews - a.stats.totalReviews);
+  if (!scored.length) return;
   const wrap = el('div', 'rc-dishes');
   wrap.appendChild(el('span', 'rc-dishes-label', 'Popular dishes'));
   const list = el('div', 'rc-dishes-list');
-  dishEls = new Map();
-  for (const item of items) {
+  for (const { item, stats } of scored) {
     const chip = el('button', 'rc-chip rc-dish-chip') as HTMLButtonElement;
     chip.type = 'button';
     chip.appendChild(el('span', 'rc-chip-label', item));
     const pct = el('span', 'rc-chip-pct');
     const count = el('span', 'rc-chip-count');
-    const cached = featureId ? dishScoreCache.get(`${featureId}|${item.toLowerCase()}`) : undefined;
-    if (cached) paintDishChip({ pct, count }, cached, overall);
-    else pct.textContent = '…';
+    paintDishChip(pct, count, stats, overall);
     chip.appendChild(pct);
     chip.appendChild(count);
-    dishEls.set(item.toLowerCase(), { pct, count });
     chip.onclick = () => triggerDishSearch(item);
     list.appendChild(chip);
   }
   wrap.appendChild(list);
-  panel.appendChild(wrap);
-  if (featureId) ensureDishScores(featureId, items, overall);
+  // Keep dishes above the value-for-money line on async redraws.
+  const anchor = panel.querySelector('.rc-value');
+  anchor ? panel.insertBefore(wrap, anchor) : panel.appendChild(wrap);
+};
+
+const ensureDishScores = (featureId: string, items: string[]) => {
+  const limit = createLimiter(HIGHLIGHT_FETCH_CONCURRENCY);
+  for (const item of items) {
+    const key = `${featureId}|${item.toLowerCase()}`;
+    if (dishScoreCache.has(key) || dishScoreInflight.has(key)) continue;
+    dishScoreInflight.add(key);
+    limit(async () => {
+      try {
+        const stats = statsForReviews(await fetchAllForSearch(featureId, item));
+        dishScoreCache.set(key, stats);
+        if (getFeatureId() === featureId) redrawDishes();
+      } catch (e) {
+        console.error('[dishes] score failed for', item, e);
+      } finally {
+        dishScoreInflight.delete(key);
+      }
+    });
+  }
+};
+
+const renderDishChips = (panel: HTMLElement, items: string[]) => {
+  const featureId = getFeatureId();
+  dishCtx = featureId ? { panel, items, featureId } : null;
+  redrawDishes();
+  if (featureId) ensureDishScores(featureId, items);
 };
 
 const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {

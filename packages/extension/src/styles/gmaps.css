@@ -513,7 +513,6 @@
   flex-wrap: wrap;
   gap: 5px;
 }
-.rc-dish-chip .rc-chip-pct { color: rgba(255, 255, 255, 0.4); }
 
 .rc-chip-panel {
   margin-top: 12px;
