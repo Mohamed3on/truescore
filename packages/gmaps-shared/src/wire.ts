@@ -11,7 +11,11 @@ import type { ChipMeta, PlaceMeta, Review, SortStats } from './index';
 // from Chip so the two "highlights" (prose bullets vs scored topic chips) never
 // collide again.
 export type SummaryHighlight = { text: string; sentiment: string };
-export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney: number };
+// `items`: specific dishes / menu items reviewers praise, as short label-search
+// terms (e.g. "pancakes", "alfajores"). Rendered as their own clickable chips
+// below the topic chips, each auto-scored by a label search. Optional — older
+// cached summaries predate it.
+export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney: number; items?: string[] };
 
 export type Score = {
   featureId: string;

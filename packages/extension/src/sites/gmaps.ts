@@ -31,7 +31,7 @@ const MIN_PAGES_BEFORE_STABILIZE = 2;
 const HIGHLIGHT_FETCH_CONCURRENCY = 3;
 
 type FetchState = { isFetching: boolean; done: boolean; cursor: string; pageCount: number };
-type SummaryResult = { highlights?: { text: string; sentiment: string }[]; verdict?: string; valueForMoney?: number };
+type SummaryResult = { highlights?: { text: string; sentiment: string }[]; verdict?: string; valueForMoney?: number; items?: string[] };
 type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
 type CardEls = {
   merged?: MergedEls;
@@ -70,6 +70,14 @@ type HighlightsCache = { items: Highlight[]; ts: number; newestHeadId?: string }
 let activeHighlight: Highlight | null = null;
 let activeLabelSearch: { query: string; reviews: Review[]; summary?: SummaryResult } | null = null;
 let labelSearchSeq = 0;
+
+// Label-search scores for the summary's praised-dish chips, keyed
+// `${featureId}|${item}` so re-renders of the summary panel reuse them instead
+// of refetching. `dishPctEls` maps the current render's chips back to their %
+// span so a score landing late paints in place without a full re-render.
+const dishScoreCache = new Map<string, SortStats>();
+const dishScoreInflight = new Set<string>();
+let dishPctEls = new Map<string, HTMLElement>();
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -1304,6 +1312,71 @@ const updateUI = () => {
   els.card.classList.toggle('done', allDone);
 };
 
+// Praised dishes from the summary, as chips below the highlights. Each is
+// auto-scored by a label search; clicking one runs that search in the searchbox.
+const paintDishPct = (pctEl: HTMLElement, stats: SortStats, overall: number) => {
+  if (!stats.trustedReviews) { pctEl.textContent = '—'; pctEl.style.color = '#888'; return; }
+  pctEl.textContent = `${stats.scorePct}%`;
+  pctEl.style.color = getDiffColor(stats.scorePct - overall);
+};
+
+const ensureDishScores = (featureId: string, items: string[], overall: number) => {
+  const limit = createLimiter(HIGHLIGHT_FETCH_CONCURRENCY);
+  for (const item of items) {
+    const key = `${featureId}|${item.toLowerCase()}`;
+    if (dishScoreCache.has(key) || dishScoreInflight.has(key)) continue;
+    dishScoreInflight.add(key);
+    limit(async () => {
+      try {
+        const stats = statsForReviews(await fetchAllForSearch(featureId, item));
+        dishScoreCache.set(key, stats);
+        if (getFeatureId() !== featureId) return;
+        const pctEl = dishPctEls.get(item.toLowerCase());
+        if (pctEl?.isConnected) paintDishPct(pctEl, stats, overall);
+      } catch (e) {
+        console.error('[dishes] score failed for', item, e);
+        const pctEl = dishPctEls.get(item.toLowerCase());
+        if (pctEl?.isConnected) pctEl.textContent = '✗';
+      } finally {
+        dishScoreInflight.delete(key);
+      }
+    });
+  }
+};
+
+const triggerDishSearch = (item: string) => {
+  const input = cardEls.searchInput;
+  if (!input) return;
+  input.value = item;
+  input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  runLabelSearch();
+};
+
+const renderDishChips = (panel: HTMLElement, items: string[]) => {
+  const featureId = getFeatureId();
+  const overall = toPct(store.mergedStats(currentOption).mergedPct);
+  const wrap = el('div', 'rc-dishes');
+  wrap.appendChild(el('span', 'rc-dishes-label', 'Popular dishes'));
+  const list = el('div', 'rc-dishes-list');
+  dishPctEls = new Map();
+  for (const item of items) {
+    const chip = el('button', 'rc-chip rc-dish-chip') as HTMLButtonElement;
+    chip.type = 'button';
+    chip.appendChild(el('span', 'rc-chip-label', item));
+    const pct = el('span', 'rc-chip-pct');
+    const cached = featureId ? dishScoreCache.get(`${featureId}|${item.toLowerCase()}`) : undefined;
+    if (cached) paintDishPct(pct, cached, overall);
+    else pct.textContent = '…';
+    chip.appendChild(pct);
+    dishPctEls.set(item.toLowerCase(), pct);
+    chip.onclick = () => triggerDishSearch(item);
+    list.appendChild(chip);
+  }
+  wrap.appendChild(list);
+  panel.appendChild(wrap);
+  if (featureId) ensureDishScores(featureId, items, overall);
+};
+
 const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   panel.textContent = '';
   panel.className = 'rc-summary-panel';
@@ -1328,6 +1401,9 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
       panel.appendChild(row);
     }
   }
+  // Only on the main place summary — a label-search/chip sub-summary's items
+  // would spawn nested searches off a filtered set.
+  if (result.items?.length && panel === cardEls.sumPanel) renderDishChips(panel, result.items);
   if (result.valueForMoney) {
     const v = Math.max(1, Math.min(5, result.valueForMoney));
     panel.appendChild(el('div', 'rc-value', `Value for money: ${starString(v)}`));

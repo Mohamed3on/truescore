@@ -21,6 +21,7 @@ const HIGHLIGHTS_SCHEMA = {
         },
       },
     },
+    items: { type: 'ARRAY', items: { type: 'STRING' } },
     valueForMoney: { type: 'INTEGER' },
   },
 };
@@ -48,18 +49,38 @@ async function call(prompt: string, maxTokens: number, schema?: object): Promise
 // mid-array → "Unterminated string" / "Expected '}'"). Salvage the complete
 // highlight objects instead of failing the whole summary — the verdict is a
 // separate call and is always worth returning.
-function parseStructured(text: string): { highlights: SummaryHighlight[]; valueForMoney: number } {
+// Praised dish/menu terms: trim, drop blanks, dedupe case-insensitively, cap 6
+// (auto-scoring fires one label search per item, so the cap bounds the fan-out).
+const cleanItems = (raw: unknown): string[] => {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v !== 'string') continue;
+    const t = v.trim();
+    const k = t.toLowerCase();
+    if (!t || seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+    if (out.length >= 6) break;
+  }
+  return out;
+};
+
+function parseStructured(text: string): { highlights: SummaryHighlight[]; items: string[]; valueForMoney: number } {
   try {
     const p = JSON.parse(text);
-    return { highlights: p.highlights ?? [], valueForMoney: p.valueForMoney ?? 3 };
+    return { highlights: p.highlights ?? [], items: cleanItems(p.items), valueForMoney: p.valueForMoney ?? 3 };
   } catch {
     const highlights: SummaryHighlight[] = [];
     for (const m of text.matchAll(/\{[^{}]*"text"[^{}]*\}/g)) {
       try { highlights.push(JSON.parse(m[0])); } catch {}
     }
+    const itemsMatch = text.match(/"items"\s*:\s*\[([^\]]*)\]/);
+    const items = cleanItems(itemsMatch?.[1].split(',').map((s) => s.replace(/^\s*"|"\s*$/g, '')));
     const vfm = text.match(/"valueForMoney"\s*:\s*(\d+)/);
     console.warn(`[summarize] structured JSON truncated; salvaged ${highlights.length} highlights`);
-    return { highlights, valueForMoney: vfm ? Number(vfm[1]) : 3 };
+    return { highlights, items, valueForMoney: vfm ? Number(vfm[1]) : 3 };
   }
 }
 
@@ -85,14 +106,16 @@ ${NOTES}`;
 
 Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
 
+Also list items: up to 6 specific dishes, drinks, or menu items reviewers praise, as short search terms — the dish or key ingredient in 1-2 words (e.g. "pancakes", "alfajores"); split a compound dish like "salmon avocado toast" into "salmon", "avocado". Only clearly praised food/drink, [] if none.
+
 ${NOTES}`;
 
   const [verdict, structuredText] = await Promise.all([
     call(verdictPrompt, 1024),
     call(structuredPrompt, 8192, HIGHLIGHTS_SCHEMA),
   ]);
-  const { highlights, valueForMoney } = parseStructured(structuredText);
-  return { verdict: verdict.trim(), highlights, valueForMoney };
+  const { highlights, items, valueForMoney } = parseStructured(structuredText);
+  return { verdict: verdict.trim(), highlights, items, valueForMoney };
 }
 
 export async function ask(placeName: string, reviewTexts: string[], question: string, filterQuery?: string): Promise<string> {

@@ -95,6 +95,8 @@ const resummarizeBtn = $('resummarize') as HTMLButtonElement;
 const highlightsRow = $('highlightsRow') as HTMLElement;
 const highlightsList = $('highlightsList') as HTMLElement;
 const highlightsRefreshBtn = $('highlightsRefresh') as HTMLButtonElement;
+const dishesRow = $('dishesRow') as HTMLElement;
+const dishesList = $('dishesList') as HTMLElement;
 const searchForm = $('searchForm') as HTMLFormElement;
 const searchInput = $('searchInput') as HTMLInputElement;
 const searchBtn = $('searchBtn') as HTMLButtonElement;
@@ -125,6 +127,11 @@ let activeHighlight: UiChip | null = null;
 let activeSearch: SearchResult | null = null;
 let currentHighlights: UiChip[] = [];
 let highlightReviewsInflight: Promise<void> | null = null;
+
+// Praised dish/menu items from the summary, each auto-scored by its own label
+// search. A SearchResult once scored; clicking opens it in the search panel.
+type DishChip = { item: string; state: ChipState; result?: SearchResult };
+let dishChips: DishChip[] = [];
 
 function setStatus(msg: string, isErr = false) {
   status.textContent = msg;
@@ -184,6 +191,66 @@ function renderHighlights(highlights: UiChip[], sort = false) {
     }
     highlightsList.appendChild(btn);
   }
+}
+
+// Praised dishes from the summary, rendered as chips below the topic chips.
+// Each is auto-scored by a label search (/api/search); a scored chip opens that
+// search's panel on click — the same flow as typing the dish into the searchbox.
+function renderDishes() {
+  while (dishesList.firstChild) dishesList.removeChild(dishesList.firstChild);
+  dishesRow.hidden = dishChips.length === 0;
+  for (const d of dishChips) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chip';
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = d.item;
+    btn.appendChild(label);
+    const pct = document.createElement('span');
+    if (d.state === 'done' && d.result) {
+      pct.className = `pct ${chipClass(d.result.scorePct, currentMergedPct)}`;
+      pct.textContent = d.result.trustedReviews ? `${d.result.scorePct}%` : '—';
+      const r = d.result;
+      btn.addEventListener('click', () => showSearchPanel(r));
+    } else if (d.state === 'error') {
+      btn.classList.add('errored');
+      btn.disabled = true;
+      pct.className = 'pct neg';
+      pct.textContent = '✗';
+    } else {
+      btn.classList.add('loading');
+      btn.disabled = true;
+      pct.className = 'pct chip-pending';
+      pct.textContent = '…';
+    }
+    btn.appendChild(pct);
+    dishesList.appendChild(btn);
+  }
+}
+
+async function scoreDish(featureId: string, d: DishChip) {
+  try {
+    const resp = await postNdjson('/api/search', { featureId, query: d.item });
+    let result: SearchResult | null = null;
+    for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
+      if (evt.type === 'search') result = evt.result;
+      else if (evt.type === 'error') throw new Error(evt.error);
+    }
+    if (currentFeatureId !== featureId) return;
+    d.result = result ?? undefined;
+    d.state = result ? 'done' : 'error';
+  } catch {
+    if (currentFeatureId !== featureId) return;
+    d.state = 'error';
+  }
+  renderDishes();
+}
+
+function showDishes(items: string[], featureId: string) {
+  dishChips = items.map((item) => ({ item, state: 'loading' as ChipState }));
+  renderDishes();
+  for (const d of dishChips) scoreDish(featureId, d);
 }
 
 function showHighlightsLoading(msg: string) {
@@ -656,6 +723,8 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   $('verdict').textContent = '';
   resummarizeBtn.hidden = true;
   highlightsRow.hidden = true;
+  dishChips = [];
+  renderDishes();
   chipPanel.hidden = true;
   verdictRow.style.display = '';
   highlightsListEl.style.display = '';
@@ -929,10 +998,14 @@ function renderSummary(summary: Summary) {
   resummarizeBtn.hidden = false;
   while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
   renderHighlightList(highlightsListEl, summary.highlights);
+  if (currentFeatureId && summary.items?.length) showDishes(summary.items, currentFeatureId);
+  else { dishChips = []; renderDishes(); }
 }
 
 function renderSummaryError(msg: string) {
   $('verdict').textContent = `summary failed: ${msg}`;
+  dishChips = [];
+  renderDishes();
 }
 
 async function fetchHistogramFor(featureId: string, mergedPct: number) {

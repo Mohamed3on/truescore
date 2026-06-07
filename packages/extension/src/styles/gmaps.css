@@ -492,6 +492,29 @@
   background: rgba(109, 211, 206, 0.1) !important;
 }
 
+/* Praised-dish chips (rc-dish-chip reuses .rc-chip); % is colored inline. */
+.rc-dishes {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.rc-dishes-label {
+  display: block;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 500;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 8px;
+}
+.rc-dishes-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.rc-dish-chip .rc-chip-pct { color: rgba(255, 255, 255, 0.4); }
+
 .rc-chip-panel {
   margin-top: 12px;
   padding: 12px;
