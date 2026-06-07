@@ -106,7 +106,7 @@ ${NOTES}`;
 
 Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
 
-Also list items: up to 6 specific dishes or drinks reviewers praise, as short label-search keywords. Use the shortest distinctive word — the signature name or key ingredient — dropping generic nouns (cookie, toast, cake, latte) so the search catches variants: "shiro cookie" → "shiro" (also matches "shiro cookies"), "dulce de leche cake" → "dulce de leche". Split a compound like "salmon avocado toast" into "salmon", "avocado". Only clearly praised food/drink, [] if none.
+Also list items: up to 6 dishes or drinks reviewers praise, as short label-search keywords. Prefer the least common, most distinctive word and drop generic nouns so the search catches variants: "shiro cookie" → "shiro" (also matches "shiro cookies"), "dulce de leche cake" → "dulce de leche". But if that word is ambiguous alone — a plain adjective that also describes non-food (e.g. "dirty", which would also catch "dirty table") — keep the phrase ("dirty burger"); emitting both a broad and a specific term is fine ("burger", "dirty burger"). Split a compound like "salmon avocado toast" into "salmon", "avocado". Only clearly praised food/drink, [] if none.
 
 ${NOTES}`;
 
