@@ -956,10 +956,11 @@ const renderLabelSearchResult = () => {
 
   const { query, reviews } = activeLabelSearch;
   const score = statsForReviews(reviews);
-  // Color by how this query scores vs the place overall (like the chips / main
-  // number); the % label itself stays absolute.
+  // Green when this query beats the place overall, red below — binary, matching
+  // the topic/dish chips. (A relative gradient can't reach green when overall is
+  // already high, e.g. a 100% query only a few points over a low-90s% place.)
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
-  const color = getDiffColor(score.scorePct - overall);
+  const color = score.scorePct >= overall ? '#4ADE80' : '#F87171';
 
   res.style.display = 'block';
   res.textContent = '';
@@ -1318,7 +1319,9 @@ type DishEls = { pct: HTMLElement; count: HTMLElement };
 const paintDishChip = (els: DishEls, stats: SortStats, overall: number) => {
   if (stats.trustedReviews) {
     els.pct.textContent = `${stats.scorePct}%`;
-    els.pct.style.color = getDiffColor(stats.scorePct - overall);
+    // Binary green/red like the topic chips, not getDiffColor's relative
+    // gradient — that can't reach green when the place overall is already high.
+    els.pct.style.color = stats.scorePct >= overall ? '#4ADE80' : '#F87171';
   } else {
     els.pct.textContent = '—';
     els.pct.style.color = '#888';
