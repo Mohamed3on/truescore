@@ -106,7 +106,7 @@ ${NOTES}`;
 
 Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
 
-Also list items: up to 6 specific dishes, drinks, or menu items reviewers praise, as short search terms — the dish or key ingredient in 1-2 words (e.g. "pancakes", "alfajores"); split a compound dish like "salmon avocado toast" into "salmon", "avocado". Only clearly praised food/drink, [] if none.
+Also list items: up to 6 specific dishes or drinks reviewers praise, as short label-search keywords. Use the shortest distinctive word — the signature name or key ingredient — dropping generic nouns (cookie, toast, cake, latte) so the search catches variants: "shiro cookie" → "shiro" (also matches "shiro cookies"), "dulce de leche cake" → "dulce de leche". Split a compound like "salmon avocado toast" into "salmon", "avocado". Only clearly praised food/drink, [] if none.
 
 ${NOTES}`;
 

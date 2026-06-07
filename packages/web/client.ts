@@ -225,6 +225,12 @@ function renderDishes() {
       pct.textContent = '…';
     }
     btn.appendChild(pct);
+    if (d.state === 'done' && d.result) {
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = `·${d.result.totalReviews}`;
+      btn.appendChild(count);
+    }
     dishesList.appendChild(btn);
   }
 }
