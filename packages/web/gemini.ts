@@ -49,7 +49,7 @@ async function call(prompt: string, maxTokens: number, schema?: object): Promise
 // mid-array → "Unterminated string" / "Expected '}'"). Salvage the complete
 // highlight objects instead of failing the whole summary — the verdict is a
 // separate call and is always worth returning.
-// Praised dish/menu terms: trim, drop blanks, dedupe case-insensitively, cap 6
+// Praised standout terms: trim, drop blanks, dedupe case-insensitively, cap 6
 // (auto-scoring fires one label search per item, so the cap bounds the fan-out).
 const cleanItems = (raw: unknown): string[] => {
   if (!Array.isArray(raw)) return [];
@@ -106,7 +106,7 @@ ${NOTES}`;
 
 Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
 
-Also list items: up to 6 dishes or drinks reviewers praise, as short label-search keywords. Prefer the least common, most distinctive word and drop generic nouns so the search catches variants: "shiro cookie" → "shiro" (also matches "shiro cookies"), "dulce de leche cake" → "dulce de leche". But if that word is ambiguous alone — a plain adjective that also describes non-food (e.g. "dirty", which would also catch "dirty table") — keep the phrase ("dirty burger"); emitting both a broad and a specific term is fine ("burger", "dirty burger"). Split a compound like "salmon avocado toast" into "salmon", "avocado". Only clearly praised food/drink, [] if none.
+Also list items: up to 6 specific things reviewers single out as standouts — dishes, animals, exhibits, products, a named feature, whatever the place is known for — as short label-search keywords. Prefer the least common, most distinctive word and drop generic nouns so the search catches variants: "Western Lowland Gorilla" → "gorilla", "dulce de leche cake" → "dulce de leche". Split a compound like "salmon avocado toast" into "salmon", "avocado". But if a word is ambiguous alone — a generic adjective that also matches unrelated text (e.g. "dirty", which would also catch "dirty table") — keep the phrase ("dirty burger"). Only concrete, clearly praised specifics, not vague qualities like "service" or "atmosphere". [] if none.
 
 ${NOTES}`;
 

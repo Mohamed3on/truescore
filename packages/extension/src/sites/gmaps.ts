@@ -1347,7 +1347,7 @@ const redrawDishes = () => {
     .sort((a, b) => b.stats.totalReviews - a.stats.totalReviews);
   if (!scored.length) return;
   const wrap = el('div', 'rc-dishes');
-  wrap.appendChild(el('span', 'rc-dishes-label', 'Popular dishes'));
+  wrap.appendChild(el('span', 'rc-dishes-label', 'Standouts'));
   const list = el('div', 'rc-dishes-list');
   for (const { item, stats } of scored) {
     const chip = el('button', 'rc-chip rc-dish-chip') as HTMLButtonElement;
