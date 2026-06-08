@@ -72,14 +72,14 @@ let activeHighlight: Highlight | null = null;
 let activeLabelSearch: { query: string; reviews: Review[]; summary?: SummaryResult } | null = null;
 let labelSearchSeq = 0;
 
-// Label-search scores for the summary's praised-dish chips, keyed
+// Label-search scores for the summary's praised-standout chips, keyed
 // `${featureId}|${item}` so re-renders reuse them instead of refetching.
-// `dishCtx` holds the current summary panel + items so a score landing late can
+// `standoutCtx` holds the current summary panel + items so a score landing late can
 // rebuild the chip row (filter to ≥2 mentions, sort by count) without a full
 // summary re-render.
-const dishScoreCache = new Map<string, SortStats>();
-const dishScoreInflight = new Set<string>();
-let dishCtx: { panel: HTMLElement; items: string[]; featureId: string } | null = null;
+const standoutScoreCache = new Map<string, SortStats>();
+const standoutScoreInflight = new Set<string>();
+let standoutCtx: { panel: HTMLElement; items: string[]; featureId: string } | null = null;
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -959,7 +959,7 @@ const renderLabelSearchResult = () => {
   const { query, reviews } = activeLabelSearch;
   const score = statsForReviews(reviews);
   // Green when this query beats the place overall, red below — binary, matching
-  // the topic/dish chips. (A relative gradient can't reach green when overall is
+  // the topic/standout chips. (A relative gradient can't reach green when overall is
   // already high, e.g. a 100% query only a few points over a low-90s% place.)
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
   const color = score.scorePct >= overall ? '#4ADE80' : '#F87171';
@@ -1315,9 +1315,9 @@ const updateUI = () => {
   els.card.classList.toggle('done', allDone);
 };
 
-// Praised dishes from the summary, as chips below the highlights. Each is
+// Praised standouts from the summary, as chips below the highlights. Each is
 // auto-scored by a label search; clicking one runs that search in the searchbox.
-const paintDishChip = (pct: HTMLElement, count: HTMLElement, stats: SortStats, overall: number) => {
+const paintStandoutChip = (pct: HTMLElement, count: HTMLElement, stats: SortStats, overall: number) => {
   pct.textContent = `${stats.scorePct}%`;
   // Binary green/red like the topic chips, not getDiffColor's relative gradient —
   // that can't reach green when the place overall is already high.
@@ -1325,7 +1325,7 @@ const paintDishChip = (pct: HTMLElement, count: HTMLElement, stats: SortStats, o
   count.textContent = `·${stats.totalReviews}`;
 };
 
-const triggerDishSearch = (item: string) => {
+const triggerStandoutSearch = (item: string) => {
   const input = cardEls.searchInput;
   if (!input) return;
   input.value = accentVariantQuery(item);
@@ -1333,65 +1333,65 @@ const triggerDishSearch = (item: string) => {
   runLabelSearch();
 };
 
-// Rebuild the dish chips from whatever scores have landed: only dishes with ≥2
+// Rebuild the standout chips from whatever scores have landed: only standouts with ≥2
 // reviews mentioning them, most-mentioned first. Re-run as each label search
 // resolves, so chips reveal and reorder in place.
-const redrawDishes = () => {
-  if (!dishCtx) return;
-  const { panel, items, featureId } = dishCtx;
-  panel.querySelector('.rc-dishes')?.remove();
+const redrawStandouts = () => {
+  if (!standoutCtx) return;
+  const { panel, items, featureId } = standoutCtx;
+  panel.querySelector('.rc-standouts')?.remove();
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
   const scored = items
-    .map((item) => ({ item, stats: dishScoreCache.get(`${featureId}|${item.toLowerCase()}`) }))
+    .map((item) => ({ item, stats: standoutScoreCache.get(`${featureId}|${item.toLowerCase()}`) }))
     .filter((x): x is { item: string; stats: SortStats } => !!x.stats && x.stats.totalReviews >= 2)
     .sort((a, b) => b.stats.totalReviews - a.stats.totalReviews);
   if (!scored.length) return;
-  const wrap = el('div', 'rc-dishes');
-  wrap.appendChild(el('span', 'rc-dishes-label', 'Standouts'));
-  const list = el('div', 'rc-dishes-list');
+  const wrap = el('div', 'rc-standouts');
+  wrap.appendChild(el('span', 'rc-standouts-label', 'Standouts'));
+  const list = el('div', 'rc-standouts-list');
   for (const { item, stats } of scored) {
-    const chip = el('button', 'rc-chip rc-dish-chip') as HTMLButtonElement;
+    const chip = el('button', 'rc-chip rc-standout-chip') as HTMLButtonElement;
     chip.type = 'button';
     chip.appendChild(el('span', 'rc-chip-label', item));
     const pct = el('span', 'rc-chip-pct');
     const count = el('span', 'rc-chip-count');
-    paintDishChip(pct, count, stats, overall);
+    paintStandoutChip(pct, count, stats, overall);
     chip.appendChild(pct);
     chip.appendChild(count);
-    chip.onclick = () => triggerDishSearch(item);
+    chip.onclick = () => triggerStandoutSearch(item);
     list.appendChild(chip);
   }
   wrap.appendChild(list);
-  // Keep dishes above the value-for-money line on async redraws.
+  // Keep standouts above the value-for-money line on async redraws.
   const anchor = panel.querySelector('.rc-value');
   anchor ? panel.insertBefore(wrap, anchor) : panel.appendChild(wrap);
 };
 
-const ensureDishScores = (featureId: string, items: string[]) => {
+const ensureStandoutScores = (featureId: string, items: string[]) => {
   const limit = createLimiter(HIGHLIGHT_FETCH_CONCURRENCY);
   for (const item of items) {
     const key = `${featureId}|${item.toLowerCase()}`;
-    if (dishScoreCache.has(key) || dishScoreInflight.has(key)) continue;
-    dishScoreInflight.add(key);
+    if (standoutScoreCache.has(key) || standoutScoreInflight.has(key)) continue;
+    standoutScoreInflight.add(key);
     limit(async () => {
       try {
         const stats = statsForReviews(await fetchAllForSearch(featureId, accentVariantQuery(item)));
-        dishScoreCache.set(key, stats);
-        if (getFeatureId() === featureId) redrawDishes();
+        standoutScoreCache.set(key, stats);
+        if (getFeatureId() === featureId) redrawStandouts();
       } catch (e) {
-        console.error('[dishes] score failed for', item, e);
+        console.error('[standouts] score failed for', item, e);
       } finally {
-        dishScoreInflight.delete(key);
+        standoutScoreInflight.delete(key);
       }
     });
   }
 };
 
-const renderDishChips = (panel: HTMLElement, items: string[]) => {
+const renderStandoutChips = (panel: HTMLElement, items: string[]) => {
   const featureId = getFeatureId();
-  dishCtx = featureId ? { panel, items, featureId } : null;
-  redrawDishes();
-  if (featureId) ensureDishScores(featureId, items);
+  standoutCtx = featureId ? { panel, items, featureId } : null;
+  redrawStandouts();
+  if (featureId) ensureStandoutScores(featureId, items);
 };
 
 const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
@@ -1420,7 +1420,7 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   }
   // Only on the main place summary — a label-search/chip sub-summary's items
   // would spawn nested searches off a filtered set.
-  if (result.items?.length && panel === cardEls.sumPanel) renderDishChips(panel, result.items);
+  if (result.items?.length && panel === cardEls.sumPanel) renderStandoutChips(panel, result.items);
   if (result.valueForMoney) {
     const v = Math.max(1, Math.min(5, result.valueForMoney));
     panel.appendChild(el('div', 'rc-value', `Value for money: ${starString(v)}`));

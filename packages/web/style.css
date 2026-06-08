@@ -713,13 +713,13 @@ section#result::before {
   text-transform: uppercase;
 }
 
-/* Praised-dish chips reuse .chip / .highlights-list; only the section needs styling. */
-.dishes-row {
+/* Praised-standout chips reuse .chip / .highlights-list; only the section needs styling. */
+.standouts-row {
   margin-bottom: 18px;
   padding-bottom: 18px;
   border-bottom: 1px solid var(--hairline);
 }
-.dishes-header { margin-bottom: 10px; }
+.standouts-header { margin-bottom: 10px; }
 
 .verdict {
   font-size: 14px;

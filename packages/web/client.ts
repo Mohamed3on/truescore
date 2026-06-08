@@ -95,8 +95,8 @@ const resummarizeBtn = $('resummarize') as HTMLButtonElement;
 const highlightsRow = $('highlightsRow') as HTMLElement;
 const highlightsList = $('highlightsList') as HTMLElement;
 const highlightsRefreshBtn = $('highlightsRefresh') as HTMLButtonElement;
-const dishesRow = $('dishesRow') as HTMLElement;
-const dishesList = $('dishesList') as HTMLElement;
+const standoutsRow = $('standoutsRow') as HTMLElement;
+const standoutsList = $('standoutsList') as HTMLElement;
 const searchForm = $('searchForm') as HTMLFormElement;
 const searchInput = $('searchInput') as HTMLInputElement;
 const searchBtn = $('searchBtn') as HTMLButtonElement;
@@ -128,10 +128,10 @@ let activeSearch: SearchResult | null = null;
 let currentHighlights: UiChip[] = [];
 let highlightReviewsInflight: Promise<void> | null = null;
 
-// Praised dish/menu items from the summary, each auto-scored by its own label
+// Praised standout items from the summary, each auto-scored by its own label
 // search. A SearchResult once scored; clicking opens it in the search panel.
-type DishChip = { item: string; state: ChipState; result?: SearchResult };
-let dishChips: DishChip[] = [];
+type StandoutChip = { item: string; state: ChipState; result?: SearchResult };
+let standoutChips: StandoutChip[] = [];
 
 function setStatus(msg: string, isErr = false) {
   status.textContent = msg;
@@ -193,17 +193,17 @@ function renderHighlights(highlights: UiChip[], sort = false) {
   }
 }
 
-// Praised dishes from the summary, rendered as chips below the topic chips.
+// Praised standouts from the summary, rendered as chips below the topic chips.
 // Each is auto-scored by a label search (/api/search); a scored chip opens that
-// search's panel on click — the same flow as typing the dish into the searchbox.
-function renderDishes() {
-  while (dishesList.firstChild) dishesList.removeChild(dishesList.firstChild);
-  // Show only dishes confirmed with ≥2 reviews mentioning them, most-mentioned
+// search's panel on click — the same flow as typing the standout into the searchbox.
+function renderStandouts() {
+  while (standoutsList.firstChild) standoutsList.removeChild(standoutsList.firstChild);
+  // Show only standouts confirmed with ≥2 reviews mentioning them, most-mentioned
   // first. Unscored / low-mention / errored chips aren't shown.
-  const shown = dishChips
+  const shown = standoutChips
     .filter((d) => d.result && d.result.totalReviews >= 2)
     .sort((a, b) => b.result!.totalReviews - a.result!.totalReviews);
-  dishesRow.hidden = shown.length === 0;
+  standoutsRow.hidden = shown.length === 0;
   for (const d of shown) {
     const r = d.result!;
     const btn = document.createElement('button');
@@ -222,11 +222,11 @@ function renderDishes() {
     count.textContent = `·${r.totalReviews}`;
     btn.appendChild(count);
     btn.addEventListener('click', () => showSearchPanel(r));
-    dishesList.appendChild(btn);
+    standoutsList.appendChild(btn);
   }
 }
 
-async function scoreDish(featureId: string, d: DishChip) {
+async function scoreStandout(featureId: string, d: StandoutChip) {
   try {
     const resp = await postNdjson('/api/search', { featureId, query: accentVariantQuery(d.item) });
     let result: SearchResult | null = null;
@@ -241,13 +241,13 @@ async function scoreDish(featureId: string, d: DishChip) {
     if (currentFeatureId !== featureId) return;
     d.state = 'error';
   }
-  renderDishes();
+  renderStandouts();
 }
 
-function showDishes(items: string[], featureId: string) {
-  dishChips = items.map((item) => ({ item, state: 'loading' as ChipState }));
-  renderDishes();
-  for (const d of dishChips) scoreDish(featureId, d);
+function showStandouts(items: string[], featureId: string) {
+  standoutChips = items.map((item) => ({ item, state: 'loading' as ChipState }));
+  renderStandouts();
+  for (const d of standoutChips) scoreStandout(featureId, d);
 }
 
 function showHighlightsLoading(msg: string) {
@@ -720,8 +720,8 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   $('verdict').textContent = '';
   resummarizeBtn.hidden = true;
   highlightsRow.hidden = true;
-  dishChips = [];
-  renderDishes();
+  standoutChips = [];
+  renderStandouts();
   chipPanel.hidden = true;
   verdictRow.style.display = '';
   highlightsListEl.style.display = '';
@@ -995,14 +995,14 @@ function renderSummary(summary: Summary) {
   resummarizeBtn.hidden = false;
   while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
   renderHighlightList(highlightsListEl, summary.highlights);
-  if (currentFeatureId && summary.items?.length) showDishes(summary.items, currentFeatureId);
-  else { dishChips = []; renderDishes(); }
+  if (currentFeatureId && summary.items?.length) showStandouts(summary.items, currentFeatureId);
+  else { standoutChips = []; renderStandouts(); }
 }
 
 function renderSummaryError(msg: string) {
   $('verdict').textContent = `summary failed: ${msg}`;
-  dishChips = [];
-  renderDishes();
+  standoutChips = [];
+  renderStandouts();
 }
 
 async function fetchHistogramFor(featureId: string, mergedPct: number) {
