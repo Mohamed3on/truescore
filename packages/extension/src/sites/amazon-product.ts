@@ -206,8 +206,53 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     ...(antiCsrf ? { 'anti-csrftoken-a2z': antiCsrf } : {}),
   };
 
-  const extractReviewTexts = (html: string, parser: DOMParser, seen: Set<string>) => {
-    const doc = parser.parseFromString(html, 'text/html');
+  // The one paginated review fetch all three callers share: POST the review AJAX
+  // (cursor via nextPageToken), fall back to the plain product-reviews page, parse,
+  // and hand each page to onPage. extraParams (e.g. filterByKeyword) flow into both
+  // the POST body and the fallback URL so filtered searches stay filtered; onPage
+  // returns 'stop' to end pagination early.
+  const fetchReviewPages = async (
+    onPage: (doc: Document, page: number) => 'stop' | void,
+    extraParams: Record<string, string> = {},
+  ) => {
+    const parser = new DOMParser();
+    let nextToken: string | null = null;
+    for (let page = 1; page <= NUMBER_OF_PAGES_TO_PARSE; page++) {
+      const params: Record<string, string> = {
+        sortBy: 'recent', pageNumber: String(page), pageSize: '10',
+        asin: productSIN, scope: `reviewsAjax${page}`,
+        deviceType: 'desktop', reftag: 'cm_cr_getr_d_paging_btm', ...extraParams,
+      };
+      if (nextToken) params.nextPageToken = nextToken;
+
+      let html = '';
+      try {
+        const res = await fetch(portalUrl, {
+          method: 'POST', credentials: 'include', headers: portalHeaders,
+          body: new URLSearchParams(params),
+        });
+        if (res.ok) html = parseAjaxChunks(await res.text());
+      } catch (_) {}
+
+      if (!html) {
+        const qs = new URLSearchParams({ sortBy: 'recent', pageNumber: String(page), ...extraParams });
+        if (nextToken) qs.set('nextPageToken', nextToken);
+        try {
+          const res = await fetch(`/product-reviews/${productSIN}/?${qs}`, { credentials: 'include' });
+          if (res.ok) html = await res.text();
+        } catch (_) {}
+      }
+      if (!html) break;
+
+      if (onPage(parser.parseFromString(html, 'text/html'), page) === 'stop') break;
+
+      const tokenMatch = html.match(/nextPageToken[^:]*?:\s*(?:&quot;|")([^"&]+)/);
+      nextToken = tokenMatch?.[1] ?? null;
+      if (!nextToken) break;
+    }
+  };
+
+  const extractReviewTexts = (doc: Document, seen: Set<string>) => {
     const reviews = doc.querySelectorAll('[data-hook="review"]');
     const texts: string[] = [];
     for (const review of reviews) {
@@ -226,50 +271,16 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     const cachedTexts = cacheGet(reviewsCacheKey, ONE_DAY);
     if (cachedTexts) return cachedTexts;
 
-    const parser = new DOMParser();
     const seen = new Set<string>();
     const texts: string[] = [];
-    let nextToken: string | null = null;
-
-    for (let page = 1; page <= NUMBER_OF_PAGES_TO_PARSE; page++) {
-      // Try /portal/ AJAX with cursor
-      const params: Record<string, string> = {
-        sortBy: 'recent', pageNumber: String(page), pageSize: '10',
-        asin: productSIN, scope: `reviewsAjax${page}`,
-        deviceType: 'desktop', reftag: 'cm_cr_getr_d_paging_btm',
-      };
-      if (nextToken) params.nextPageToken = nextToken;
-
-      let html = '';
-      try {
-        const res = await fetch(portalUrl, {
-          method: 'POST', credentials: 'include', headers: portalHeaders,
-          body: new URLSearchParams(params),
-        });
-        if (res.ok) html = parseAjaxChunks(await res.text());
-      } catch (_) {}
-
-      // Fallback to HTML scrape
-      if (!html) {
-        try {
-          const fallbackUrl = `/product-reviews/${productSIN}/?sortBy=recent&pageNumber=${page}${nextToken ? `&nextPageToken=${encodeURIComponent(nextToken)}` : ''}`;
-          const res = await fetch(fallbackUrl, { credentials: 'include' });
-          if (res.ok) html = await res.text();
-        } catch (_) {}
-      }
-      if (!html) break;
-
-      const { total, texts: newTexts } = extractReviewTexts(html, parser, seen);
+    await fetchReviewPages((doc, page) => {
+      const { total, texts: newTexts } = extractReviewTexts(doc, seen);
       texts.push(...newTexts);
       if (total > 0 && newTexts.length === 0) {
         console.warn(`[ARS] Page ${page}: all ${total} reviews were duplicates — pagination broken, stopping`);
-        break;
+        return 'stop';
       }
-
-      const tokenMatch = html.match(/nextPageToken[^:]*?:\s*(?:&quot;|")([^"&]+)/);
-      nextToken = tokenMatch?.[1] ?? null;
-      if (!nextToken) break;
-    }
+    });
 
     if (texts.length) cacheSet(reviewsCacheKey, texts);
     return texts;
@@ -278,7 +289,6 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   if (!usedCache) {
     const starRatingsToLikeDislikeMapping: Record<number, number> = { 5: 1, 1: -1 };
     let totalRatingPercentages: { fiveStars: number; oneStars: number } | undefined;
-    const parser = new DOMParser();
 
     try {
       const totals = getRatingPercentages();
@@ -344,34 +354,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     const seenReviewIds = new Set<string>();
     const collectedReviewTexts: string[] = [];
     const reviewTextsSeen = new Set<string>();
-    let nextToken: string | null = null;
-    for (let page = 1; page <= NUMBER_OF_PAGES_TO_PARSE; page++) {
-      let html = '';
-      const portalParams: Record<string, string> = {
-        sortBy: 'recent', pageNumber: String(page), pageSize: '10',
-        asin: productSIN, scope: `reviewsAjax${page}`,
-        deviceType: 'desktop', reftag: 'cm_cr_getr_d_paging_btm',
-      };
-      if (nextToken) portalParams.nextPageToken = nextToken;
-      try {
-        const res = await fetch(portalUrl, {
-          method: 'POST', credentials: 'include', headers: portalHeaders,
-          body: new URLSearchParams(portalParams),
-        });
-        if (res.ok) html = parseAjaxChunks(await res.text());
-      } catch (_) {}
-
-      if (!html) {
-        try {
-          const fallbackUrl = `/product-reviews/${productSIN}/?sortBy=recent&pageNumber=${page}${nextToken ? `&nextPageToken=${encodeURIComponent(nextToken)}` : ''}`;
-          const res = await fetch(fallbackUrl, { credentials: 'include' });
-          if (res.ok) html = await res.text();
-        } catch (_) {}
-      }
-      if (!html) break;
-
-      const syntheticDocument = parser.parseFromString(html, 'text/html');
-
+    await fetchReviewPages((syntheticDocument, page) => {
       if (!totalRatingPercentages) {
         totalRatingPercentages = getRatingPercentages(syntheticDocument);
         const { calculatedScore, totalScorePercentage } = setTotalRatingsScore(
@@ -381,7 +364,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       }
 
       const reviews = syntheticDocument.querySelectorAll('[data-hook="review"]');
-      if (!reviews.length) break;
+      if (!reviews.length) return 'stop';
 
       const prevSeen = seenReviewIds.size;
       for (const review of reviews) {
@@ -420,15 +403,11 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
       if (seenReviewIds.size === prevSeen) {
         console.warn(`[ARS] Score page ${page}: all ${reviews.length} reviews were duplicates — pagination is broken, stopping`);
-        break;
+        return 'stop';
       }
 
       updateLiveStats();
-
-      const tokenMatch = html.match(/nextPageToken[^:]*?:\s*(?:&quot;|")([^"&]+)/);
-      nextToken = tokenMatch?.[1] ?? null;
-      if (!nextToken) break;
-    }
+    });
 
     if (numberOfParsedReviews > 0) {
       cacheSet(scoresCacheKey, { numberOfParsedReviews, scores, formatRatings });
@@ -490,27 +469,11 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   // Amazon's review AJAX accepts filterByKeyword, so this spans EVERY review —
   // not just the pages we scored — mirroring the Google Maps label search. One
   // paged fetch per OR-term, unioned by review id (sharing one DOMParser).
-  const fetchKeywordTerm = async (term: string, seen: Set<string>, parser: DOMParser): Promise<FilteredReview[]> => {
+  const fetchKeywordTerm = async (term: string, seen: Set<string>): Promise<FilteredReview[]> => {
     const out: FilteredReview[] = [];
-    let nextToken: string | null = null;
-    for (let page = 1; page <= NUMBER_OF_PAGES_TO_PARSE; page++) {
-      const params: Record<string, string> = {
-        sortBy: 'recent', pageNumber: String(page), pageSize: '10',
-        asin: productSIN, scope: `reviewsAjax${page}`, deviceType: 'desktop',
-        reftag: 'cm_cr_getr_d_paging_btm', filterByKeyword: term,
-      };
-      if (nextToken) params.nextPageToken = nextToken;
-      let html = '';
-      try {
-        const res = await fetch(portalUrl, {
-          method: 'POST', credentials: 'include', headers: portalHeaders,
-          body: new URLSearchParams(params),
-        });
-        if (res.ok) html = parseAjaxChunks(await res.text());
-      } catch (_) {}
-      if (!html) break;
-      const reviews = parser.parseFromString(html, 'text/html').querySelectorAll('[data-hook="review"]');
-      if (!reviews.length) break;
+    await fetchReviewPages((doc) => {
+      const reviews = doc.querySelectorAll('[data-hook="review"]');
+      if (!reviews.length) return 'stop';
       let added = 0;
       for (const review of reviews) {
         const id = review.id || review.querySelector('[data-hook="review-body"]')?.textContent?.trim().slice(0, 80) || '';
@@ -519,18 +482,14 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         added++;
         out.push(parseFilteredReview(review));
       }
-      if (!added) break;
-      const tokenMatch = html.match(/nextPageToken[^:]*?:\s*(?:&quot;|")([^"&]+)/);
-      nextToken = tokenMatch?.[1] ?? null;
-      if (!nextToken) break;
-    }
+      if (!added) return 'stop';
+    }, { filterByKeyword: term });
     return out;
   };
 
   const fetchReviewsByKeyword = async (terms: string[]): Promise<FilteredReview[]> => {
     const seen = new Set<string>();
-    const parser = new DOMParser();
-    const groups = await Promise.all(terms.map((t) => fetchKeywordTerm(t, seen, parser)));
+    const groups = await Promise.all(terms.map((t) => fetchKeywordTerm(t, seen)));
     return groups.flat();
   };
 
