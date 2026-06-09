@@ -1,7 +1,7 @@
 import { addCommas, el, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget, geminiSummarize, renderFreeFormAnswer } from '../shared/review-summary';
-import { parseOrQuery } from '@truescore/gmaps-shared';
+import { queryTerms, buildReviewCard } from '../shared/review-search';
 
 const STAMPED_API_KEY = '8a204db0-ec09-48cf-baed-db3ca2ef99e6';
 const STAMPED_STORE = 'bjj-fanatics.myshopify.com';
@@ -133,56 +133,22 @@ const reviewHaystack = (r: StampedReview) =>
   [r.reviewTitle, r.reviewMessage, ...(r.reviewOptionsList || []).map(o => o.value)]
     .filter(Boolean).join(' ').toLowerCase();
 
-// `terms` are lowercased OR-terms; a review matches if its text contains ANY of
-// them. parseOrQuery splits the Gmail-style ` OR ` operator (any case).
-const queryTerms = (query: string) => parseOrQuery(query).map(t => t.toLowerCase());
+// `terms` are lowercased OR-terms (from queryTerms); a review matches if its
+// text contains ANY of them.
 const matchesTerms = (r: StampedReview, terms: string[]) => {
   const h = reviewHaystack(r);
   return terms.some(t => h.includes(t));
 };
 
-// Highlight every occurrence of ANY term. At each position take the
-// earliest-starting match (longest on ties) so overlapping terms don't double-wrap.
-const appendHighlighted = (parent: HTMLElement, text: string, terms: string[]) => {
-  if (!terms.length) { parent.appendChild(document.createTextNode(text)); return; }
-  const lower = text.toLowerCase();
-  let i = 0;
-  while (i < text.length) {
-    let best = -1, bestLen = 0;
-    for (const t of terms) {
-      const idx = lower.indexOf(t, i);
-      if (idx >= 0 && (best < 0 || idx < best || (idx === best && t.length > bestLen))) { best = idx; bestLen = t.length; }
-    }
-    if (best < 0) { parent.appendChild(document.createTextNode(text.slice(i))); return; }
-    if (best > i) parent.appendChild(document.createTextNode(text.slice(i, best)));
-    parent.appendChild(el('mark', 'ars-search-hl', text.slice(best, best + bestLen)));
-    i = best + bestLen;
-  }
-};
-
 const MAX_RENDERED_RESULTS = 50;
 const SEARCH_DEBOUNCE_MS = 120;
 
-const buildReviewCard = (r: StampedReview, terms: string[]) => {
-  const card = el('div', 'ars-search-review');
-  const head = el('div', 'ars-search-review-head');
-  const rating = Math.max(0, Math.min(5, Math.round(r.reviewRating || 0)));
-  head.appendChild(el('span', 'ars-search-stars', '★'.repeat(rating) + '☆'.repeat(5 - rating)));
-  const meta = (r.reviewOptionsList || []).map(o => o.value).filter(Boolean).join(' · ');
-  if (meta) head.appendChild(el('span', 'ars-search-meta', meta));
-  card.appendChild(head);
-  if (r.reviewTitle) {
-    const title = el('div', 'ars-search-title');
-    appendHighlighted(title, r.reviewTitle, terms);
-    card.appendChild(title);
-  }
-  if (r.reviewMessage) {
-    const body = el('div', 'ars-search-body');
-    appendHighlighted(body, r.reviewMessage, terms);
-    card.appendChild(body);
-  }
-  return card;
-};
+const cardFields = (r: StampedReview) => ({
+  rating: r.reviewRating,
+  title: r.reviewTitle,
+  body: r.reviewMessage,
+  meta: (r.reviewOptionsList || []).map(o => o.value).filter(Boolean).join(' · '),
+});
 
 const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
   const section = el('div', 'ars-search-section');
@@ -296,7 +262,7 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
       return;
     }
     const shown = matches.slice(0, MAX_RENDERED_RESULTS);
-    for (const r of shown) list.appendChild(buildReviewCard(r, terms));
+    for (const r of shown) list.appendChild(buildReviewCard(cardFields(r), terms));
     if (matches.length > shown.length) {
       list.appendChild(el('div', 'ars-search-truncated',
         `Showing first ${shown.length} — refine the search to see more.`));

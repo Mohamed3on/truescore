@@ -1,6 +1,7 @@
 import { cacheGet, cacheSet } from '../shared/cache';
-import { addCommas } from '../shared/utils';
+import { addCommas, el, npsColor } from '../shared/utils';
 import { buildSummarizeWidget } from '../shared/review-summary';
+import { queryTerms, buildReviewCard } from '../shared/review-search';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 
 const NUMBER_OF_PAGES_TO_PARSE = 10;
@@ -461,6 +462,179 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     }
   }
 
+  // ---- Keyword review search (server-side filterByKeyword) ----
+  // Amazon's review AJAX accepts filterByKeyword, so this spans EVERY review —
+  // not just the pages we scored — mirroring the Google Maps label search. One
+  // paged fetch per OR-term, unioned by review id.
+  type FilteredReview = { rating: number; title: string; body: string; verified: boolean; meta: string };
+
+  const pickText = (root: Element, sel: string) => {
+    const node = root.querySelector(sel);
+    // Prefer the original (untranslated) span when Amazon nests one; for local
+    // reviews this also strips the star-rating alt text baked into the title.
+    return (node?.querySelector('.cr-original-review-content')?.textContent ?? node?.textContent ?? '').trim();
+  };
+
+  const parseFilteredReview = (review: Element): FilteredReview => {
+    const ratingEl = review.querySelector('[data-hook="review-star-rating"], [data-hook="cmps-review-star-rating"]');
+    return {
+      rating: parseInt(ratingEl?.textContent?.match(/(\d)(?:\.\d)?/)?.[1] ?? '0', 10),
+      title: pickText(review, '[data-hook="review-title"]'),
+      body: pickText(review, '[data-hook="review-body"]'),
+      verified: !!review.querySelector('[data-hook="avp-badge"]'),
+      meta: review.querySelector('[data-hook="review-date"]')?.textContent?.trim() ?? '',
+    };
+  };
+
+  const fetchKeywordTerm = async (term: string, seen: Set<string>): Promise<FilteredReview[]> => {
+    const parser = new DOMParser();
+    const out: FilteredReview[] = [];
+    let nextToken: string | null = null;
+    for (let page = 1; page <= NUMBER_OF_PAGES_TO_PARSE; page++) {
+      const params: Record<string, string> = {
+        sortBy: 'recent', pageNumber: String(page), pageSize: '10',
+        asin: productSIN, scope: `reviewsAjax${page}`, deviceType: 'desktop',
+        reftag: 'cm_cr_getr_d_paging_btm', filterByKeyword: term,
+      };
+      if (nextToken) params.nextPageToken = nextToken;
+      let html = '';
+      try {
+        const res = await fetch(portalUrl, {
+          method: 'POST', credentials: 'include', headers: portalHeaders,
+          body: new URLSearchParams(params),
+        });
+        if (res.ok) html = parseAjaxChunks(await res.text());
+      } catch (_) {}
+      if (!html) break;
+      const reviews = parser.parseFromString(html, 'text/html').querySelectorAll('[data-hook="review"]');
+      if (!reviews.length) break;
+      let added = 0;
+      for (const review of reviews) {
+        const id = review.id || review.querySelector('[data-hook="review-body"]')?.textContent?.trim().slice(0, 80) || '';
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        added++;
+        out.push(parseFilteredReview(review));
+      }
+      if (!added) break;
+      const tokenMatch = html.match(/nextPageToken[^:]*?:\s*(?:&quot;|")([^"&]+)/);
+      nextToken = tokenMatch?.[1] ?? null;
+      if (!nextToken) break;
+    }
+    return out;
+  };
+
+  const fetchReviewsByKeyword = async (query: string): Promise<FilteredReview[]> => {
+    const seen = new Set<string>();
+    const groups = await Promise.all(queryTerms(query).map((t) => fetchKeywordTerm(t, seen)));
+    return groups.flat();
+  };
+
+  const keywordSummaryPrompt = (kw: string) =>
+    `These are Amazon reviews that mention "${kw}". Focus ONLY on what reviewers say about ${kw} for this product — ignore shipping, delivery, packaging, and seller issues. List what reviewers praise and complain about regarding ${kw}, most-mentioned first; include a point only if 2+ reviewers make it. If reviewers disagree, surface the tension. End with a short verdict on ${kw}.`;
+
+  const buildKeywordSearch = () => {
+    const section = el('div', 'ars-search-section');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'ars-search-input';
+    input.placeholder = 'Search all reviews… e.g. "battery OR strap" (Enter)';
+    section.appendChild(input);
+
+    const header = el('div', 'ars-search-header');
+    header.style.display = 'none';
+    const scoreChip = el('span', 'ars-search-score');
+    const summary = el('span', 'ars-search-summary');
+    header.append(scoreChip, summary);
+    section.appendChild(header);
+
+    const list = el('div', 'ars-search-list');
+    list.style.display = 'none';
+    section.appendChild(list);
+
+    // Re-filled with a fresh summarize/ask widget (scoped + cached per keyword)
+    // on every successful search.
+    const sumHost = el('div');
+    section.appendChild(sumHost);
+
+    let seq = 0;
+    const reset = () => {
+      seq++; // invalidate any in-flight search so it can't render after a clear
+      header.style.display = 'none';
+      list.style.display = 'none';
+      list.textContent = '';
+      sumHost.textContent = '';
+    };
+
+    const run = async () => {
+      const query = input.value.trim();
+      if (!query) { reset(); return; }
+      const mySeq = ++seq;
+      header.style.display = '';
+      list.style.display = 'none';
+      scoreChip.style.display = 'none';
+      summary.textContent = `Searching “${query}”…`;
+      sumHost.textContent = '';
+
+      let reviews: FilteredReview[];
+      try {
+        reviews = await fetchReviewsByKeyword(query);
+      } catch (e) {
+        if (mySeq === seq) summary.textContent = 'Search failed';
+        console.error('[ARS] keyword search failed', e);
+        return;
+      }
+      if (mySeq !== seq) return;
+
+      const terms = queryTerms(query);
+      let five = 0, one = 0;
+      for (const r of reviews) { if (r.rating === 5) five++; else if (r.rating === 1) one++; }
+
+      summary.textContent = '';
+      summary.append(
+        el('span', 'ars-search-count', addCommas(reviews.length)),
+        document.createTextNode(` review${reviews.length === 1 ? '' : 's'} mention “${query}”`),
+      );
+
+      if (reviews.length) {
+        const nps = ((five - one) / reviews.length) * 100;
+        scoreChip.textContent = `${Math.round(nps)}%`;
+        scoreChip.style.color = npsColor(nps);
+        scoreChip.style.display = '';
+      }
+
+      list.style.display = '';
+      list.textContent = '';
+      if (!reviews.length) {
+        list.appendChild(el('div', 'ars-search-empty', 'No reviews mention this'));
+        return;
+      }
+      for (const r of reviews) {
+        const meta = [r.verified ? '✓ Verified' : '', r.meta].filter(Boolean).join(' · ');
+        list.appendChild(buildReviewCard({ rating: r.rating, title: r.title, body: r.body, meta }, terms));
+      }
+
+      const texts = reviews
+        .map((r) => [r.title, r.body].filter(Boolean).join('. '))
+        .filter((t) => t.length >= 20);
+      if (texts.length) {
+        buildSummarizeWidget({
+          wrapper: sumHost,
+          cacheKey: `review-summary-${cacheASIN}-kw-${query.toLowerCase()}`,
+          summaryPrompt: keywordSummaryPrompt(query),
+          fetchReviews: async () => texts,
+          questionPlaceholder: `Ask about “${query}” reviews…`,
+          skipSuspicious: true,
+        });
+      }
+    };
+
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+    input.addEventListener('input', () => { if (!input.value.trim()) reset(); });
+
+    wrapper.appendChild(section);
+  };
+
   if (numberOfParsedReviews > 0) {
     scores.recent.percentage = scores.recent.percentage || (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
     const SUMMARY_PROMPT = `Analyze these Amazon product reviews. Ignore anything about shipping, delivery, packaging, or seller issues \u2014 focus ONLY on the product itself. Skip generic praise like "great product".
@@ -472,6 +646,8 @@ If 2+ reviewers mention a specific better alternative product, note it and expla
 Check for signs of review manipulation: repetitive phrasing across reviews, suspiciously similar wording or sentence structure, lack of specific/unique details, generic praise that reads like astroturfing, or signs of incentivized reviews. If detected, warn about it. If reviews appear genuine, leave suspiciousPatterns empty.
 
 End with a short summary: the gist of what owners say, anything to watch out for, any better alternatives mentioned, and whether this is the best you can get for the price.`;
+
+    buildKeywordSearch();
 
     buildSummarizeWidget({
       wrapper,
