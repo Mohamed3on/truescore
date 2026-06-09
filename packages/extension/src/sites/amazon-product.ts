@@ -122,6 +122,30 @@ const setTotalRatingsScore = (totalRatingPercentages: { fiveStars: number; oneSt
 
 const THREE_DAYS = 3 * 86400000;
 
+// ---- Keyword review search helpers (pure; used by getRatingSummary) ----
+type FilteredReview = { rating: number; title: string; body: string; verified: boolean; meta: string };
+
+const pickText = (root: Element, sel: string) => {
+  const node = root.querySelector(sel);
+  // Prefer the original (untranslated) span when Amazon nests one; for local
+  // reviews this also strips the star-rating alt text baked into the title.
+  return (node?.querySelector('.cr-original-review-content')?.textContent ?? node?.textContent ?? '').trim();
+};
+
+const parseFilteredReview = (review: Element): FilteredReview => {
+  const ratingEl = review.querySelector('[data-hook="review-star-rating"], [data-hook="cmps-review-star-rating"]');
+  return {
+    rating: parseInt(ratingEl?.textContent?.match(/(\d)(?:\.\d)?/)?.[1] ?? '0', 10),
+    title: pickText(review, '[data-hook="review-title"]'),
+    body: pickText(review, '[data-hook="review-body"]'),
+    verified: !!review.querySelector('[data-hook="avp-badge"]'),
+    meta: review.querySelector('[data-hook="review-date"]')?.textContent?.trim() ?? '',
+  };
+};
+
+const keywordSummaryPrompt = (kw: string) =>
+  `These are Amazon reviews that mention "${kw}". Focus ONLY on what reviewers say about ${kw} for this product — ignore shipping, delivery, packaging, and seller issues. List what reviewers praise and complain about regarding ${kw}, most-mentioned first; include a point only if 2+ reviewers make it. If reviewers disagree, surface the tension. End with a short verdict on ${kw}.`;
+
 const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLElement, numOfRatings: any, cacheASIN: string) => {
   const recentRatingsURL = `/product-reviews/${productSIN}/?sortBy=recent`;
   let numberOfParsedReviews = 0;
@@ -465,29 +489,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   // ---- Keyword review search (server-side filterByKeyword) ----
   // Amazon's review AJAX accepts filterByKeyword, so this spans EVERY review —
   // not just the pages we scored — mirroring the Google Maps label search. One
-  // paged fetch per OR-term, unioned by review id.
-  type FilteredReview = { rating: number; title: string; body: string; verified: boolean; meta: string };
-
-  const pickText = (root: Element, sel: string) => {
-    const node = root.querySelector(sel);
-    // Prefer the original (untranslated) span when Amazon nests one; for local
-    // reviews this also strips the star-rating alt text baked into the title.
-    return (node?.querySelector('.cr-original-review-content')?.textContent ?? node?.textContent ?? '').trim();
-  };
-
-  const parseFilteredReview = (review: Element): FilteredReview => {
-    const ratingEl = review.querySelector('[data-hook="review-star-rating"], [data-hook="cmps-review-star-rating"]');
-    return {
-      rating: parseInt(ratingEl?.textContent?.match(/(\d)(?:\.\d)?/)?.[1] ?? '0', 10),
-      title: pickText(review, '[data-hook="review-title"]'),
-      body: pickText(review, '[data-hook="review-body"]'),
-      verified: !!review.querySelector('[data-hook="avp-badge"]'),
-      meta: review.querySelector('[data-hook="review-date"]')?.textContent?.trim() ?? '',
-    };
-  };
-
-  const fetchKeywordTerm = async (term: string, seen: Set<string>): Promise<FilteredReview[]> => {
-    const parser = new DOMParser();
+  // paged fetch per OR-term, unioned by review id (sharing one DOMParser).
+  const fetchKeywordTerm = async (term: string, seen: Set<string>, parser: DOMParser): Promise<FilteredReview[]> => {
     const out: FilteredReview[] = [];
     let nextToken: string | null = null;
     for (let page = 1; page <= NUMBER_OF_PAGES_TO_PARSE; page++) {
@@ -524,14 +527,12 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     return out;
   };
 
-  const fetchReviewsByKeyword = async (query: string): Promise<FilteredReview[]> => {
+  const fetchReviewsByKeyword = async (terms: string[]): Promise<FilteredReview[]> => {
     const seen = new Set<string>();
-    const groups = await Promise.all(queryTerms(query).map((t) => fetchKeywordTerm(t, seen)));
+    const parser = new DOMParser();
+    const groups = await Promise.all(terms.map((t) => fetchKeywordTerm(t, seen, parser)));
     return groups.flat();
   };
-
-  const keywordSummaryPrompt = (kw: string) =>
-    `These are Amazon reviews that mention "${kw}". Focus ONLY on what reviewers say about ${kw} for this product — ignore shipping, delivery, packaging, and seller issues. List what reviewers praise and complain about regarding ${kw}, most-mentioned first; include a point only if 2+ reviewers make it. If reviewers disagree, surface the tension. End with a short verdict on ${kw}.`;
 
   const buildKeywordSearch = () => {
     const section = el('div', 'ars-search-section');
@@ -570,6 +571,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       const query = input.value.trim();
       if (!query) { reset(); return; }
       const mySeq = ++seq;
+      const terms = queryTerms(query);
       header.style.display = '';
       list.style.display = 'none';
       scoreChip.style.display = 'none';
@@ -578,7 +580,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
       let reviews: FilteredReview[];
       try {
-        reviews = await fetchReviewsByKeyword(query);
+        reviews = await fetchReviewsByKeyword(terms);
       } catch (e) {
         if (mySeq === seq) summary.textContent = 'Search failed';
         console.error('[ARS] keyword search failed', e);
@@ -586,7 +588,6 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       }
       if (mySeq !== seq) return;
 
-      const terms = queryTerms(query);
       let five = 0, one = 0;
       for (const r of reviews) { if (r.rating === 5) five++; else if (r.rating === 1) one++; }
 

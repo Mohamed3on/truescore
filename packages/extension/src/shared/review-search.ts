@@ -7,7 +7,7 @@ export const queryTerms = (query: string) => parseOrQuery(query).map((t) => t.to
 
 // Highlight every occurrence of ANY term. At each position take the
 // earliest-starting match (longest on ties) so overlapping terms don't double-wrap.
-export const appendHighlighted = (parent: HTMLElement, text: string, terms: string[]) => {
+const appendHighlighted = (parent: HTMLElement, text: string, terms: string[]) => {
   if (!terms.length) { parent.appendChild(document.createTextNode(text)); return; }
   const lower = text.toLowerCase();
   let i = 0;
