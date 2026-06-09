@@ -53,6 +53,7 @@
     "https://stamped.io/api/*",
     "*://apps.bazaarvoice.com/*",
     "*://*.goodreads.com/book/show/*",
+    "*://*.goodreads.com/*/book/show/*",
     "*://*.appsync-api.us-east-1.amazonaws.com/*",
     "*://*.google.com/maps/*",
     "*://*.imdb.com/title/*/*",
@@ -170,7 +171,7 @@
       "run_at": "document_end"
     },
     {
-      "matches": ["*://*.goodreads.com/book/show/*"],
+      "matches": ["*://*.goodreads.com/book/show/*", "*://*.goodreads.com/*/book/show/*"],
       "js": ["sites/goodreads.js"],
       "run_at": "document_end"
     },
