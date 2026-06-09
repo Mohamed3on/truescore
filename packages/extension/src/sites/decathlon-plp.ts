@@ -1,4 +1,4 @@
-import { addCommas, npsStats } from '../shared/utils';
+import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 
@@ -39,9 +39,8 @@ const fetchScore = async (sku: string, productId: string) => {
 const injectBadge = (card: Element, { score, nps }: { score: number; nps: number }) => {
   const target = card.querySelector('.review__fullstars__votes');
   if (!target) return;
-  const hue = Math.min(120, Math.max(0, (nps - 50) * 3));
   const badge = document.createElement('span');
-  badge.style.cssText = `color:hsl(${hue},70%,35%);font-weight:600;font-size:12px;margin-left:6px`;
+  badge.style.cssText = `color:${npsColor(nps)};font-weight:600;font-size:12px;margin-left:6px`;
   badge.textContent = `${addCommas(score)} (${Math.round(nps)}%)`;
   target.after(badge);
 };
