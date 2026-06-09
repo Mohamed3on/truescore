@@ -1,4 +1,4 @@
-import { addCommas, npsColor } from '../shared/utils';
+import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
@@ -98,9 +98,7 @@ const getScoreFromStats = (stats: any) => {
     if (entry?.RatingValue === 1) one = entry?.Count || 0;
   }
 
-  const nps = ((five - one) / total) * 100;
-  const score = Math.round((five - one) * ((five - one) / total));
-  return { score, nps, total, five, one };
+  return { ...npsStats(five, one, total), total, five, one };
 };
 
 // --- PDP-specific code ---

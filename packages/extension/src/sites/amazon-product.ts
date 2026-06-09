@@ -1,5 +1,5 @@
 import { cacheGet, cacheSet } from '../shared/cache';
-import { addCommas, el, npsColor } from '../shared/utils';
+import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { buildSummarizeWidget } from '../shared/review-summary';
 import { queryTerms, buildReviewCard } from '../shared/review-search';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
@@ -557,7 +557,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       );
 
       if (reviews.length) {
-        const nps = ((five - one) / reviews.length) * 100;
+        const { nps } = npsStats(five, one, reviews.length);
         scoreChip.textContent = `${Math.round(nps)}%`;
         scoreChip.style.color = npsColor(nps);
         scoreChip.style.display = '';

@@ -1,4 +1,4 @@
-import { addCommas, npsColor } from '../shared/utils';
+import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
@@ -22,9 +22,7 @@ const scoreFromDist = (dist: any[]) => {
     if (ratingType === 1) one = ratingCount;
   }
   if (total === 0) return null;
-  const nps = ((five - one) / total) * 100;
-  const score = Math.round((five - one) * ((five - one) / total));
-  return { score, nps };
+  return npsStats(five, one, total);
 };
 
 const fetchScore = async (country: string, lang: string, itemNo: string) => {

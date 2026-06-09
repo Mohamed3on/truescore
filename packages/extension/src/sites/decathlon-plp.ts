@@ -1,4 +1,4 @@
-import { addCommas } from '../shared/utils';
+import { addCommas, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 
@@ -31,9 +31,7 @@ const fetchScore = async (sku: string, productId: string) => {
   }
   if (!total) return null;
 
-  const nps = ((five - one) / total) * 100;
-  const score = Math.round((five - one) * ((five - one) / total));
-  const result = { score, nps };
+  const result = npsStats(five, one, total);
   cacheSet(key, result);
   return result;
 };

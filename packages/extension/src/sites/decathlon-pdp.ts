@@ -1,4 +1,4 @@
-import { addCommas, npsColor } from '../shared/utils';
+import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget } from '../shared/review-summary';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
@@ -31,9 +31,7 @@ const getScoreFromStats = (stats: any) => {
     if (code === '1') one = value;
   }
   if (total === 0) return null;
-  const nps = ((five - one) / total) * 100;
-  const score = Math.round((five - one) * ((five - one) / total));
-  return { score, nps };
+  return npsStats(five, one, total);
 };
 
 const appendScore = (productInfo: Element, { score, nps }: { score: number; nps: number }) => {

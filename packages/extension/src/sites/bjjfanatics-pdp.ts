@@ -1,4 +1,4 @@
-import { addCommas, el, npsColor } from '../shared/utils';
+import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget, geminiSummarize, renderFreeFormAnswer } from '../shared/review-summary';
 import { queryTerms, buildReviewCard } from '../shared/review-search';
@@ -111,10 +111,7 @@ const computeScore = ({ total, reviews }: ReviewBundle) => {
   }
   const denom = total || reviews.length;
   if (!denom) return null;
-  const ratio = (five - one) / denom;
-  const nps = ratio * 100;
-  const score = Math.round((five - one) * ratio);
-  return { score, ratio, nps, total: denom };
+  return { ...npsStats(five, one, denom), total: denom };
 };
 
 const MIN_REVIEW_CHARS = 20;

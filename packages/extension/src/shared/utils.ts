@@ -6,6 +6,14 @@ export const npsColor = (nps: number): string => {
   return `hsl(${hue}, 70%, 35%)`;
 };
 
+// Net sentiment from 5★/1★ counts: `nps` is the net-positive share as a
+// -100..100 percentage, `score` weights it by volume. Callers guard total > 0
+// where the NaN at total === 0 would matter.
+export const npsStats = (five: number, one: number, total: number) => {
+  const ratio = (five - one) / total;
+  return { score: Math.round((five - one) * ratio), nps: ratio * 100 };
+};
+
 export const el = (tag: string, className?: string, text?: string | number) => {
   const e = document.createElement(tag);
   if (className) e.className = className;

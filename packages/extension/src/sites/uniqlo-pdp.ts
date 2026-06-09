@@ -1,4 +1,4 @@
-import { addCommas, npsColor } from '../shared/utils';
+import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
@@ -66,9 +66,7 @@ const getScore = (rating: any) => {
   const { one = 0, two = 0, three = 0, four = 0, five = 0 } = rc;
   const total = one + two + three + four + five;
   if (total === 0) return null;
-  const nps = ((five - one) / total) * 100;
-  const score = Math.round((five - one) * ((five - one) / total));
-  return { score, nps };
+  return npsStats(five, one, total);
 };
 
 const appendScore = (ratingEl: Element, { score, nps }: { score: number; nps: number }) => {
