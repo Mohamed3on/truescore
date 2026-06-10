@@ -98,7 +98,7 @@ export async function summarize(placeName: string, reviewTexts: string[], filter
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
 
-  const verdictPrompt = `${block}\n\n---\n\nWrite a concise verdict on ${subject}: what stands out and whether it's worth it. Mention caveats only if the reviews raise real ones — don't invent them. **Bold** specifics. Markdown prose, no headings or bullets. Max 120 words.
+  const verdictPrompt = `${block}\n\n---\n\nWrite a concise verdict on ${subject}: what stands out and whether it's worth it. If reviewers compare it to other similar places, say how it stacks up — and if they name a better alternative (common for tourist spots they call overrated), point to it. Only when they actually do. Mention caveats only if the reviews raise real ones — don't invent them. **Bold** specifics. Markdown prose, no headings or bullets. Max 120 words.
 
 ${NOTES}`;
 
