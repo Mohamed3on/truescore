@@ -106,7 +106,7 @@ ${NOTES}`;
 
 Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
 
-Also list items: up to 6 concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword: the least common, most distinctive word, dropping generic nouns so the search catches variants ("Western Lowland Gorilla" → "gorilla", "dulce de leche cake" → "dulce de leche"). Split a compound like "salmon avocado toast" into "salmon", "avocado". But keep the phrase when a bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"). Skip generic qualities every place has — service, staff, cleanliness, value. [] if nothing specific stands out.
+Also list items: up to 6 concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword: the least common, most distinctive word, dropping generic nouns so the search catches variants ("Western Lowland Gorilla" → "gorilla", "dulce de leche cake" → "dulce de leche"). Split a compound like "salmon avocado toast" into "salmon", "avocado". But keep the phrase when a bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"). Skip generic qualities every place has — service, staff, cleanliness, value. Also include any better alternative place reviewers point to (somewhere they'd go instead), as its proper name. [] if nothing specific stands out.
 
 ${NOTES}`;
 
