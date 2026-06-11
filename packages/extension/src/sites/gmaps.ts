@@ -48,6 +48,7 @@ type CardEls = {
   highlightsBtn?: HTMLButtonElement;
   highlightsStale?: HTMLElement;
   standoutsSection?: HTMLElement;
+  alternativesSection?: HTMLElement;
   chipPanel?: HTMLElement;
   chipPanelTitle?: HTMLElement;
   chipPanelBody?: HTMLElement;
@@ -1162,6 +1163,13 @@ const createUIElements = () => {
   c.appendChild(soSec);
   cardEls.standoutsSection = soSec;
 
+  // Better-alternatives chips, directly under Standouts — same chip group, but
+  // their own labelled row. Populated by renderSummary.
+  const altSec = el('div', 'rc-alternatives');
+  altSec.style.display = 'none';
+  c.appendChild(altSec);
+  cardEls.alternativesSection = altSec;
+
   const searchSec = el('div', 'rc-search-section');
   const searchInput = document.createElement('input');
   searchInput.type = 'text';
@@ -1413,15 +1421,18 @@ const renderStandoutChips = (items: string[]) => {
   if (featureId) ensureStandoutScores(featureId, items);
 };
 
-// Better-alternative places reviewers point to. Its own labelled row, apart
-// from the Standouts chips — an alternative isn't a feature of this place, so it
-// shouldn't be scored/sorted as a standout. But each chip still runs a label
-// search for that name, exactly like the standout/topic chips, so a click
-// surfaces the reviews that mention it.
-const renderAlternatives = (panel: HTMLElement, alternatives?: string[]) => {
-  if (!alternatives?.length) return;
-  const wrap = el('div', 'rc-alternatives');
-  wrap.appendChild(el('span', 'rc-alternatives-label', 'Better alternatives'));
+// Better-alternative places reviewers point to. Its own labelled row directly
+// under Standouts, apart from the Standouts chips — an alternative isn't a
+// feature of this place, so it shouldn't be scored/sorted as a standout. But
+// each chip still runs a label search for that name, exactly like the
+// standout/topic chips, so a click surfaces the reviews that mention it.
+const renderAlternatives = (alternatives?: string[]) => {
+  const section = cardEls.alternativesSection;
+  if (!section) return;
+  section.textContent = '';
+  if (!alternatives?.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  section.appendChild(el('span', 'rc-alternatives-label', 'Better alternatives'));
   const list = el('div', 'rc-alternatives-list');
   for (const name of alternatives) {
     const chip = el('button', 'rc-chip rc-alternative-chip') as HTMLButtonElement;
@@ -1430,8 +1441,7 @@ const renderAlternatives = (panel: HTMLElement, alternatives?: string[]) => {
     chip.onclick = () => triggerStandoutSearch(name);
     list.appendChild(chip);
   }
-  wrap.appendChild(list);
-  panel.appendChild(wrap);
+  section.appendChild(list);
 };
 
 const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
@@ -1468,7 +1478,7 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
   if (panel === cardEls.sumPanel) {
     if (result.items?.length) renderStandoutChips(result.items);
     else clearStandouts();
-    renderAlternatives(panel, result.alternatives);
+    renderAlternatives(result.alternatives);
   }
   if (!result.highlights?.length && !result.verdict) {
     panel.textContent = 'No highlights found';

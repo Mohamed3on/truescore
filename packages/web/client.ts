@@ -313,7 +313,6 @@ function showChipPanel(h: UiChip) {
   chipPanel.hidden = false;
   verdictRow.style.display = 'none';
   highlightsListEl.style.display = 'none';
-  alternativesRow.style.display = 'none';
   resummarizeBtn.style.display = 'none';
   chipSummarizeBtn.disabled = false;
   chipSummarizeBtn.textContent = 'SUMMARIZE';
@@ -328,7 +327,6 @@ function closeChipPanel() {
   chipPanel.hidden = true;
   verdictRow.style.display = '';
   highlightsListEl.style.display = '';
-  alternativesRow.style.display = '';
   resummarizeBtn.style.display = '';
   searchInput.value = '';
   chipQuestionInput.value = '';
@@ -376,7 +374,6 @@ function showSearchPanel(r: SearchResult) {
   chipPanel.hidden = false;
   verdictRow.style.display = 'none';
   highlightsListEl.style.display = 'none';
-  alternativesRow.style.display = 'none';
   resummarizeBtn.style.display = 'none';
   chipSummarizeBtn.disabled = false;
   chipQuestionInput.value = '';
@@ -759,7 +756,6 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   chipPanel.hidden = true;
   verdictRow.style.display = '';
   highlightsListEl.style.display = '';
-  alternativesRow.style.display = '';
   searchForm.hidden = false;
   searchInput.value = '';
   searchRefreshBtn.hidden = true;

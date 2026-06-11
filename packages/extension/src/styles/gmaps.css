@@ -519,8 +519,8 @@
    label search on click, like the standouts, but in their own row and never
    auto-scored. A teal-tinted border marks them apart from the standout chips. */
 .rc-alternatives {
-  margin-top: 10px;
-  padding-top: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 .rc-alternatives-label {
