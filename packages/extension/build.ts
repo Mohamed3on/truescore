@@ -62,6 +62,7 @@ await esbuild.build({
 
 // Static assets
 cpSync('src/manifest.json', `${OUT}/manifest.json`);
+cpSync('src/icons', `${OUT}/icons`, { recursive: true });
 cpSync('src/popup/popup.html', `${OUT}/popup/popup.html`);
 cpSync('src/popup/popup.css', `${OUT}/popup/popup.css`);
 cpSync('src/styles/amazon-product.css', `${OUT}/sites/amazon-product.css`);

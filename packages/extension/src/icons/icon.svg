@@ -1,0 +1,19 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- TrueScore mark: a score dial filled high with the gold→teal signature gradient,
+       on a dark-glass tile. Source of truth; PNGs are rendered from this. -->
+  <defs>
+    <linearGradient id="tile" x1="64" y1="2" x2="64" y2="126" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#202840"/>
+      <stop offset="1" stop-color="#0C0E16"/>
+    </linearGradient>
+    <linearGradient id="score" x1="22" y1="104" x2="106" y2="24" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E8B86D"/>
+      <stop offset="0.55" stop-color="#9FCFA6"/>
+      <stop offset="1" stop-color="#6DD3CE"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="124" height="124" rx="30" fill="url(#tile)"/>
+  <rect x="2.75" y="2.75" width="122.5" height="122.5" rx="29.25" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="1.5"/>
+  <path d="M38.6 98.2 A38 38 0 1 1 89.4 98.2" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="15" stroke-linecap="round"/>
+  <path d="M38.6 98.2 A38 38 0 1 1 89.4 98.2" stroke="url(#score)" stroke-width="15" stroke-linecap="round" stroke-dasharray="139.1 999"/>
+</svg>
