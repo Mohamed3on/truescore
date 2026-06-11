@@ -1,6 +1,6 @@
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
-import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX } from '../shared/cache-keys';
+import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import {
   chipsFromPreview,
@@ -128,6 +128,30 @@ const loadSummaryCache = () => {
 };
 const saveSummaryCache = () => {
   try { localStorage.setItem(getSummaryCacheKey(), JSON.stringify(summaryCache)); } catch {}
+};
+
+// Label-search summaries, keyed by lowercased query, persisted per place like
+// the main summary so a search summary survives navigation/re-search. Capped so
+// a place explored with many searches can't crowd out the localStorage quota.
+const SEARCH_SUMMARY_LIMIT = 20;
+let searchSummaryCache: Record<string, SummaryResult> = {};
+const getSearchSummaryCacheKey = () => `${SEARCH_SUMMARY_CACHE_PREFIX}${lastFeatureId || 'default'}`;
+const loadSearchSummaryCache = () => {
+  try { searchSummaryCache = JSON.parse(localStorage.getItem(getSearchSummaryCacheKey()) as string) || {}; }
+  catch { searchSummaryCache = {}; }
+};
+const saveSearchSummaryCache = () => {
+  try {
+    const keys = Object.keys(searchSummaryCache);
+    for (const k of keys.slice(0, Math.max(0, keys.length - SEARCH_SUMMARY_LIMIT))) delete searchSummaryCache[k];
+    localStorage.setItem(getSearchSummaryCacheKey(), JSON.stringify(searchSummaryCache));
+  } catch {}
+};
+const cacheSearchSummary = (query: string, summary: SummaryResult) => {
+  const key = query.toLowerCase();
+  delete searchSummaryCache[key]; // re-insert so the most-recently-used stays newest
+  searchSummaryCache[key] = summary;
+  saveSearchSummaryCache();
 };
 
 // chrome.storage.local proxy via gmaps-bridge.ts (we run in MAIN world).
@@ -991,9 +1015,14 @@ const renderLabelSearchResult = () => {
   cardEls.searchQuestionInput = questionInput;
 
   // Summary/answer panel sits above the reviews so a Summarize result is visible
-  // the moment it lands, not below the scrolling review list. (It's hidden until
-  // summarizeLabelSearch/askLabelSearch fills it.)
-  if (panel) res.appendChild(panel);
+  // the moment it lands, not below the scrolling review list. A cached summary
+  // for this query renders straight away; otherwise it's hidden until
+  // summarizeLabelSearch/askLabelSearch fills it.
+  if (panel) {
+    res.appendChild(panel);
+    if (activeLabelSearch.summary) renderSummary(panel, activeLabelSearch.summary);
+    else panel.style.display = 'none';
+  }
 
   const list = el('div', 'rc-search-reviews');
   renderReviewsInto(list, reviews, parseOrQuery(query));
@@ -1022,7 +1051,7 @@ const runLabelSearch = async () => {
   try {
     const reviews = await fetchAllForSearch(featureId, query);
     if (seq !== labelSearchSeq) return;
-    activeLabelSearch = { query, reviews };
+    activeLabelSearch = { query, reviews, summary: searchSummaryCache[query.toLowerCase()] };
     if (!reviews.length) {
       res.textContent = `No label-search reviews for "${query}"`;
       return;
@@ -1054,6 +1083,7 @@ const summarizeLabelSearch = async (btn?: HTMLButtonElement) => {
     const result = await summarizeReviews(texts, search.query, null);
     if (typeof result === 'object') {
       search.summary = result;
+      cacheSearchSummary(search.query, result);
       panel.className = 'rc-summary-panel';
       renderSummary(panel, result);
     }
@@ -1545,6 +1575,7 @@ const observer = new MutationObserver(() => {
     resetScores();
     loadSummaryCache();
     loadHighlightsCache();
+    loadSearchSummaryCache();
     activeLabelSearch = null;
     labelSearchSeq++;
     document.querySelector('#reviews-container')?.remove();
