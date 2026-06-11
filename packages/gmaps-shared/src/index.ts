@@ -327,7 +327,7 @@ export const metaFromPreview = (data: any): PlaceMeta => {
 export const overallPctFromHistogram = (h: Histogram): number => {
   const total = h.reduce((a, b) => a + b, 0);
   if (!total) return 0;
-  return Math.round(((h[0] - h[4]) / total) * 100);
+  return Math.round((((h[0] ?? 0) - (h[4] ?? 0)) / total) * 100);
 };
 
 // (5★ − 1★) · |5★ − 1★| / total — the integer "score" shown next to the
@@ -336,7 +336,7 @@ export const overallPctFromHistogram = (h: Histogram): number => {
 export const overallScoreFromHistogram = (h: Histogram): number => {
   const total = h.reduce((a, b) => a + b, 0);
   if (!total) return 0;
-  const diff = h[0] - h[4];
+  const diff = (h[0] ?? 0) - (h[4] ?? 0);
   return Math.round((diff * Math.abs(diff)) / total);
 };
 

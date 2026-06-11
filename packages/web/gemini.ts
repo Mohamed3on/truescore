@@ -77,7 +77,7 @@ function parseStructured(text: string): { highlights: SummaryHighlight[]; items:
       try { highlights.push(JSON.parse(m[0])); } catch {}
     }
     const itemsMatch = text.match(/"items"\s*:\s*\[([^\]]*)\]/);
-    const items = cleanItems(itemsMatch?.[1].split(',').map((s) => s.replace(/^\s*"|"\s*$/g, '')));
+    const items = cleanItems(itemsMatch?.[1]?.split(',').map((s) => s.replace(/^\s*"|"\s*$/g, '')));
     const vfm = text.match(/"valueForMoney"\s*:\s*(\d+)/);
     console.warn(`[summarize] structured JSON truncated; salvaged ${highlights.length} highlights`);
     return { highlights, items, valueForMoney: vfm ? Number(vfm[1]) : 3 };

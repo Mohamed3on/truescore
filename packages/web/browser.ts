@@ -44,7 +44,7 @@ async function bakeCookies(): Promise<string> {
     : [r.headers.get('set-cookie')].filter(Boolean);
   for (const c of (setCookies || []) as string[]) {
     const m = c?.match(/^([^=]+)=([^;]*)/);
-    if (m) jar[m[1]] = m[2];
+    if (m?.[1]) jar[m[1]] = m[2] ?? '';
   }
   return cookieHeader();
 }

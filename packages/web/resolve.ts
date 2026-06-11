@@ -47,10 +47,10 @@ export async function resolvePlace(input: string): Promise<PlaceRef> {
   // Name from /place/<NAME>/ or ?q=<NAME>,
   let name = '';
   const placeMatch = url.match(/\/place\/([^/@?]+)/);
-  if (placeMatch) name = decodeURIComponent(placeMatch[1].replace(/\+/g, ' '));
+  if (placeMatch?.[1]) name = decodeURIComponent(placeMatch[1].replace(/\+/g, ' '));
   if (!name) {
     const qMatch = url.match(/[?&]q=([^&]+)/);
-    if (qMatch) name = decodeURIComponent(qMatch[1].split(',')[0].replace(/\+/g, ' '));
+    if (qMatch?.[1]) name = decodeURIComponent(qMatch[1].split(',')[0]!.replace(/\+/g, ' '));
   }
   return { featureId, name, resolvedUrl };
 }
