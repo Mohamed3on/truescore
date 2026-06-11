@@ -4,7 +4,7 @@ import {
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
-  type SortStats, type Summary,
+  type SortStats, type Summary, type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 
 // Cloudflare 5xx (502/521/522/524) returns an HTML error page, which would
@@ -445,7 +445,7 @@ async function onHighlightClick(h: UiChip) {
   chipBody.appendChild(loading);
   await ensureHighlightReviews();
   if (activeHighlight !== h) return;
-  setPanelTitle(h.label.toUpperCase(), h.score?.scorePct ?? 0, h.score?.trustedReviews ?? 0, h.reviews?.length ?? h.count);
+  setPanelTitle(h.label.toUpperCase(), h.score?.scorePct ?? 0, h.score?.trustedReviews ?? 0, (h as Chip).reviews?.length ?? h.count);
   renderReviewList(h.reviews ?? []);
 }
 
@@ -872,7 +872,7 @@ function localHourInTz(tz: string | undefined, now = new Date()): { day: number;
     const day = WEEKDAYS.indexOf(parts.weekday as typeof WEEKDAYS[number]);
     return {
       day: day >= 0 ? day : fallback.day,
-      hour: parseInt(parts.hour, 10) + parseInt(parts.minute, 10) / 60,
+      hour: parseInt(parts.hour!, 10) + parseInt(parts.minute!, 10) / 60,
     };
   } catch {
     return fallback;
@@ -906,7 +906,7 @@ function renderHoursToday(meta: PlaceMeta | undefined) {
   const hoursLabel = today?.openHour != null && today.closeHour != null
     ? `${formatHourLabel(today.openHour)}–${formatHourLabel(today.closeHour)}`
     : (today?.label ?? '');
-  hoursTodayEl.textContent = hoursLabel ? `${today.day.slice(0, 3)} · ${hoursLabel}` : '';
+  hoursTodayEl.textContent = hoursLabel && today ? `${today.day.slice(0, 3)} · ${hoursLabel}` : '';
   hoursEl.hidden = false;
 }
 

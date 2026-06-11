@@ -17,13 +17,13 @@ export const mdToHtml = (src: string): string => {
   const isOrdered = (l: string) => /^\s*\d+\.\s+/.test(l);
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i];
+    const line = lines[i]!;
     const h = line.match(/^(#{1,6})\s+(.*)$/);
-    if (h) { out.push(`<h${h[1].length}>${mdInline(h[2])}</h${h[1].length}>`); i++; continue; }
+    if (h) { out.push(`<h${h[1]!.length}>${mdInline(h[2]!)}</h${h[1]!.length}>`); i++; continue; }
     if (isList(line)) {
       out.push('<ul>');
-      while (i < lines.length && isList(lines[i])) {
-        out.push(`<li>${mdInline(lines[i].replace(/^\s*[-*]\s+/, ''))}</li>`);
+      while (i < lines.length && isList(lines[i]!)) {
+        out.push(`<li>${mdInline(lines[i]!.replace(/^\s*[-*]\s+/, ''))}</li>`);
         i++;
       }
       out.push('</ul>');
@@ -31,8 +31,8 @@ export const mdToHtml = (src: string): string => {
     }
     if (isOrdered(line)) {
       out.push('<ol>');
-      while (i < lines.length && isOrdered(lines[i])) {
-        out.push(`<li>${mdInline(lines[i].replace(/^\s*\d+\.\s+/, ''))}</li>`);
+      while (i < lines.length && isOrdered(lines[i]!)) {
+        out.push(`<li>${mdInline(lines[i]!.replace(/^\s*\d+\.\s+/, ''))}</li>`);
         i++;
       }
       out.push('</ol>');
@@ -40,8 +40,8 @@ export const mdToHtml = (src: string): string => {
     }
     if (!line.trim()) { i++; continue; }
     const para: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^#{1,6}\s+/.test(lines[i]) && !isList(lines[i]) && !isOrdered(lines[i])) {
-      para.push(lines[i]);
+    while (i < lines.length && lines[i]!.trim() && !/^#{1,6}\s+/.test(lines[i]!) && !isList(lines[i]!) && !isOrdered(lines[i]!)) {
+      para.push(lines[i]!);
       i++;
     }
     out.push(`<p>${mdInline(para.join('\n')).replace(/\n/g, '<br>')}</p>`);
