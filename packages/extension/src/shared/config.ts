@@ -1,19 +1,15 @@
-// Build-time fallback (from GEMINI_API_KEY env var)
-const BUILD_TIME_KEY = process.env.GEMINI_API_KEY as string;
-
-// Runtime key from chrome.storage, falling back to build-time key
+// The Gemini key is per-user: set in the TrueScore popup, stored in
+// chrome.storage.sync. It is deliberately NOT bundled — a key compiled into the
+// extension is readable by anyone who unpacks it.
 export async function getGeminiApiKey(): Promise<string> {
   try {
     const { geminiApiKey } = await chrome.storage.sync.get('geminiApiKey');
-    return geminiApiKey || BUILD_TIME_KEY || '';
+    return geminiApiKey || '';
   } catch {
-    // MAIN world scripts can't access chrome.storage
-    return BUILD_TIME_KEY || '';
+    // MAIN-world scripts can't reach chrome.storage; they use the web proxy, not this.
+    return '';
   }
 }
-
-// Sync export for MAIN world scripts (gmaps) that can't use chrome.storage
-export const GEMINI_API_KEY = BUILD_TIME_KEY || '';
 
 export const GEMINI_MODEL = 'gemini-3-flash-preview';
 

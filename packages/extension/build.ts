@@ -1,14 +1,7 @@
 import esbuild from 'esbuild';
-import { cpSync, mkdirSync, readFileSync, rmSync } from 'fs';
+import { cpSync, mkdirSync, rmSync } from 'fs';
 
 const OUT = 'truescore';
-
-// Read GEMINI_API_KEY from .env directly. Shells often carry a stale
-// exported value that would otherwise win over the .env and bake an
-// expired key into the bundle.
-const envFile = (() => { try { return readFileSync('.env', 'utf8'); } catch { return ''; } })();
-const GEMINI_API_KEY =
-  envFile.match(/^GEMINI_API_KEY=(.+)$/m)?.[1].trim() || process.env.GEMINI_API_KEY || '';
 
 // Clean
 rmSync(OUT, { recursive: true, force: true });
@@ -45,9 +38,6 @@ await esbuild.build({
   format: 'iife',
   target: ['chrome120'],
   minify: false,
-  define: {
-    'process.env.GEMINI_API_KEY': JSON.stringify(GEMINI_API_KEY),
-  },
 });
 
 // Bundle background
