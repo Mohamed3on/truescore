@@ -704,7 +704,9 @@ section#result::before {
 .chip .pct.chip-pending {
   color: var(--t3);
   letter-spacing: 0.06em;
+  animation: chip-pulse 1.4s ease-in-out infinite;
 }
+@keyframes chip-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 .chip-loading {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 10px;

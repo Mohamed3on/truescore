@@ -82,6 +82,10 @@ let labelSearchSeq = 0;
 // summary re-render.
 const standoutScoreCache = new Map<string, SortStats>();
 const standoutScoreInflight = new Set<string>();
+// The reviews fetched to score each chip, kept (in-memory) so clicking the chip
+// reuses them instead of re-running the same label search. Not persisted —
+// reviews are heavy; after a reload the first click refetches.
+const standoutReviewsCache = new Map<string, Review[]>();
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -190,6 +194,10 @@ const bridgeStorage = (() => {
 const store = createScoreStore({ storage: bridgeStorage, now: Date.now });
 
 let highlightsState: HighlightsCache | null = null;
+// Candidate chips harvested from the place preview, shown (in-memory, never
+// persisted) as loading chips while their scores fetch — so highlights appear
+// immediately and fill in, rather than popping in once scored.
+let highlightCandidates: HighlightCandidate[] = [];
 // featureId whose highlights are currently being computed — a per-place mutex,
 // so an SPA nav can start the new place's compute while the old run winds down.
 let highlightsComputingFor: string | null = null;
@@ -318,6 +326,7 @@ const toPct = (ratio: number) => Math.round(ratio * 100);
 const resetScores = () => {
   staleHistogramKey = lastHistogramKey;
   lastHistogramKey = null;
+  highlightCandidates = [];
   store.reset();
   for (const key of SORT_KEYS) {
     fetchState[key] = makeFetchState();
@@ -604,6 +613,9 @@ const computeHighlights = async (force = false) => {
 
     const items: Highlight[] = [];
     highlightsState = { items, ts: Date.now() };
+    // Show every candidate as a loading chip right away; scores fill in inline.
+    highlightCandidates = chips;
+    renderHighlights();
     const limit = createLimiter(HIGHLIGHT_FETCH_CONCURRENCY);
     let completed = 0;
 
@@ -752,20 +764,27 @@ const renderHighlights = () => {
   const btn = cardEls.highlightsBtn;
   if (!list) return;
   while (list.firstChild) list.removeChild(list.firstChild);
-  if (!highlightsState || !highlightsState.items.length) {
-    if (btn) {
+  const items = highlightsState?.items ?? [];
+  const scoredTokens = new Set(items.map((i) => i.token));
+  // Candidates whose score hasn't landed yet — rendered after the scored chips
+  // as pulsing placeholders, then replaced inline once their fetch resolves.
+  const loading = highlightCandidates.filter((c) => !scoredTokens.has(c.token));
+  // computeHighlights owns the button label ('Computing X/N') while it runs.
+  const computing = highlightsComputingFor === getFeatureId();
+  if (!items.length && !loading.length) {
+    if (btn && !computing) {
       btn.disabled = false;
       btn.textContent = 'Compute Highlights';
     }
     return;
   }
-  if (btn) {
+  if (btn && !computing) {
     btn.disabled = false;
     btn.textContent = 'Refresh';
   }
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
   const isAbove = (h: Highlight) => (h.score?.scorePct ?? 0) >= overall;
-  const sorted = sortChipsByImpact(highlightsState.items, overall);
+  const sorted = sortChipsByImpact(items, overall);
   for (const h of sorted) {
     const chip = el('button', 'rc-chip') as HTMLButtonElement;
     chip.type = 'button';
@@ -779,6 +798,15 @@ const renderHighlights = () => {
     chip.appendChild(countEl);
     if (activeHighlight?.token === h.token) chip.classList.add('rc-chip-active');
     chip.onclick = () => onChipClick(h);
+    list.appendChild(chip);
+  }
+  for (const c of loading) {
+    const chip = el('button', 'rc-chip rc-chip-pending') as HTMLButtonElement;
+    chip.type = 'button';
+    chip.disabled = true;
+    chip.appendChild(el('span', 'rc-chip-label', c.label));
+    chip.appendChild(el('span', 'rc-chip-pct rc-chip-scoring', '…'));
+    chip.appendChild(el('span', 'rc-chip-count', `·${c.count}`));
     list.appendChild(chip);
   }
   updateHighlightsStaleBadge();
@@ -1393,7 +1421,16 @@ const triggerLabelSearchFor = (item: string) => {
   // Raw term in the box; fetchAllForSearch expands it to spelling variants.
   input.value = item;
   input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  runLabelSearch();
+  const featureId = getFeatureId();
+  const cached = featureId ? standoutReviewsCache.get(`${featureId}|${item.toLowerCase()}`) : undefined;
+  if (cached?.length) {
+    // Reuse the reviews already fetched to score this chip — no second search.
+    labelSearchSeq++;
+    activeLabelSearch = { query: item, reviews: cached, summary: searchSummaryCache[item.toLowerCase()] };
+    renderLabelSearchResult();
+  } else {
+    runLabelSearch();
+  }
 };
 
 // Drop a group's section — no summary, or none of its items cleared the ≥2 gate.
@@ -1403,9 +1440,11 @@ const clearScored = (kind: ScoredKind) => {
   if (section) { section.textContent = ''; section.style.display = 'none'; }
 };
 
-// Rebuild a group's chips from whatever scores have landed: only items with ≥2
-// reviews mentioning them, most-mentioned first. Re-run as each label search
-// resolves, so chips reveal and reorder in place.
+// Rebuild a group's chips, progressive-enhancement style: every item shows
+// immediately — scored ones (≥2 mentions, most-mentioned first) with their
+// score, still-pending ones after, pulsing with a "…" placeholder. Re-run as
+// each label search resolves, so scores fill in inline and a chip that lands
+// below 2 mentions drops out. Hidden only once nothing is left to show.
 const redrawScored = (kind: ScoredKind) => {
   const cfg = SCORED_GROUPS[kind];
   const section = cfg.section();
@@ -1414,23 +1453,29 @@ const redrawScored = (kind: ScoredKind) => {
   const { items, featureId } = ctx;
   section.textContent = '';
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
-  const scored = items
-    .map((item) => ({ item, stats: standoutScoreCache.get(`${featureId}|${item.toLowerCase()}`) }))
+  const rows = items.map((item) => ({ item, stats: standoutScoreCache.get(`${featureId}|${item.toLowerCase()}`) }));
+  const scored = rows
     .filter((x): x is { item: string; stats: SortStats } => !!x.stats && x.stats.totalReviews >= 2)
     .sort((a, b) => b.stats.totalReviews - a.stats.totalReviews);
-  if (!scored.length) { section.style.display = 'none'; return; }
+  const pending = rows.filter((x) => !x.stats);
+  if (!scored.length && !pending.length) { section.style.display = 'none'; return; }
   section.style.display = '';
   section.appendChild(el('span', cfg.labelClass, cfg.label));
   const list = el('div', cfg.listClass);
-  for (const { item, stats } of scored) {
+  for (const { item, stats } of [...scored, ...pending]) {
     const chip = el('button', `rc-chip ${cfg.chipClass}`) as HTMLButtonElement;
     chip.type = 'button';
     chip.appendChild(el('span', 'rc-chip-label', item));
-    const pct = el('span', 'rc-chip-pct');
-    const count = el('span', 'rc-chip-count');
-    paintScoredChip(pct, count, stats, overall);
-    chip.appendChild(pct);
-    chip.appendChild(count);
+    if (stats) {
+      const pct = el('span', 'rc-chip-pct');
+      const count = el('span', 'rc-chip-count');
+      paintScoredChip(pct, count, stats, overall);
+      chip.appendChild(pct);
+      chip.appendChild(count);
+    } else {
+      chip.classList.add('rc-chip-pending');
+      chip.appendChild(el('span', 'rc-chip-pct rc-chip-scoring', '…'));
+    }
     chip.onclick = () => triggerLabelSearchFor(item);
     list.appendChild(chip);
   }
@@ -1445,12 +1490,17 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
     standoutScoreInflight.add(key);
     limit(async () => {
       try {
-        const stats = statsForReviews(await fetchAllForSearch(featureId, item));
-        standoutScoreCache.set(key, stats);
+        const reviews = await fetchAllForSearch(featureId, item);
+        standoutScoreCache.set(key, statsForReviews(reviews));
+        standoutReviewsCache.set(key, reviews);
         saveScoredCache();
         if (getFeatureId() === featureId) redrawScored(kind);
       } catch (e) {
         console.error(`[${kind}] score failed for`, item, e);
+        // Resolve to zero so the chip drops out (like a no-mention item) instead
+        // of pulsing "…" forever.
+        standoutScoreCache.set(key, statsForReviews([]));
+        if (getFeatureId() === featureId) redrawScored(kind);
       } finally {
         standoutScoreInflight.delete(key);
       }
@@ -1501,6 +1551,7 @@ const refreshStaleScores = () => {
   if (live == null || scoredCacheHeadId == null || scoredCacheHeadId === live || !featureId) return;
   const prefix = `${featureId}|`;
   for (const k of [...standoutScoreCache.keys()]) if (k.startsWith(prefix)) standoutScoreCache.delete(k);
+  for (const k of [...standoutReviewsCache.keys()]) if (k.startsWith(prefix)) standoutReviewsCache.delete(k);
   scoredCacheHeadId = live;
   for (const kind of Object.keys(scoredCtx) as ScoredKind[]) {
     const ctx = scoredCtx[kind];

@@ -206,17 +206,19 @@ function renderHighlights(highlights: UiChip[], sort = false) {
   }
 }
 
-// Render a scored group's chips: only items confirmed with ≥2 reviews mentioning
-// them, most-mentioned first, each with its label-search score. Clicking opens
-// that search's panel — the same flow as typing the term into the searchbox.
+// Render a scored group's chips, progressive-enhancement style: items still
+// being scored show immediately as pulsing "…" placeholders, scored ones (≥2
+// mentions, most-mentioned first) show their score and open the search panel on
+// click. Scores fill in inline; a chip that lands below 2 mentions drops out.
 function renderScored(kind: ScoredKind) {
   const g = scoredGroups[kind];
   while (g.list.firstChild) g.list.removeChild(g.list.firstChild);
-  const shown = g.chips
+  const scored = g.chips
     .filter((d) => d.result && d.result.totalReviews >= 2)
     .sort((a, b) => b.result!.totalReviews - a.result!.totalReviews);
-  g.row.hidden = shown.length === 0;
-  for (const d of shown) {
+  const pending = g.chips.filter((d) => d.state === 'loading');
+  g.row.hidden = scored.length === 0 && pending.length === 0;
+  for (const d of scored) {
     const r = d.result!;
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -234,6 +236,21 @@ function renderScored(kind: ScoredKind) {
     count.textContent = `·${r.totalReviews}`;
     btn.appendChild(count);
     btn.addEventListener('click', () => showSearchPanel(r));
+    g.list.appendChild(btn);
+  }
+  for (const d of pending) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = g.chipClass ? `chip ${g.chipClass} loading` : 'chip loading';
+    btn.disabled = true;
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = d.item;
+    btn.appendChild(label);
+    const dot = document.createElement('span');
+    dot.className = 'pct chip-pending';
+    dot.textContent = '…';
+    btn.appendChild(dot);
     g.list.appendChild(btn);
   }
 }
