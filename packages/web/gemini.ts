@@ -112,7 +112,7 @@ Each highlight: text (one concrete line, ≤20 words, specifics over adjectives)
 
 Also list items: up to 6 concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword: the least common, most distinctive word, dropping generic nouns so the search catches variants ("Western Lowland Gorilla" → "gorilla", "dulce de leche cake" → "dulce de leche"). Split a compound like "salmon avocado toast" into "salmon", "avocado". But keep the phrase when a bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"). Skip generic qualities every place has — service, staff, cleanliness, value. These must be things at THIS place. [] if nothing specific stands out.
 
-Separately, list alternatives: proper names of OTHER places reviewers explicitly point to as somewhere they'd go instead (common when they call this place overrated). Names only — never put these in items, since a place named as a better alternative is not a feature of this one. [] if reviewers name none.
+Separately, list alternatives: proper names of OTHER places reviewers explicitly recommend over this one (common when they call this place overrated). Can be anywhere — a nearby swap or a better one in another city/country, not just local substitutes. Names only — never put these in items, since a place named as a better alternative is not a feature of this one. [] if reviewers name none.
 
 ${NOTES}`;
 
