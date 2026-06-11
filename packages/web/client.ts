@@ -52,7 +52,12 @@ async function* readNdjson<T>(body: ReadableStream<Uint8Array>): AsyncGenerator<
       while ((nl = buffer.indexOf('\n')) !== -1) {
         const line = buffer.slice(0, nl).trim();
         buffer = buffer.slice(nl + 1);
-        if (line) yield JSON.parse(line) as T;
+        if (!line) continue;
+        try {
+          yield JSON.parse(line) as T;
+        } catch {
+          console.warn('[readNdjson] skipping unparseable line');
+        }
       }
     }
   } finally {
@@ -631,6 +636,8 @@ async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
         lastFailures = evt.failures;
         renderHighlights([...chipMap.values()], true);
         break;
+      case 'error':
+        throw new Error(evt.error || 'highlights failed');
     }
   }
   if (lastFailures > 0) {
