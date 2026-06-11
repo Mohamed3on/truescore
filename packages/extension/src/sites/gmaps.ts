@@ -1413,21 +1413,22 @@ const renderStandoutChips = (items: string[]) => {
   if (featureId) ensureStandoutScores(featureId, items);
 };
 
-// Better-alternative places reviewers point to. A plain labelled row in the
-// summary, deliberately apart from the Standouts chips: an alternative is a
-// rival place, not a feature of this one, so it's shown — never auto-scored.
-// Each links out to a Maps search for it.
+// Better-alternative places reviewers point to. Its own labelled row, apart
+// from the Standouts chips — an alternative isn't a feature of this place, so it
+// shouldn't be scored/sorted as a standout. But each chip still runs a label
+// search for that name, exactly like the standout/topic chips, so a click
+// surfaces the reviews that mention it.
 const renderAlternatives = (panel: HTMLElement, alternatives?: string[]) => {
   if (!alternatives?.length) return;
   const wrap = el('div', 'rc-alternatives');
   wrap.appendChild(el('span', 'rc-alternatives-label', 'Better alternatives'));
   const list = el('div', 'rc-alternatives-list');
   for (const name of alternatives) {
-    const link = el('a', 'rc-alternative', name) as HTMLAnchorElement;
-    link.href = `https://www.google.com/maps/search/${encodeURIComponent(name)}`;
-    link.target = '_blank';
-    link.rel = 'noopener';
-    list.appendChild(link);
+    const chip = el('button', 'rc-chip rc-alternative-chip') as HTMLButtonElement;
+    chip.type = 'button';
+    chip.appendChild(el('span', 'rc-chip-label', name));
+    chip.onclick = () => triggerStandoutSearch(name);
+    list.appendChild(chip);
   }
   wrap.appendChild(list);
   panel.appendChild(wrap);

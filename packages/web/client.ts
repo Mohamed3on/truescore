@@ -257,21 +257,24 @@ function showStandouts(items: string[], featureId: string) {
   for (const d of standoutChips) scoreStandout(featureId, d);
 }
 
-// Better-alternative places reviewers point to — rendered apart from the
-// standouts as plain links to a Maps search, never scored: an alternative is a
-// rival venue, not a feature of this place, so a low in-place score would mislead.
+// Better-alternative places reviewers point to — their own row, apart from the
+// standouts so a rival venue isn't scored/sorted as a feature of this place. Each
+// chip still runs a label search for that name (same as the topic/standout chips),
+// so a click surfaces the reviews mentioning it.
 function renderAlternatives(alternatives?: string[]) {
   while (alternativesList.firstChild) alternativesList.removeChild(alternativesList.firstChild);
   const names = alternatives ?? [];
   alternativesRow.hidden = names.length === 0;
   for (const name of names) {
-    const a = document.createElement('a');
-    a.className = 'alternative';
-    a.textContent = name;
-    a.href = `https://www.google.com/maps/search/${encodeURIComponent(name)}`;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    alternativesList.appendChild(a);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chip alternative-chip';
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = name;
+    btn.appendChild(label);
+    btn.addEventListener('click', () => runSearch(accentVariantQuery(name)));
+    alternativesList.appendChild(btn);
   }
 }
 

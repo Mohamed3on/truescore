@@ -515,8 +515,9 @@
   gap: 5px;
 }
 
-/* Better-alternative places (rival venues reviewers name) — pill links inside
-   the summary panel, kept visually distinct from the scored standout chips. */
+/* Better-alternative places (rival venues reviewers name) — chips that run a
+   label search on click, like the standouts, but in their own row and never
+   auto-scored. A teal-tinted border marks them apart from the standout chips. */
 .rc-alternatives {
   margin-top: 10px;
   padding-top: 8px;
@@ -535,21 +536,13 @@
 .rc-alternatives-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
-.rc-summary-panel .rc-alternative {
-  font-size: 11px;
-  color: #8AB4F8;
-  text-decoration: none;
-  padding: 3px 8px;
-  background: rgba(138, 180, 248, 0.08);
-  border: 1px solid rgba(138, 180, 248, 0.22);
-  border-radius: 999px;
-  transition: background 0.2s, border-color 0.2s;
+.rc-alternative-chip {
+  border-color: rgba(138, 180, 248, 0.3);
 }
-.rc-summary-panel .rc-alternative:hover {
-  background: rgba(138, 180, 248, 0.16);
-  border-color: rgba(138, 180, 248, 0.4);
+.rc-alternative-chip:hover {
+  border-color: rgba(138, 180, 248, 0.5);
 }
 
 .rc-chip-panel {
