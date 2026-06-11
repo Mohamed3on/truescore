@@ -102,6 +102,8 @@ const highlightsList = $('highlightsList') as HTMLElement;
 const highlightsRefreshBtn = $('highlightsRefresh') as HTMLButtonElement;
 const standoutsRow = $('standoutsRow') as HTMLElement;
 const standoutsList = $('standoutsList') as HTMLElement;
+const alternativesRow = $('alternativesRow') as HTMLElement;
+const alternativesList = $('alternativesList') as HTMLElement;
 const searchForm = $('searchForm') as HTMLFormElement;
 const searchInput = $('searchInput') as HTMLInputElement;
 const searchBtn = $('searchBtn') as HTMLButtonElement;
@@ -255,6 +257,24 @@ function showStandouts(items: string[], featureId: string) {
   for (const d of standoutChips) scoreStandout(featureId, d);
 }
 
+// Better-alternative places reviewers point to — rendered apart from the
+// standouts as plain links to a Maps search, never scored: an alternative is a
+// rival venue, not a feature of this place, so a low in-place score would mislead.
+function renderAlternatives(alternatives?: string[]) {
+  while (alternativesList.firstChild) alternativesList.removeChild(alternativesList.firstChild);
+  const names = alternatives ?? [];
+  alternativesRow.hidden = names.length === 0;
+  for (const name of names) {
+    const a = document.createElement('a');
+    a.className = 'alternative';
+    a.textContent = name;
+    a.href = `https://www.google.com/maps/search/${encodeURIComponent(name)}`;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    alternativesList.appendChild(a);
+  }
+}
+
 function showHighlightsLoading(msg: string) {
   highlightsRow.hidden = false;
   while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
@@ -290,6 +310,7 @@ function showChipPanel(h: UiChip) {
   chipPanel.hidden = false;
   verdictRow.style.display = 'none';
   highlightsListEl.style.display = 'none';
+  alternativesRow.style.display = 'none';
   resummarizeBtn.style.display = 'none';
   chipSummarizeBtn.disabled = false;
   chipSummarizeBtn.textContent = 'SUMMARIZE';
@@ -304,6 +325,7 @@ function closeChipPanel() {
   chipPanel.hidden = true;
   verdictRow.style.display = '';
   highlightsListEl.style.display = '';
+  alternativesRow.style.display = '';
   resummarizeBtn.style.display = '';
   searchInput.value = '';
   chipQuestionInput.value = '';
@@ -351,6 +373,7 @@ function showSearchPanel(r: SearchResult) {
   chipPanel.hidden = false;
   verdictRow.style.display = 'none';
   highlightsListEl.style.display = 'none';
+  alternativesRow.style.display = 'none';
   resummarizeBtn.style.display = 'none';
   chipSummarizeBtn.disabled = false;
   chipQuestionInput.value = '';
@@ -729,9 +752,11 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   highlightsRow.hidden = true;
   standoutChips = [];
   renderStandouts();
+  renderAlternatives([]);
   chipPanel.hidden = true;
   verdictRow.style.display = '';
   highlightsListEl.style.display = '';
+  alternativesRow.style.display = '';
   searchForm.hidden = false;
   searchInput.value = '';
   searchRefreshBtn.hidden = true;
@@ -1002,6 +1027,7 @@ function renderSummary(summary: Summary) {
   resummarizeBtn.hidden = false;
   while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
   renderHighlightList(highlightsListEl, summary.highlights);
+  renderAlternatives(summary.alternatives);
   if (currentFeatureId && summary.items?.length) showStandouts(summary.items, currentFeatureId);
   else { standoutChips = []; renderStandouts(); }
 }
@@ -1010,6 +1036,7 @@ function renderSummaryError(msg: string) {
   $('verdict').textContent = `summary failed: ${msg}`;
   standoutChips = [];
   renderStandouts();
+  renderAlternatives([]);
 }
 
 async function fetchHistogramFor(featureId: string, mergedPct: number) {

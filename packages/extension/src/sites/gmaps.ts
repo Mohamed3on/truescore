@@ -32,7 +32,7 @@ const MIN_PAGES_BEFORE_STABILIZE = 2;
 const HIGHLIGHT_FETCH_CONCURRENCY = 3;
 
 type FetchState = { isFetching: boolean; done: boolean; cursor: string; pageCount: number };
-type SummaryResult = { highlights?: { text: string; sentiment: string }[]; verdict?: string; valueForMoney?: number; items?: string[] };
+type SummaryResult = { highlights?: { text: string; sentiment: string }[]; verdict?: string; valueForMoney?: number; items?: string[]; alternatives?: string[] };
 type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
 type CardEls = {
   merged?: MergedEls;
@@ -47,6 +47,7 @@ type CardEls = {
   highlightsList?: HTMLElement;
   highlightsBtn?: HTMLButtonElement;
   highlightsStale?: HTMLElement;
+  standoutsSection?: HTMLElement;
   chipPanel?: HTMLElement;
   chipPanelTitle?: HTMLElement;
   chipPanelBody?: HTMLElement;
@@ -74,12 +75,12 @@ let labelSearchSeq = 0;
 
 // Label-search scores for the summary's praised-standout chips, keyed
 // `${featureId}|${item}` so re-renders reuse them instead of refetching.
-// `standoutCtx` holds the current summary panel + items so a score landing late can
-// rebuild the chip row (filter to ≥2 mentions, sort by count) without a full
-// summary re-render.
+// `standoutCtx` holds the current place's items so a score landing late can
+// rebuild the chip row (filter to ≥2 mentions, sort by count) into the dedicated
+// Standouts section (just under Highlights) without a full summary re-render.
 const standoutScoreCache = new Map<string, SortStats>();
 const standoutScoreInflight = new Set<string>();
-let standoutCtx: { panel: HTMLElement; items: string[]; featureId: string } | null = null;
+let standoutCtx: { items: string[]; featureId: string } | null = null;
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -987,6 +988,11 @@ const renderLabelSearchResult = () => {
   res.appendChild(questionInput);
   cardEls.searchQuestionInput = questionInput;
 
+  // Summary/answer panel sits above the reviews so a Summarize result is visible
+  // the moment it lands, not below the scrolling review list. (It's hidden until
+  // summarizeLabelSearch/askLabelSearch fills it.)
+  if (panel) res.appendChild(panel);
+
   const list = el('div', 'rc-search-reviews');
   renderReviewsInto(list, reviews, parseOrQuery(query));
   res.appendChild(list);
@@ -1148,6 +1154,13 @@ const createUIElements = () => {
   cardEls.highlightsBtn = hlBtn;
   cardEls.highlightsStale = hlStale;
   if (highlightsState && highlightsState.items.length) renderHighlights();
+
+  // Standouts (praised items from the summary) sit right under Highlights — both
+  // are scored topic chips, so they read as one group. Populated by renderSummary.
+  const soSec = el('div', 'rc-standouts');
+  soSec.style.display = 'none';
+  c.appendChild(soSec);
+  cardEls.standoutsSection = soSec;
 
   const searchSec = el('div', 'rc-search-section');
   const searchInput = document.createElement('input');
@@ -1333,21 +1346,30 @@ const triggerStandoutSearch = (item: string) => {
   runLabelSearch();
 };
 
+// Drop the Standouts section — no summary, or a summary with no scored standouts.
+const clearStandouts = () => {
+  standoutCtx = null;
+  const section = cardEls.standoutsSection;
+  if (section) { section.textContent = ''; section.style.display = 'none'; }
+};
+
 // Rebuild the standout chips from whatever scores have landed: only standouts with ≥2
 // reviews mentioning them, most-mentioned first. Re-run as each label search
-// resolves, so chips reveal and reorder in place.
+// resolves, so chips reveal and reorder in place — in the dedicated section
+// directly under Highlights, not buried in the summary panel.
 const redrawStandouts = () => {
-  if (!standoutCtx) return;
-  const { panel, items, featureId } = standoutCtx;
-  panel.querySelector('.rc-standouts')?.remove();
+  const section = cardEls.standoutsSection;
+  if (!section || !standoutCtx) return;
+  const { items, featureId } = standoutCtx;
+  section.textContent = '';
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
   const scored = items
     .map((item) => ({ item, stats: standoutScoreCache.get(`${featureId}|${item.toLowerCase()}`) }))
     .filter((x): x is { item: string; stats: SortStats } => !!x.stats && x.stats.totalReviews >= 2)
     .sort((a, b) => b.stats.totalReviews - a.stats.totalReviews);
-  if (!scored.length) return;
-  const wrap = el('div', 'rc-standouts');
-  wrap.appendChild(el('span', 'rc-standouts-label', 'Standouts'));
+  if (!scored.length) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  section.appendChild(el('span', 'rc-standouts-label', 'Standouts'));
   const list = el('div', 'rc-standouts-list');
   for (const { item, stats } of scored) {
     const chip = el('button', 'rc-chip rc-standout-chip') as HTMLButtonElement;
@@ -1361,10 +1383,7 @@ const redrawStandouts = () => {
     chip.onclick = () => triggerStandoutSearch(item);
     list.appendChild(chip);
   }
-  wrap.appendChild(list);
-  // Keep standouts above the value-for-money line on async redraws.
-  const anchor = panel.querySelector('.rc-value');
-  anchor ? panel.insertBefore(wrap, anchor) : panel.appendChild(wrap);
+  section.appendChild(list);
 };
 
 const ensureStandoutScores = (featureId: string, items: string[]) => {
@@ -1387,11 +1406,31 @@ const ensureStandoutScores = (featureId: string, items: string[]) => {
   }
 };
 
-const renderStandoutChips = (panel: HTMLElement, items: string[]) => {
+const renderStandoutChips = (items: string[]) => {
   const featureId = getFeatureId();
-  standoutCtx = featureId ? { panel, items, featureId } : null;
+  standoutCtx = featureId ? { items, featureId } : null;
   redrawStandouts();
   if (featureId) ensureStandoutScores(featureId, items);
+};
+
+// Better-alternative places reviewers point to. A plain labelled row in the
+// summary, deliberately apart from the Standouts chips: an alternative is a
+// rival place, not a feature of this one, so it's shown — never auto-scored.
+// Each links out to a Maps search for it.
+const renderAlternatives = (panel: HTMLElement, alternatives?: string[]) => {
+  if (!alternatives?.length) return;
+  const wrap = el('div', 'rc-alternatives');
+  wrap.appendChild(el('span', 'rc-alternatives-label', 'Better alternatives'));
+  const list = el('div', 'rc-alternatives-list');
+  for (const name of alternatives) {
+    const link = el('a', 'rc-alternative', name) as HTMLAnchorElement;
+    link.href = `https://www.google.com/maps/search/${encodeURIComponent(name)}`;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    list.appendChild(link);
+  }
+  wrap.appendChild(list);
+  panel.appendChild(wrap);
 };
 
 const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
@@ -1418,12 +1457,17 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
       panel.appendChild(row);
     }
   }
-  // Only on the main place summary — a label-search/chip sub-summary's items
-  // would spawn nested searches off a filtered set.
-  if (result.items?.length && panel === cardEls.sumPanel) renderStandoutChips(panel, result.items);
   if (result.valueForMoney) {
     const v = Math.max(1, Math.min(5, result.valueForMoney));
     panel.appendChild(el('div', 'rc-value', `Value for money: ${starString(v)}`));
+  }
+  // Standouts (their own section under Highlights) and alternatives are about
+  // the place as a whole — only the main summary, never a label-search/chip
+  // sub-summary whose items would spawn nested searches off a filtered set.
+  if (panel === cardEls.sumPanel) {
+    if (result.items?.length) renderStandoutChips(result.items);
+    else clearStandouts();
+    renderAlternatives(panel, result.alternatives);
   }
   if (!result.highlights?.length && !result.verdict) {
     panel.textContent = 'No highlights found';

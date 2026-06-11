@@ -14,8 +14,11 @@ export type SummaryHighlight = { text: string; sentiment: string };
 // `items`: specific things reviewers single out (dishes, animals, exhibits…),
 // as short label-search terms (e.g. "alfajores", "gorilla"). Rendered as their
 // own clickable chips below the topic chips, each auto-scored by a label search.
-// Optional — older cached summaries predate it.
-export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney: number; items?: string[] };
+// `alternatives`: proper names of OTHER places reviewers point to as somewhere
+// they'd go instead — kept apart from `items` because such a place scores low
+// here precisely because it's a rival, so auto-scoring it as a feature misleads.
+// Both optional — older cached summaries predate them.
+export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney: number; items?: string[]; alternatives?: string[] };
 
 export type Score = {
   featureId: string;

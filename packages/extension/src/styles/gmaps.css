@@ -492,9 +492,10 @@
   background: rgba(109, 211, 206, 0.1) !important;
 }
 
-/* Praised-standout chips (rc-standout-chip reuses .rc-chip); % is colored inline. */
+/* Standouts section — its own block right under Highlights (rc-standout-chip
+   reuses .rc-chip; % is colored inline). */
 .rc-standouts {
-  margin-top: 10px;
+  margin-top: 12px;
   padding-top: 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
@@ -512,6 +513,43 @@
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
+}
+
+/* Better-alternative places (rival venues reviewers name) — pill links inside
+   the summary panel, kept visually distinct from the scored standout chips. */
+.rc-alternatives {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.rc-alternatives-label {
+  display: block;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 500;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 6px;
+}
+.rc-alternatives-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rc-summary-panel .rc-alternative {
+  font-size: 11px;
+  color: #8AB4F8;
+  text-decoration: none;
+  padding: 3px 8px;
+  background: rgba(138, 180, 248, 0.08);
+  border: 1px solid rgba(138, 180, 248, 0.22);
+  border-radius: 999px;
+  transition: background 0.2s, border-color 0.2s;
+}
+.rc-summary-panel .rc-alternative:hover {
+  background: rgba(138, 180, 248, 0.16);
+  border-color: rgba(138, 180, 248, 0.4);
 }
 
 .rc-chip-panel {

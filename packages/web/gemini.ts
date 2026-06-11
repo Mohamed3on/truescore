@@ -22,6 +22,7 @@ const HIGHLIGHTS_SCHEMA = {
       },
     },
     items: { type: 'ARRAY', items: { type: 'STRING' } },
+    alternatives: { type: 'ARRAY', items: { type: 'STRING' } },
     valueForMoney: { type: 'INTEGER' },
   },
 };
@@ -67,20 +68,23 @@ const cleanItems = (raw: unknown): string[] => {
   return out;
 };
 
-function parseStructured(text: string): { highlights: SummaryHighlight[]; items: string[]; valueForMoney: number } {
+const salvageStringArray = (text: string, field: string): string[] => {
+  const m = text.match(new RegExp(`"${field}"\\s*:\\s*\\[([^\\]]*)\\]`));
+  return cleanItems(m?.[1]?.split(',').map((s) => s.replace(/^\s*"|"\s*$/g, '')));
+};
+
+function parseStructured(text: string): { highlights: SummaryHighlight[]; items: string[]; alternatives: string[]; valueForMoney: number } {
   try {
     const p = JSON.parse(text);
-    return { highlights: p.highlights ?? [], items: cleanItems(p.items), valueForMoney: p.valueForMoney ?? 3 };
+    return { highlights: p.highlights ?? [], items: cleanItems(p.items), alternatives: cleanItems(p.alternatives), valueForMoney: p.valueForMoney ?? 3 };
   } catch {
     const highlights: SummaryHighlight[] = [];
     for (const m of text.matchAll(/\{[^{}]*"text"[^{}]*\}/g)) {
       try { highlights.push(JSON.parse(m[0])); } catch {}
     }
-    const itemsMatch = text.match(/"items"\s*:\s*\[([^\]]*)\]/);
-    const items = cleanItems(itemsMatch?.[1]?.split(',').map((s) => s.replace(/^\s*"|"\s*$/g, '')));
     const vfm = text.match(/"valueForMoney"\s*:\s*(\d+)/);
     console.warn(`[summarize] structured JSON truncated; salvaged ${highlights.length} highlights`);
-    return { highlights, items, valueForMoney: vfm ? Number(vfm[1]) : 3 };
+    return { highlights, items: salvageStringArray(text, 'items'), alternatives: salvageStringArray(text, 'alternatives'), valueForMoney: vfm ? Number(vfm[1]) : 3 };
   }
 }
 
@@ -106,7 +110,9 @@ ${NOTES}`;
 
 Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
 
-Also list items: up to 6 concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword: the least common, most distinctive word, dropping generic nouns so the search catches variants ("Western Lowland Gorilla" → "gorilla", "dulce de leche cake" → "dulce de leche"). Split a compound like "salmon avocado toast" into "salmon", "avocado". But keep the phrase when a bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"). Skip generic qualities every place has — service, staff, cleanliness, value. Also include any better alternative place reviewers point to (somewhere they'd go instead), as its proper name. [] if nothing specific stands out.
+Also list items: up to 6 concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword: the least common, most distinctive word, dropping generic nouns so the search catches variants ("Western Lowland Gorilla" → "gorilla", "dulce de leche cake" → "dulce de leche"). Split a compound like "salmon avocado toast" into "salmon", "avocado". But keep the phrase when a bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"). Skip generic qualities every place has — service, staff, cleanliness, value. These must be things at THIS place. [] if nothing specific stands out.
+
+Separately, list alternatives: proper names of OTHER places reviewers explicitly point to as somewhere they'd go instead (common when they call this place overrated). Names only — never put these in items, since a place named as a better alternative is not a feature of this one. [] if reviewers name none.
 
 ${NOTES}`;
 
@@ -114,8 +120,8 @@ ${NOTES}`;
     call(verdictPrompt, 1024),
     call(structuredPrompt, 8192, HIGHLIGHTS_SCHEMA),
   ]);
-  const { highlights, items, valueForMoney } = parseStructured(structuredText);
-  return { verdict: verdict.trim(), highlights, items, valueForMoney };
+  const { highlights, items, alternatives, valueForMoney } = parseStructured(structuredText);
+  return { verdict: verdict.trim(), highlights, items, alternatives, valueForMoney };
 }
 
 export async function ask(placeName: string, reviewTexts: string[], question: string, filterQuery?: string): Promise<string> {
