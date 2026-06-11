@@ -8,6 +8,7 @@ on:
       - 'packages/gmaps-shared/**'
       - 'package.json'
       - 'bun.lock'
+      - 'bunfig.toml'
       - 'deploy/**'
       - '.github/workflows/deploy-web.yml'
   workflow_dispatch:
