@@ -1,6 +1,6 @@
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
-import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX } from '../shared/cache-keys';
+import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import {
   chipsFromPreview,
@@ -451,6 +451,7 @@ const reconcileWithLiveHead = (liveHeadId: string) => {
     }
   }
   updateHighlightsStaleBadge();
+  refreshStaleScores();
 };
 
 const calculateFullPercentage = () => {
@@ -1446,6 +1447,7 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
       try {
         const stats = statsForReviews(await fetchAllForSearch(featureId, item));
         standoutScoreCache.set(key, stats);
+        saveScoredCache();
         if (getFeatureId() === featureId) redrawScored(kind);
       } catch (e) {
         console.error(`[${kind}] score failed for`, item, e);
@@ -1461,6 +1463,49 @@ const renderScoredGroup = (kind: ScoredKind, items: string[]) => {
   scoredCtx[kind] = featureId ? { items, featureId } : null;
   redrawScored(kind);
   if (featureId) ensureScored(featureId, items, kind);
+};
+
+// Persist the chip auto-search scores per place, like the highlights cache, so
+// they survive navigation/reload instead of re-searching. `scoredCacheHeadId` is
+// the newest review id when the scores were saved; once the live head moves past
+// it (new reviews), the scores are stale and re-run — the same policy as
+// highlights. Scores are stored without the featureId prefix and rekeyed on load.
+let scoredCacheHeadId: string | undefined;
+const getScoredCacheKey = () => `${SCORE_GROUP_CACHE_PREFIX}${lastFeatureId || 'default'}`;
+const loadScoredCache = () => {
+  scoredCacheHeadId = undefined;
+  if (!lastFeatureId) return;
+  try {
+    const raw = JSON.parse(localStorage.getItem(getScoredCacheKey()) as string);
+    if (!raw?.scores) return;
+    for (const [item, stats] of Object.entries(raw.scores)) standoutScoreCache.set(`${lastFeatureId}|${item}`, stats as SortStats);
+    scoredCacheHeadId = raw.newestHeadId;
+  } catch {}
+};
+const saveScoredCache = () => {
+  if (!lastFeatureId) return;
+  try {
+    const prefix = `${lastFeatureId}|`;
+    const scores: Record<string, SortStats> = {};
+    for (const [k, v] of standoutScoreCache) if (k.startsWith(prefix)) scores[k.slice(prefix.length)] = v;
+    if (!Object.keys(scores).length) return;
+    scoredCacheHeadId = store.newestHeadId() ?? scoredCacheHeadId;
+    localStorage.setItem(getScoredCacheKey(), JSON.stringify({ scores, newestHeadId: scoredCacheHeadId }));
+  } catch {}
+};
+// New reviews since these scores were computed → drop this place's cached scores
+// and re-score whatever groups are showing.
+const refreshStaleScores = () => {
+  const live = store.newestHeadId();
+  const featureId = getFeatureId();
+  if (live == null || scoredCacheHeadId == null || scoredCacheHeadId === live || !featureId) return;
+  const prefix = `${featureId}|`;
+  for (const k of [...standoutScoreCache.keys()]) if (k.startsWith(prefix)) standoutScoreCache.delete(k);
+  scoredCacheHeadId = live;
+  for (const kind of Object.keys(scoredCtx) as ScoredKind[]) {
+    const ctx = scoredCtx[kind];
+    if (ctx && ctx.featureId === featureId) ensureScored(featureId, ctx.items, kind);
+  }
 };
 
 const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
@@ -1576,6 +1621,7 @@ const observer = new MutationObserver(() => {
     loadSummaryCache();
     loadHighlightsCache();
     loadSearchSummaryCache();
+    loadScoredCache();
     activeLabelSearch = null;
     labelSearchSeq++;
     document.querySelector('#reviews-container')?.remove();
