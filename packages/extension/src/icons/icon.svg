@@ -1,6 +1,6 @@
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- TrueScore mark: a score gauge — gold→teal signature arc with a needle at a
-       high reading, on a dark-glass tile. Source of truth; PNGs render from this. -->
+  <!-- TrueScore mark: a score gauge — gold→teal signature arc with a fine needle
+       at a high reading, on a dark-glass tile. Source of truth; PNGs render from this. -->
   <defs>
     <linearGradient id="tile" x1="64" y1="2" x2="64" y2="126" gradientUnits="userSpaceOnUse">
       <stop stop-color="#202840"/>
@@ -14,8 +14,8 @@
   </defs>
   <rect x="2" y="2" width="124" height="124" rx="30" fill="url(#tile)"/>
   <rect x="2.75" y="2.75" width="122.5" height="122.5" rx="29.25" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="1.5"/>
-  <path d="M38.6 98.2 A38 38 0 1 1 89.4 98.2" stroke="url(#score)" stroke-width="15" stroke-linecap="round"/>
-  <line x1="64" y1="72" x2="84.7" y2="47" stroke="#F4F6FA" stroke-width="8.5" stroke-linecap="round"/>
-  <circle cx="64" cy="72" r="6.5" fill="#0C0E16"/>
-  <circle cx="64" cy="72" r="6.5" fill="none" stroke="#F4F6FA" stroke-width="4"/>
+  <path d="M38.6 98.2 A38 38 0 1 1 89.4 98.2" stroke="url(#score)" stroke-width="12" stroke-linecap="round"/>
+  <line x1="64" y1="72" x2="85.4" y2="46.2" stroke="#F4F6FA" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="64" cy="72" r="4.5" fill="#0C0E16"/>
+  <circle cx="64" cy="72" r="4.5" fill="none" stroke="#F4F6FA" stroke-width="2.5"/>
 </svg>
