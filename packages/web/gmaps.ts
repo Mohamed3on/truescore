@@ -1,6 +1,6 @@
 import {
   PAGE_SIZE,
-  parseOrQuery,
+  expandSearchTerms,
   mergeByReviewId,
   statsForReviews,
   collectSort,
@@ -54,17 +54,18 @@ export type PartialScore = Omit<ScoreResult, 'reviews'>;
 // every page from either sort. Suitable for streaming `score-progress` events.
 export type ScoreProgressCallback = (partial: PartialScore) => void;
 
-// `query` may use the Gmail-style ` OR ` operator: each term becomes its own
-// Google search, fanned out + merged by reviewId in collectSearchTerms so the
-// score reflects reviews matching ANY term. A plain query is the single-term
-// case. `onPage` streams the merged running set so the count climbs across terms.
+// `query` may use the Gmail-style ` OR ` operator, and each term expands to its
+// accent/hyphen/space spellings: every term becomes its own Google search,
+// fanned out + merged by reviewId in collectSearchTerms so the score reflects
+// reviews matching ANY spelling. `onPage` streams the merged running set so the
+// count climbs across terms.
 export function fetchAllForSearch(
   featureId: string,
   query: string,
   onPage?: SortPageCallback,
 ): Promise<Review[]> {
   return collectSearchTerms(
-    parseOrQuery(query),
+    expandSearchTerms(query),
     (term, c) => buildUrlForSearch(featureId, term, c),
     transport,
     onPage ? (merged) => onPage('relevant', merged) : undefined,

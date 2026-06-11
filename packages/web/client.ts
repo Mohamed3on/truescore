@@ -1,6 +1,6 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
 import {
-  accentVariantQuery, compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
@@ -135,10 +135,16 @@ let activeSearch: SearchResult | null = null;
 let currentHighlights: UiChip[] = [];
 let highlightReviewsInflight: Promise<void> | null = null;
 
-// Praised standout items from the summary, each auto-scored by its own label
-// search. A SearchResult once scored; clicking opens it in the search panel.
-type StandoutChip = { item: string; state: ChipState; result?: SearchResult };
-let standoutChips: StandoutChip[] = [];
+// Standouts (praised items) and Better-alternatives (rival places) are the same
+// kind of group: each item is auto-scored by its own label search (a SearchResult
+// once scored), shown with its score, most-mentioned first; clicking opens it in
+// the search panel. They differ only in which row/list they render into.
+type ScoredChip = { item: string; state: ChipState; result?: SearchResult };
+const scoredGroups = {
+  standouts: { chips: [] as ScoredChip[], row: standoutsRow, list: standoutsList, chipClass: '' },
+  alternatives: { chips: [] as ScoredChip[], row: alternativesRow, list: alternativesList, chipClass: 'alternative-chip' },
+};
+type ScoredKind = keyof typeof scoredGroups;
 
 function setStatus(msg: string, isErr = false) {
   status.textContent = msg;
@@ -200,22 +206,21 @@ function renderHighlights(highlights: UiChip[], sort = false) {
   }
 }
 
-// Praised standouts from the summary, rendered as chips below the topic chips.
-// Each is auto-scored by a label search (/api/search); a scored chip opens that
-// search's panel on click — the same flow as typing the standout into the searchbox.
-function renderStandouts() {
-  while (standoutsList.firstChild) standoutsList.removeChild(standoutsList.firstChild);
-  // Show only standouts confirmed with ≥2 reviews mentioning them, most-mentioned
-  // first. Unscored / low-mention / errored chips aren't shown.
-  const shown = standoutChips
+// Render a scored group's chips: only items confirmed with ≥2 reviews mentioning
+// them, most-mentioned first, each with its label-search score. Clicking opens
+// that search's panel — the same flow as typing the term into the searchbox.
+function renderScored(kind: ScoredKind) {
+  const g = scoredGroups[kind];
+  while (g.list.firstChild) g.list.removeChild(g.list.firstChild);
+  const shown = g.chips
     .filter((d) => d.result && d.result.totalReviews >= 2)
     .sort((a, b) => b.result!.totalReviews - a.result!.totalReviews);
-  standoutsRow.hidden = shown.length === 0;
+  g.row.hidden = shown.length === 0;
   for (const d of shown) {
     const r = d.result!;
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'chip';
+    btn.className = g.chipClass ? `chip ${g.chipClass}` : 'chip';
     const label = document.createElement('span');
     label.className = 'label';
     label.textContent = d.item;
@@ -229,13 +234,14 @@ function renderStandouts() {
     count.textContent = `·${r.totalReviews}`;
     btn.appendChild(count);
     btn.addEventListener('click', () => showSearchPanel(r));
-    standoutsList.appendChild(btn);
+    g.list.appendChild(btn);
   }
 }
 
-async function scoreStandout(featureId: string, d: StandoutChip) {
+async function scoreChip(kind: ScoredKind, featureId: string, d: ScoredChip) {
   try {
-    const resp = await postNdjson('/api/search', { featureId, query: accentVariantQuery(d.item) });
+    // The server expands the term to its accent/hyphen/space spellings.
+    const resp = await postNdjson('/api/search', { featureId, query: d.item });
     let result: SearchResult | null = null;
     for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
       if (evt.type === 'search') result = evt.result;
@@ -248,34 +254,19 @@ async function scoreStandout(featureId: string, d: StandoutChip) {
     if (currentFeatureId !== featureId) return;
     d.state = 'error';
   }
-  renderStandouts();
+  renderScored(kind);
 }
 
-function showStandouts(items: string[], featureId: string) {
-  standoutChips = items.map((item) => ({ item, state: 'loading' as ChipState }));
-  renderStandouts();
-  for (const d of standoutChips) scoreStandout(featureId, d);
+function showScored(kind: ScoredKind, items: string[] | undefined, featureId: string) {
+  const g = scoredGroups[kind];
+  g.chips = (items ?? []).map((item) => ({ item, state: 'loading' as ChipState }));
+  renderScored(kind);
+  for (const d of g.chips) scoreChip(kind, featureId, d);
 }
 
-// Better-alternative places reviewers point to — their own row, apart from the
-// standouts so a rival venue isn't scored/sorted as a feature of this place. Each
-// chip still runs a label search for that name (same as the topic/standout chips),
-// so a click surfaces the reviews mentioning it.
-function renderAlternatives(alternatives?: string[]) {
-  while (alternativesList.firstChild) alternativesList.removeChild(alternativesList.firstChild);
-  const names = alternatives ?? [];
-  alternativesRow.hidden = names.length === 0;
-  for (const name of names) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'chip alternative-chip';
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = name;
-    btn.appendChild(label);
-    btn.addEventListener('click', () => runSearch(accentVariantQuery(name)));
-    alternativesList.appendChild(btn);
-  }
+function clearScored(kind: ScoredKind) {
+  scoredGroups[kind].chips = [];
+  renderScored(kind);
 }
 
 function showHighlightsLoading(msg: string) {
@@ -750,9 +741,8 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   $('verdict').textContent = '';
   resummarizeBtn.hidden = true;
   highlightsRow.hidden = true;
-  standoutChips = [];
-  renderStandouts();
-  renderAlternatives([]);
+  clearScored('standouts');
+  clearScored('alternatives');
   chipPanel.hidden = true;
   verdictRow.style.display = '';
   highlightsListEl.style.display = '';
@@ -1026,16 +1016,16 @@ function renderSummary(summary: Summary) {
   resummarizeBtn.hidden = false;
   while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
   renderHighlightList(highlightsListEl, summary.highlights);
-  renderAlternatives(summary.alternatives);
-  if (currentFeatureId && summary.items?.length) showStandouts(summary.items, currentFeatureId);
-  else { standoutChips = []; renderStandouts(); }
+  if (currentFeatureId) {
+    showScored('standouts', summary.items, currentFeatureId);
+    showScored('alternatives', summary.alternatives, currentFeatureId);
+  } else { clearScored('standouts'); clearScored('alternatives'); }
 }
 
 function renderSummaryError(msg: string) {
   $('verdict').textContent = `summary failed: ${msg}`;
-  standoutChips = [];
-  renderStandouts();
-  renderAlternatives([]);
+  clearScored('standouts');
+  clearScored('alternatives');
 }
 
 async function fetchHistogramFor(featureId: string, mergedPct: number) {

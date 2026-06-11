@@ -97,13 +97,28 @@ export const parseOrQuery = (query: string): string[] =>
 export const stripAccents = (s: string): string =>
   s.normalize('NFD').replace(/\p{Diacritic}/gu, '');
 
-// Search query for a keyword: if it's accented, OR in the folded spelling so
-// reviews written either way are caught ("açaí" → "açaí OR acai"). Plain ASCII
-// is returned unchanged. The OR fans out through the same parseOrQuery path.
+// Search query for a keyword, broadened for recall: OR in the accent-folded
+// spelling ("açaí" → "açaí OR acai") and swap hyphens↔spaces ("europa-park" →
+// "europa-park OR europa park"). Google ranks "europa-park", "europa park" and
+// the quoted phrase differently and returns different counts, so we search the
+// spellings and union the hits rather than betting on one. Plain single words
+// are unchanged. Variants fan out through parseOrQuery, capped at MAX_OR_TERMS.
 export const accentVariantQuery = (term: string): string => {
-  const folded = stripAccents(term);
-  return folded === term ? term : `${term} OR ${folded}`;
+  const variants = new Set<string>();
+  for (const base of [term, stripAccents(term)]) {
+    variants.add(base);
+    if (base.includes('-')) variants.add(base.replace(/-/g, ' '));
+    if (/\s/.test(base)) variants.add(base.replace(/\s+/g, '-'));
+  }
+  return [...variants].slice(0, MAX_OR_TERMS).join(' OR ');
 };
+
+// Upstream search terms for a query: split on OR, expand each to its
+// accent/hyphen/space variants, dedupe, cap the fan-out. Both the extension and
+// the server feed this to collectSearchTerms, so a typed query gets the same
+// spelling-variant recall as a chip's auto-search.
+export const expandSearchTerms = (query: string): string[] =>
+  [...new Set(parseOrQuery(query).flatMap((t) => parseOrQuery(accentVariantQuery(t))))].slice(0, MAX_OR_TERMS);
 
 const localeQuery = (locale: Locale = {}) => `hl=${locale.hl || 'en'}&gl=${locale.gl || ''}`;
 

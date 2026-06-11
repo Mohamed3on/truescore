@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { parseOrQuery, accentVariantQuery, stripAccents, mergeByReviewId, collectSearchTerms, type Review } from './index';
+import { parseOrQuery, accentVariantQuery, expandSearchTerms, stripAccents, mergeByReviewId, collectSearchTerms, type Review } from './index';
 
 const review = (id: string, stars = 5, count = 9): Review =>
   ({ reviewId: id, stars, reviewerReviewCount: count, timestamp: 1_700_000_000_000, text: `text-${id}` });
@@ -46,9 +46,23 @@ describe('accentVariantQuery', () => {
     expect(parseOrQuery(accentVariantQuery('açaí'))).toEqual(['açaí', 'acai']);
   });
 
-  test('plain ASCII term is returned unchanged', () => {
+  test('plain single ASCII word is returned unchanged', () => {
     expect(accentVariantQuery('burger')).toBe('burger');
-    expect(accentVariantQuery('dirty burger')).toBe('dirty burger');
+  });
+
+  test('hyphen and space spellings are unioned for recall', () => {
+    expect(accentVariantQuery('europa-park')).toBe('europa-park OR europa park');
+    expect(accentVariantQuery('europa park')).toBe('europa park OR europa-park');
+    expect(accentVariantQuery('dirty burger')).toBe('dirty burger OR dirty-burger');
+  });
+});
+
+describe('expandSearchTerms', () => {
+  test('expands each OR term to its spelling variants, deduped and capped', () => {
+    expect(expandSearchTerms('europa-park')).toEqual(['europa-park', 'europa park']);
+    expect(expandSearchTerms('wifi OR europa park')).toEqual(['wifi', 'europa park', 'europa-park']);
+    // Already-expanded input (e.g. a chip query) is idempotent.
+    expect(expandSearchTerms('europa-park OR europa park')).toEqual(['europa-park', 'europa park']);
   });
 });
 

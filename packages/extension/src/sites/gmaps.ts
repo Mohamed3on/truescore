@@ -3,12 +3,12 @@ import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../s
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import {
-  accentVariantQuery,
   chipsFromPreview,
   collectSearchTerms,
   collectSort,
   collectToken,
   compileMatchRegex,
+  expandSearchTerms,
   overallPctFromHistogram,
   overallScoreFromHistogram,
   PAGE_SIZE,
@@ -74,14 +74,14 @@ let activeHighlight: Highlight | null = null;
 let activeLabelSearch: { query: string; reviews: Review[]; summary?: SummaryResult } | null = null;
 let labelSearchSeq = 0;
 
-// Label-search scores for the summary's praised-standout chips, keyed
-// `${featureId}|${item}` so re-renders reuse them instead of refetching.
-// `standoutCtx` holds the current place's items so a score landing late can
-// rebuild the chip row (filter to ≥2 mentions, sort by count) into the dedicated
-// Standouts section (just under Highlights) without a full summary re-render.
+// Auto-scored label searches for the Standouts and Better-alternatives chips —
+// the two are the same kind of group and share this machinery. Keyed
+// `${featureId}|${item}` so re-renders reuse a score instead of refetching.
+// `scoredCtx` holds each group's current items so a score landing late can
+// rebuild that chip row (filter to ≥2 mentions, sort by count) without a full
+// summary re-render.
 const standoutScoreCache = new Map<string, SortStats>();
 const standoutScoreInflight = new Set<string>();
-let standoutCtx: { items: string[]; featureId: string } | null = null;
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -527,10 +527,11 @@ const fetchPlacePreviewActive = async (placeUrl: string): Promise<any | null> =>
 const fetchAllForToken = (featureId: string, token: string): Promise<Review[]> =>
   collectToken(featureId, token, tabTransport, { locale: localeFromDom() });
 
-// Gmail-style ` OR ` splits the query; collectSearchTerms runs one Google
-// search per term in parallel and merges by reviewId (plain query → N=1).
+// Gmail-style ` OR ` splits the query and each term expands to its
+// accent/hyphen/space spellings; collectSearchTerms runs one Google search per
+// term in parallel and merges by reviewId, so the count is the union.
 const fetchAllForSearch = (featureId: string, query: string): Promise<Review[]> =>
-  collectSearchTerms(parseOrQuery(query), (term, c) => buildUrlForSearch(featureId, term, c), tabTransport);
+  collectSearchTerms(expandSearchTerms(query), (term, c) => buildUrlForSearch(featureId, term, c), tabTransport);
 
 (window as any).__truescoreGmaps = {
   ...((window as any).__truescoreGmaps || {}),
@@ -1336,9 +1337,18 @@ const updateUI = () => {
   els.card.classList.toggle('done', allDone);
 };
 
-// Praised standouts from the summary, as chips below the highlights. Each is
-// auto-scored by a label search; clicking one runs that search in the searchbox.
-const paintStandoutChip = (pct: HTMLElement, count: HTMLElement, stats: SortStats, overall: number) => {
+// Standouts (praised items) and Better-alternatives (rival places) are the same
+// kind of chip group: each item is a label-search term, auto-scored by a label
+// search, shown with its score, most-mentioned first; clicking pre-fills the
+// searchbox and runs that search. They differ only in section/label/classes.
+const SCORED_GROUPS = {
+  standouts: { label: 'Standouts', labelClass: 'rc-standouts-label', listClass: 'rc-standouts-list', chipClass: 'rc-standout-chip', section: () => cardEls.standoutsSection },
+  alternatives: { label: 'Better alternatives', labelClass: 'rc-alternatives-label', listClass: 'rc-alternatives-list', chipClass: 'rc-alternative-chip', section: () => cardEls.alternativesSection },
+} as const;
+type ScoredKind = keyof typeof SCORED_GROUPS;
+const scoredCtx: Record<ScoredKind, { items: string[]; featureId: string } | null> = { standouts: null, alternatives: null };
+
+const paintScoredChip = (pct: HTMLElement, count: HTMLElement, stats: SortStats, overall: number) => {
   pct.textContent = `${stats.scorePct}%`;
   // Binary green/red like the topic chips, not getDiffColor's relative gradient —
   // that can't reach green when the place overall is already high.
@@ -1346,29 +1356,31 @@ const paintStandoutChip = (pct: HTMLElement, count: HTMLElement, stats: SortStat
   count.textContent = `·${stats.totalReviews}`;
 };
 
-const triggerStandoutSearch = (item: string) => {
+const triggerLabelSearchFor = (item: string) => {
   const input = cardEls.searchInput;
   if (!input) return;
-  input.value = accentVariantQuery(item);
+  // Raw term in the box; fetchAllForSearch expands it to spelling variants.
+  input.value = item;
   input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   runLabelSearch();
 };
 
-// Drop the Standouts section — no summary, or a summary with no scored standouts.
-const clearStandouts = () => {
-  standoutCtx = null;
-  const section = cardEls.standoutsSection;
+// Drop a group's section — no summary, or none of its items cleared the ≥2 gate.
+const clearScored = (kind: ScoredKind) => {
+  scoredCtx[kind] = null;
+  const section = SCORED_GROUPS[kind].section();
   if (section) { section.textContent = ''; section.style.display = 'none'; }
 };
 
-// Rebuild the standout chips from whatever scores have landed: only standouts with ≥2
+// Rebuild a group's chips from whatever scores have landed: only items with ≥2
 // reviews mentioning them, most-mentioned first. Re-run as each label search
-// resolves, so chips reveal and reorder in place — in the dedicated section
-// directly under Highlights, not buried in the summary panel.
-const redrawStandouts = () => {
-  const section = cardEls.standoutsSection;
-  if (!section || !standoutCtx) return;
-  const { items, featureId } = standoutCtx;
+// resolves, so chips reveal and reorder in place.
+const redrawScored = (kind: ScoredKind) => {
+  const cfg = SCORED_GROUPS[kind];
+  const section = cfg.section();
+  const ctx = scoredCtx[kind];
+  if (!section || !ctx) return;
+  const { items, featureId } = ctx;
   section.textContent = '';
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
   const scored = items
@@ -1377,24 +1389,24 @@ const redrawStandouts = () => {
     .sort((a, b) => b.stats.totalReviews - a.stats.totalReviews);
   if (!scored.length) { section.style.display = 'none'; return; }
   section.style.display = '';
-  section.appendChild(el('span', 'rc-standouts-label', 'Standouts'));
-  const list = el('div', 'rc-standouts-list');
+  section.appendChild(el('span', cfg.labelClass, cfg.label));
+  const list = el('div', cfg.listClass);
   for (const { item, stats } of scored) {
-    const chip = el('button', 'rc-chip rc-standout-chip') as HTMLButtonElement;
+    const chip = el('button', `rc-chip ${cfg.chipClass}`) as HTMLButtonElement;
     chip.type = 'button';
     chip.appendChild(el('span', 'rc-chip-label', item));
     const pct = el('span', 'rc-chip-pct');
     const count = el('span', 'rc-chip-count');
-    paintStandoutChip(pct, count, stats, overall);
+    paintScoredChip(pct, count, stats, overall);
     chip.appendChild(pct);
     chip.appendChild(count);
-    chip.onclick = () => triggerStandoutSearch(item);
+    chip.onclick = () => triggerLabelSearchFor(item);
     list.appendChild(chip);
   }
   section.appendChild(list);
 };
 
-const ensureStandoutScores = (featureId: string, items: string[]) => {
+const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
   const limit = createLimiter(HIGHLIGHT_FETCH_CONCURRENCY);
   for (const item of items) {
     const key = `${featureId}|${item.toLowerCase()}`;
@@ -1402,11 +1414,11 @@ const ensureStandoutScores = (featureId: string, items: string[]) => {
     standoutScoreInflight.add(key);
     limit(async () => {
       try {
-        const stats = statsForReviews(await fetchAllForSearch(featureId, accentVariantQuery(item)));
+        const stats = statsForReviews(await fetchAllForSearch(featureId, item));
         standoutScoreCache.set(key, stats);
-        if (getFeatureId() === featureId) redrawStandouts();
+        if (getFeatureId() === featureId) redrawScored(kind);
       } catch (e) {
-        console.error('[standouts] score failed for', item, e);
+        console.error(`[${kind}] score failed for`, item, e);
       } finally {
         standoutScoreInflight.delete(key);
       }
@@ -1414,34 +1426,11 @@ const ensureStandoutScores = (featureId: string, items: string[]) => {
   }
 };
 
-const renderStandoutChips = (items: string[]) => {
+const renderScoredGroup = (kind: ScoredKind, items: string[]) => {
   const featureId = getFeatureId();
-  standoutCtx = featureId ? { items, featureId } : null;
-  redrawStandouts();
-  if (featureId) ensureStandoutScores(featureId, items);
-};
-
-// Better-alternative places reviewers point to. Its own labelled row directly
-// under Standouts, apart from the Standouts chips — an alternative isn't a
-// feature of this place, so it shouldn't be scored/sorted as a standout. But
-// each chip still runs a label search for that name, exactly like the
-// standout/topic chips, so a click surfaces the reviews that mention it.
-const renderAlternatives = (alternatives?: string[]) => {
-  const section = cardEls.alternativesSection;
-  if (!section) return;
-  section.textContent = '';
-  if (!alternatives?.length) { section.style.display = 'none'; return; }
-  section.style.display = '';
-  section.appendChild(el('span', 'rc-alternatives-label', 'Better alternatives'));
-  const list = el('div', 'rc-alternatives-list');
-  for (const name of alternatives) {
-    const chip = el('button', 'rc-chip rc-alternative-chip') as HTMLButtonElement;
-    chip.type = 'button';
-    chip.appendChild(el('span', 'rc-chip-label', name));
-    chip.onclick = () => triggerStandoutSearch(name);
-    list.appendChild(chip);
-  }
-  section.appendChild(list);
+  scoredCtx[kind] = featureId ? { items, featureId } : null;
+  redrawScored(kind);
+  if (featureId) ensureScored(featureId, items, kind);
 };
 
 const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
@@ -1472,13 +1461,14 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
     const v = Math.max(1, Math.min(5, result.valueForMoney));
     panel.appendChild(el('div', 'rc-value', `Value for money: ${starString(v)}`));
   }
-  // Standouts (their own section under Highlights) and alternatives are about
-  // the place as a whole — only the main summary, never a label-search/chip
-  // sub-summary whose items would spawn nested searches off a filtered set.
+  // Standouts and alternatives are scored chip groups about the place as a whole
+  // — only the main summary, never a label-search/chip sub-summary whose items
+  // would spawn nested searches off a filtered set.
   if (panel === cardEls.sumPanel) {
-    if (result.items?.length) renderStandoutChips(result.items);
-    else clearStandouts();
-    renderAlternatives(result.alternatives);
+    if (result.items?.length) renderScoredGroup('standouts', result.items);
+    else clearScored('standouts');
+    if (result.alternatives?.length) renderScoredGroup('alternatives', result.alternatives);
+    else clearScored('alternatives');
   }
   if (!result.highlights?.length && !result.verdict) {
     panel.textContent = 'No highlights found';
