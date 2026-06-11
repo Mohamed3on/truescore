@@ -68,6 +68,22 @@ export async function getGoogleCookieHeader(): Promise<string> {
   return cookiesRefreshing;
 }
 
+// The server must only ever fetch Google's own hosts. Everything legitimately
+// passed here (listugcposts, preview/place, the maps HTML) is *.google.com; an
+// attacker-supplied place URL is the one thing that isn't. Reject by hostname
+// SUFFIX — a substring check would wrongly admit "google.com.attacker.example".
+export function assertGoogleHost(url: string): void {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    throw new Error('invalid URL');
+  }
+  if (host !== 'google.com' && !host.endsWith('.google.com')) {
+    throw new Error(`refusing to fetch non-Google host: ${host}`);
+  }
+}
+
 // 429: explicit throttle. 5xx covers proxy-origin timeouts (502/504), upstream
 // unavailability (503), and Cloudflare-shape errors (522/524) that show up when
 // the proxy provider sits behind Cloudflare and the listugcposts fan-out from
@@ -76,6 +92,7 @@ const RETRY_STATUSES = new Set([429, 500, 502, 503, 504, 522, 524]);
 const MAX_ATTEMPTS = 4;
 
 export async function googleFetch(url: string): Promise<string> {
+  assertGoogleHost(url);
   const cookie = await getGoogleCookieHeader();
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     let r: Response | null = null;

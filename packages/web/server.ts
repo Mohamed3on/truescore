@@ -129,7 +129,7 @@ async function recomputeHighlights(featureId: string, name: string): Promise<voi
 // Highlights are recomputed in the background only when drift exceeds 1%.
 function revalidate(featureId: string, name: string, resolvedUrl: string): Promise<void> {
   return revalidateInflight.run(featureId, async () => {
-    const bundle = await getOrFetchPreviewBundle(featureId, resolvedUrl).catch(() => null);
+    const bundle = await getOrFetchPreviewBundle(featureId).catch(() => null);
     const histogram = bundle?.histogram ?? null;
     const currentTotal = histogram ? histogram.reduce((a, b) => a + b, 0) : null;
     if (currentTotal == null) return;
@@ -262,7 +262,7 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string)
     // Run preview in parallel with the score scrape, but emit each as soon as
     // it lands instead of awaiting both. Preview failures degrade to a
     // null-histogram event so the client clears its loading skeleton.
-    const previewPromise = getOrFetchPreviewBundle(featureId, resolvedUrl)
+    const previewPromise = getOrFetchPreviewBundle(featureId)
       .then((bundle) => {
         write({
           type: 'preview',
@@ -288,13 +288,13 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string)
   });
 }
 
-function getOrFetchPreviewBundle(featureId: string, url: string): Promise<PreviewBundle> {
+function getOrFetchPreviewBundle(featureId: string): Promise<PreviewBundle> {
   const existing = cache.get(featureId);
   if (existing?.histogram && existing.meta && cache.histogramFresh(existing)) {
     return Promise.resolve({ histogram: existing.histogram, meta: existing.meta });
   }
   return previewInflight.run(featureId, async () => {
-    const bundle = await fetchPreviewBundle(url);
+    const bundle = await fetchPreviewBundle(mapsUrlFor(featureId));
     await cache.putPreviewBundle(featureId, bundle);
     return bundle;
   });
@@ -379,8 +379,7 @@ Bun.serve({
           const { featureId } = await req.json();
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
-          const url = entry.resolvedUrl ?? mapsUrlFor(featureId);
-          const { histogram } = await getOrFetchPreviewBundle(featureId, url);
+          const { histogram } = await getOrFetchPreviewBundle(featureId);
           if (!histogram) return json({ error: 'histogram unavailable' }, 500);
           return json({ histogram, overallPct: overallPctFromHistogram(histogram), cached: cache.histogramFresh(entry) } satisfies HistogramResponse);
         } catch (e) {
