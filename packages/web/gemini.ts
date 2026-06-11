@@ -102,7 +102,7 @@ export async function summarize(placeName: string, reviewTexts: string[], filter
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
 
-  const verdictPrompt = `${block}\n\n---\n\nWrite a concise verdict on ${subject}: what stands out and whether it's worth it. Keep it about this place: only point to another place reviewers would visit instead when many of them repeatedly name the same one — a one-off mention stays out, since alternatives are surfaced separately. Mention caveats only if the reviews raise real ones — don't invent them. **Bold** specifics. Markdown prose, no headings or bullets. Max 120 words.
+  const verdictPrompt = `${block}\n\n---\n\nWrite a concise verdict on ${subject}: what stands out and whether it's worth it. Keep it about this place: only point to another place when many reviewers repeatedly name the same one as better — never a place they say is worse or that this place beats — and a one-off mention stays out, since alternatives are surfaced separately. Mention caveats only if the reviews raise real ones — don't invent them. **Bold** specifics. Markdown prose, no headings or bullets. Max 120 words.
 
 ${NOTES}`;
 
@@ -112,7 +112,7 @@ Each highlight: text (one concrete line, ≤20 words, specifics over adjectives)
 
 Also list items: up to 6 concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword: the least common, most distinctive word, dropping generic nouns so the search catches variants ("Western Lowland Gorilla" → "gorilla", "dulce de leche cake" → "dulce de leche"). Split a compound like "salmon avocado toast" into "salmon", "avocado". But keep the phrase when a bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"). Skip generic qualities every place has — service, staff, cleanliness, value. These must be things at THIS place. [] if nothing specific stands out.
 
-Separately, list alternatives: proper names of OTHER places reviewers explicitly recommend over this one (common when they call this place overrated). Can be anywhere — a nearby swap or a better one in another city/country, not just local substitutes. Names only — never put these in items, since a place named as a better alternative is not a feature of this one. [] if reviewers name none.
+Separately, list alternatives: proper names of OTHER places reviewers say are BETTER than this one — somewhere they'd rather go because it beats this place (common when they call this place overrated). Better only: skip any place mentioned as worse, or that reviewers say this place beats. Can be anywhere — a nearby swap or a better one in another city/country, not just local substitutes. Names only — never put these in items, since a place named as a better alternative is not a feature of this one. [] if reviewers name none.
 
 ${NOTES}`;
 
