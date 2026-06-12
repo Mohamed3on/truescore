@@ -1,6 +1,6 @@
 import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
-import { buildSummarizeWidget, geminiSummarize, renderFreeFormAnswer } from '../shared/review-summary';
+import { buildSummarizeWidget, llmSummarize, renderFreeFormAnswer } from '../shared/review-summary';
 import { queryTerms, buildReviewCard } from '../shared/review-search';
 
 const STAMPED_API_KEY = '8a204db0-ec09-48cf-baed-db3ca2ef99e6';
@@ -205,7 +205,7 @@ const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
     sumPanel.style.display = 'block';
     sumPanel.textContent = 'Summarizing…';
     try {
-      const text = await geminiSummarize(texts, FILTERED_SUMMARY_PROMPT, null);
+      const text = await llmSummarize(texts, FILTERED_SUMMARY_PROMPT, null);
       summaryCache.set(query.toLowerCase(), text);
       if (currentQuery !== query) return;
       renderCached(query, text);

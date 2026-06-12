@@ -25,7 +25,7 @@ Each site adapts this formula to what data is available (star histograms, like/d
 ## What it does on each site
 
 **Shopping**
-- **Amazon** — Sorts search results by score. On product pages: trending score from recent reviews, AI-powered review summary (via Gemini), and sentiment breakdown by product variation (color, size, etc).
+- **Amazon** — Sorts search results by score. On product pages: trending score from recent reviews, AI-powered review summary (via Gemini or OpenAI — keys set in the popup), and sentiment breakdown by product variation (color, size, etc).
 - **Booking.com** — Sorts hotel results by score. On hotel pages: analyzes the last 100 reviews with filters by guest type and room type.
 - **Decathlon / Uniqlo / IKEA / dm.de** — NPS-style score on product pages with attribute breakdowns (quality, fit, durability, etc). Product list pages auto-sort by score.
 

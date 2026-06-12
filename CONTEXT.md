@@ -15,7 +15,7 @@ and `gmaps-shared`.
 - **Histogram** — the `[5★,4★,3★,2★,1★]` counts; `overallPct` and the integer `overallScore` are derived from it.
 - **relevant / newest** — the two Google sort orders scored in parallel; pagination stops when `scorePct` **stabilizes** (within 1% after ≥2 pages).
 - **Chip** (topic chip) — a Google Maps topic (e.g. "light show", "elevator") with a `token`; TrueScore re-scores the reviews under each chip. *(Formerly named `Highlight` — renamed to end the collision below.)*
-- **Summary** — Gemini output for a place: a prose **verdict**, a list of **SummaryHighlight**s, **valueForMoney** (1–5), and **items** (praised dishes/menu terms).
+- **Summary** — LLM output for a place (gemini or openai, see packages/web/llm.ts): a prose **verdict**, a list of **SummaryHighlight**s, **valueForMoney** (1–5), and **items** (praised dishes/menu terms).
 - **SummaryHighlight** — one verdict bullet: `{ text, sentiment }`. Distinct from **Chip** — both used to be called "highlight".
 - **items** (dish chips) — short praised dish/menu terms from the Summary, rendered as their own chips below the topic chips and auto-scored via a **Search** each; clicking one opens that search.
 - **Search** — arbitrary review-text search within a place. A Gmail-style ` OR ` operator (`parseOrQuery`, any case) splits the query into terms; each is searched separately and the matches are unioned (dedup by `reviewId`).

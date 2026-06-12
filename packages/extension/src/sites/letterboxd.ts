@@ -1,5 +1,5 @@
 import { cacheGet, cacheSet } from '../shared/cache';
-import { geminiSummarize } from '../shared/review-summary';
+import { llmSummarize } from '../shared/review-summary';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el, renderMarkdownInline } from '../shared/utils';
 
@@ -604,7 +604,7 @@ function displaySummary(slug: string, anchor: HTMLElement): HTMLElement {
       if (!texts.length) throw new Error('No written reviews found yet.');
       body.textContent = '';
       body.append(el('div', 'lbx-progress', '✦ Summarizing…'));
-      const data = (await geminiSummarize(texts, SUMMARY_PROMPT, SUMMARY_SCHEMA)) as FilmSummary;
+      const data = (await llmSummarize(texts, SUMMARY_PROMPT, SUMMARY_SCHEMA)) as FilmSummary;
       setCachedSummary(slug, data);
       renderSummary(body, data);
       showRelink();

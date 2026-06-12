@@ -655,7 +655,7 @@ const computeHighlights = async (force = false) => {
   }
 };
 
-// All Gemini work happens server-side (truescore-web) so the model, prompts,
+// All LLM work happens server-side (truescore-web) so the model, prompts,
 // and schema live in one place. The extension just ships the date-prefixed
 // review texts (already produced by textReviewsFor) plus place identity, and
 // the server runs the same summarize()/ask() the web SPA does.

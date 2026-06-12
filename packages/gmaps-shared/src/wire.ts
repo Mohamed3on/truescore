@@ -7,7 +7,7 @@ import type { ChipMeta, PlaceMeta, Review, SortStats } from './index';
 
 // ---- payloads ----
 
-// A verdict bullet from Gemini: one concrete line + its sentiment. Named apart
+// A verdict bullet from the LLM: one concrete line + its sentiment. Named apart
 // from Chip so the two "highlights" (prose bullets vs scored topic chips) never
 // collide again.
 export type SummaryHighlight = { text: string; sentiment: string };

@@ -30,11 +30,21 @@
   <div class="settings">
     <label class="field">
       <span class="field-label">Gemini API Key</span>
-      <span class="field-hint">For AI summaries on Amazon &amp; Google Maps. <a href="https://aistudio.google.com/apikey" target="_blank">Get one free</a></span>
+      <span class="field-hint">For AI review summaries. <a href="https://aistudio.google.com/apikey" target="_blank">Get one free</a></span>
       <div class="input-row">
         <input type="password" id="apikey" placeholder="AIza..." spellcheck="false" autocomplete="off">
-        <button id="toggle-vis" title="Show/hide">
-          <svg id="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        <button class="toggle-vis" title="Show/hide">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </label>
+    <label class="field">
+      <span class="field-label">OpenAI API Key</span>
+      <span class="field-hint">Used instead of Gemini when set. <a href="https://platform.openai.com/api-keys" target="_blank">Get one</a></span>
+      <div class="input-row">
+        <input type="password" id="openai-key" placeholder="sk-..." spellcheck="false" autocomplete="off">
+        <button class="toggle-vis" title="Show/hide">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
     </label>

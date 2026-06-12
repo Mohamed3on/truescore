@@ -10,7 +10,7 @@ TLS: Cloudflare edge (Flexible mode — edge ↔ origin is plain HTTP)
 | | |
 |---|---|
 | App dir | `/opt/truescore` |
-| .env | `/opt/truescore/.env` (PORT=80, Decodo creds, paths) |
+| .env | `/opt/truescore/.env` (PORT=80, Decodo creds, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `LLM_PROVIDER`, paths) |
 | Code/cache state | `/var/lib/truescore/{cache.sqlite,cookies.json}` (legacy `cache.json` migrated on first start) |
 | systemd unit | `/etc/systemd/system/truescore.service` |
 | Service user | `truescore` |
@@ -45,6 +45,9 @@ ssh root@65.108.153.112 'rm -f /var/lib/truescore/cache.sqlite* && systemctl res
 
 # wipe cookies (forces re-bake via proxy)
 ssh root@65.108.153.112 'rm /var/lib/truescore/cookies.json && systemctl restart truescore'
+
+# switch summarization model (llm.ts): gemini (default when unset) or openai
+ssh root@65.108.153.112 'sed -i "s/^LLM_PROVIDER=.*/LLM_PROVIDER=gemini/" /opt/truescore/.env && systemctl restart truescore'
 ```
 
 ## Residential proxy (Decodo)

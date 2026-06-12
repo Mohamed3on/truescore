@@ -17,7 +17,7 @@ import {
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
 import { scorePlace, fetchAllForSearch } from './gmaps';
-import { summarize, ask } from './gemini';
+import { summarize, ask } from './llm';
 import { fetchPreviewBundle, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, scoreHighlight } from './highlights';
 import { cache, type CacheEntry } from './cache';

@@ -1,7 +1,7 @@
 import { homedir } from 'os';
 import { Database } from 'bun:sqlite';
 import type { ScoreResult } from './gmaps';
-import type { Summary } from './gemini';
+import type { Summary } from './llm';
 import type { Chip, PlaceMeta } from '@truescore/gmaps-shared';
 
 const LEGACY_JSON_PATH = process.env.TRUESCORE_CACHE_PATH || `${homedir()}/.truescore-cache.json`;

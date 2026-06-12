@@ -120,7 +120,7 @@ h1 {
 
 .input-row input::placeholder { color: #ccc; }
 
-#toggle-vis {
+.toggle-vis {
   width: 32px;
   height: 32px;
   display: flex;
@@ -135,7 +135,7 @@ h1 {
   transition: color 0.15s, border-color 0.15s;
 }
 
-#toggle-vis:hover { color: #555; border-color: #bbb; }
+.toggle-vis:hover { color: #555; border-color: #bbb; }
 
 /* Status */
 #status {

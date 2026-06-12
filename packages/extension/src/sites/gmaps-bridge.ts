@@ -1,14 +1,7 @@
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT } from '../shared/gmaps-bridge-protocol';
 
-// ISOLATED world, document_start. Bridges chrome.* APIs that MAIN-world
-// gmaps.ts can't reach itself: the Gemini API key (one-shot via dataset) and
-// chrome.storage.local (request/response via CustomEvents).
-chrome.storage.sync.get('geminiApiKey', ({ geminiApiKey }) => {
-  if (geminiApiKey) {
-    document.documentElement.dataset.tsGeminiKey = geminiApiKey;
-  }
-});
-
+// ISOLATED world, document_start. Bridges chrome.storage.local, which
+// MAIN-world gmaps.ts can't reach itself (request/response via CustomEvents).
 const respond = (id: string, value: unknown) => {
   document.dispatchEvent(new CustomEvent(STORAGE_RESULT, { detail: { id, value } }));
 };

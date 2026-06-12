@@ -1,4 +1,4 @@
-import { getGeminiApiKey, geminiEndpoint } from './config';
+import { getGeminiApiKey, getOpenAIApiKey, geminiEndpoint, OPENAI_ENDPOINT, OPENAI_MODEL } from './config';
 import { el, renderMarkdown, renderMarkdownInline } from './utils';
 
 export const renderStructuredSummary = (
@@ -71,9 +71,53 @@ const SUMMARY_SCHEMA = {
   required: ['complaints', 'praised', 'conclusion']
 };
 
-export const geminiSummarize = async (reviewTexts: string[], prompt: string, schema: any = SUMMARY_SCHEMA): Promise<any> => {
+// OpenAI strict structured output wants every property required and
+// additionalProperties: false at each level; Gemini-style `nullable` becomes a
+// type union. The schemas stay authored in the Gemini-friendly shape above.
+const toStrictSchema = (s: any): any => {
+  if (s?.type === 'object') {
+    return {
+      ...s,
+      properties: Object.fromEntries(Object.entries(s.properties).map(([k, v]) => [k, toStrictSchema(v)])),
+      required: Object.keys(s.properties),
+      additionalProperties: false,
+    };
+  }
+  if (s?.type === 'array') return { ...s, items: toStrictSchema(s.items) };
+  if (s?.nullable) {
+    const { nullable, ...rest } = s;
+    return { ...rest, type: [rest.type, 'null'] };
+  }
+  return s;
+};
+
+// Uses the OpenAI key when one is set in the popup, otherwise the Gemini key \u2014
+// clear the OpenAI field to switch back. Same prompt either way.
+export const llmSummarize = async (reviewTexts: string[], prompt: string, schema: any = SUMMARY_SCHEMA): Promise<any> => {
+  const fullPrompt = prompt + '\n\nReviews:\n\n' + reviewTexts.join('\n---\n');
+
+  const openaiKey = await getOpenAIApiKey();
+  if (openaiKey) {
+    const res = await fetch(OPENAI_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiKey}` },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [{ role: 'user', content: fullPrompt }],
+        max_completion_tokens: 32768,
+        ...(schema && {
+          response_format: { type: 'json_schema', json_schema: { name: 'summary', strict: true, schema: toStrictSchema(schema) } },
+        }),
+      }),
+    });
+    const data = await res.json();
+    const raw = data?.choices?.[0]?.message?.content;
+    if (!raw) throw new Error(data?.error?.message || 'Empty OpenAI response');
+    return schema ? JSON.parse(raw) : raw;
+  }
+
   const apiKey = await getGeminiApiKey();
-  if (!apiKey) throw new Error('No Gemini API key \u2014 set one in the TrueScore popup');
+  if (!apiKey) throw new Error('No API key \u2014 set one in the TrueScore popup');
 
   const generationConfig: any = {
     thinkingConfig: { thinkingLevel: 'MINIMAL' },
@@ -88,7 +132,7 @@ export const geminiSummarize = async (reviewTexts: string[], prompt: string, sch
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt + '\n\nReviews:\n\n' + reviewTexts.join('\n---\n') }] }],
+      contents: [{ parts: [{ text: fullPrompt }] }],
       generationConfig,
     }),
   });
@@ -280,7 +324,7 @@ export const buildSummarizeWidget = ({
     try {
       const reviews = await loadReviews();
       btn.textContent = '\u23F3 Summarizing\u2026';
-      const parsed = await geminiSummarize(reviews, withContext(summaryPrompt));
+      const parsed = await llmSummarize(reviews, withContext(summaryPrompt));
       bumpRateLimit();
       summaryTs = Date.now();
       localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta }));
@@ -310,7 +354,7 @@ export const buildSummarizeWidget = ({
     try {
       const reviews = await loadReviews();
       btn.textContent = '\u23F3 Asking\u2026';
-      const answer = await geminiSummarize(reviews, `${withContext(questionPrompt)}\n\nQuestion: ${question}`, null);
+      const answer = await llmSummarize(reviews, `${withContext(questionPrompt)}\n\nQuestion: ${question}`, null);
       bumpRateLimit();
       saveQA(cacheKey, { q: question, a: answer, ts: Date.now() });
       renderFreeFormAnswer(summaryPanel, answer);
@@ -397,10 +441,10 @@ export const buildSummarizeWidget = ({
   }
 
   // Auto-summarize on landing — skip silently if a summary is already cached
-  // or no Gemini key is set (the manual button stays available either way).
+  // or no API key is set (the manual button stays available either way).
   if (autoSummarize && !cached?.parsed) {
-    getGeminiApiKey().then((key) => {
-      if (key && !questionInput.value.trim()) summarizeBtn.click();
+    Promise.all([getOpenAIApiKey(), getGeminiApiKey()]).then(([openaiKey, geminiKey]) => {
+      if ((openaiKey || geminiKey) && !questionInput.value.trim()) summarizeBtn.click();
     });
   }
 };
