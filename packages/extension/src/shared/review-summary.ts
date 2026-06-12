@@ -1,4 +1,4 @@
-import { getGeminiApiKey, getOpenAIApiKey, geminiEndpoint, OPENAI_ENDPOINT, OPENAI_MODEL } from './config';
+import { getActiveLLM, geminiEndpoint, OPENAI_ENDPOINT, OPENAI_MODEL } from './config';
 import { el, renderMarkdown, renderMarkdownInline } from './utils';
 
 export const renderStructuredSummary = (
@@ -91,16 +91,17 @@ const toStrictSchema = (s: any): any => {
   return s;
 };
 
-// Uses the OpenAI key when one is set in the popup, otherwise the Gemini key \u2014
-// clear the OpenAI field to switch back. Same prompt either way.
+// Provider comes from the popup toggle (getActiveLLM); same prompt either way.
 export const llmSummarize = async (reviewTexts: string[], prompt: string, schema: any = SUMMARY_SCHEMA): Promise<any> => {
   const fullPrompt = prompt + '\n\nReviews:\n\n' + reviewTexts.join('\n---\n');
 
-  const openaiKey = await getOpenAIApiKey();
-  if (openaiKey) {
+  const { provider, key } = await getActiveLLM();
+  if (!key) throw new Error(`No ${provider === 'openai' ? 'OpenAI' : 'Gemini'} API key \u2014 set one in the TrueScore popup`);
+
+  if (provider === 'openai') {
     const res = await fetch(OPENAI_ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openaiKey}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify({
         model: OPENAI_MODEL,
         messages: [{ role: 'user', content: fullPrompt }],
@@ -116,9 +117,6 @@ export const llmSummarize = async (reviewTexts: string[], prompt: string, schema
     return schema ? JSON.parse(raw) : raw;
   }
 
-  const apiKey = await getGeminiApiKey();
-  if (!apiKey) throw new Error('No API key \u2014 set one in the TrueScore popup');
-
   const generationConfig: any = {
     thinkingConfig: { thinkingLevel: 'MINIMAL' },
     maxOutputTokens: 32768,
@@ -128,7 +126,7 @@ export const llmSummarize = async (reviewTexts: string[], prompt: string, schema
     generationConfig.responseSchema = schema;
   }
 
-  const res = await fetch(geminiEndpoint(apiKey), {
+  const res = await fetch(geminiEndpoint(key), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -441,10 +439,10 @@ export const buildSummarizeWidget = ({
   }
 
   // Auto-summarize on landing — skip silently if a summary is already cached
-  // or no API key is set (the manual button stays available either way).
+  // or the active provider has no key (the manual button stays available either way).
   if (autoSummarize && !cached?.parsed) {
-    Promise.all([getOpenAIApiKey(), getGeminiApiKey()]).then(([openaiKey, geminiKey]) => {
-      if ((openaiKey || geminiKey) && !questionInput.value.trim()) summarizeBtn.click();
+    getActiveLLM().then(({ key }) => {
+      if (key && !questionInput.value.trim()) summarizeBtn.click();
     });
   }
 };

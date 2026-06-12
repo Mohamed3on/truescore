@@ -1,5 +1,32 @@
 const status = document.getElementById('status')!;
 
+const flashSaved = (msg: string) => {
+  status.textContent = msg;
+  status.className = 'saved';
+  setTimeout(() => { status.textContent = ''; }, 1500);
+};
+
+// Provider toggle: explicit choice in llmProvider; unset falls back to
+// OpenAI-if-keyed else Gemini (mirrors getActiveLLM in shared/config.ts).
+const seg = document.getElementById('provider-seg')!;
+const segBtns = [...seg.querySelectorAll<HTMLButtonElement>('button')];
+const markActive = (provider: string) =>
+  segBtns.forEach((b) => b.classList.toggle('active', b.dataset.provider === provider));
+
+chrome.storage.sync.get(['llmProvider', 'openaiApiKey'], ({ llmProvider, openaiApiKey }) => {
+  markActive(llmProvider || (openaiApiKey ? 'openai' : 'gemini'));
+});
+
+for (const btn of segBtns) {
+  btn.addEventListener('click', () => {
+    const provider = btn.dataset.provider!;
+    chrome.storage.sync.set({ llmProvider: provider }, () => {
+      markActive(provider);
+      flashSaved('Saved');
+    });
+  });
+}
+
 // One field per provider key; review summaries prefer OpenAI when both are set.
 const FIELDS = [
   { id: 'apikey', storageKey: 'geminiApiKey' },
@@ -20,11 +47,7 @@ for (const { id, storageKey } of FIELDS) {
     clearTimeout(timer);
     timer = setTimeout(() => {
       const key = input.value.trim();
-      chrome.storage.sync.set({ [storageKey]: key }, () => {
-        status.textContent = key ? 'Saved' : 'Cleared';
-        status.className = 'saved';
-        setTimeout(() => { status.textContent = ''; }, 1500);
-      });
+      chrome.storage.sync.set({ [storageKey]: key }, () => flashSaved(key ? 'Saved' : 'Cleared'));
     }, 400);
   });
 

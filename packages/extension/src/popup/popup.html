@@ -28,6 +28,14 @@
   <div class="divider"></div>
 
   <div class="settings">
+    <div class="field">
+      <span class="field-label">AI Model</span>
+      <span class="field-hint">For review summaries on this device. Google Maps summaries are server-side.</span>
+      <div class="seg" id="provider-seg">
+        <button data-provider="gemini">Gemini Flash</button>
+        <button data-provider="openai">GPT-5.4 nano</button>
+      </div>
+    </div>
     <label class="field">
       <span class="field-label">Gemini API Key</span>
       <span class="field-hint">For AI review summaries. <a href="https://aistudio.google.com/apikey" target="_blank">Get one free</a></span>
@@ -40,7 +48,7 @@
     </label>
     <label class="field">
       <span class="field-label">OpenAI API Key</span>
-      <span class="field-hint">Used instead of Gemini when set. <a href="https://platform.openai.com/api-keys" target="_blank">Get one</a></span>
+      <span class="field-hint">Needed when GPT is selected. <a href="https://platform.openai.com/api-keys" target="_blank">Get one</a></span>
       <div class="input-row">
         <input type="password" id="openai-key" placeholder="sk-..." spellcheck="false" autocomplete="off">
         <button class="toggle-vis" title="Show/hide">

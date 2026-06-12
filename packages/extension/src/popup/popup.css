@@ -137,6 +137,33 @@ h1 {
 
 .toggle-vis:hover { color: #555; border-color: #bbb; }
 
+/* Provider segmented toggle */
+.seg {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.seg button {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+  color: #999;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.seg button:hover { color: #555; border-color: #bbb; }
+
+.seg button.active {
+  background: #333;
+  border-color: #333;
+  color: #fff;
+}
+
 /* Status */
 #status {
   font-size: 11px;

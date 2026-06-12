@@ -11,8 +11,18 @@ const storedKey = async (name: string): Promise<string> => {
   }
 };
 
-export const getGeminiApiKey = () => storedKey('geminiApiKey');
-export const getOpenAIApiKey = () => storedKey('openaiApiKey');
+// Active provider for extension-direct summaries: the popup toggle wins;
+// unset falls back to OpenAI-if-keyed, else Gemini. (Google Maps summaries
+// are server-side and follow the server's LLM_PROVIDER instead.)
+export async function getActiveLLM(): Promise<{ provider: 'gemini' | 'openai'; key: string }> {
+  const [pref, openaiKey, geminiKey] = await Promise.all([
+    storedKey('llmProvider'),
+    storedKey('openaiApiKey'),
+    storedKey('geminiApiKey'),
+  ]);
+  const provider = pref === 'gemini' || pref === 'openai' ? pref : openaiKey ? 'openai' : 'gemini';
+  return { provider, key: provider === 'openai' ? openaiKey : geminiKey };
+}
 
 export const GEMINI_MODEL = 'gemini-3-flash-preview';
 
