@@ -41,6 +41,12 @@ const report = (provider: Provider, call: string, u: { inputTokens?: number; out
 
 const NOTES = `On factual disagreements (price, hours), trust the more recent review. Reviews come first; fold in general knowledge where they're silent.`;
 
+// Deliberately shape-only (plus the sentiment enum): an eval'd attempt to move
+// the field instructions into .describe() + min/max bounds regressed both
+// providers — nano leaked reasoning into items and named cities as
+// alternatives, gemini's highlights shrank and valueForMoney came back
+// Infinity. Field semantics live in structuredPrompt; content hygiene
+// (dedupe, junk tokens) in cleanItems.
 const HIGHLIGHTS_SCHEMA = z.object({
   highlights: z.array(
     z.object({
