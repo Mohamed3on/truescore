@@ -53,8 +53,10 @@ const HIGHLIGHTS_SCHEMA = z.object({
   valueForMoney: z.number().int(),
 });
 
-// Praised standout terms: trim, drop blanks, dedupe case-insensitively, cap 6
-// (auto-scoring fires one label search per item, so the cap bounds the fan-out).
+// Praised standout terms: trim, drop blanks and letterless junk ("[]", "—" —
+// models occasionally echo the empty-list notation as an element), dedupe
+// case-insensitively, cap 6 (auto-scoring fires one label search per item, so
+// the cap bounds the fan-out).
 const cleanItems = (raw: unknown): string[] => {
   if (!Array.isArray(raw)) return [];
   const seen = new Set<string>();
@@ -63,7 +65,7 @@ const cleanItems = (raw: unknown): string[] => {
     if (typeof v !== 'string') continue;
     const t = v.trim();
     const k = t.toLowerCase();
-    if (!t || seen.has(k)) continue;
+    if (!t || !/[\p{L}\p{N}]/u.test(t) || seen.has(k)) continue;
     seen.add(k);
     out.push(t);
     if (out.length >= 6) break;
@@ -114,9 +116,9 @@ ${NOTES}`;
 
 Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
 
-Also list items: up to 6 concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword biased toward recall: the term is searched against all reviews, so prefer the broadest word reviewers actually repeat — a term only one or two reviews contain makes a useless chip. One word when possible; drop prices, sizes, and qualifiers ("brunch menu €14" → "brunch", "Western Lowland Gorilla" → "gorilla"). Spell normally — never glue words together ("patatas bravas" → "bravas", not "patatasbravas"). Split a compound like "salmon avocado toast" into "salmon", "avocado". Keep a phrase only when the bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"; "dulce de leche", not "leche"). Skip generic qualities every place has — service, staff, cleanliness, value. These must be things at THIS place. [] if nothing specific stands out.
+Also list items: up to 6 concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword biased toward recall: the term is searched against all reviews, so prefer the broadest word reviewers actually repeat — a term only one or two reviews contain makes a useless chip. One word when possible; drop prices, sizes, and qualifiers ("brunch menu €14" → "brunch", "Western Lowland Gorilla" → "gorilla"). Spell normally — never glue words together ("patatas bravas" → "bravas", not "patatasbravas"). Split a compound like "salmon avocado toast" into "salmon", "avocado". Keep a phrase only when the bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"; "dulce de leche", not "leche"). Skip generic qualities every place has — service, staff, cleanliness, value. These must be things at THIS place. Empty list if nothing specific stands out.
 
-Separately, list alternatives: proper names of OTHER places reviewers say are BETTER than this one — somewhere they'd rather go because it beats this place (common when they call this place overrated). Better only: skip any place mentioned as worse, or that reviewers say this place beats. Can be anywhere — a nearby swap or a better one in another city/country, not just local substitutes. Names only — never put these in items, since a place named as a better alternative is not a feature of this one. Use the short name reviewers actually write ("BrunchIt", not "BrunchIt Café & Terrace") so searching mentions of it matches. [] if reviewers name none.
+Separately, list alternatives: proper names of OTHER places reviewers say are BETTER than this one — somewhere they'd rather go because it beats this place (common when they call this place overrated). Better only: skip any place mentioned as worse, or that reviewers say this place beats. Can be anywhere — a nearby swap or a better one in another city/country, not just local substitutes. Names only — never put these in items, since a place named as a better alternative is not a feature of this one. Use the short name reviewers actually write ("BrunchIt", not "BrunchIt Café & Terrace") so searching mentions of it matches. Empty list if reviewers name none.
 
 ${NOTES}`;
 
