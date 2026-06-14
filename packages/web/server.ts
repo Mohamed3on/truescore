@@ -136,8 +136,18 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
     const entry = cache.get(featureId);
     const prevTotal = entry?.totalReviewsAtCache;
     const hadHighlights = !!entry?.highlights?.length;
-    if (entry && prevTotal === currentTotal) return; // still fresh
+    // A cached score of 0 while the histogram shows reviews means the last scrape
+    // was throttled (200 + empty body), not a review-less place — re-scrape even
+    // though the stale-total check matches.
+    const cachedScoreFailed = (entry?.score?.totalReviews ?? 0) === 0 && currentTotal > 0;
+    if (entry && prevTotal === currentTotal && !cachedScoreFailed) return; // still fresh
     const score = await scorePlace(featureId);
+    // Don't overwrite the entry with another throttled (empty) scrape — keep what
+    // we have and let the next request retry.
+    if (score.totalReviews === 0 && currentTotal > 0) {
+      console.warn(`[revalidate] ${name} (${featureId}): re-scrape got 0 vs histogram ${currentTotal} — keeping prior entry (likely throttle)`);
+      return;
+    }
     await cache.putScore(featureId, name, score, currentTotal, resolvedUrl);
     console.log(`[revalidate] ${name}: total ${prevTotal ?? 'unset'} → ${currentTotal}, re-scored`);
 
@@ -283,7 +293,14 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string)
     });
     const bundle = await previewPromise;
     const currentTotal = bundle.histogram ? bundle.histogram.reduce((a, b) => a + b, 0) : null;
-    await cache.putScore(featureId, name, score, currentTotal, resolvedUrl);
+    // Skip caching a throttled scrape (0 reviews) when the histogram shows the
+    // place has reviews, so the next lookup retries instead of serving the empty
+    // result forever. Genuinely review-less places have currentTotal 0 and cache.
+    if (score.totalReviews === 0 && (currentTotal ?? 0) > 0) {
+      console.warn(`[lookup] ${name} (${featureId}): scraped 0 but histogram has ${currentTotal} — not caching (likely throttle)`);
+    } else {
+      await cache.putScore(featureId, name, score, currentTotal, resolvedUrl);
+    }
     write({ type: 'score', score, fetchMs: Date.now() - t0 });
   });
 }
