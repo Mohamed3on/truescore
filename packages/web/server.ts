@@ -18,7 +18,7 @@ import {
 import { resolvePlace } from './resolve';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask } from './llm';
-import { fetchPreviewBundle, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
+import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, scoreHighlight } from './highlights';
 import { cache, type CacheEntry } from './cache';
 import { createInflight } from './inflight';
@@ -131,24 +131,21 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
   return revalidateInflight.run(featureId, async () => {
     const bundle = await getOrFetchPreviewBundle(featureId).catch(() => null);
     const histogram = bundle?.histogram ?? null;
-    const currentTotal = histogram ? histogram.reduce((a, b) => a + b, 0) : null;
+    const currentTotal = histogram ? histogramTotal(histogram) : null;
     if (currentTotal == null) return;
     const entry = cache.get(featureId);
     const prevTotal = entry?.totalReviewsAtCache;
     const hadHighlights = !!entry?.highlights?.length;
-    // A cached score of 0 while the histogram shows reviews means the last scrape
-    // was throttled (200 + empty body), not a review-less place — re-scrape even
-    // though the stale-total check matches.
-    const cachedScoreFailed = (entry?.score?.totalReviews ?? 0) === 0 && currentTotal > 0;
-    if (entry && prevTotal === currentTotal && !cachedScoreFailed) return; // still fresh
+    // Skip the re-scrape when the entry is both fresh (histogram total unchanged)
+    // and usable (not a throttled 0-review scrape); otherwise re-scrape.
+    if (entry && cache.scoreFresh(entry, currentTotal) && cache.scoreUsable(entry, currentTotal)) return;
     const score = await scorePlace(featureId);
-    // Don't overwrite the entry with another throttled (empty) scrape — keep what
-    // we have and let the next request retry.
-    if (score.totalReviews === 0 && currentTotal > 0) {
+    // putScore returns false when it rejects a throttled (empty) scrape — keep the
+    // prior entry and let the next request retry.
+    if (!(await cache.putScore(featureId, name, score, currentTotal, resolvedUrl))) {
       console.warn(`[revalidate] ${name} (${featureId}): re-scrape got 0 vs histogram ${currentTotal} — keeping prior entry (likely throttle)`);
       return;
     }
-    await cache.putScore(featureId, name, score, currentTotal, resolvedUrl);
     console.log(`[revalidate] ${name}: total ${prevTotal ?? 'unset'} → ${currentTotal}, re-scored`);
 
     if (hadHighlights && prevTotal != null) {
@@ -292,14 +289,12 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string)
       write({ type: 'score-progress', score: partial });
     });
     const bundle = await previewPromise;
-    const currentTotal = bundle.histogram ? bundle.histogram.reduce((a, b) => a + b, 0) : null;
-    // Skip caching a throttled scrape (0 reviews) when the histogram shows the
-    // place has reviews, so the next lookup retries instead of serving the empty
-    // result forever. Genuinely review-less places have currentTotal 0 and cache.
-    if (score.totalReviews === 0 && (currentTotal ?? 0) > 0) {
+    const currentTotal = bundle.histogram ? histogramTotal(bundle.histogram) : null;
+    // putScore rejects a throttled (0-review) scrape when the histogram shows the
+    // place has reviews, so the next lookup retries instead of caching the empty
+    // result. Genuinely review-less places have currentTotal 0 and still cache.
+    if (!(await cache.putScore(featureId, name, score, currentTotal, resolvedUrl))) {
       console.warn(`[lookup] ${name} (${featureId}): scraped 0 but histogram has ${currentTotal} — not caching (likely throttle)`);
-    } else {
-      await cache.putScore(featureId, name, score, currentTotal, resolvedUrl);
     }
     write({ type: 'score', score, fetchMs: Date.now() - t0 });
   });

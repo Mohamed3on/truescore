@@ -339,8 +339,10 @@ export const metaFromPreview = (data: any): PlaceMeta => {
   };
 };
 
+export const histogramTotal = (h: Histogram): number => h.reduce((a, b) => a + b, 0);
+
 export const overallPctFromHistogram = (h: Histogram): number => {
-  const total = h.reduce((a, b) => a + b, 0);
+  const total = histogramTotal(h);
   if (!total) return 0;
   return Math.round((((h[0] ?? 0) - (h[4] ?? 0)) / total) * 100);
 };
@@ -349,7 +351,7 @@ export const overallPctFromHistogram = (h: Histogram): number => {
 // place name. Sign tracks net polarity; magnitude scales with both the gap
 // between 5★/1★ counts and how decisively reviewers chose.
 export const overallScoreFromHistogram = (h: Histogram): number => {
-  const total = h.reduce((a, b) => a + b, 0);
+  const total = histogramTotal(h);
   if (!total) return 0;
   const diff = (h[0] ?? 0) - (h[4] ?? 0);
   return Math.round((diff * Math.abs(diff)) / total);

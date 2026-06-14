@@ -92,6 +92,12 @@ const ensureEntry = (featureId: string, name: string): void => {
   persist(featureId, { name, score: emptyScore(featureId), scoreTs: 0 });
 };
 
+// 0 reviews scraped while the live histogram total is > 0 means Google returned a
+// 200 + empty body (throttle), not a review-less place — never trust it as a real
+// result, neither to persist nor to serve.
+const isThrottledScrape = (totalReviews: number, liveTotal: number | null | undefined): boolean =>
+  totalReviews === 0 && (liveTotal ?? 0) > 0;
+
 export const cache = {
   get(featureId: string): CacheEntry | undefined {
     return store.get(featureId);
@@ -104,11 +110,20 @@ export const cache = {
     if (entry.totalReviewsAtCache == null) return false;
     return entry.totalReviewsAtCache === currentTotal;
   },
+  // A cached score of 0 while the live histogram shows reviews is a throttled
+  // scrape, not a real result — treat it as unusable so revalidate re-scrapes.
+  scoreUsable(entry: CacheEntry, currentTotal?: number | null): boolean {
+    return !isThrottledScrape(entry.score.totalReviews, currentTotal);
+  },
   histogramFresh(entry: CacheEntry): boolean {
     return !!entry.histogramTs && Date.now() - entry.histogramTs < HISTOGRAM_TTL_MS;
   },
-  async putScore(featureId: string, name: string, score: ScoreResult, totalReviewsAtCache: number | null, resolvedUrl?: string) {
+  // Returns false when the scrape is rejected as a throttle artifact (0 reviews
+  // vs a non-zero histogram): nothing is persisted, so the prior entry stands and
+  // the next lookup retries.
+  async putScore(featureId: string, name: string, score: ScoreResult, totalReviewsAtCache: number | null, resolvedUrl?: string): Promise<boolean> {
     const existing = store.get(featureId);
+    if (isThrottledScrape(score.totalReviews, totalReviewsAtCache)) return false;
     persist(featureId, {
       ...existing,
       name,
@@ -119,6 +134,7 @@ export const cache = {
       lastAccessTs: existing?.lastAccessTs ?? Date.now(),
       accessCount: existing?.accessCount ?? 1,
     });
+    return true;
   },
   async touch(featureId: string) {
     const existing = store.get(featureId);

@@ -9,6 +9,7 @@ import {
   collectToken,
   compileMatchRegex,
   expandSearchTerms,
+  histogramTotal,
   overallPctFromHistogram,
   overallScoreFromHistogram,
   PAGE_SIZE,
@@ -468,7 +469,7 @@ const calculateFullPercentage = () => {
   if (!counts) return null;
   const key = counts.join(',');
   if (key === staleHistogramKey) return null;
-  const allReviews = counts.reduce((a, b) => a + b, 0);
+  const allReviews = histogramTotal(counts);
   if (!allReviews) return null;
   lastHistogramKey = key;
   return toPct((counts[0] - counts[4]) / allReviews);
@@ -482,7 +483,7 @@ const getPlaceInfo = () => {
 
 const injectSimpleScore = (placeDetailsElement: HTMLElement) => {
   const counts = readHistogramCounts();
-  if (!counts || !counts.reduce((a, b) => a + b, 0)) return;
+  if (!counts || !histogramTotal(counts)) return;
   const score = overallScoreFromHistogram(counts);
   const pct = overallPctFromHistogram(counts);
   const newElement = el('div', 'truescore-simple-score', `score: ${addCommas(score)} — ${pct}%`);
