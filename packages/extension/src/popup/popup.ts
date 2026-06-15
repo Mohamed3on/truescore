@@ -51,6 +51,7 @@ for (const btn of reasoningBtns) {
 const FIELDS = [
   { id: 'apikey', storageKey: 'geminiApiKey' },
   { id: 'openai-key', storageKey: 'openaiApiKey' },
+  { id: 'deepseek-key', storageKey: 'deepseekApiKey' },
 ];
 
 for (const { id, storageKey } of FIELDS) {

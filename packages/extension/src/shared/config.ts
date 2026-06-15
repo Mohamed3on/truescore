@@ -28,15 +28,19 @@ export async function getReasoningEffort(): Promise<ReasoningEffort> {
   return (REASONING_EFFORTS as string[]).includes(effort) ? (effort as ReasoningEffort) : DEFAULT_REASONING_EFFORT;
 }
 
-export async function getActiveLLM(): Promise<{ provider: 'gemini' | 'openai'; key: string; reasoningEffort: ReasoningEffort }> {
-  const [pref, openaiKey, geminiKey, reasoningEffort] = await Promise.all([
+export type LLMProvider = 'gemini' | 'openai' | 'deepseek';
+
+export async function getActiveLLM(): Promise<{ provider: LLMProvider; key: string; reasoningEffort: ReasoningEffort }> {
+  const [pref, openaiKey, geminiKey, deepseekKey, reasoningEffort] = await Promise.all([
     storedKey('llmProvider'),
     storedKey('openaiApiKey'),
     storedKey('geminiApiKey'),
+    storedKey('deepseekApiKey'),
     getReasoningEffort(),
   ]);
-  const provider = pref === 'gemini' || pref === 'openai' ? pref : openaiKey ? 'openai' : 'gemini';
-  return { provider, key: provider === 'openai' ? openaiKey : geminiKey, reasoningEffort };
+  const provider: LLMProvider = pref === 'gemini' || pref === 'openai' || pref === 'deepseek' ? pref : openaiKey ? 'openai' : 'gemini';
+  const key = provider === 'openai' ? openaiKey : provider === 'deepseek' ? deepseekKey : geminiKey;
+  return { provider, key, reasoningEffort };
 }
 
 export const GEMINI_MODEL = 'gemini-3-flash-preview';
@@ -47,3 +51,11 @@ export const geminiEndpoint = (apiKey: string) =>
 export const OPENAI_MODEL = 'gpt-5.4-nano';
 
 export const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
+
+// DeepSeek V4 Flash via its OpenAI-compatible Chat Completions endpoint. Always
+// non-thinking (fastest, and its thinking ladder didn't improve summary quality
+// — see web evals/latency.ts); no native json_schema, so review-summary.ts asks
+// for json_object and pins the shape into the prompt.
+export const DEEPSEEK_MODEL = 'deepseek-v4-flash';
+
+export const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';

@@ -1,4 +1,4 @@
-import { getActiveLLM, geminiEndpoint, OPENAI_ENDPOINT, OPENAI_MODEL } from './config';
+import { getActiveLLM, geminiEndpoint, OPENAI_ENDPOINT, OPENAI_MODEL, DEEPSEEK_ENDPOINT, DEEPSEEK_MODEL } from './config';
 import { el, renderMarkdown, renderMarkdownInline } from './utils';
 
 export const renderStructuredSummary = (
@@ -91,30 +91,42 @@ const toStrictSchema = (s: any): any => {
   return s;
 };
 
+const PROVIDER_LABEL: Record<string, string> = { gemini: 'Gemini', openai: 'OpenAI', deepseek: 'DeepSeek' };
+
 // Provider comes from the popup toggle (getActiveLLM); same prompt either way.
 export const llmSummarize = async (reviewTexts: string[], prompt: string, schema: any = SUMMARY_SCHEMA): Promise<any> => {
   const fullPrompt = prompt + '\n\nReviews:\n\n' + reviewTexts.join('\n---\n');
 
   const { provider, key, reasoningEffort } = await getActiveLLM();
-  if (!key) throw new Error(`No ${provider === 'openai' ? 'OpenAI' : 'Gemini'} API key \u2014 set one in the TrueScore popup`);
+  if (!key) throw new Error(`No ${PROVIDER_LABEL[provider]} API key \u2014 set one in the TrueScore popup`);
 
-  if (provider === 'openai') {
-    const res = await fetch(OPENAI_ENDPOINT, {
+  // OpenAI and DeepSeek both speak the OpenAI Chat Completions API; they differ
+  // only in endpoint/model and how thinking + structured output are requested.
+  // nano takes a strict json_schema and the popup's reasoning effort; DeepSeek
+  // has no native schema mode, so we ask for json_object and pin the shape into
+  // the prompt, and keep it non-thinking (its thinking ladder was slower for no
+  // quality gain \u2014 see web evals/latency.ts).
+  if (provider === 'openai' || provider === 'deepseek') {
+    const isDeepseek = provider === 'deepseek';
+    const content = isDeepseek && schema ? `${fullPrompt}\n\nReturn ONLY a JSON object matching this schema (no markdown, no extra keys):\n${JSON.stringify(schema)}` : fullPrompt;
+    const res = await fetch(isDeepseek ? DEEPSEEK_ENDPOINT : OPENAI_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
       body: JSON.stringify({
-        model: OPENAI_MODEL,
-        messages: [{ role: 'user', content: fullPrompt }],
-        reasoning_effort: reasoningEffort,
-        max_completion_tokens: 32768,
-        ...(schema && {
-          response_format: { type: 'json_schema', json_schema: { name: 'summary', strict: true, schema: toStrictSchema(schema) } },
-        }),
+        model: isDeepseek ? DEEPSEEK_MODEL : OPENAI_MODEL,
+        messages: [{ role: 'user', content }],
+        ...(isDeepseek
+          ? { thinking: { type: 'disabled' }, max_tokens: 8192, ...(schema && { response_format: { type: 'json_object' } }) }
+          : {
+              reasoning_effort: reasoningEffort,
+              max_completion_tokens: 32768,
+              ...(schema && { response_format: { type: 'json_schema', json_schema: { name: 'summary', strict: true, schema: toStrictSchema(schema) } } }),
+            }),
       }),
     });
     const data = await res.json();
     const raw = data?.choices?.[0]?.message?.content;
-    if (!raw) throw new Error(data?.error?.message || 'Empty OpenAI response');
+    if (!raw) throw new Error(data?.error?.message || `Empty ${PROVIDER_LABEL[provider]} response`);
     return schema ? JSON.parse(raw) : raw;
   }
 

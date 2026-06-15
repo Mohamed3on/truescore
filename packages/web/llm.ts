@@ -1,3 +1,4 @@
+import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject, generateText, NoObjectGeneratedError } from 'ai';
@@ -6,14 +7,16 @@ import type { Summary, SummaryHighlight } from '@truescore/gmaps-shared';
 
 export type { Summary, SummaryHighlight };
 
-// Both providers run the same prompts and schema so the models are directly
-// comparable (see evals/compare.ts). LLM_PROVIDER=gemini|openai picks the
-// active one; defaults to Gemini. The google provider reads GEMINI_API_KEY
-// (this repo's name for it), not the SDK default GOOGLE_GENERATIVE_AI_API_KEY.
+// The providers all run the same prompts and schema so the models are directly
+// comparable (see evals/compare.ts). LLM_PROVIDER=gemini|openai|deepseek picks
+// the active one; defaults to Gemini. The google provider reads GEMINI_API_KEY
+// (this repo's name for it), not the SDK default GOOGLE_GENERATIVE_AI_API_KEY;
+// deepseek reads DEEPSEEK_API_KEY.
 const google = createGoogleGenerativeAI({
   apiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY,
 });
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const deepseek = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY });
 
 export const PROVIDERS = {
   gemini: {
@@ -25,6 +28,15 @@ export const PROVIDERS = {
     // a little; medium/high roughly double nano's latency (see evals/latency.ts).
     model: openai('gpt-5.4-nano'),
     providerOptions: { openai: { reasoningEffort: 'low' } },
+  },
+  deepseek: {
+    // V4 Flash, non-thinking: ties nano/flash on latency+quality at a fraction
+    // of the cost (evals/latency.ts). Its thinking ladder runs 2.5-7x slower
+    // for no quality gain, so it stays disabled. No native JSON-schema output —
+    // the SDK injects the schema into the prompt (compat mode), which the
+    // summarize() salvage path already tolerates.
+    model: deepseek('deepseek-v4-flash'),
+    providerOptions: { deepseek: { thinking: { type: 'disabled' as const } } },
   },
 };
 export type Provider = keyof typeof PROVIDERS;
@@ -42,7 +54,10 @@ const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
     ? { model: PROVIDERS[provider].model, providerOptions: { openai: { reasoningEffort: effort } } }
     : PROVIDERS[provider];
 
-const active = (): Provider => (process.env.LLM_PROVIDER === 'openai' ? 'openai' : 'gemini');
+const active = (): Provider => {
+  const p = process.env.LLM_PROVIDER;
+  return p && p in PROVIDERS ? (p as Provider) : 'gemini';
+};
 
 // evals/compare.ts hooks this to collect per-call token usage; the server
 // never sets it.
