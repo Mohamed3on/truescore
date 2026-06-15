@@ -1,0 +1,6 @@
+#!/bin/sh
+# Mirror the CI deploy gate (.github/workflows/deploy-web.yml runs `bun run
+# check`) so a broken typecheck or test is caught before it fails the
+# auto-deploy and freezes the box on the old build. Bypass with
+# `git push --no-verify` when you really mean to.
+exec bun run check
