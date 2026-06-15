@@ -1,9 +1,15 @@
-// One-off: compare summarization latency across providers/effort levels.
-//   bun evals/latency.ts [runs]   (default 3 runs per variant)
+// One-off: compare summarization latency (and optional quality) across
+// providers / reasoning-effort levels.
+//   bun evals/latency.ts [runs] [reviews.json] [--judge]   (default 3 runs)
 // Times the heavy *structured* extraction call (the production bottleneck) on
 // a realistic review set, so the spread reflects what users actually wait for.
-// nano effort ladder (none|low|medium|high|xhigh) vs Gemini Flash at the
-// production thinkingLevel. Reasoning/thought tokens explain the latency.
+// Variants: nano effort ladder (none|low|medium|high), Gemini Flash at the
+// production thinkingLevel, and DeepSeek V4 Flash non-thinking + its thinking
+// effort ladder (low|medium|high|xhigh|max). Reasoning/thought tokens explain
+// the latency. --judge adds a blind gpt-5.4 quality score (grounded/specific/
+// useful, 1-5) of each variant's structured output, scored after timing so it
+// never pollutes the latency numbers.
+import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject } from 'ai';
@@ -11,10 +17,18 @@ import { z } from 'zod';
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+const deepseek = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY });
 const nano = openai('gpt-5.4-nano');
 const flash = google('gemini-3-flash-preview');
+const ds = deepseek('deepseek-v4-flash');
 
-const RUNS = Number(process.argv[2]) || 3;
+// DeepSeek has no native JSON-schema response format, so the SDK injects the
+// schema into the system prompt and logs a warning on every call — hush it.
+(globalThis as any).AI_SDK_LOG_WARNINGS = false;
+
+const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const RUNS = Number(args[0]) || 3;
+const JUDGE = process.argv.includes('--judge');
 
 const SCHEMA = z.object({
   highlights: z.array(z.object({ text: z.string(), sentiment: z.enum(['positive', 'negative', 'neutral']) })),
@@ -25,7 +39,7 @@ const SCHEMA = z.object({
 
 // Optional path to a JSON array of review strings (e.g. a real place's
 // reviewTexts); falls back to the built-in sample set.
-const reviewsFile = process.argv[3];
+const reviewsFile = args[1];
 const SAMPLE_REVIEWS = [
   'Best brunch in the neighborhood. The shakshuka is incredible and the flat white is properly pulled. Gets packed by 10am on weekends.',
   'Overrated and overpriced. €18 for avocado toast that was cold in the middle. Service was friendly but slow — waited 25 minutes for food.',
@@ -66,8 +80,24 @@ const median = (xs: number[]): number => {
 };
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
+// --judge: a blind gpt-5.4 scorer for each structured output (same rubric as
+// evals/compare.ts). Absolute 1-5 per dimension; a call's clock stops before
+// its output is judged, so judge time never counts toward latency.
+type Q = { g: number; s: number; u: number };
+const judge = openai('gpt-5.4');
+const QUALITY_SCHEMA = z.object({ grounded: z.number().int(), specific: z.number().int(), useful: z.number().int() });
+const scoreQuality = async (summary: unknown): Promise<Q> => {
+  const { object } = await generateObject({
+    model: judge,
+    schema: QUALITY_SCHEMA,
+    prompt: `${REVIEWS.join('\n\n')}\n\n---\n\nA model extracted the structured summary below from the reviews above. Score it 1-5 on grounded (every claim traceable to the reviews, nothing invented), specific (concrete details over vague adjectives), and useful (helps someone decide).\n\n${JSON.stringify(summary, null, 1)}`,
+  });
+  return { g: object.grounded, s: object.specific, u: object.useful };
+};
+
 type Variant = { label: string; run: () => Promise<any> };
 const NANO_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
+const DS_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 const variants: Variant[] = [
   ...NANO_EFFORTS.map((e) => ({
     label: `nano:${e}`,
@@ -77,10 +107,19 @@ const variants: Variant[] = [
     label: 'flash:min',
     run: () => generateObject({ model: flash, providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
   },
+  // DeepSeek V4 Flash: non-thinking (fastest) then the thinking effort ladder.
+  {
+    label: 'ds:off',
+    run: () => generateObject({ model: ds, providerOptions: { deepseek: { thinking: { type: 'disabled' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
+  },
+  ...DS_EFFORTS.map((e) => ({
+    label: `ds:${e}`,
+    run: () => generateObject({ model: ds, providerOptions: { deepseek: { thinking: { type: 'enabled' }, reasoningEffort: e } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
+  })),
 ];
 
-type Row = { label: string; med: number; mean: number; lats: number[]; reason: number; out: number };
-type Sample = { label: string; ms: number; reason: number; out: number };
+type Row = { label: string; med: number; mean: number; lats: number[]; reason: number; out: number; q?: Q };
+type Sample = { label: string; ms: number; reason: number; out: number; q?: Q };
 
 console.log(`\nstructured-summary latency · ${RUNS} runs/variant · ${REVIEWS.length} reviews · parallel\n`);
 
@@ -92,7 +131,10 @@ const settled = await Promise.all(
       const t0 = performance.now();
       try {
         const r = await v.run();
-        return { label: v.label, ms: performance.now() - t0, reason: (r.usage as any).reasoningTokens ?? 0, out: r.usage.outputTokens ?? 0 };
+        // Stop the clock before judging so the judge's own call never counts.
+        const s: Sample = { label: v.label, ms: performance.now() - t0, reason: (r.usage as any).reasoningTokens ?? 0, out: r.usage.outputTokens ?? 0 };
+        if (JUDGE) s.q = await scoreQuality(r.object).catch((e: any) => (console.log(`  judge ${v.label}: ERROR ${e.message?.slice(0, 70)}`), undefined));
+        return s;
       } catch (e: any) {
         console.log(`  ${v.label}: ERROR ${e.message?.slice(0, 90)}`);
         return null;
@@ -106,16 +148,21 @@ const rows: Row[] = variants.flatMap((v) => {
   const mine = samples.filter((s) => s.label === v.label);
   if (!mine.length) return [];
   const lats = mine.map((s) => s.ms);
-  return [{ label: v.label, med: median(lats), mean: avg(lats), lats, reason: avg(mine.map((s) => s.reason)), out: avg(mine.map((s) => s.out)) }];
+  const qs = mine.map((s) => s.q).filter((q): q is Q => !!q);
+  const q = qs.length ? { g: avg(qs.map((x) => x.g)), s: avg(qs.map((x) => x.s)), u: avg(qs.map((x) => x.u)) } : undefined;
+  return [{ label: v.label, med: median(lats), mean: avg(lats), lats, reason: avg(mine.map((s) => s.reason)), out: avg(mine.map((s) => s.out)), q }];
 });
 
 const fastest = Math.min(...rows.map((r) => r.med));
-console.log('variant      median    mean   ×fast   reasoning  output   runs (s)');
-console.log('-'.repeat(74));
+console.log(`variant      median    mean   ×fast   reasoning  output${JUDGE ? '   qual (g/s/u)' : ''}   runs (s)`);
+console.log('-'.repeat(JUDGE ? 96 : 74));
 for (const r of rows) {
+  const qcol = JUDGE
+    ? (r.q ? `  ${((r.q.g + r.q.s + r.q.u) / 3).toFixed(1)} (${r.q.g.toFixed(1)}/${r.q.s.toFixed(1)}/${r.q.u.toFixed(1)})` : '  —').padEnd(18)
+    : '';
   console.log(
     `${r.label.padEnd(11)} ${(r.med / 1000).toFixed(1).padStart(5)}s  ${(r.mean / 1000).toFixed(1).padStart(5)}s  ` +
-      `${(r.med / fastest).toFixed(1).padStart(4)}×  ${Math.round(r.reason).toString().padStart(7)}    ${Math.round(r.out).toString().padStart(5)}   ` +
+      `${(r.med / fastest).toFixed(1).padStart(4)}×  ${Math.round(r.reason).toString().padStart(7)}    ${Math.round(r.out).toString().padStart(5)}${qcol}   ` +
       `[${r.lats.map((x) => (x / 1000).toFixed(1)).join(', ')}]`,
   );
 }
