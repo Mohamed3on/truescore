@@ -49,6 +49,13 @@ const REASONING_EFFORTS: ReasoningEffort[] = ['none', 'low', 'medium', 'high'];
 export const parseReasoningEffort = (v: unknown): ReasoningEffort | undefined =>
   typeof v === 'string' && (REASONING_EFFORTS as string[]).includes(v) ? (v as ReasoningEffort) : undefined;
 
+// Optional per-request provider override: Maps threads the popup's explicit
+// choice, web callers omit it (→ active()). Checked against PROVIDERS' own keys
+// so an untrusted request body can only pick a configured provider, not inject.
+const PROVIDER_KEYS = Object.keys(PROVIDERS);
+export const parseProvider = (v: unknown): Provider | undefined =>
+  typeof v === 'string' && PROVIDER_KEYS.includes(v) ? (v as Provider) : undefined;
+
 const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
   effort && provider === 'openai'
     ? { model: PROVIDERS[provider].model, providerOptions: { openai: { reasoningEffort: effort } } }
@@ -56,7 +63,7 @@ const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
 
 const active = (): Provider => {
   const p = process.env.LLM_PROVIDER;
-  return p && p in PROVIDERS ? (p as Provider) : 'gemini';
+  return p && PROVIDER_KEYS.includes(p) ? (p as Provider) : 'gemini';
 };
 
 // evals/compare.ts hooks this to collect per-call token usage; the server

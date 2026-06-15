@@ -43,6 +43,14 @@ export async function getActiveLLM(): Promise<{ provider: LLMProvider; key: stri
   return { provider, key, reasoningEffort };
 }
 
+// Google Maps summaries run server-side on the server's key, so the popup's
+// provider toggle only overrides the server default when explicitly chosen — an
+// unset toggle returns undefined and leaves the server on its own default.
+export async function getProviderChoice(): Promise<LLMProvider | undefined> {
+  const pref = await storedKey('llmProvider');
+  return pref === 'gemini' || pref === 'openai' || pref === 'deepseek' ? pref : undefined;
+}
+
 export const GEMINI_MODEL = 'gemini-3-flash-preview';
 
 export const geminiEndpoint = (apiKey: string) =>
