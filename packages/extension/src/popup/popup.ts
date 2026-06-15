@@ -13,9 +13,16 @@ const segBtns = [...seg.querySelectorAll<HTMLButtonElement>('button')];
 const markActive = (provider: string) =>
   segBtns.forEach((b) => b.classList.toggle('active', b.dataset.provider === provider));
 
+// Reasoning effort only applies to GPT-5.4 nano; hide the field for Gemini /
+// DeepSeek. style.display (not [hidden]) so it beats `.field { display: flex }`.
+const reasoningField = document.getElementById('reasoning-field')!;
+const showReasoning = (provider: string) => { reasoningField.style.display = provider === 'openai' ? '' : 'none'; };
+
 chrome.storage.sync.get(['llmProvider', 'openaiApiKey'], (items) => {
   const { llmProvider, openaiApiKey } = items as Record<string, string | undefined>;
-  markActive(llmProvider || (openaiApiKey ? 'openai' : 'gemini'));
+  const active = llmProvider || (openaiApiKey ? 'openai' : 'gemini');
+  markActive(active);
+  showReasoning(active);
 });
 
 for (const btn of segBtns) {
@@ -23,6 +30,7 @@ for (const btn of segBtns) {
     const provider = btn.dataset.provider!;
     chrome.storage.sync.set({ llmProvider: provider }, () => {
       markActive(provider);
+      showReasoning(provider);
       flashSaved('Saved');
     });
   });
