@@ -27,6 +27,26 @@ for (const btn of segBtns) {
   });
 }
 
+// Reasoning effort for gpt-5.4-nano (OpenAI path only); defaults to medium.
+const reasoningSeg = document.getElementById('reasoning-seg')!;
+const reasoningBtns = [...reasoningSeg.querySelectorAll<HTMLButtonElement>('button')];
+const markEffort = (effort: string) =>
+  reasoningBtns.forEach((b) => b.classList.toggle('active', b.dataset.effort === effort));
+
+chrome.storage.sync.get('openaiReasoningEffort', ({ openaiReasoningEffort }) => {
+  markEffort(openaiReasoningEffort || 'medium');
+});
+
+for (const btn of reasoningBtns) {
+  btn.addEventListener('click', () => {
+    const effort = btn.dataset.effort!;
+    chrome.storage.sync.set({ openaiReasoningEffort: effort }, () => {
+      markEffort(effort);
+      flashSaved('Saved');
+    });
+  });
+}
+
 // One field per provider key; review summaries prefer OpenAI when both are set.
 const FIELDS = [
   { id: 'apikey', storageKey: 'geminiApiKey' },

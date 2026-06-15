@@ -11,17 +11,29 @@ const storedKey = async (name: string): Promise<string> => {
   }
 };
 
+// gpt-5.4-nano reasoning effort, set in the popup. The API accepts
+// none|low|medium|high|xhigh; we expose none..high (xhigh is the slowest and
+// we optimize for speed). 'none' is nano's default — no reasoning tokens;
+// medium is an explicit opt-in to deeper thinking ('high' is noticeably
+// slower). Only the OpenAI path reads this — Gemini Flash thinking is pinned
+// to MINIMAL in review-summary.ts.
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high';
+export const REASONING_EFFORTS: ReasoningEffort[] = ['none', 'low', 'medium', 'high'];
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'medium';
+
 // Active provider for extension-direct summaries: the popup toggle wins;
 // unset falls back to OpenAI-if-keyed, else Gemini. (Google Maps summaries
 // are server-side and follow the server's LLM_PROVIDER instead.)
-export async function getActiveLLM(): Promise<{ provider: 'gemini' | 'openai'; key: string }> {
-  const [pref, openaiKey, geminiKey] = await Promise.all([
+export async function getActiveLLM(): Promise<{ provider: 'gemini' | 'openai'; key: string; reasoningEffort: ReasoningEffort }> {
+  const [pref, openaiKey, geminiKey, effort] = await Promise.all([
     storedKey('llmProvider'),
     storedKey('openaiApiKey'),
     storedKey('geminiApiKey'),
+    storedKey('openaiReasoningEffort'),
   ]);
   const provider = pref === 'gemini' || pref === 'openai' ? pref : openaiKey ? 'openai' : 'gemini';
-  return { provider, key: provider === 'openai' ? openaiKey : geminiKey };
+  const reasoningEffort = (REASONING_EFFORTS as string[]).includes(effort) ? (effort as ReasoningEffort) : DEFAULT_REASONING_EFFORT;
+  return { provider, key: provider === 'openai' ? openaiKey : geminiKey, reasoningEffort };
 }
 
 export const GEMINI_MODEL = 'gemini-3-flash-preview';

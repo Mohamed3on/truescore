@@ -95,7 +95,7 @@ const toStrictSchema = (s: any): any => {
 export const llmSummarize = async (reviewTexts: string[], prompt: string, schema: any = SUMMARY_SCHEMA): Promise<any> => {
   const fullPrompt = prompt + '\n\nReviews:\n\n' + reviewTexts.join('\n---\n');
 
-  const { provider, key } = await getActiveLLM();
+  const { provider, key, reasoningEffort } = await getActiveLLM();
   if (!key) throw new Error(`No ${provider === 'openai' ? 'OpenAI' : 'Gemini'} API key \u2014 set one in the TrueScore popup`);
 
   if (provider === 'openai') {
@@ -105,6 +105,7 @@ export const llmSummarize = async (reviewTexts: string[], prompt: string, schema
       body: JSON.stringify({
         model: OPENAI_MODEL,
         messages: [{ role: 'user', content: fullPrompt }],
+        reasoning_effort: reasoningEffort,
         max_completion_tokens: 32768,
         ...(schema && {
           response_format: { type: 'json_schema', json_schema: { name: 'summary', strict: true, schema: toStrictSchema(schema) } },
