@@ -21,10 +21,10 @@ export const PROVIDERS = {
     providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' as const } } },
   },
   openai: {
-    // gpt-5.4-nano spends no reasoning tokens by default, matching Gemini's
-    // minimal thinking level — don't set reasoningEffort.
+    // High reasoning effort. nano spends no reasoning tokens by default, so this
+    // is an explicit opt-in to deeper thinking.
     model: openai('gpt-5.4-nano'),
-    providerOptions: {},
+    providerOptions: { openai: { reasoningEffort: 'high' } },
   },
 };
 export type Provider = keyof typeof PROVIDERS;
