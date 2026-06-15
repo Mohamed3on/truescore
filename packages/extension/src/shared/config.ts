@@ -1,3 +1,5 @@
+import { REASONING_EFFORTS, type ReasoningEffort, type Provider as LLMProvider } from '@truescore/gmaps-shared';
+
 // API keys are per-user: set in the TrueScore popup, stored in
 // chrome.storage.sync. They are deliberately NOT bundled — a key compiled into
 // the extension is readable by anyone who unpacks it.
@@ -11,13 +13,13 @@ const storedKey = async (name: string): Promise<string> => {
   }
 };
 
-// gpt-5.4-nano reasoning effort, set in the popup. The API accepts
-// none|low|medium|high|xhigh; we expose none..high. Default is 'low' — about
-// as fast as no reasoning while still thinking a little; medium/high roughly
-// double nano's latency (see web evals/latency.ts). Only the OpenAI path reads
-// this — Gemini Flash thinking is pinned to MINIMAL in review-summary.ts.
-export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high';
-export const REASONING_EFFORTS: ReasoningEffort[] = ['none', 'low', 'medium', 'high'];
+// gpt-5.4-nano reasoning effort, set in the popup. ReasoningEffort and its
+// validation list are the canonical ones from gmaps-shared/wire.ts (shared with
+// the server), re-exported here so the rest of the extension keeps importing
+// them from config. Default 'low'; only the OpenAI path reads it (Gemini and
+// DeepSeek run non-thinking).
+export type { ReasoningEffort, LLMProvider };
+export { REASONING_EFFORTS };
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 
 // Active provider for extension-direct summaries: the popup toggle wins;
@@ -25,10 +27,8 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 // are server-side and follow the server's LLM_PROVIDER instead.)
 export async function getReasoningEffort(): Promise<ReasoningEffort> {
   const effort = await storedKey('openaiReasoningEffort');
-  return (REASONING_EFFORTS as string[]).includes(effort) ? (effort as ReasoningEffort) : DEFAULT_REASONING_EFFORT;
+  return (REASONING_EFFORTS as readonly string[]).includes(effort) ? (effort as ReasoningEffort) : DEFAULT_REASONING_EFFORT;
 }
-
-export type LLMProvider = 'gemini' | 'openai' | 'deepseek';
 
 export async function getActiveLLM(): Promise<{ provider: LLMProvider; key: string; reasoningEffort: ReasoningEffort }> {
   const [pref, openaiKey, geminiKey, deepseekKey, reasoningEffort] = await Promise.all([

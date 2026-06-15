@@ -3,9 +3,10 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject, generateText, NoObjectGeneratedError } from 'ai';
 import { z } from 'zod';
-import type { Summary, SummaryHighlight } from '@truescore/gmaps-shared';
+import { LLM_PROVIDERS, REASONING_EFFORTS, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
+import { cleanItems, salvageStructured } from './summary-parse';
 
-export type { Summary, SummaryHighlight };
+export type { Summary, SummaryHighlight, Provider, ReasoningEffort };
 
 // The providers all run the same prompts and schema so the models are directly
 // comparable (see evals/compare.ts). LLM_PROVIDER=gemini|openai|deepseek picks
@@ -39,22 +40,15 @@ export const PROVIDERS = {
     providerOptions: { deepseek: { thinking: { type: 'disabled' as const } } },
   },
 };
-export type Provider = keyof typeof PROVIDERS;
 
-// Optional per-request override for the openai reasoning effort, so Maps
-// summaries can honor the extension popup's knob. Unset keeps the provider
-// default above; Gemini ignores it (it uses thinkingLevel).
-export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high';
-const REASONING_EFFORTS: ReasoningEffort[] = ['none', 'low', 'medium', 'high'];
+// Validate untrusted request-body overrides against the canonical wire lists
+// (gmaps-shared/wire.ts): the server only honors a configured provider/effort,
+// never one injected from the body. Unset → active() default. Gemini/DeepSeek
+// ignore reasoningEffort (it's gpt-5.4-nano only).
 export const parseReasoningEffort = (v: unknown): ReasoningEffort | undefined =>
-  typeof v === 'string' && (REASONING_EFFORTS as string[]).includes(v) ? (v as ReasoningEffort) : undefined;
-
-// Optional per-request provider override: Maps threads the popup's explicit
-// choice, web callers omit it (→ active()). Checked against PROVIDERS' own keys
-// so an untrusted request body can only pick a configured provider, not inject.
-const PROVIDER_KEYS = Object.keys(PROVIDERS);
+  typeof v === 'string' && (REASONING_EFFORTS as readonly string[]).includes(v) ? (v as ReasoningEffort) : undefined;
 export const parseProvider = (v: unknown): Provider | undefined =>
-  typeof v === 'string' && PROVIDER_KEYS.includes(v) ? (v as Provider) : undefined;
+  typeof v === 'string' && (LLM_PROVIDERS as readonly string[]).includes(v) ? (v as Provider) : undefined;
 
 const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
   effort && provider === 'openai'
@@ -63,7 +57,7 @@ const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
 
 const active = (): Provider => {
   const p = process.env.LLM_PROVIDER;
-  return p && PROVIDER_KEYS.includes(p) ? (p as Provider) : 'gemini';
+  return p && (LLM_PROVIDERS as readonly string[]).includes(p) ? (p as Provider) : 'gemini';
 };
 
 // evals/compare.ts hooks this to collect per-call token usage; the server
@@ -93,45 +87,6 @@ const HIGHLIGHTS_SCHEMA = z.object({
   alternatives: z.array(z.string()),
   valueForMoney: z.number().int(),
 });
-
-// Praised standout terms: trim, drop blanks and letterless junk ("[]", "—" —
-// models occasionally echo the empty-list notation as an element), dedupe
-// case-insensitively, cap 6 (auto-scoring fires one label search per item, so
-// the cap bounds the fan-out).
-const cleanItems = (raw: unknown): string[] => {
-  if (!Array.isArray(raw)) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const v of raw) {
-    if (typeof v !== 'string') continue;
-    const t = v.trim();
-    const k = t.toLowerCase();
-    if (!t || !/[\p{L}\p{N}]/u.test(t) || seen.has(k)) continue;
-    seen.add(k);
-    out.push(t);
-    if (out.length >= 6) break;
-  }
-  return out;
-};
-
-// The structured call occasionally truncates at maxOutputTokens (cut mid-array
-// → invalid JSON → NoObjectGeneratedError). Salvage the complete highlight
-// objects from the raw text instead of failing the whole summary — the verdict
-// is a separate call and is always worth returning.
-const salvageStringArray = (text: string, field: string): string[] => {
-  const m = text.match(new RegExp(`"${field}"\\s*:\\s*\\[([^\\]]*)\\]`));
-  return cleanItems(m?.[1]?.split(',').map((s) => s.replace(/^\s*"|"\s*$/g, '')));
-};
-
-function salvageStructured(text: string): { highlights: SummaryHighlight[]; items: string[]; alternatives: string[]; valueForMoney: number } {
-  const highlights: SummaryHighlight[] = [];
-  for (const m of text.matchAll(/\{[^{}]*"text"[^{}]*\}/g)) {
-    try { highlights.push(JSON.parse(m[0])); } catch {}
-  }
-  const vfm = text.match(/"valueForMoney"\s*:\s*(\d+)/);
-  console.warn(`[summarize] structured JSON truncated; salvaged ${highlights.length} highlights`);
-  return { highlights, items: salvageStringArray(text, 'items'), alternatives: salvageStringArray(text, 'alternatives'), valueForMoney: vfm ? Number(vfm[1]) : 3 };
-}
 
 const reviewBlock = (texts: string[]) => texts.join('\n\n');
 

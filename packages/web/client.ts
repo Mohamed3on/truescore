@@ -5,6 +5,7 @@ import {
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
   type SortStats, type Summary, type SummarizeResponse,
+  type AskRequest, type HighlightSummaryRequest, type HighlightsRequest, type HistogramRequest, type LookupRequest, type SearchRequest, type SummarizeRequest,
 } from '@truescore/gmaps-shared';
 
 // Cloudflare 5xx (502/521/522/524) returns an HTML error page, which would
@@ -258,7 +259,7 @@ function renderScored(kind: ScoredKind) {
 async function scoreChip(kind: ScoredKind, featureId: string, d: ScoredChip) {
   try {
     // The server expands the term to its accent/hyphen/space spellings.
-    const resp = await postNdjson('/api/search', { featureId, query: d.item });
+    const resp = await postNdjson('/api/search', { featureId, query: d.item } satisfies SearchRequest);
     let result: SearchResult | null = null;
     for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
       if (evt.type === 'search') result = evt.result;
@@ -359,7 +360,7 @@ async function askChipPanel() {
   try {
     const data = await postJson<{ answer?: string }>('/api/ask', {
       featureId: currentFeatureId, question: q, filter, reviewTexts,
-    });
+    } satisfies AskRequest);
     while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
     const answer = document.createElement('div');
     answer.className = 'answer';
@@ -495,7 +496,7 @@ async function summarizeActiveChip() {
   try {
     const data = await postJson<{ summary?: Summary; cached?: boolean }>('/api/highlight-summary', {
       featureId: currentFeatureId, token: h.token,
-    });
+    } satisfies HighlightSummaryRequest);
     if (data.summary) {
       renderChipSummary(data.summary);
       chipSummarizeBtn.disabled = false;
@@ -519,7 +520,7 @@ async function summarizeActiveSearch() {
   try {
     const resp = await postNdjson('/api/search', {
       featureId: currentFeatureId, query: r.query, summarize: true,
-    });
+    } satisfies SearchRequest);
     let result: SearchResult | null = null;
     let cached = false;
     for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
@@ -556,7 +557,7 @@ async function runSearch(query: string, force = false) {
   try {
     const resp = await postNdjson('/api/search', {
       featureId: currentFeatureId, query, force,
-    });
+    } satisfies SearchRequest);
     for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
       if (evt.type === 'search-progress') {
         // Per-page progress: same `Searching "x" · N reviews · P%` shape so
@@ -589,7 +590,7 @@ async function loadHighlights(force = false) {
     const resp = await fetchWithRetry('/api/highlights', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId: currentFeatureId, force }),
+      body: JSON.stringify({ featureId: currentFeatureId, force } satisfies HighlightsRequest),
     });
     const ct = resp.headers.get('content-type') ?? '';
     if (resp.ok && ct.includes('ndjson') && resp.body) {
@@ -627,7 +628,7 @@ async function ensureHighlightReviews(): Promise<void> {
       const resp = await fetchWithRetry('/api/highlights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ featureId: currentFeatureId }),
+        body: JSON.stringify({ featureId: currentFeatureId } satisfies HighlightsRequest),
       });
       const ct = resp.headers.get('content-type') ?? '';
       if (!resp.ok || !ct.includes('json')) return;
@@ -1047,7 +1048,7 @@ function renderSummaryError(msg: string) {
 
 async function fetchHistogramFor(featureId: string, mergedPct: number) {
   try {
-    const data = await postJson<HistogramResponse>('/api/histogram', { featureId });
+    const data = await postJson<HistogramResponse>('/api/histogram', { featureId } satisfies HistogramRequest);
     if (data.overallPct != null) renderOverall(data.overallPct, mergedPct);
     if (data.histogram) renderOverallScore(data.histogram);
   } catch {}
@@ -1056,7 +1057,7 @@ async function fetchHistogramFor(featureId: string, mergedPct: number) {
 async function fetchSummaryFor(featureId: string, force = false): Promise<{ ok: boolean; ms: number }> {
   const t0 = Date.now();
   try {
-    const data = await postJson<SummarizeResponse>('/api/summarize', { featureId, force });
+    const data = await postJson<SummarizeResponse>('/api/summarize', { featureId, force } satisfies SummarizeRequest);
     if (data.error) {
       renderSummaryError(data.error);
       return { ok: false, ms: Date.now() - t0 };
@@ -1087,7 +1088,7 @@ form.addEventListener('submit', async (e) => {
   setStatus('Resolving link…');
   const t0 = Date.now();
   try {
-    const resp = await postNdjson('/api/lookup', { url });
+    const resp = await postNdjson('/api/lookup', { url } satisfies LookupRequest);
     await consumeLookupStream(resp.body!, t0);
   } catch (e) {
     delete document.body.dataset.state;
@@ -1237,7 +1238,7 @@ askForm.addEventListener('submit', async (e) => {
   try {
     const data = await postJson<{ answer?: string }>('/api/ask', {
       featureId: currentFeatureId, question: q,
-    });
+    } satisfies AskRequest);
     renderMarkdown(answerEl, data.answer ?? '');
     questionInput.value = '';
     setStatus('');

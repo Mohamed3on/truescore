@@ -96,11 +96,25 @@ export type PlacesResponse = { places?: PlaceItem[]; error?: string };
 export type CachedResponse = { found: boolean; summary?: Summary; highlights?: Chip[]; highlightSummaries?: Record<string, Summary> };
 export type ContributeResponse = { ok?: boolean; error?: string };
 
+// ---- LLM provider selection (server-side; the popup threads its choice) ----
+// The full set of summarization providers and reasoning levels the server
+// accepts. Canonical here so web/llm.ts and the extension's config.ts share one
+// definition instead of each re-declaring the union + its validation list.
+export const LLM_PROVIDERS = ['gemini', 'openai', 'deepseek'] as const;
+export type Provider = (typeof LLM_PROVIDERS)[number];
+export const REASONING_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+// Optional per-request overrides on the summarize/ask bodies. Unset leaves the
+// server on its own default (LLM_PROVIDER env, nano:low). reasoningEffort is
+// gpt-5.4-nano only; the server ignores it on Gemini/DeepSeek.
+export type LlmOverrides = { reasoningEffort?: ReasoningEffort; provider?: Provider };
+
 // ---- request bodies ----
 export type LookupRequest = { url: string };
-export type SummarizeRequest = { featureId: string; name?: string; reviewTexts?: string[]; filter?: string; force?: boolean };
+export type SummarizeRequest = { featureId: string; name?: string; reviewTexts?: string[]; filter?: string; force?: boolean } & LlmOverrides;
+export type HistogramRequest = { featureId: string };
 export type HighlightsRequest = { featureId: string; force?: boolean };
 export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean };
 export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean };
-export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string };
+export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string } & LlmOverrides;
 export type ContributeRequest = { featureId: string; name: string; summary?: Summary; highlights?: Chip[]; highlightSummaries?: Record<string, Summary> };

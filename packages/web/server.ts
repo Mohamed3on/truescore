@@ -1,18 +1,26 @@
 import {
   statsForReviews,
   textReviewsFor,
+  type AskRequest,
   type AskResponse,
   type CachedResponse,
   type Chip,
   type ChipMeta,
+  type ContributeRequest,
   type ContributeResponse,
   type HighlightEvent,
+  type HighlightSummaryRequest,
   type HighlightSummaryResponse,
+  type HighlightsRequest,
   type HighlightsResponse,
+  type HistogramRequest,
   type HistogramResponse,
   type LookupEvent,
+  type LookupRequest,
   type PlacesResponse,
   type SearchEvent,
+  type SearchRequest,
+  type SummarizeRequest,
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
@@ -319,7 +327,7 @@ Bun.serve({
     '/api/lookup': {
       POST: async (req) => {
         try {
-          const { url } = await req.json();
+          const { url } = await req.json() as LookupRequest;
           const { featureId, name, resolvedUrl } = await resolvePlace(url);
           const cached = cache.get(featureId);
           if (cached) return streamCachedLookup(featureId, name, resolvedUrl, cached);
@@ -353,13 +361,7 @@ Bun.serve({
     '/api/contribute': {
       POST: async (req) => {
         try {
-          const { featureId, name, summary, highlights, highlightSummaries } = await req.json() as {
-            featureId: string;
-            name: string;
-            summary?: any;
-            highlights?: any[];
-            highlightSummaries?: Record<string, any>;
-          };
+          const { featureId, name, summary, highlights, highlightSummaries } = await req.json() as ContributeRequest;
           if (!featureId || !name) return corsJson({ error: 'missing featureId or name' }, 400);
           if (!summary && !highlights && !highlightSummaries) return corsJson({ error: 'nothing to contribute' }, 400);
           await cache.putContribution(featureId, name, { summary, highlights, highlightSummaries });
@@ -388,7 +390,7 @@ Bun.serve({
     '/api/histogram': {
       POST: async (req) => {
         try {
-          const { featureId } = await req.json();
+          const { featureId } = await req.json() as HistogramRequest;
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
           const { histogram } = await getOrFetchPreviewBundle(featureId);
@@ -408,15 +410,7 @@ Bun.serve({
     '/api/summarize': {
       POST: async (req) => {
         try {
-          const body = await req.json() as {
-            featureId: string;
-            name?: string;
-            reviewTexts?: string[];
-            filter?: string;
-            force?: boolean;
-            reasoningEffort?: string;
-            provider?: string;
-          };
+          const body = await req.json() as SummarizeRequest;
           const featureId = body.featureId;
           if (!featureId) return corsJson({ error: 'missing featureId' }, 400);
 
@@ -449,7 +443,7 @@ Bun.serve({
       POST: async (req) => {
         let featureId = '';
         try {
-          const body = await req.json() as { featureId: string; force?: boolean };
+          const body = await req.json() as HighlightsRequest;
           featureId = body.featureId;
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
@@ -475,14 +469,7 @@ Bun.serve({
     '/api/highlight-summary': {
       POST: async (req) => {
         try {
-          const body = await req.json() as {
-            featureId: string;
-            token: string;
-            name?: string;
-            label?: string;
-            reviewTexts?: string[];
-            force?: boolean;
-          };
+          const body = await req.json() as HighlightSummaryRequest;
           const { featureId, token, force } = body;
           if (!featureId || !token) return corsJson({ error: 'missing featureId or token' }, 400);
 
@@ -518,12 +505,7 @@ Bun.serve({
         let featureId = '';
         let term = '';
         try {
-          const body = await req.json() as {
-            featureId: string;
-            query: string;
-            force?: boolean;
-            summarize?: boolean;
-          };
+          const body = await req.json() as SearchRequest;
           featureId = body.featureId;
           term = (body.query ?? '').trim();
           if (!term) return json({ error: 'empty query' }, 400);
@@ -579,15 +561,7 @@ Bun.serve({
     '/api/ask': {
       POST: async (req) => {
         try {
-          const body = await req.json() as {
-            featureId?: string;
-            name?: string;
-            reviewTexts?: string[];
-            question: string;
-            filter?: string;
-            reasoningEffort?: string;
-            provider?: string;
-          };
+          const body = await req.json() as AskRequest;
           const { featureId, question } = body;
           if (!question) return corsJson({ error: 'missing question' }, 400);
 
