@@ -23,7 +23,10 @@ const SCHEMA = z.object({
   valueForMoney: z.number().int(),
 });
 
-const REVIEWS = [
+// Optional path to a JSON array of review strings (e.g. a real place's
+// reviewTexts); falls back to the built-in sample set.
+const reviewsFile = process.argv[3];
+const SAMPLE_REVIEWS = [
   'Best brunch in the neighborhood. The shakshuka is incredible and the flat white is properly pulled. Gets packed by 10am on weekends.',
   'Overrated and overpriced. €18 for avocado toast that was cold in the middle. Service was friendly but slow — waited 25 minutes for food.',
   'Lovely spot, great natural light, plants everywhere. Coffee is excellent. Food is fine but you are really paying for the vibe and the location.',
@@ -53,6 +56,7 @@ const REVIEWS = [
   'Outdoor seating is lovely in summer, heaters in winter. Year-round winner. The seasonal specials board is always worth checking.',
   'Came for the hype, left unimpressed. Long wait, average coffee, tiny portions for the price. La Cabra does everything better and cheaper.',
 ];
+const REVIEWS: string[] = reviewsFile ? await Bun.file(reviewsFile).json() : SAMPLE_REVIEWS;
 const PROMPT = `${REVIEWS.join('\n\n')}\n\n---\n\nExtract highlights about this place and rate value for money 1-5 from pricing mentions. Each highlight: one concrete line, ≤20 words, with sentiment. Also list up to 6 short keyword items the place is known for, and any alternatives reviewers name as better. Empty arrays if nothing fits.`;
 
 const median = (xs: number[]): number => {
@@ -63,7 +67,7 @@ const median = (xs: number[]): number => {
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
 type Variant = { label: string; run: () => Promise<any> };
-const NANO_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const;
+const NANO_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
 const variants: Variant[] = [
   ...NANO_EFFORTS.map((e) => ({
     label: `nano:${e}`,
@@ -76,29 +80,34 @@ const variants: Variant[] = [
 ];
 
 type Row = { label: string; med: number; mean: number; lats: number[]; reason: number; out: number };
-const rows: Row[] = [];
-let printedUsage = false;
+type Sample = { label: string; ms: number; reason: number; out: number };
 
-console.log(`\nstructured-summary latency · ${RUNS} runs/variant · ${REVIEWS.length} reviews\n`);
+console.log(`\nstructured-summary latency · ${RUNS} runs/variant · ${REVIEWS.length} reviews · parallel\n`);
 
-for (const v of variants) {
-  const lats: number[] = [];
-  const reason: number[] = [];
-  const out: number[] = [];
-  for (let i = 0; i < RUNS; i++) {
-    const t0 = performance.now();
-    try {
-      const r = await v.run();
-      lats.push(performance.now() - t0);
-      if (!printedUsage) { console.log('  (usage shape:', JSON.stringify(r.usage), ')\n'); printedUsage = true; }
-      reason.push((r.usage as any).reasoningTokens ?? 0);
-      out.push(r.usage.outputTokens ?? 0);
-    } catch (e: any) {
-      console.log(`  ${v.label} run ${i + 1}: ERROR ${e.message?.slice(0, 90)}`);
-    }
-  }
-  if (lats.length) rows.push({ label: v.label, med: median(lats), mean: avg(lats), lats, reason: avg(reason), out: avg(out) });
-}
+// Account isn't rate-limited, so fire every call at once and time each
+// independently — total wall-clock is the slowest single call, not the sum.
+const settled = await Promise.all(
+  variants.flatMap((v) =>
+    Array.from({ length: RUNS }, async (): Promise<Sample | null> => {
+      const t0 = performance.now();
+      try {
+        const r = await v.run();
+        return { label: v.label, ms: performance.now() - t0, reason: (r.usage as any).reasoningTokens ?? 0, out: r.usage.outputTokens ?? 0 };
+      } catch (e: any) {
+        console.log(`  ${v.label}: ERROR ${e.message?.slice(0, 90)}`);
+        return null;
+      }
+    }),
+  ),
+);
+const samples = settled.filter((s): s is Sample => s !== null);
+
+const rows: Row[] = variants.flatMap((v) => {
+  const mine = samples.filter((s) => s.label === v.label);
+  if (!mine.length) return [];
+  const lats = mine.map((s) => s.ms);
+  return [{ label: v.label, med: median(lats), mean: avg(lats), lats, reason: avg(mine.map((s) => s.reason)), out: avg(mine.map((s) => s.out)) }];
+});
 
 const fastest = Math.min(...rows.map((r) => r.med));
 console.log('variant      median    mean   ×fast   reasoning  output   runs (s)');
