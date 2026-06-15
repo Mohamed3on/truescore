@@ -23,15 +23,19 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 // Active provider for extension-direct summaries: the popup toggle wins;
 // unset falls back to OpenAI-if-keyed, else Gemini. (Google Maps summaries
 // are server-side and follow the server's LLM_PROVIDER instead.)
+export async function getReasoningEffort(): Promise<ReasoningEffort> {
+  const effort = await storedKey('openaiReasoningEffort');
+  return (REASONING_EFFORTS as string[]).includes(effort) ? (effort as ReasoningEffort) : DEFAULT_REASONING_EFFORT;
+}
+
 export async function getActiveLLM(): Promise<{ provider: 'gemini' | 'openai'; key: string; reasoningEffort: ReasoningEffort }> {
-  const [pref, openaiKey, geminiKey, effort] = await Promise.all([
+  const [pref, openaiKey, geminiKey, reasoningEffort] = await Promise.all([
     storedKey('llmProvider'),
     storedKey('openaiApiKey'),
     storedKey('geminiApiKey'),
-    storedKey('openaiReasoningEffort'),
+    getReasoningEffort(),
   ]);
   const provider = pref === 'gemini' || pref === 'openai' ? pref : openaiKey ? 'openai' : 'gemini';
-  const reasoningEffort = (REASONING_EFFORTS as string[]).includes(effort) ? (effort as ReasoningEffort) : DEFAULT_REASONING_EFFORT;
   return { provider, key: provider === 'openai' ? openaiKey : geminiKey, reasoningEffort };
 }
 

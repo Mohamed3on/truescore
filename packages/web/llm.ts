@@ -29,6 +29,19 @@ export const PROVIDERS = {
 };
 export type Provider = keyof typeof PROVIDERS;
 
+// Optional per-request override for the openai reasoning effort, so Maps
+// summaries can honor the extension popup's knob. Unset keeps the provider
+// default above; Gemini ignores it (it uses thinkingLevel).
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high';
+const REASONING_EFFORTS: ReasoningEffort[] = ['none', 'low', 'medium', 'high'];
+export const parseReasoningEffort = (v: unknown): ReasoningEffort | undefined =>
+  typeof v === 'string' && (REASONING_EFFORTS as string[]).includes(v) ? (v as ReasoningEffort) : undefined;
+
+const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
+  effort && provider === 'openai'
+    ? { model: PROVIDERS[provider].model, providerOptions: { openai: { reasoningEffort: effort } } }
+    : PROVIDERS[provider];
+
 const active = (): Provider => (process.env.LLM_PROVIDER === 'openai' ? 'openai' : 'gemini');
 
 // evals/compare.ts hooks this to collect per-call token usage; the server
@@ -109,8 +122,8 @@ const subjectOf = (place: string, filter?: string) => {
 // string fields), so the prose verdict and structured highlights run as two
 // parallel calls. Input tokens overlap on the review block; output is clean
 // both ways.
-export async function summarize(placeName: string, reviewTexts: string[], filterQuery?: string, provider: Provider = active()): Promise<Summary> {
-  const { model, providerOptions } = PROVIDERS[provider];
+export async function summarize(placeName: string, reviewTexts: string[], filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Summary> {
+  const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
 
@@ -146,8 +159,8 @@ ${NOTES}`;
   return { verdict: verdict.trim(), ...structured };
 }
 
-export async function ask(placeName: string, reviewTexts: string[], question: string, filterQuery?: string, provider: Provider = active()): Promise<string> {
-  const { model, providerOptions } = PROVIDERS[provider];
+export async function ask(placeName: string, reviewTexts: string[], question: string, filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<string> {
+  const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const prompt = `${reviewBlock(reviewTexts)}\n\n---\n\nAnswer about ${subjectOf(placeName, filterQuery)} using the reviews. Be concise. Name specifics (prices, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree or don't cover it, say so.
 
 ${NOTES}

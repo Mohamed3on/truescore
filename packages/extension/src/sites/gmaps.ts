@@ -2,6 +2,7 @@ import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/u
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
+import { getReasoningEffort } from '../shared/config';
 import {
   chipsFromPreview,
   collectSearchTerms,
@@ -663,6 +664,9 @@ const computeHighlights = async (force = false) => {
 const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null, customQuestion: string | null): Promise<SummaryResult | string> => {
   const featureId = getFeatureId();
   const { name } = getPlaceInfo();
+  // Server-side summaries run on the server's key, but honor the popup's
+  // reasoning-effort knob (gpt-5.4-nano only; the server ignores it on Gemini).
+  const reasoningEffort = await getReasoningEffort();
 
   const post = async <T>(path: string, body: object): Promise<T> => {
     const resp = await fetch(`${TRUESCORE_API_BASE}${path}`, {
@@ -681,6 +685,7 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
     const data = await post<{ answer: string }>('/api/ask', {
       featureId, name, reviewTexts, question: customQuestion,
       filter: filterQuery ?? undefined,
+      reasoningEffort,
     });
     return data.answer;
   }
@@ -692,6 +697,7 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
     // always "compute fresh" — Resummarize/refresh-search/highlight-summarize
     // all flow here. Server-side cache is for the web SPA.
     force: true,
+    reasoningEffort,
   });
   return data.summary;
 };

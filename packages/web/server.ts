@@ -17,7 +17,7 @@ import {
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
 import { scorePlace, fetchAllForSearch } from './gmaps';
-import { summarize, ask } from './llm';
+import { summarize, ask, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, scoreHighlight } from './highlights';
 import { cache, type CacheEntry } from './cache';
@@ -414,6 +414,7 @@ Bun.serve({
             reviewTexts?: string[];
             filter?: string;
             force?: boolean;
+            reasoningEffort?: string;
           };
           const featureId = body.featureId;
           if (!featureId) return corsJson({ error: 'missing featureId' }, 400);
@@ -433,7 +434,7 @@ Bun.serve({
           const reviewTexts = body.reviewTexts ?? (entry?.score ? textReviewsFor(entry.score.reviews) : null);
           if (!reviewTexts?.length) return corsJson({ error: 'no reviews — look up the place first or pass reviewTexts in the body' }, 404);
 
-          const summary = await summarize(placeName, reviewTexts, filter);
+          const summary = await summarize(placeName, reviewTexts, filter, undefined, parseReasoningEffort(body.reasoningEffort));
           if (!filter && entry) await cache.putSummary(featureId, summary);
           return corsJson({ summary, cached: false } satisfies SummarizeResponse);
         } catch (e) {
@@ -583,6 +584,7 @@ Bun.serve({
             reviewTexts?: string[];
             question: string;
             filter?: string;
+            reasoningEffort?: string;
           };
           const { featureId, question } = body;
           if (!question) return corsJson({ error: 'missing question' }, 400);
@@ -592,7 +594,7 @@ Bun.serve({
           const reviewTexts = body.reviewTexts ?? (entry?.score ? textReviewsFor(entry.score.reviews) : null);
           if (!reviewTexts?.length) return corsJson({ error: 'no reviews — look up the place first or pass reviewTexts in the body' }, 404);
 
-          const answer = await ask(placeName, reviewTexts, question, body.filter?.trim() || undefined);
+          const answer = await ask(placeName, reviewTexts, question, body.filter?.trim() || undefined, undefined, parseReasoningEffort(body.reasoningEffort));
           return corsJson({ answer } satisfies AskResponse);
         } catch (e) {
           console.error('[ask]', e);
