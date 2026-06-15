@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "allowJs": true,
+
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    // Off here (on in web/gmaps-shared): these are DOM-scraping site scripts
+    // where `matches[1]`/`el[0]` index access is idiomatic and a bad index is a
+    // visible missing-UI failure, not a silent wrong score. strict (incl. null
+    // checks) is what gate-checks the wire-consumer bodies — see CONTEXT.md.
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": true,
+
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false,
+
+    "types": ["chrome"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}

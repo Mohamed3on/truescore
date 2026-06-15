@@ -9,6 +9,7 @@
     "@truescore/gmaps-shared": "workspace:*"
   },
   "devDependencies": {
+    "@types/chrome": "^0.1.43",
     "esbuild": "^0.25.0",
     "typescript": "^5.7.0"
   }

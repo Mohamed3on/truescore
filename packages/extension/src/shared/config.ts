@@ -5,7 +5,7 @@ import { REASONING_EFFORTS, type ReasoningEffort, type Provider as LLMProvider }
 // the extension is readable by anyone who unpacks it.
 const storedKey = async (name: string): Promise<string> => {
   try {
-    const items = await chrome.storage.sync.get(name);
+    const items = await chrome.storage.sync.get(name) as Record<string, string>;
     return items[name] || '';
   } catch {
     // MAIN-world scripts can't reach chrome.storage; they use the web proxy, not this.

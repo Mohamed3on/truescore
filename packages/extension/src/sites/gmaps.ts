@@ -4,6 +4,8 @@ import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEAR
 import { createScoreStore, type Period } from '../shared/score-store';
 import { getReasoningEffort, getProviderChoice } from '../shared/config';
 import {
+  type SummarizeRequest,
+  type AskRequest,
   chipsFromPreview,
   collectSearchTerms,
   collectSort,
@@ -663,6 +665,7 @@ const computeHighlights = async (force = false) => {
 // the server runs the same summarize()/ask() the web SPA does.
 const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null, customQuestion: string | null): Promise<SummaryResult | string> => {
   const featureId = getFeatureId();
+  if (!featureId) throw new Error('No Google Maps place detected');
   const { name } = getPlaceInfo();
   // Server-side summaries run on the server's key, but honor the popup's model
   // + reasoning-effort knobs. provider is the popup's explicit pick (omitted
@@ -688,7 +691,7 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
       featureId, name, reviewTexts, question: customQuestion,
       filter: filterQuery ?? undefined,
       reasoningEffort, provider,
-    });
+    } satisfies AskRequest);
     return data.answer;
   }
   const data = await post<{ summary: SummaryResult }>('/api/summarize', {
@@ -700,7 +703,7 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
     // all flow here. Server-side cache is for the web SPA.
     force: true,
     reasoningEffort, provider,
-  });
+  } satisfies SummarizeRequest);
   return data.summary;
 };
 
@@ -998,7 +1001,7 @@ const askActiveChip = async () => {
   const body = cardEls.chipPanelBody;
   const input = cardEls.chipQuestionInput;
   const q = input?.value?.trim();
-  if (!h || !body || !q) return;
+  if (!h || !body || !q || !input) return;
   const texts = textReviewsFor(h.reviews ?? []);
   if (!texts.length) { body.textContent = 'No review text available'; return; }
   body.textContent = 'Asking…';

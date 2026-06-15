@@ -13,7 +13,8 @@ const segBtns = [...seg.querySelectorAll<HTMLButtonElement>('button')];
 const markActive = (provider: string) =>
   segBtns.forEach((b) => b.classList.toggle('active', b.dataset.provider === provider));
 
-chrome.storage.sync.get(['llmProvider', 'openaiApiKey'], ({ llmProvider, openaiApiKey }) => {
+chrome.storage.sync.get(['llmProvider', 'openaiApiKey'], (items) => {
+  const { llmProvider, openaiApiKey } = items as Record<string, string | undefined>;
   markActive(llmProvider || (openaiApiKey ? 'openai' : 'gemini'));
 });
 
@@ -33,8 +34,8 @@ const reasoningBtns = [...reasoningSeg.querySelectorAll<HTMLButtonElement>('butt
 const markEffort = (effort: string) =>
   reasoningBtns.forEach((b) => b.classList.toggle('active', b.dataset.effort === effort));
 
-chrome.storage.sync.get('openaiReasoningEffort', ({ openaiReasoningEffort }) => {
-  markEffort(openaiReasoningEffort || 'low');
+chrome.storage.sync.get('openaiReasoningEffort', (items) => {
+  markEffort((items as Record<string, string>).openaiReasoningEffort || 'low');
 });
 
 for (const btn of reasoningBtns) {
@@ -59,7 +60,8 @@ for (const { id, storageKey } of FIELDS) {
 
   // Load saved key
   chrome.storage.sync.get(storageKey, (items) => {
-    if (items[storageKey]) input.value = items[storageKey];
+    const v = (items as Record<string, string>)[storageKey];
+    if (v) input.value = v;
   });
 
   // Save on change (debounced)

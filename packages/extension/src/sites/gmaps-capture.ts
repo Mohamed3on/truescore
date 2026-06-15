@@ -57,6 +57,6 @@ import { PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
         try { store(String(url), (this as XMLHttpRequest).responseText); } catch {}
       });
     }
-    return origOpen.call(this, method, url, ...rest);
+    return (origOpen as (...a: any[]) => void).call(this, method, url, ...rest);
   };
 })();

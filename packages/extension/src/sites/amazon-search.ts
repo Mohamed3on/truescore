@@ -176,8 +176,8 @@ const sortAmazonResults = async () => {
   };
 
   const origPush = history.pushState;
-  history.pushState = function(...args: any[]) { origPush.apply(this, args); onNavigate(); };
+  history.pushState = function (...args: Parameters<History['pushState']>) { origPush.apply(this, args); onNavigate(); };
   const origReplace = history.replaceState;
-  history.replaceState = function(...args: any[]) { origReplace.apply(this, args); onNavigate(); };
+  history.replaceState = function (...args: Parameters<History['replaceState']>) { origReplace.apply(this, args); onNavigate(); };
   window.addEventListener('popstate', onNavigate);
 })();

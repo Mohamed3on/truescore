@@ -271,7 +271,7 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
     const mvRank = vereinId && mvRankByVereinId.get(vereinId);
     const expectedPoints = mvRank && pointsByPosition[mvRank];
 
-    if (teamData && expectedPoints !== undefined) {
+    if (teamData && typeof expectedPoints === 'number') {
       const diff = teamData.points - expectedPoints;
       td.textContent = diff > 0 ? `+${diff}` : String(diff);
       (td as HTMLElement).style.color = diff > 0 ? '#2e7d32' : diff < 0 ? '#c62828' : '#666';
