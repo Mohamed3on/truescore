@@ -55,10 +55,10 @@ const REVIEWS = [
 ];
 const PROMPT = `${REVIEWS.join('\n\n')}\n\n---\n\nExtract highlights about this place and rate value for money 1-5 from pricing mentions. Each highlight: one concrete line, ≤20 words, with sentiment. Also list up to 6 short keyword items the place is known for, and any alternatives reviewers name as better. Empty arrays if nothing fits.`;
 
-const median = (xs: number[]) => {
+const median = (xs: number[]): number => {
   const s = [...xs].sort((a, b) => a - b);
   const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  return s.length % 2 ? (s[m] ?? 0) : ((s[m - 1] ?? 0) + (s[m] ?? 0)) / 2;
 };
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
