@@ -21,10 +21,10 @@ export const PROVIDERS = {
     providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' as const } } },
   },
   openai: {
-    // Medium reasoning effort. nano spends no reasoning tokens by default, so
-    // this is an explicit opt-in to deeper thinking ('high' was too slow).
+    // Low reasoning effort — about as fast as no reasoning while still thinking
+    // a little; medium/high roughly double nano's latency (see evals/latency.ts).
     model: openai('gpt-5.4-nano'),
-    providerOptions: { openai: { reasoningEffort: 'medium' } },
+    providerOptions: { openai: { reasoningEffort: 'low' } },
   },
 };
 export type Provider = keyof typeof PROVIDERS;
@@ -128,15 +128,12 @@ Separately, list alternatives: proper names of OTHER places reviewers say are BE
 
 ${NOTES}`;
 
-  // maxOutputTokens covers reasoning + visible output, and reasoningEffort is
-  // 'medium', so these caps run well above the visible-text need (verdict is
-  // ~120 words) to leave the model room to think without truncating.
   const [verdict, structured] = await Promise.all([
-    generateText({ model, providerOptions, maxOutputTokens: 8192, prompt: verdictPrompt }).then((r) => {
+    generateText({ model, providerOptions, maxOutputTokens: 1024, prompt: verdictPrompt }).then((r) => {
       report(provider, 'verdict', r.usage);
       return r.text;
     }),
-    generateObject({ model, providerOptions, maxOutputTokens: 16384, schema: HIGHLIGHTS_SCHEMA, prompt: structuredPrompt })
+    generateObject({ model, providerOptions, maxOutputTokens: 8192, schema: HIGHLIGHTS_SCHEMA, prompt: structuredPrompt })
       .then((r) => {
         report(provider, 'structured', r.usage);
         return { ...r.object, items: cleanItems(r.object.items), alternatives: cleanItems(r.object.alternatives) };

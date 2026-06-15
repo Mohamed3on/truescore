@@ -34,7 +34,7 @@ const markEffort = (effort: string) =>
   reasoningBtns.forEach((b) => b.classList.toggle('active', b.dataset.effort === effort));
 
 chrome.storage.sync.get('openaiReasoningEffort', ({ openaiReasoningEffort }) => {
-  markEffort(openaiReasoningEffort || 'medium');
+  markEffort(openaiReasoningEffort || 'low');
 });
 
 for (const btn of reasoningBtns) {

@@ -12,14 +12,13 @@ const storedKey = async (name: string): Promise<string> => {
 };
 
 // gpt-5.4-nano reasoning effort, set in the popup. The API accepts
-// none|low|medium|high|xhigh; we expose none..high (xhigh is the slowest and
-// we optimize for speed). 'none' is nano's default — no reasoning tokens;
-// medium is an explicit opt-in to deeper thinking ('high' is noticeably
-// slower). Only the OpenAI path reads this — Gemini Flash thinking is pinned
-// to MINIMAL in review-summary.ts.
+// none|low|medium|high|xhigh; we expose none..high. Default is 'low' — about
+// as fast as no reasoning while still thinking a little; medium/high roughly
+// double nano's latency (see web evals/latency.ts). Only the OpenAI path reads
+// this — Gemini Flash thinking is pinned to MINIMAL in review-summary.ts.
 export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high';
 export const REASONING_EFFORTS: ReasoningEffort[] = ['none', 'low', 'medium', 'high'];
-export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'medium';
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 
 // Active provider for extension-direct summaries: the popup toggle wins;
 // unset falls back to OpenAI-if-keyed, else Gemini. (Google Maps summaries
