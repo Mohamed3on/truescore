@@ -6,7 +6,8 @@
   "scripts": {
     "build:extension": "bun --cwd packages/extension run build",
     "deploy:web": "SERVER=root@65.108.153.112 ./deploy/sync.sh",
-    "check": "bun test && bunx tsc -p packages/gmaps-shared && bunx tsc -p packages/web"
+    "check": "bun test && bunx tsc -p packages/gmaps-shared && bunx tsc -p packages/web",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
     "@types/bun": "latest",
