@@ -128,12 +128,15 @@ Separately, list alternatives: proper names of OTHER places reviewers say are BE
 
 ${NOTES}`;
 
+  // maxOutputTokens covers reasoning + visible output, and reasoningEffort is
+  // 'high', so these caps run well above the visible-text need (verdict is ~120
+  // words) to leave the model room to think without truncating.
   const [verdict, structured] = await Promise.all([
-    generateText({ model, providerOptions, maxOutputTokens: 1024, prompt: verdictPrompt }).then((r) => {
+    generateText({ model, providerOptions, maxOutputTokens: 8192, prompt: verdictPrompt }).then((r) => {
       report(provider, 'verdict', r.usage);
       return r.text;
     }),
-    generateObject({ model, providerOptions, maxOutputTokens: 8192, schema: HIGHLIGHTS_SCHEMA, prompt: structuredPrompt })
+    generateObject({ model, providerOptions, maxOutputTokens: 16384, schema: HIGHLIGHTS_SCHEMA, prompt: structuredPrompt })
       .then((r) => {
         report(provider, 'structured', r.usage);
         return { ...r.object, items: cleanItems(r.object.items), alternatives: cleanItems(r.object.alternatives) };
