@@ -95,7 +95,9 @@ const PROVIDER_LABEL: Record<string, string> = { gemini: 'Gemini', openai: 'Open
 
 // Provider comes from the popup toggle (getActiveLLM); same prompt either way.
 export const llmSummarize = async (reviewTexts: string[], prompt: string, schema: any = SUMMARY_SCHEMA): Promise<any> => {
-  const fullPrompt = prompt + '\n\nReviews:\n\n' + reviewTexts.join('\n---\n');
+  // Reviews arrive in the page's locale (amazon.es, booking.de, …), so without
+  // this the model answers in that language. Pin output to English for every site.
+  const fullPrompt = prompt + '\n\nAlways respond in English, even if the reviews are written in another language.\n\nReviews:\n\n' + reviewTexts.join('\n---\n');
 
   const { provider, key, reasoningEffort } = await getActiveLLM();
   if (!key) throw new Error(`No ${PROVIDER_LABEL[provider]} API key \u2014 set one in the TrueScore popup`);
