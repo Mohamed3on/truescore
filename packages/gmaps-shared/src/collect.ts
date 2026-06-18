@@ -63,25 +63,22 @@ export async function collectPaged(
   return { reviews: [...collected.values()], nextCursor: cursor || null };
 }
 
-// Sort + token URLs are shared (buildListUrl / buildTokenUrl); review search is
-// not — the two packages reverse-engineered different pb slots, so each calls
-// collectPaged with its own search builder.
-export type ShareOptions = CollectOptions & { locale?: Locale; creds?: MapsCreds };
+// creds are required, not optional: the legacy GET endpoint is retired, so every
+// sort/token fetch replays the batchexecute RPC with a captured, session-bound
+// bgkey. The type enforces it — callers resolve creds before calling. (Review
+// search isn't here: the two packages own their own search builder.)
+export type ShareOptions = CollectOptions & { locale?: Locale; creds: MapsCreds };
 
-// creds are required: the legacy GET endpoint is retired, so every sort/token
-// fetch replays the batchexecute RPC with a captured, session-bound bgkey.
 const withHl = (creds: MapsCreds, locale?: Locale): MapsCreds => ({ ...creds, hl: creds.hl ?? locale?.hl });
 
-export function collectSort(featureId: string, sort: SortKey, transport: Transport, opts: ShareOptions = {}) {
+export function collectSort(featureId: string, sort: SortKey, transport: Transport, opts: ShareOptions) {
   const { locale, creds, ...rest } = opts;
-  if (!creds) throw new Error('collectSort: MapsCreds required (listugcposts retired)');
   const c2 = withHl(creds, locale);
   return collectPaged((c) => buildListReq(featureId, sort, c2, c), transport, { stabilize: true, ...rest });
 }
 
-export async function collectToken(featureId: string, token: string, transport: Transport, opts: ShareOptions = {}): Promise<Review[]> {
+export async function collectToken(featureId: string, token: string, transport: Transport, opts: ShareOptions): Promise<Review[]> {
   const { locale, creds, ...rest } = opts;
-  if (!creds) throw new Error('collectToken: MapsCreds required (listugcposts retired)');
   const c2 = withHl(creds, locale);
   const { reviews } = await collectPaged((c) => buildTokenReq(featureId, token, c2, c), transport, { maxPages: 30, ...rest });
   return reviews;
