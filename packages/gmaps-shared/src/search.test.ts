@@ -95,7 +95,7 @@ describe('collectSearchTerms', () => {
   };
   const page = (wrappers: any[], nextCursor: string | null) =>
     ")]}'\n" + JSON.stringify([null, nextCursor, wrappers]);
-  const urlFor = (term: string, cursor: string) => `${term}|${cursor}`;
+  const urlFor = (term: string, cursor: string) => ({ url: `${term}|${cursor}` });
 
   test('fans out one search per term and unions, deduped across terms', async () => {
     // term a: 2 pages (r1,r2 → r3). term b: 1 page (r2,r4). r2 is shared → counted once.

@@ -129,7 +129,7 @@ export const expandSearchTerms = (query: string): string[] =>
 // across sorts, pages, highlight-tokens, AND different places, until it expires
 // (verified live), so callers cache a single set of creds globally.
 export type MapsCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; hl?: string };
-export type MapsReq = { url: string; init: { method: string; headers: Record<string, string>; body: string } };
+export type MapsReq = { url: string; init?: { method?: string; headers?: Record<string, string>; body?: string } };
 
 let batchReqId = 1000;
 

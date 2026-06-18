@@ -59,8 +59,46 @@ import { MAPS_CREDS_CAPTURED, PREVIEW_CAPTURED, type MapsCapturedCreds } from '.
   // that header alone identifies it. sessionId is the 81-tagged token in the
   // bgbind (or the f.req body): ["<sid>",null,null,null,null,null,81].
   const SID_RE = /\["([A-Za-z0-9_-]{16,}?)",null,null,null,null,null,81\]/;
+
+  // Active half of the capture: nudge Maps into firing a review batchexecute on
+  // demand and resolve when storeCreds next intercepts one. The consumer
+  // (gmaps.ts) just awaits window.__truescoreRequestMapsCreds() rather than
+  // owning the DOM nudge + wait. Deduped to one in-flight nudge.
+  const CAPTURE_WAIT_MS = 6000;
+  let captureResolve: ((c: MapsCapturedCreds | null) => void) | null = null;
+  let captureInFlight: Promise<MapsCapturedCreds | null> | null = null;
+  const settleCapture = (c: MapsCapturedCreds | null) => {
+    const resolve = captureResolve;
+    captureResolve = null;
+    captureInFlight = null;
+    resolve?.(c);
+  };
+  const findReviewsScroll = (): HTMLElement | null => {
+    let el = document.querySelector<HTMLElement>('.jftiEf[data-review-id]')?.parentElement ?? null;
+    while (el) {
+      const s = getComputedStyle(el);
+      if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return el;
+      el = el.parentElement;
+    }
+    return null;
+  };
+  const requestCapture = (): Promise<MapsCapturedCreds | null> => {
+    if (captureInFlight) return captureInFlight;
+    captureInFlight = new Promise((resolve) => { captureResolve = resolve; });
+    // Open the Reviews tab if needed, then scroll — Maps fires the bgkey-bearing
+    // batchexecute when the list loads or paginates; a no-op click on an already-
+    // open tab won't refetch, but a scroll forces the next page.
+    document.querySelector<HTMLElement>('button[role="tab"][aria-label*="eview" i]')?.click();
+    const scrollOnce = () => findReviewsScroll()?.scrollBy({ top: 1e6 });
+    scrollOnce();
+    setTimeout(scrollOnce, 1200);
+    setTimeout(() => settleCapture(window.__truescoreMapsCreds ?? null), CAPTURE_WAIT_MS);
+    return captureInFlight;
+  };
+  window.__truescoreRequestMapsCreds = requestCapture;
+
   const storeCreds = (urlStr: string, headers: Record<string, string>, body: unknown) => {
-    if (!/batchexecute/.test(urlStr)) return;
+    if (!urlStr.includes('batchexecute')) return;
     const bgkey = headers['x-maps-bgkey'];
     if (!bgkey) return;
     const bgbind = headers['x-maps-bgbind'] || '';
@@ -79,12 +117,15 @@ import { MAPS_CREDS_CAPTURED, PREVIEW_CAPTURED, type MapsCapturedCreds } from '.
     };
     window.__truescoreMapsCreds = creds;
     document.dispatchEvent(new CustomEvent(MAPS_CREDS_CAPTURED, { detail: creds }));
+    settleCapture(creds);
   };
 
   const origFetch = window.fetch;
   window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
     const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
-    try { storeCreds(url, headerMap(init?.headers), init?.body); } catch {}
+    // Gate on the URL before normalising headers — Maps fires many fetches per
+    // interaction and only the review RPC carries creds.
+    if (url.includes('batchexecute')) try { storeCreds(url, headerMap(init?.headers), init?.body); } catch {}
     const promise = origFetch.call(this, input, init);
     if (isPreviewUrl(url)) {
       promise.then((r) => r.clone().text()).then((t) => store(url, t)).catch(() => {});

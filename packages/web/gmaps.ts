@@ -89,7 +89,7 @@ export async function scorePlace(
 
   const creds = getMapsCreds();
   if (!creds) {
-    const z: SortStats = { totalReviews: 0, trustedReviews: 0, scorePct: 0 };
+    const z = statsForReviews([]);
     return { featureId, ...z, relevant: z, newest: z, reviews: [] };
   }
   const [relevant, newest] = await Promise.all([

@@ -199,65 +199,38 @@ const store = createScoreStore({ storage: bridgeStorage, now: Date.now });
 
 // === Botguard creds for the ListUgcPosts batchexecute RPC ===
 // Google retired GET /maps/rpc/listugcposts; reviews now come only from a
-// batchexecute call needing a signed x-maps-bgkey that gmaps-capture lifts off
-// Maps' own review XHR. The token is session-bound — reusable across every
-// place/sort/page/highlight-token until it expires — so we cache ONE set
-// globally (chrome.storage), refresh it whenever a newer capture flies by, and
-// only nudge Maps to emit a fresh one on a cold cache or after expiry.
+// batchexecute call needing a signed x-maps-bgkey. gmaps-capture owns lifting it
+// off Maps' own review XHR and nudging Maps to emit one on demand
+// (window.__truescoreRequestMapsCreds). This is just the cache + consume path:
+// the token is session-bound (reusable across every place/sort/page/highlight-
+// token until it expires), so we keep ONE set globally (chrome.storage).
 const MAPS_CREDS_KEY = 'rc_maps_creds';
-const CREDS_WAIT_MS = 6000;
-let mapsCreds: MapsCapturedCreds | null = null;
-let credsHydrated = false;
-let credsWaiters: ((c: MapsCapturedCreds | null) => void)[] = [];
+// Seed from a capture that may have fired before this document_end script ran;
+// the MAPS_CREDS_CAPTURED listener owns every update after.
+let mapsCreds: MapsCapturedCreds | null = window.__truescoreMapsCreds ?? null;
+let credsLoad: Promise<void> | undefined;
 let credsRetried = false; // one expiry-recovery per place; reset in resetScores
 
-// Freshest wins: a live capture on this page beats the persisted one.
-const currentCreds = (): MapsCapturedCreds | null => {
-  const live = window.__truescoreMapsCreds;
-  if (live?.bgkey && (!mapsCreds || live.ts > mapsCreds.ts)) mapsCreds = live;
-  return mapsCreds;
-};
+const currentCreds = (): MapsCapturedCreds | null => mapsCreds;
 
-const hydrateCreds = async () => {
-  if (credsHydrated) return;
-  credsHydrated = true;
-  if (currentCreds()) return;
-  const saved = await bridgeStorage.get<MapsCapturedCreds>(MAPS_CREDS_KEY);
-  if (saved?.bgkey && !currentCreds()) mapsCreds = saved;
-};
+// One-shot read of the persisted token, memoised; a no-op once anything is cached.
+const hydrateCreds = (): Promise<void> =>
+  (credsLoad ??= (async () => {
+    if (mapsCreds) return;
+    const saved = await bridgeStorage.get<MapsCapturedCreds>(MAPS_CREDS_KEY);
+    if (saved?.bgkey && !mapsCreds) mapsCreds = saved;
+  })());
 
 const invalidateCreds = () => {
   mapsCreds = null;
-  window.__truescoreMapsCreds = undefined;
   bridgeStorage.set(MAPS_CREDS_KEY, null).catch(() => {});
 };
 
-// Clicking Maps' own Reviews tab makes it fire the bgkey-bearing batchexecute;
-// gmaps-capture intercepts it and dispatches MAPS_CREDS_CAPTURED.
-const triggerReviewsCapture = () => {
-  // Maps fires the bgkey-bearing batchexecute when the reviews list loads or
-  // paginates. Open the Reviews tab if needed, then scroll — a no-op click on an
-  // already-open tab won't refetch, but scrolling forces the next page.
-  document.querySelector<HTMLElement>('button[role="tab"][aria-label*="eview" i]')?.click();
-  const scrollOnce = () => findReviewsScrollContainer()?.scrollBy({ top: 1e6 });
-  scrollOnce();
-  setTimeout(scrollOnce, 1200);
-};
-
-// Usable creds: the cached set if we have one, else nudge Maps to emit one and
-// wait briefly. Falls back to whatever's cached rather than blocking forever.
+// Usable creds: the cached set, else ask the capture layer to nudge Maps into
+// emitting one and resolve on the next intercept.
 const ensureCreds = async (): Promise<MapsCapturedCreds | null> => {
   await hydrateCreds();
-  const c = currentCreds();
-  if (c) return c;
-  triggerReviewsCapture();
-  return new Promise((resolve) => {
-    credsWaiters.push(resolve);
-    setTimeout(() => {
-      credsWaiters = credsWaiters.filter((w) => w !== resolve);
-      resolve(currentCreds());
-    }, CREDS_WAIT_MS);
-  });
+  return mapsCreds ?? (await window.__truescoreRequestMapsCreds?.()) ?? null;
 };
 
 document.addEventListener(MAPS_CREDS_CAPTURED, (e) => {
@@ -265,13 +238,10 @@ document.addEventListener(MAPS_CREDS_CAPTURED, (e) => {
   if (!c?.bgkey) return;
   mapsCreds = c;
   bridgeStorage.set(MAPS_CREDS_KEY, c).catch(() => {});
-  credsWaiters.splice(0).forEach((resolve) => resolve(c));
-  // Self-heal: a fresh capture (auto-triggered or from the user opening Reviews)
-  // kicks off scoring if we haven't completed a live fetch for this place yet —
-  // covers a cold cache and the expiry-recovery refetch.
-  const fetched = fetchState.relevant.done && fetchState.newest.done;
-  const fetching = fetchState.relevant.isFetching || fetchState.newest.isFetching;
-  if (getFeatureId() && !fetched && !fetching && !kickoffPending) startFetching();
+  // A fresh capture (auto-nudged or from the user opening Reviews) kicks off
+  // scoring if we haven't started a live fetch for this place yet — covers a
+  // cold cache and the expiry-recovery refetch.
+  if (shouldStartScoring()) startFetching();
 });
 
 let highlightsState: HighlightsCache | null = null;
@@ -576,13 +546,10 @@ const getFeatureId = () => {
   return matches.length ? decodeURIComponent(matches[matches.length - 1][1]) : null;
 };
 
-// document.documentElement.lang is a full locale on Maps (e.g. "en-ES"); Google's
-// RPC wants a bare language in hl and the region separately in gl, so split it —
-// "en-ES" → hl=en, gl=ES. Passing "en-ES" as hl returned malformed responses.
-const localeFromDom = (): Locale => {
-  const [hl, region] = (document.documentElement.lang || 'en').split('-');
-  return { hl: hl || 'en', gl: location.href.match(/gl=([a-zA-Z]{2})/)?.[1] || region || '' };
-};
+// document.documentElement.lang is a full locale on Maps (e.g. "en-ES"); the
+// batchexecute RPC wants a bare language in hl ("en-ES" as hl returned malformed
+// responses), and never takes gl, so just strip the region.
+const localeFromDom = (): Locale => ({ hl: (document.documentElement.lang || 'en').split('-')[0] || 'en' });
 
 // Extension transport: fetch from the maps tab on the user's own session.
 const tabTransport: Transport = (url, init) => fetch(url, init).then((r) => r.text());
@@ -843,7 +810,7 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
       credsRetried = true;
       invalidateCreds();
       for (const k of SORT_KEYS) fetchState[k] = makeFetchState(); // let the self-heal relaunch
-      triggerReviewsCapture();
+      window.__truescoreRequestMapsCreds?.(); // nudge a fresh capture → listener relaunches
       return;
     }
     const fid = getFeatureId();
@@ -856,9 +823,17 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
 // resolve creds once up front. ensureCreds nudges Maps' Reviews tab on a cold
 // cache; if nothing arrives the MAPS_CREDS_CAPTURED listener restarts us later.
 let kickoffPending = false;
+// The single "should a scoring kickoff start?" predicate — shared by the
+// capture listener, the observer, and the guard below: on a place, with no
+// fetch pending/in-flight/finished for it yet. (kickoffPending covers the async
+// ensureCreds window before isFetching flips.)
+const shouldStartScoring = (): boolean =>
+  !!getFeatureId() && !kickoffPending &&
+  !fetchState.relevant.isFetching && !fetchState.newest.isFetching &&
+  !fetchState.relevant.done && !fetchState.newest.done;
+
 const startFetching = async () => {
-  if (!getFeatureId() || kickoffPending) return;
-  if (fetchState.relevant.isFetching || fetchState.newest.isFetching) return;
+  if (!shouldStartScoring()) return;
   kickoffPending = true;
   const featureId = getFeatureId();
   try {
@@ -1817,7 +1792,7 @@ const observer = new MutationObserver(() => {
   }
   if (!document.querySelector('#reviews-container')) {
     updateUI();
-    if (!fetchState.relevant.isFetching && !fetchState.relevant.done) startFetching();
+    if (shouldStartScoring()) startFetching();
   }
 });
 

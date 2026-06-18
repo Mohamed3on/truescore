@@ -1,5 +1,6 @@
 // Combined background service worker
 import { SCORE_CACHE_PREFIX } from './shared/cache-keys';
+import type { MapsCreds } from '@truescore/gmaps-shared';
 
 // Drop rc_score_* entries older than 30 days. Registered on install/update
 // only — top-level chrome.alarms.create on every SW wake would reset the
@@ -32,7 +33,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 const SEED_MIN_INTERVAL_MS = 5 * 60 * 1000;
 let lastSeed = { bgkey: '', ts: 0 };
 
-type SeedCreds = { bgkey: string; bgbind: string; sessionId: string; at: string };
+type SeedCreds = Pick<MapsCreds, 'bgkey' | 'bgbind' | 'sessionId' | 'at'>;
 const seedMapsCreds = async (creds: SeedCreds) => {
   if (!creds?.bgkey || !creds.bgbind || !creds.sessionId || !creds.at) return;
   const now = Date.now();

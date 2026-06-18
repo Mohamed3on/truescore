@@ -37,7 +37,7 @@ const MIN_PAGES_BEFORE_STABILIZE = 2;
 // aborted signal propagates as the transport's rejection; callers that pause
 // catch it and keep whatever pages already landed (already surfaced via onPage).
 export async function collectPaged(
-  reqFor: (cursor: string) => string | MapsReq,
+  reqFor: (cursor: string) => MapsReq,
   transport: Transport,
   opts: CollectOptions = {},
 ): Promise<{ reviews: Review[]; nextCursor: string | null }> {
@@ -46,9 +46,8 @@ export async function collectPaged(
   let cursor = startCursor;
   let lastPct: number | null = null;
   for (let index = 0; index < maxPages; index++) {
-    const r = reqFor(cursor);
-    const req = typeof r === 'string' ? { url: r, init: undefined } : r;
-    const { reviews, nextCursor } = parseReviewsResponse(await transport(req.url, { signal, ...req.init }));
+    const { url, init } = reqFor(cursor);
+    const { reviews, nextCursor } = parseReviewsResponse(await transport(url, { signal, ...init }));
     if (!reviews.length) break;
     for (const r of reviews) collected.set(r.reviewId, r);
     const running = [...collected.values()];
@@ -98,7 +97,7 @@ export async function collectToken(featureId: string, token: string, transport: 
 // (single-term) query is just the N=1 case.
 export async function collectSearchTerms(
   terms: string[],
-  reqFor: (term: string, cursor: string) => string | MapsReq,
+  reqFor: (term: string, cursor: string) => MapsReq,
   transport: Transport,
   onMerged?: (merged: Review[]) => void,
 ): Promise<Review[]> {

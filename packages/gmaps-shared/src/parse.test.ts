@@ -60,6 +60,34 @@ describe('parseReviewsResponse', () => {
   });
 });
 
+// The batchexecute transport wraps the same [null, cursor, [[wrappers]]] payload
+// (now a JSON string) inside a length-prefixed wrb.fr envelope. parseReviewsResponse
+// unwraps it to the inner string, then runs the identical parse as above.
+describe('parseReviewsResponse — batchexecute envelope', () => {
+  const envelope = (rpc: string, payload: string) =>
+    ")]}'\n\n123\n" + JSON.stringify([
+      ['wrb.fr', rpc, payload, null, null, null, 'generic'],
+      ['di', 42], ['af.httprm', 42, 'hash', 9],
+    ]);
+  const batchPage = (wrappers: any[], nextCursor: string | null) =>
+    envelope('/MapsUgcPostService.ListUgcPosts', JSON.stringify([null, nextCursor, wrappers]));
+
+  test('unwraps the envelope and parses the inner payload + cursor', () => {
+    const { reviews, nextCursor } = parseReviewsResponse(batchPage([mkWrapper('a', 5, 9), mkWrapper('b', 1, 4)], 'cur1'));
+    expect(reviews.map((r) => r.reviewId)).toEqual(['a', 'b']);
+    expect(reviews[0]!.stars).toBe(5);
+    expect(nextCursor).toBe('cur1');
+  });
+  test('an empty/expired payload ([null,…,true]) → no reviews', () => {
+    expect(parseReviewsResponse(batchPage([], null))).toEqual({ reviews: [], nextCursor: null });
+    const expired = envelope('/MapsUgcPostService.ListUgcPosts', JSON.stringify([null, null, null, null, null, true]));
+    expect(parseReviewsResponse(expired)).toEqual({ reviews: [], nextCursor: null });
+  });
+  test('envelope without a ListUgcPosts payload → empty, never throws', () => {
+    expect(parseReviewsResponse(envelope('/Some.Other.Rpc', '[]'))).toEqual({ reviews: [], nextCursor: null });
+  });
+});
+
 describe('chipsFromPreview', () => {
   const mk = (chips: any[]) => { const d: any = []; d[6] = []; d[6][153] = []; d[6][153][0] = chips; return d; };
   const chip = (token: string, label: string, count: number) => {
