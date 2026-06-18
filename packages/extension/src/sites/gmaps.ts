@@ -1,11 +1,12 @@
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import { getReasoningEffort, getProviderChoice } from '../shared/config';
 import {
   type SummarizeRequest,
   type AskRequest,
+  buildSearchReq,
   chipsFromPreview,
   collectSearchTerms,
   collectSort,
@@ -15,7 +16,6 @@ import {
   histogramTotal,
   overallPctFromHistogram,
   overallScoreFromHistogram,
-  PAGE_SIZE,
   parseOrQuery,
   reviewAge,
   sortChipsByImpact,
@@ -197,6 +197,83 @@ const bridgeStorage = (() => {
 // and all DOM.
 const store = createScoreStore({ storage: bridgeStorage, now: Date.now });
 
+// === Botguard creds for the ListUgcPosts batchexecute RPC ===
+// Google retired GET /maps/rpc/listugcposts; reviews now come only from a
+// batchexecute call needing a signed x-maps-bgkey that gmaps-capture lifts off
+// Maps' own review XHR. The token is session-bound — reusable across every
+// place/sort/page/highlight-token until it expires — so we cache ONE set
+// globally (chrome.storage), refresh it whenever a newer capture flies by, and
+// only nudge Maps to emit a fresh one on a cold cache or after expiry.
+const MAPS_CREDS_KEY = 'rc_maps_creds';
+const CREDS_WAIT_MS = 6000;
+let mapsCreds: MapsCapturedCreds | null = null;
+let credsHydrated = false;
+let credsWaiters: ((c: MapsCapturedCreds | null) => void)[] = [];
+let credsRetried = false; // one expiry-recovery per place; reset in resetScores
+
+// Freshest wins: a live capture on this page beats the persisted one.
+const currentCreds = (): MapsCapturedCreds | null => {
+  const live = window.__truescoreMapsCreds;
+  if (live?.bgkey && (!mapsCreds || live.ts > mapsCreds.ts)) mapsCreds = live;
+  return mapsCreds;
+};
+
+const hydrateCreds = async () => {
+  if (credsHydrated) return;
+  credsHydrated = true;
+  if (currentCreds()) return;
+  const saved = await bridgeStorage.get<MapsCapturedCreds>(MAPS_CREDS_KEY);
+  if (saved?.bgkey && !currentCreds()) mapsCreds = saved;
+};
+
+const invalidateCreds = () => {
+  mapsCreds = null;
+  window.__truescoreMapsCreds = undefined;
+  bridgeStorage.set(MAPS_CREDS_KEY, null).catch(() => {});
+};
+
+// Clicking Maps' own Reviews tab makes it fire the bgkey-bearing batchexecute;
+// gmaps-capture intercepts it and dispatches MAPS_CREDS_CAPTURED.
+const triggerReviewsCapture = () => {
+  // Maps fires the bgkey-bearing batchexecute when the reviews list loads or
+  // paginates. Open the Reviews tab if needed, then scroll — a no-op click on an
+  // already-open tab won't refetch, but scrolling forces the next page.
+  document.querySelector<HTMLElement>('button[role="tab"][aria-label*="eview" i]')?.click();
+  const scrollOnce = () => findReviewsScrollContainer()?.scrollBy({ top: 1e6 });
+  scrollOnce();
+  setTimeout(scrollOnce, 1200);
+};
+
+// Usable creds: the cached set if we have one, else nudge Maps to emit one and
+// wait briefly. Falls back to whatever's cached rather than blocking forever.
+const ensureCreds = async (): Promise<MapsCapturedCreds | null> => {
+  await hydrateCreds();
+  const c = currentCreds();
+  if (c) return c;
+  triggerReviewsCapture();
+  return new Promise((resolve) => {
+    credsWaiters.push(resolve);
+    setTimeout(() => {
+      credsWaiters = credsWaiters.filter((w) => w !== resolve);
+      resolve(currentCreds());
+    }, CREDS_WAIT_MS);
+  });
+};
+
+document.addEventListener(MAPS_CREDS_CAPTURED, (e) => {
+  const c = (e as CustomEvent).detail as MapsCapturedCreds;
+  if (!c?.bgkey) return;
+  mapsCreds = c;
+  bridgeStorage.set(MAPS_CREDS_KEY, c).catch(() => {});
+  credsWaiters.splice(0).forEach((resolve) => resolve(c));
+  // Self-heal: a fresh capture (auto-triggered or from the user opening Reviews)
+  // kicks off scoring if we haven't completed a live fetch for this place yet —
+  // covers a cold cache and the expiry-recovery refetch.
+  const fetched = fetchState.relevant.done && fetchState.newest.done;
+  const fetching = fetchState.relevant.isFetching || fetchState.newest.isFetching;
+  if (getFeatureId() && !fetched && !fetching && !kickoffPending) startFetching();
+});
+
 let highlightsState: HighlightsCache | null = null;
 // Candidate chips harvested from the place preview, shown (in-memory, never
 // persisted) as loading chips while their scores fetch — so highlights appear
@@ -331,6 +408,7 @@ const resetScores = () => {
   staleHistogramKey = lastHistogramKey;
   lastHistogramKey = null;
   highlightCandidates = [];
+  credsRetried = false;
   store.reset();
   for (const key of SORT_KEYS) {
     fetchState[key] = makeFetchState();
@@ -498,27 +576,16 @@ const getFeatureId = () => {
   return matches.length ? decodeURIComponent(matches[matches.length - 1][1]) : null;
 };
 
-const localeFromDom = (): Locale => ({
-  hl: document.documentElement.lang || 'en',
-  gl: location.href.match(/gl=([a-zA-Z]{2})/)?.[1] || '',
-});
+// document.documentElement.lang is a full locale on Maps (e.g. "en-ES"); Google's
+// RPC wants a bare language in hl and the region separately in gl, so split it —
+// "en-ES" → hl=en, gl=ES. Passing "en-ES" as hl returned malformed responses.
+const localeFromDom = (): Locale => {
+  const [hl, region] = (document.documentElement.lang || 'en').split('-');
+  return { hl: hl || 'en', gl: location.href.match(/gl=([a-zA-Z]{2})/)?.[1] || region || '' };
+};
 
 // Extension transport: fetch from the maps tab on the user's own session.
 const tabTransport: Transport = (url, init) => fetch(url, init).then((r) => r.text());
-
-const buildUrlForSearch = (featureId: string, query: string, cursor = '') => {
-  const { hl = 'en', gl = '' } = localeFromDom();
-  const c = encodeURIComponent(cursor);
-  const pb = [
-    `!1m7!1s${featureId}!3s${encodeURIComponent(query)}!6m4!4m1!1e1!4m1!1e3`,
-    `!2m2!1i${PAGE_SIZE}!2s${c}`,
-    `!5m2!1s${c}!7e81`,
-    `!8m9!2b1!3b1!5b1!7b1!12m4!1b1!2b1!4m1!1e1`,
-    `!11m4!1e3!2e1!6m1!1i2`,
-    `!13m1!1e1`,
-  ].join('');
-  return `https://www.google.com/maps/rpc/listugcposts?authuser=0&hl=${hl}&gl=${gl}&pb=${pb}`;
-};
 
 const PREVIEW_WAIT_MS = 3000;
 
@@ -562,14 +629,18 @@ const fetchPlacePreviewActive = async (placeUrl: string): Promise<any | null> =>
   }
 };
 
-const fetchAllForToken = (featureId: string, token: string): Promise<Review[]> =>
-  collectToken(featureId, token, tabTransport, { locale: localeFromDom() });
+const fetchAllForToken = (featureId: string, token: string, creds: MapsCapturedCreds): Promise<Review[]> =>
+  collectToken(featureId, token, tabTransport, { locale: localeFromDom(), creds });
 
 // Gmail-style ` OR ` splits the query and each term expands to its
 // accent/hyphen/space spellings; collectSearchTerms runs one Google search per
-// term in parallel and merges by reviewId, so the count is the union.
-const fetchAllForSearch = (featureId: string, query: string): Promise<Review[]> =>
-  collectSearchTerms(expandSearchTerms(query), (term, c) => buildUrlForSearch(featureId, term, c), tabTransport);
+// term in parallel and merges by reviewId, so the count is the union. Needs the
+// captured bgkey like every other review fetch.
+const fetchAllForSearch = async (featureId: string, query: string): Promise<Review[]> => {
+  const creds = await ensureCreds();
+  if (!creds) return [];
+  return collectSearchTerms(expandSearchTerms(query), (term, c) => buildSearchReq(featureId, term, creds, c), tabTransport);
+};
 
 (window as any).__truescoreGmaps = {
   ...((window as any).__truescoreGmaps || {}),
@@ -614,6 +685,12 @@ const computeHighlights = async (force = false) => {
       if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'No highlights';
       return;
     }
+    const creds = await ensureCreds();
+    if (!stillCurrent()) return;
+    if (!creds) {
+      if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'Open Reviews to enable';
+      return;
+    }
 
     const items: Highlight[] = [];
     highlightsState = { items, ts: Date.now() };
@@ -625,7 +702,7 @@ const computeHighlights = async (force = false) => {
 
     await Promise.all(chips.map((chip) => limit(async () => {
       try {
-        const reviews = await fetchAllForToken(featureId, chip.token);
+        const reviews = await fetchAllForToken(featureId, chip.token, creds);
         if (!stillCurrent()) return;
         const item = { ...chip, fetched: reviews.length, score: statsForReviews(reviews), reviews };
         items.push(item);
@@ -652,9 +729,10 @@ const computeHighlights = async (force = false) => {
     if (stillCurrent() && cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'Failed — retry';
   } finally {
     if (highlightsComputingFor === featureId) highlightsComputingFor = null;
-    // Resume parent's main-score fetches that we paused.
-    for (const k of pausedSorts) {
-      if (!fetchState[k].done) fetchAllReviews(k);
+    // Resume parent's main-score fetches that we paused (creds are cached by now).
+    const resumeCreds = currentCreds();
+    if (resumeCreds) for (const k of pausedSorts) {
+      if (!fetchState[k].done) fetchAllReviews(k, resumeCreds);
     }
   }
 };
@@ -707,7 +785,7 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
   return data.summary;
 };
 
-const fetchAllReviews = async (sortKey: SortKey) => {
+const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
   const featureId = getFeatureId();
   if (!featureId || fetchState[sortKey].isFetching) return;
 
@@ -726,6 +804,7 @@ const fetchAllReviews = async (sortKey: SortKey) => {
       startCursor: state.cursor,
       signal: controller.signal,
       locale: localeFromDom(),
+      creds,
       stabilize: false,
       onPage: (_running, { index, nextCursor, pageReviews }) => {
         store.ingest(sortKey, pageReviews);
@@ -757,15 +836,38 @@ const fetchAllReviews = async (sortKey: SortKey) => {
   // cloud hydrate first so a cloud hit (with summaries) isn't clobbered by a
   // redundant recompute; computeHighlights no-ops if highlights already exist.
   if (fetchState.relevant.done && fetchState.newest.done) {
+    // Zero reviews from a real place means the cached bgkey expired — drop it and
+    // nudge Maps to mint a fresh one (the capture listener then refetches). Once
+    // per place, so a genuinely review-less place doesn't loop.
+    if (!store.hasLiveData() && currentCreds() && !credsRetried) {
+      credsRetried = true;
+      invalidateCreds();
+      for (const k of SORT_KEYS) fetchState[k] = makeFetchState(); // let the self-heal relaunch
+      triggerReviewsCapture();
+      return;
+    }
     const fid = getFeatureId();
     if (fid) store.persistIfReady(`${SCORE_CACHE_PREFIX}${fid}`).catch((e) => console.warn('[gmaps] persist score cache failed', e));
     cloudHydratePromise.then(() => computeHighlights());
   }
 };
 
-const startFetching = () => {
-  if (!getFeatureId()) return;
-  for (const key of SORT_KEYS) fetchAllReviews(key);
+// Both sorts replay the batchexecute RPC, which needs a captured bgkey, so we
+// resolve creds once up front. ensureCreds nudges Maps' Reviews tab on a cold
+// cache; if nothing arrives the MAPS_CREDS_CAPTURED listener restarts us later.
+let kickoffPending = false;
+const startFetching = async () => {
+  if (!getFeatureId() || kickoffPending) return;
+  if (fetchState.relevant.isFetching || fetchState.newest.isFetching) return;
+  kickoffPending = true;
+  const featureId = getFeatureId();
+  try {
+    const creds = await ensureCreds();
+    if (!creds || getFeatureId() !== featureId) return;
+    for (const key of SORT_KEYS) fetchAllReviews(key, creds);
+  } finally {
+    kickoffPending = false;
+  }
 };
 
 const cardEls: CardEls = {};
@@ -900,7 +1002,9 @@ const ensureChipReviews = async (h: Highlight): Promise<void> => {
   if (h.reviews) return;
   const featureId = getFeatureId();
   if (!featureId) return;
-  try { h.reviews = await fetchAllForToken(featureId, h.token); }
+  const creds = await ensureCreds();
+  if (!creds) return;
+  try { h.reviews = await fetchAllForToken(featureId, h.token, creds); }
   catch (e) { console.error('[highlights] refetch reviews failed for', h.label, e); }
 };
 

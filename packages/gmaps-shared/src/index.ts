@@ -120,38 +120,67 @@ export const accentVariantQuery = (term: string): string => {
 export const expandSearchTerms = (query: string): string[] =>
   [...new Set(parseOrQuery(query).flatMap((t) => parseOrQuery(accentVariantQuery(t))))].slice(0, MAX_OR_TERMS);
 
-const localeQuery = (locale: Locale = {}) => `hl=${locale.hl || 'en'}&gl=${locale.gl || ''}`;
+// Google retired GET /maps/rpc/listugcposts — it now returns [null,…,1] for
+// everyone, Maps' own page included. Reviews come only from the batchexecute
+// RPC (rpcid qv9Egd → /MapsUgcPostService.ListUgcPosts), which requires a
+// botguard-signed `x-maps-bgkey` minted by Google's page JS. We can't forge it;
+// we lift creds off a request Google's own UI made (extension: capture bridge;
+// web: headless browser) and replay them. One token is session-bound — reusable
+// across sorts, pages, highlight-tokens, AND different places, until it expires
+// (verified live), so callers cache a single set of creds globally.
+export type MapsCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; hl?: string };
+export type MapsReq = { url: string; init: { method: string; headers: Record<string, string>; body: string } };
 
-export const buildListUrl = (featureId: string, sort: SortKey, cursor = '', locale: Locale = {}) => {
-  const sortVal = sort === 'newest' ? 2 : 1;
-  const pb = [
-    `!1m6!1s${featureId}!6m4!4m1!1e1!4m1!1e3`,
-    `!2m2!1i${PAGE_SIZE}!2s${encodeURIComponent(cursor)}`,
-    `!5m2!1s!7e81`,
-    `!8m9!2b1!3b1!5b1!7b1!12m4!1b1!2b1!4m1!1e1`,
-    `!11m4!1e3!2e1!6m1!1i2`,
-    `!13m1!1e${sortVal}`,
-  ].join('');
-  return `https://www.google.com/maps/rpc/listugcposts?authuser=0&${localeQuery(locale)}&pb=${pb}`;
+let batchReqId = 1000;
+
+// The inner ListUgcPosts request array. A free-text query sits in slot 2 and a
+// highlight token in slot 4 (both optional); the trailing [2]/[1] picks
+// newest/relevant. Page size + cursor sit in slot 1; sessionId pairs with the
+// captured bgkey/bgbind.
+const innerListReq = (featureId: string, sort: SortKey, token: string | null, query: string | null, cursor: string, sessionId: string): string =>
+  JSON.stringify([
+    [[featureId], null, query || null, null, token ? [[token]] : null, [null, null, null, [[1], [3]]]],
+    [PAGE_SIZE, cursor],
+    null, null,
+    [sessionId, null, null, null, null, null, 81],
+    null, null,
+    [null, 1, 1, null, 1, null, 1, null, null, null, null, [1, 1, null, [[1]]]],
+    null, null,
+    [3, 1, null, null, null, [2]],
+    null,
+    [sort === 'newest' ? 2 : 1],
+  ]);
+
+const batchExecuteReq = (featureId: string, sort: SortKey, token: string | null, query: string | null, cursor: string, creds: MapsCreds): MapsReq => {
+  const fReq = JSON.stringify([[['/MapsUgcPostService.ListUgcPosts', innerListReq(featureId, sort, token, query, cursor, creds.sessionId), null, 'generic']]]);
+  return {
+    url: `https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=qv9Egd&hl=${creds.hl || 'en'}&_reqid=${(batchReqId += 100)}&rt=c`,
+    init: {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        'x-maps-bgkey': creds.bgkey,
+        'x-maps-bgbind': creds.bgbind,
+        'x-maps-diversion-context-bin': 'CAE=',
+        'x-same-domain': '1',
+      },
+      body: `f.req=${encodeURIComponent(fReq)}&at=${encodeURIComponent(creds.at)}&`,
+    },
+  };
 };
 
-// Search URL is intentionally NOT shared. Web and extension reverse-engineered
-// different pb encodings for arbitrary review search; both work but the slots
-// differ enough that unifying risks behavior drift. Each package owns its own.
+export const buildListReq = (featureId: string, sort: SortKey, creds: MapsCreds, cursor = ''): MapsReq =>
+  batchExecuteReq(featureId, sort, null, null, cursor, creds);
 
-export const buildTokenUrl = (featureId: string, token: string, cursor = '', locale: Locale = {}) => {
-  const pb = [
-    `!1m9!1s${featureId}`,
-    `!5m2!1m1!1s${encodeURIComponent(token)}`,
-    `!6m4!4m1!1e1!4m1!1e3`,
-    `!2m2!1i${PAGE_SIZE}!2s${encodeURIComponent(cursor)}`,
-    `!5m2!1s!7e81`,
-    `!8m9!2b1!3b1!5b1!7b1!12m4!1b1!2b1!4m1!1e1`,
-    `!11m4!1e3!2e1!6m1!1i2`,
-    `!13m1!1e1`,
-  ].join('');
-  return `https://www.google.com/maps/rpc/listugcposts?authuser=0&${localeQuery(locale)}&pb=${pb}`;
-};
+// Highlight-token queries use the newest order within the filtered set.
+export const buildTokenReq = (featureId: string, token: string, creds: MapsCreds, cursor = ''): MapsReq =>
+  batchExecuteReq(featureId, 'newest', token, null, cursor, creds);
+
+// Free-text review search: query in slot 2, relevant ordering (matches Maps'
+// own review-search box). Was a per-package pb; the batchexecute shape is
+// identical to sort/token now, so both packages share this.
+export const buildSearchReq = (featureId: string, query: string, creds: MapsCreds, cursor = ''): MapsReq =>
+  batchExecuteReq(featureId, 'relevant', null, query, cursor, creds);
 
 // Review text lives at r[2][15]: an array of [text, mentions, range] tuples.
 // [0] is the original-language text; [1] (if present) is the translation in the
@@ -188,7 +217,18 @@ const matchTermsFromEntry = (entry: any[] | null): string[] => {
 };
 
 export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCursor: string | null } => {
-  const cleaned = text.replace(/^\)\]\}'\s*/, '');
+  // batchexecute wraps the payload: )]}'\n\n<len>\n[["wrb.fr","/MapsUgcPost…",
+  // "<escaped JSON string>",…],…]. Unwrap to that inner string, which is the
+  // same [null, cursor, [[wrappers]], …] shape the legacy endpoint returned, so
+  // everything below is unchanged. An expired/empty token yields [null,…,true]
+  // (no [2]) and falls through to the empty-arr guard.
+  let inner = text;
+  if (text.includes('"wrb.fr"')) {
+    const m = text.match(/"\/MapsUgcPostService\.ListUgcPosts","((?:\\.|[^"\\])*)"/);
+    if (!m) return { reviews: [], nextCursor: null };
+    try { inner = JSON.parse(`"${m[1]}"`); } catch { return { reviews: [], nextCursor: null }; }
+  }
+  const cleaned = inner.replace(/^\)\]\}'\s*/, '');
   let data: any;
   try { data = JSON.parse(cleaned); } catch { return { reviews: [], nextCursor: null }; }
   const arr = data[2];

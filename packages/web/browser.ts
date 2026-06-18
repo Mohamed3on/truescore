@@ -91,7 +91,12 @@ export function assertGoogleHost(url: string): void {
 const RETRY_STATUSES = new Set([429, 500, 502, 503, 504, 522, 524]);
 const MAX_ATTEMPTS = 4;
 
-export async function googleFetch(url: string): Promise<string> {
+// init carries the batchexecute POST (method/body/headers from the shared
+// builder); preview/place + the maps HTML are plain GETs and pass none.
+export async function googleFetch(
+  url: string,
+  init?: { method?: string; body?: string; headers?: Record<string, string> },
+): Promise<string> {
   assertGoogleHost(url);
   const cookie = await getGoogleCookieHeader();
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -100,7 +105,9 @@ export async function googleFetch(url: string): Promise<string> {
     try {
       r = await fetch(url, {
         proxy: PROXY_URL,
-        headers: { ...FETCH_HEADERS_BASE, Cookie: cookie },
+        method: init?.method,
+        body: init?.body,
+        headers: { ...FETCH_HEADERS_BASE, ...init?.headers, Cookie: cookie },
       });
     } catch (e) {
       networkErr = e instanceof Error ? e : new Error(String(e));

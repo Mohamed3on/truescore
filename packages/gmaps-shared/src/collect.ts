@@ -1,9 +1,11 @@
 import {
-  buildListUrl,
-  buildTokenUrl,
+  buildListReq,
+  buildTokenReq,
   parseReviewsResponse,
   scorePct,
   type Locale,
+  type MapsCreds,
+  type MapsReq,
   type Review,
   type SortKey,
 } from './index';
@@ -12,7 +14,7 @@ import {
 // tab-session fetch in the extension. The shared loop never knows which; the
 // optional AbortSignal lets a caller (the extension) pause a sort to free the
 // shared google.com connection for highlight fetches.
-export type Transport = (url: string, init?: { signal?: AbortSignal }) => Promise<string>;
+export type Transport = (url: string, init?: { signal?: AbortSignal; method?: string; body?: string; headers?: Record<string, string> }) => Promise<string>;
 
 export type CollectPage = { index: number; nextCursor: string | null; pageReviews: Review[] };
 // Returning 'stop' ends the loop after this page — lets a caller layer its own
@@ -35,7 +37,7 @@ const MIN_PAGES_BEFORE_STABILIZE = 2;
 // aborted signal propagates as the transport's rejection; callers that pause
 // catch it and keep whatever pages already landed (already surfaced via onPage).
 export async function collectPaged(
-  urlFor: (cursor: string) => string,
+  reqFor: (cursor: string) => string | MapsReq,
   transport: Transport,
   opts: CollectOptions = {},
 ): Promise<{ reviews: Review[]; nextCursor: string | null }> {
@@ -44,7 +46,9 @@ export async function collectPaged(
   let cursor = startCursor;
   let lastPct: number | null = null;
   for (let index = 0; index < maxPages; index++) {
-    const { reviews, nextCursor } = parseReviewsResponse(await transport(urlFor(cursor), { signal }));
+    const r = reqFor(cursor);
+    const req = typeof r === 'string' ? { url: r, init: undefined } : r;
+    const { reviews, nextCursor } = parseReviewsResponse(await transport(req.url, { signal, ...req.init }));
     if (!reviews.length) break;
     for (const r of reviews) collected.set(r.reviewId, r);
     const running = [...collected.values()];
@@ -63,37 +67,45 @@ export async function collectPaged(
 // Sort + token URLs are shared (buildListUrl / buildTokenUrl); review search is
 // not — the two packages reverse-engineered different pb slots, so each calls
 // collectPaged with its own search builder.
-export type ShareOptions = CollectOptions & { locale?: Locale };
+export type ShareOptions = CollectOptions & { locale?: Locale; creds?: MapsCreds };
+
+// creds are required: the legacy GET endpoint is retired, so every sort/token
+// fetch replays the batchexecute RPC with a captured, session-bound bgkey.
+const withHl = (creds: MapsCreds, locale?: Locale): MapsCreds => ({ ...creds, hl: creds.hl ?? locale?.hl });
 
 export function collectSort(featureId: string, sort: SortKey, transport: Transport, opts: ShareOptions = {}) {
-  const { locale, ...rest } = opts;
-  return collectPaged((c) => buildListUrl(featureId, sort, c, locale), transport, { stabilize: true, ...rest });
+  const { locale, creds, ...rest } = opts;
+  if (!creds) throw new Error('collectSort: MapsCreds required (listugcposts retired)');
+  const c2 = withHl(creds, locale);
+  return collectPaged((c) => buildListReq(featureId, sort, c2, c), transport, { stabilize: true, ...rest });
 }
 
 export async function collectToken(featureId: string, token: string, transport: Transport, opts: ShareOptions = {}): Promise<Review[]> {
-  const { locale, ...rest } = opts;
-  const { reviews } = await collectPaged((c) => buildTokenUrl(featureId, token, c, locale), transport, { maxPages: 30, ...rest });
+  const { locale, creds, ...rest } = opts;
+  if (!creds) throw new Error('collectToken: MapsCreds required (listugcposts retired)');
+  const c2 = withHl(creds, locale);
+  const { reviews } = await collectPaged((c) => buildTokenReq(featureId, token, c2, c), transport, { maxPages: 30, ...rest });
   return reviews;
 }
 
 // OR-search fan-out: run one paged search per term in parallel and union the
 // results, deduped by reviewId — the kernel both packages' search paths would
-// otherwise duplicate above collectPaged (cf. collectToken). The search URL is
-// deliberately not shared (each package owns its pb encoding), so the caller
-// passes `urlFor(term, cursor)`. `onMerged`, if given, fires after every page
-// with the running union so a caller can stream progress; the union grows
-// incrementally from each page, and the snapshot spread is paid only when a
-// caller is listening. A plain (single-term) query is just the N=1 case.
+// otherwise duplicate above collectPaged (cf. collectToken). The caller passes
+// `reqFor(term, cursor)` (a batchexecute request with its captured creds baked
+// in). `onMerged`, if given, fires after every page with the running union so a
+// caller can stream progress; the union grows incrementally from each page, and
+// the snapshot spread is paid only when a caller is listening. A plain
+// (single-term) query is just the N=1 case.
 export async function collectSearchTerms(
   terms: string[],
-  urlFor: (term: string, cursor: string) => string,
+  reqFor: (term: string, cursor: string) => string | MapsReq,
   transport: Transport,
   onMerged?: (merged: Review[]) => void,
 ): Promise<Review[]> {
   const union = new Map<string, Review>();
   await Promise.all(
     terms.map((term) =>
-      collectPaged((c) => urlFor(term, c), transport, {
+      collectPaged((c) => reqFor(term, c), transport, {
         maxPages: 30,
         onPage: (_running, { pageReviews }) => {
           for (const r of pageReviews) union.set(r.reviewId, r);

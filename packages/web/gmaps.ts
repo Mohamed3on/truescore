@@ -1,5 +1,5 @@
 import {
-  PAGE_SIZE,
+  buildSearchReq,
   expandSearchTerms,
   mergeByReviewId,
   statsForReviews,
@@ -12,27 +12,13 @@ import {
   type Transport,
 } from '@truescore/gmaps-shared';
 import { googleFetch } from './browser';
+import { getMapsCreds } from './maps-creds';
 
 export type { Review, SortKey, SortStats };
 
 // The server's transport: proxy + cookies + retry all live in googleFetch. It
 // has no abort path — the server never pauses a sort — so the signal goes unused.
 const transport: Transport = googleFetch;
-
-// Web search pb encoding — intentionally separate from the extension's (the two
-// reverse-engineered different slots; see the gmaps-shared note). Cursor rides
-// only the !2s slot here.
-const buildUrlForSearch = (featureId: string, query: string, cursor = '') => {
-  const pb = [
-    `!1m7!1s${featureId}!3s${encodeURIComponent(query)}!6m4!4m1!1e1!4m1!1e3`,
-    `!2m2!1i${PAGE_SIZE}!2s${encodeURIComponent(cursor)}`,
-    `!5m2!1s!7e81`,
-    `!8m9!2b1!3b1!5b1!7b1!12m4!1b1!2b1!4m1!1e1`,
-    `!11m4!1e3!2e1!6m1!1i2`,
-    `!13m1!1e1`,
-  ].join('');
-  return `https://www.google.com/maps/rpc/listugcposts?authuser=0&hl=en&gl=&pb=${pb}`;
-};
 
 // Called once after every page lands so the caller can emit interim state.
 // `reviews` is the running accumulator (deduped), not just the latest page.
@@ -64,16 +50,20 @@ export function fetchAllForSearch(
   query: string,
   onPage?: SortPageCallback,
 ): Promise<Review[]> {
+  const creds = getMapsCreds();
+  if (!creds) return Promise.resolve([]);
   return collectSearchTerms(
     expandSearchTerms(query),
-    (term, c) => buildUrlForSearch(featureId, term, c),
+    (term, c) => buildSearchReq(featureId, term, creds, c),
     transport,
     onPage ? (merged) => onPage('relevant', merged) : undefined,
   );
 }
 
 export async function fetchAllForToken(featureId: string, token: string): Promise<Review[]> {
-  return collectToken(featureId, token, transport);
+  const creds = getMapsCreds();
+  if (!creds) return [];
+  return collectToken(featureId, token, transport, { creds });
 }
 
 export async function scorePlace(
@@ -97,9 +87,14 @@ export async function scorePlace(
     });
   };
 
+  const creds = getMapsCreds();
+  if (!creds) {
+    const z: SortStats = { totalReviews: 0, trustedReviews: 0, scorePct: 0 };
+    return { featureId, ...z, relevant: z, newest: z, reviews: [] };
+  }
   const [relevant, newest] = await Promise.all([
-    collectSort(featureId, 'relevant', transport, { onPage: (rs) => { latestRelevant = rs; emit(); } }).then((r) => r.reviews),
-    collectSort(featureId, 'newest', transport, { onPage: (rs) => { latestNewest = rs; emit(); } }).then((r) => r.reviews),
+    collectSort(featureId, 'relevant', transport, { creds, onPage: (rs) => { latestRelevant = rs; emit(); } }).then((r) => r.reviews),
+    collectSort(featureId, 'newest', transport, { creds, onPage: (rs) => { latestNewest = rs; emit(); } }).then((r) => r.reviews),
   ]);
   const all = mergeByReviewId(relevant, newest);
   const m = statsForReviews(all);

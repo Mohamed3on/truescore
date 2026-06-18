@@ -1,11 +1,16 @@
-import { PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
+import { MAPS_CREDS_CAPTURED, PREVIEW_CAPTURED, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
 
-// MAIN world, document_start. Snoops /maps/preview/place RPC responses (the
-// JSON Maps' own app fires on every place page) so harvesters can read chip
-// tokens at [6][153][0] without re-fetching or driving the chip UI.
+// MAIN world, document_start — early enough that our fetch/XHR patches wrap the
+// references before Maps' own app grabs them. Two captures:
 //
-// Captures keyed by featureId so back-to-back navigations don't overwrite
-// each other's data. Bounded LRU prevents long sessions from accumulating MBs.
+// 1. /maps/preview/place RPC responses (chip tokens at [6][153][0]) — keyed by
+//    featureId so back-to-back navigations don't clobber each other.
+// 2. Botguard creds off Google's ListUgcPosts batchexecute XHR (bgkey/bgbind in
+//    request headers, at/sessionId in the body). Google retired the legacy GET
+//    listugcposts endpoint; the only way to fetch reviews now is to replay this
+//    batchexecute, and its x-maps-bgkey can't be forged — only lifted here. One
+//    capture is session-bound (reusable across places/sorts/tokens), so gmaps.ts
+//    caches it globally and refreshes whenever a newer one flies by.
 (() => {
   if (window.__truescorePreviewCapture) return;
   window.__truescorePreviewCapture = true;
@@ -40,9 +45,46 @@ import { PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
     } catch {}
   };
 
+  // Normalise fetch's many header shapes (Headers | [k,v][] | object) to lowercase keys.
+  const headerMap = (hh: any): Record<string, string> => {
+    const h: Record<string, string> = {};
+    if (!hh) return h;
+    if (typeof hh.forEach === 'function' && !Array.isArray(hh)) hh.forEach((v: string, k: string) => (h[k.toLowerCase()] = v));
+    else if (Array.isArray(hh)) for (const [k, v] of hh) h[String(k).toLowerCase()] = v;
+    else for (const k of Object.keys(hh)) h[k.toLowerCase()] = hh[k];
+    return h;
+  };
+
+  // The only request carrying x-maps-bgkey is the review-list batchexecute, so
+  // that header alone identifies it. sessionId is the 81-tagged token in the
+  // bgbind (or the f.req body): ["<sid>",null,null,null,null,null,81].
+  const SID_RE = /\["([A-Za-z0-9_-]{16,}?)",null,null,null,null,null,81\]/;
+  const storeCreds = (urlStr: string, headers: Record<string, string>, body: unknown) => {
+    if (!/batchexecute/.test(urlStr)) return;
+    const bgkey = headers['x-maps-bgkey'];
+    if (!bgkey) return;
+    const bgbind = headers['x-maps-bgbind'] || '';
+    const bodyStr = typeof body === 'string' ? body : '';
+    let decoded = bodyStr;
+    try { decoded = decodeURIComponent(bodyStr); } catch {}
+    const sessionId = (bgbind.match(SID_RE) || decoded.match(SID_RE) || [])[1];
+    if (!sessionId) return;
+    const atRaw = (bodyStr.match(/(?:^|&)at=([^&]+)/) || [])[1];
+    const creds: MapsCapturedCreds = {
+      bgkey,
+      bgbind,
+      sessionId,
+      at: atRaw ? decodeURIComponent(atRaw) : '',
+      ts: Date.now(),
+    };
+    window.__truescoreMapsCreds = creds;
+    document.dispatchEvent(new CustomEvent(MAPS_CREDS_CAPTURED, { detail: creds }));
+  };
+
   const origFetch = window.fetch;
   window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
     const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+    try { storeCreds(url, headerMap(init?.headers), init?.body); } catch {}
     const promise = origFetch.call(this, input, init);
     if (isPreviewUrl(url)) {
       promise.then((r) => r.clone().text()).then((t) => store(url, t)).catch(() => {});
@@ -51,12 +93,23 @@ import { PREVIEW_CAPTURED } from '../shared/gmaps-bridge-protocol';
   };
 
   const origOpen = XMLHttpRequest.prototype.open;
-  (XMLHttpRequest.prototype as any).open = function (method: string, url: string | URL, ...rest: any[]) {
+  const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+  const origSend = XMLHttpRequest.prototype.send;
+  type CapXHR = XMLHttpRequest & { __tsUrl?: string; __tsHeaders?: Record<string, string> };
+  (XMLHttpRequest.prototype as any).open = function (this: CapXHR, method: string, url: string | URL, ...rest: any[]) {
+    this.__tsUrl = String(url);
+    this.__tsHeaders = {};
     if (isPreviewUrl(url)) {
-      this.addEventListener('load', () => {
-        try { store(String(url), (this as XMLHttpRequest).responseText); } catch {}
-      });
+      this.addEventListener('load', () => { try { store(String(url), this.responseText); } catch {} });
     }
     return (origOpen as (...a: any[]) => void).call(this, method, url, ...rest);
+  };
+  (XMLHttpRequest.prototype as any).setRequestHeader = function (this: CapXHR, name: string, value: string) {
+    if (this.__tsHeaders) this.__tsHeaders[name.toLowerCase()] = value;
+    return origSetHeader.call(this, name, value);
+  };
+  (XMLHttpRequest.prototype as any).send = function (this: CapXHR, body?: Document | XMLHttpRequestBodyInit | null) {
+    try { if (this.__tsUrl) storeCreds(this.__tsUrl, this.__tsHeaders || {}, body); } catch {}
+    return origSend.call(this, body as any);
   };
 })();
