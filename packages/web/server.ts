@@ -24,6 +24,8 @@ import {
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
+import { setMapsCreds } from './maps-creds';
+import { setGoogleCookieOverride } from './browser';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
@@ -334,6 +336,26 @@ Bun.serve({
           return streamFreshLookup(featureId, name, resolvedUrl);
         } catch (e) {
           console.error(`[lookup] ${e instanceof Error ? e.message : e}`);
+          return json(errBody(e), 400);
+        }
+      },
+    },
+    // The extension seeds a live logged-in session here: its captured bgkey +
+    // matching Google cookies, paired so the server can replay batchexecute
+    // (the legacy endpoint is retired and the server can't mint a bgkey itself).
+    // Off unless TRUESCORE_SEED_SECRET is set; creds are held in memory only.
+    '/api/maps-creds': {
+      POST: async (req) => {
+        const secret = process.env.TRUESCORE_SEED_SECRET;
+        if (!secret) return json({ error: 'seeding disabled' }, 404);
+        if (req.headers.get('x-truescore-seed') !== secret) return json({ error: 'forbidden' }, 403);
+        try {
+          const { bgkey, bgbind, sessionId, at, cookies } = (await req.json()) as Record<string, string>;
+          if (!bgkey || !bgbind || !sessionId || !at || !cookies) return json({ error: 'incomplete creds' }, 400);
+          setMapsCreds({ bgkey, bgbind, sessionId, at, hl: 'en' });
+          setGoogleCookieOverride(cookies);
+          return json({ ok: true });
+        } catch (e) {
           return json(errBody(e), 400);
         }
       },

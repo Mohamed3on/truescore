@@ -31,6 +31,14 @@ type CachedCookies = { header: string; ts: number };
 let cookiesCache: CachedCookies | null = null;
 let cookiesRefreshing: Promise<string> | null = null;
 
+// When the extension seeds a live logged-in session (cookies that match its
+// captured bgkey), use those verbatim instead of the baked anonymous jar — the
+// botguard token only validates against the session that minted it.
+let cookieOverride: string | null = null;
+export function setGoogleCookieOverride(header: string | null): void {
+  cookieOverride = header && header.trim() ? header.trim() : null;
+}
+
 async function bakeCookies(): Promise<string> {
   const jar: Record<string, string> = { ...SEED_COOKIES };
   const cookieHeader = () => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
@@ -50,6 +58,7 @@ async function bakeCookies(): Promise<string> {
 }
 
 export async function getGoogleCookieHeader(): Promise<string> {
+  if (cookieOverride) return cookieOverride;
   if (!cookiesCache) {
     try {
       const f = Bun.file(COOKIES_PATH);

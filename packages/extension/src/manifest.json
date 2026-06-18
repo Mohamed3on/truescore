@@ -10,8 +10,11 @@
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
   },
-  "permissions": ["tabs", "scripting", "webNavigation", "storage", "unlimitedStorage", "alarms"],
+  "permissions": ["tabs", "scripting", "webNavigation", "storage", "unlimitedStorage", "alarms", "cookies"],
   "host_permissions": [
+    "*://*.google.com/*",
+    "https://truescore.mohamed3on.com/*",
+    "http://localhost/*",
     "*://www.airbnb.com/rooms/*",
     "*://*.amazon.fr/*",
     "*://*.amazon.com/*",
