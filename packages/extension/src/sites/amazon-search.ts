@@ -83,6 +83,7 @@ const resumeObs = () => {
 const sortAmazonResults = async () => {
   const items = document.querySelectorAll('.s-result-item[data-asin]:not([data-asin=""]):not(.AdHolder)');
   const seenASINs = new Set<string>();
+  const seenKeys = new Set<string>();
   const fetchPromises: Promise<[number, Element]>[] = [];
   const noRatingItems: [number, Element][] = [];
   const cache = getCache();
@@ -105,6 +106,20 @@ const sortAmazonResults = async () => {
       item.querySelector('.sg-row .a-spacing-top-micro .a-link-normal span.a-size-base');
 
     if (!numberOfRatingsElement) { noRatingItems.push([0, item]); continue; }
+
+    // Fallback dedup: color/style variants Amazon lists as separate ASINs without
+    // swatch metadata. Variants share one review pool, so same brand + identical
+    // review count ⇒ same family. (aria-label count is never rewritten by us.)
+    const reviewCount = parseInt(
+      (numberOfRatingsElement.closest('a')?.getAttribute('aria-label') || '').replace(/\D/g, ''), 10
+    ) || 0;
+    const titleKey = (item.querySelector('[data-cy="title-recipe"] h2')?.textContent || '')
+      .toLowerCase().replace(/[^a-z0-9\s]+/g, ' ').trim().split(/\s+/).slice(0, 3).join(' ');
+    if (reviewCount >= 20 && titleKey) {
+      const dupKey = `${titleKey}|${reviewCount}`;
+      if (seenKeys.has(dupKey)) { item.remove(); continue; }
+      seenKeys.add(dupKey);
+    }
 
     fetchPromises.push(
       getRatingScores(productSIN, numberOfRatingsElement, cache).then(({ calculatedScore }) => [calculatedScore, item] as [number, Element])
