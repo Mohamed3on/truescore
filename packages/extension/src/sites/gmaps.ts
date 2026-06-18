@@ -1295,7 +1295,10 @@ const createUIElements = () => {
   questionInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sumBtn.click();
   });
-  questionInput.addEventListener('input', refreshSumBtnState);
+  questionInput.addEventListener('input', () => {
+    if (!questionInput.value.trim()) restoreMainSummary();
+    refreshSumBtnState();
+  });
   c.appendChild(questionInput);
   cardEls.questionInput = questionInput;
   refreshSumBtnState();
@@ -1614,6 +1617,16 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
 };
 
 const collectReviewTexts = (): string[] => textReviewsFor(Object.values(store.mergedReviews()));
+
+// Asking a custom question renders the answer over the main summary panel (the
+// cached summary itself is kept). Clearing the question restores that summary —
+// or hides the panel if none was computed yet.
+const restoreMainSummary = () => {
+  const panel = cardEls.sumPanel;
+  if (!panel) return;
+  if (summaryCache.all) renderSummary(panel, summaryCache.all);
+  else { panel.style.display = 'none'; panel.textContent = ''; }
+};
 
 const refreshSumBtnState = () => {
   const btn = cardEls.sumBtn;
