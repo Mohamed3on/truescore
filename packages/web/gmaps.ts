@@ -94,13 +94,14 @@ export async function fetchAllForToken(featureId: string, token: string): Promis
   if (!creds) { warnNoCreds('token'); return []; }
   // A token fetch coming back empty while the list path works is the recurring
   // highlights failure. A stale session is already flagged by the transport, so
-  // only dump the raw body for a *non-stale* empty — a token Google accepted but
-  // returned nothing for — which is the genuinely puzzling case.
+  // a *non-stale* empty — a token Google accepted but returned nothing for — is
+  // the regression canary worth a line. Log structure only (place, public chip
+  // token, body length), never the raw response payload.
   let lastRaw = '';
   const tap: Transport = async (url, init) => (lastRaw = await transport(url, init));
   const reviews = await collectToken(featureId, token, tap, { creds });
   if (!reviews.length && !isStaleReviewsResponse(lastRaw)) {
-    console.warn(`[token] 0 reviews (non-stale) ${featureId} token=${token} raw[0:200]=${lastRaw.slice(0, 200).replace(/\s+/g, ' ')}`);
+    console.warn(`[token] 0 reviews (non-stale) featureId=${featureId} token=${token} rawLen=${lastRaw.length}`);
   }
   return reviews;
 }
