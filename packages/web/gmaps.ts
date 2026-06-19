@@ -1,6 +1,7 @@
 import {
   buildSearchReq,
   expandSearchTerms,
+  isStaleReviewsResponse,
   mergeByReviewId,
   statsForReviews,
   collectSort,
@@ -16,9 +17,37 @@ import { getMapsCreds } from './maps-creds';
 
 export type { Review, SortKey, SortStats };
 
-// The server's transport: proxy + cookies + retry all live in googleFetch. It
-// has no abort path — the server never pauses a sort — so the signal goes unused.
-const transport: Transport = googleFetch;
+// One throttle for the session-health warnings: a scrape fans out dozens of
+// requests, so an unthrottled stale/no-creds session would log a line per page.
+const HEALTH_LOG_INTERVAL_MS = 30_000;
+let lastStaleLog = 0;
+let lastNoCredsLog = 0;
+const throttledNow = (last: number): number | null => {
+  const now = Date.now();
+  return now - last > HEALTH_LOG_INTERVAL_MS ? now : null;
+};
+const warnNoCreds = (where: string): void => {
+  const now = throttledNow(lastNoCredsLog);
+  if (now === null) return;
+  lastNoCredsLog = now;
+  console.warn(`[maps-creds] no session seeded — ${where} serving empty; reseed by opening a Google Maps tab`);
+};
+
+// The server's transport: proxy + cookies + retry all live in googleFetch. We
+// also sniff each batchexecute body for the expired-session shape and warn once,
+// so a stale seed shows up as "session expired" in the logs instead of a silent
+// run of empties. No abort path — the server never pauses a sort.
+const transport: Transport = async (url, init) => {
+  const body = await googleFetch(url, init);
+  if (isStaleReviewsResponse(body)) {
+    const now = throttledNow(lastStaleLog);
+    if (now !== null) {
+      lastStaleLog = now;
+      console.warn('[maps-creds] session looks expired — Google returned an empty RPC payload; reviews/highlights read empty until the extension re-seeds (open a Maps tab)');
+    }
+  }
+  return body;
+};
 
 // Called once after every page lands so the caller can emit interim state.
 // `reviews` is the running accumulator (deduped), not just the latest page.
@@ -51,7 +80,7 @@ export function fetchAllForSearch(
   onPage?: SortPageCallback,
 ): Promise<Review[]> {
   const creds = getMapsCreds();
-  if (!creds) return Promise.resolve([]);
+  if (!creds) { warnNoCreds('search'); return Promise.resolve([]); }
   return collectSearchTerms(
     expandSearchTerms(query),
     (term, c) => buildSearchReq(featureId, term, creds, c),
@@ -62,15 +91,16 @@ export function fetchAllForSearch(
 
 export async function fetchAllForToken(featureId: string, token: string): Promise<Review[]> {
   const creds = getMapsCreds();
-  if (!creds) return [];
-  // A topic-token fetch coming back empty while the list path works is the
-  // recurring highlights failure; capture the raw RPC body so we can see whether
-  // Google rejected the token, expired the session, or just had no matches.
+  if (!creds) { warnNoCreds('token'); return []; }
+  // A token fetch coming back empty while the list path works is the recurring
+  // highlights failure. A stale session is already flagged by the transport, so
+  // only dump the raw body for a *non-stale* empty — a token Google accepted but
+  // returned nothing for — which is the genuinely puzzling case.
   let lastRaw = '';
   const tap: Transport = async (url, init) => (lastRaw = await transport(url, init));
   const reviews = await collectToken(featureId, token, tap, { creds });
-  if (!reviews.length) {
-    console.warn(`[token] 0 reviews ${featureId} token=${token} raw[0:200]=${lastRaw.slice(0, 200).replace(/\s+/g, ' ')}`);
+  if (!reviews.length && !isStaleReviewsResponse(lastRaw)) {
+    console.warn(`[token] 0 reviews (non-stale) ${featureId} token=${token} raw[0:200]=${lastRaw.slice(0, 200).replace(/\s+/g, ' ')}`);
   }
   return reviews;
 }
@@ -98,6 +128,7 @@ export async function scorePlace(
 
   const creds = getMapsCreds();
   if (!creds) {
+    warnNoCreds('scorePlace');
     const z = statsForReviews([]);
     return { featureId, ...z, relevant: z, newest: z, reviews: [] };
   }

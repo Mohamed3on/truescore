@@ -127,7 +127,10 @@ export async function googleFetch(
     const last = attempt === MAX_ATTEMPTS - 1;
     if (!retryable || last) {
       if (networkErr) throw networkErr;
-      throw new Error(`googleFetch ${status} for ${url.slice(0, 80)}…`);
+      // Google explains 4xx rejections (stale bgkey/at, quota) in the body —
+      // keep a snippet so the handler's catch logs *why*, not just the status.
+      const snippet = (await r!.text().catch(() => '')).slice(0, 200).replace(/\s+/g, ' ');
+      throw new Error(`googleFetch ${status} for ${url.slice(0, 80)}…${snippet ? ` body=${snippet}` : ''}`);
     }
     const delay = 500 * 2 ** attempt + Math.floor(Math.random() * 250);
     console.warn(

@@ -216,23 +216,27 @@ const matchTermsFromEntry = (entry: any[] | null): string[] => {
   return out;
 };
 
-export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCursor: string | null } => {
-  // batchexecute wraps the payload: )]}'\n\n<len>\n[["wrb.fr","/MapsUgcPost…",
-  // "<escaped JSON string>",…],…]. Unwrap to that inner string, which is the
-  // same [null, cursor, [[wrappers]], …] shape the legacy endpoint returned, so
-  // everything below is unchanged. An expired/empty token yields [null,…,true]
-  // (no [2]) and falls through to the empty-arr guard.
+// Unwrap a batchexecute reviews response to its parsed inner payload — the
+// [null, cursor, [[wrappers]], …] array. The transport double-wraps it:
+// )]}'\n\n<len>\n[["wrb.fr","/MapsUgcPost…","<escaped JSON string>",…],…], a
+// length-prefixed envelope whose wrb.fr frame carries the real payload as an
+// escaped JSON string (the same shape the legacy endpoint returned). Returns
+// null when nothing parses. One copy of the unwrap, shared by the review parser
+// and the stale-session detector below.
+const unwrapBatchPayload = (text: string): any[] | null => {
   let inner = text;
   if (text.includes('"wrb.fr"')) {
     const m = text.match(/"\/MapsUgcPostService\.ListUgcPosts","((?:\\.|[^"\\])*)"/);
-    if (!m) return { reviews: [], nextCursor: null };
-    try { inner = JSON.parse(`"${m[1]}"`); } catch { return { reviews: [], nextCursor: null }; }
+    if (!m) return null;
+    try { inner = JSON.parse(`"${m[1]}"`); } catch { return null; }
   }
-  const cleaned = inner.replace(/^\)\]\}'\s*/, '');
-  let data: any;
-  try { data = JSON.parse(cleaned); } catch { return { reviews: [], nextCursor: null }; }
-  const arr = data[2];
-  if (!arr?.length) return { reviews: [], nextCursor: null };
+  try { return JSON.parse(inner.replace(/^\)\]\}'\s*/, '')); } catch { return null; }
+};
+
+export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCursor: string | null } => {
+  const data = unwrapBatchPayload(text);
+  const arr = data?.[2];
+  if (!data || !Array.isArray(arr) || !arr.length) return { reviews: [], nextCursor: null };
   const reviews: Review[] = [];
   for (const wrapper of arr) {
     if (!wrapper?.[0]) continue;
@@ -247,6 +251,17 @@ export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCur
     if (reviewId && stars) reviews.push({ reviewId, stars, reviewerReviewCount, timestamp, text, ...(matchTerms.length ? { matchTerms } : {}) });
   }
   return { reviews, nextCursor: data[1] || null };
+};
+
+// A valid reviews response always carries a review container at data[2] (an
+// array, possibly empty). The [null,…,true] shape Google returns for an expired
+// or rejected session has none — so this tells a stale session apart from a
+// place that genuinely has zero matching reviews, letting a caller log + reseed
+// instead of silently serving "0 reviews". Malformed/other-RPC bodies aren't
+// stale (they didn't parse to a payload at all), so they report false.
+export const isStaleReviewsResponse = (text: string): boolean => {
+  const data = unwrapBatchPayload(text);
+  return data !== null && !Array.isArray(data[2]);
 };
 
 // Compile a case-insensitive matcher for `terms` — deduped, trimmed, dropping

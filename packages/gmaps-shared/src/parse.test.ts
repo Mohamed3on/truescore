@@ -1,6 +1,7 @@
 import { test, expect, describe } from 'bun:test';
 import {
   parseReviewsResponse,
+  isStaleReviewsResponse,
   chipsFromPreview,
   histogramFromPreview,
   metaFromPreview,
@@ -13,6 +14,16 @@ const mkWrapper = (id: string, stars: number, count: number, textEntry?: any[]) 
 };
 const page = (wrappers: any[], nextCursor: string | null) =>
   ")]}'\n" + JSON.stringify([null, nextCursor, wrappers]);
+
+// The batchexecute transport wraps the same [null, cursor, [[wrappers]]] payload
+// (now a JSON string) inside a length-prefixed wrb.fr envelope.
+const envelope = (rpc: string, payload: string) =>
+  ")]}'\n\n123\n" + JSON.stringify([
+    ['wrb.fr', rpc, payload, null, null, null, 'generic'],
+    ['di', 42], ['af.httprm', 42, 'hash', 9],
+  ]);
+const batchPage = (wrappers: any[], nextCursor: string | null) =>
+  envelope('/MapsUgcPostService.ListUgcPosts', JSON.stringify([null, nextCursor, wrappers]));
 
 describe('parseReviewsResponse', () => {
   test('parses reviews and the next cursor (XSSI prefix stripped)', () => {
@@ -60,18 +71,9 @@ describe('parseReviewsResponse', () => {
   });
 });
 
-// The batchexecute transport wraps the same [null, cursor, [[wrappers]]] payload
-// (now a JSON string) inside a length-prefixed wrb.fr envelope. parseReviewsResponse
-// unwraps it to the inner string, then runs the identical parse as above.
+// parseReviewsResponse unwraps the wrb.fr envelope to the inner string, then
+// runs the identical parse as above.
 describe('parseReviewsResponse — batchexecute envelope', () => {
-  const envelope = (rpc: string, payload: string) =>
-    ")]}'\n\n123\n" + JSON.stringify([
-      ['wrb.fr', rpc, payload, null, null, null, 'generic'],
-      ['di', 42], ['af.httprm', 42, 'hash', 9],
-    ]);
-  const batchPage = (wrappers: any[], nextCursor: string | null) =>
-    envelope('/MapsUgcPostService.ListUgcPosts', JSON.stringify([null, nextCursor, wrappers]));
-
   test('unwraps the envelope and parses the inner payload + cursor', () => {
     const { reviews, nextCursor } = parseReviewsResponse(batchPage([mkWrapper('a', 5, 9), mkWrapper('b', 1, 4)], 'cur1'));
     expect(reviews.map((r) => r.reviewId)).toEqual(['a', 'b']);
@@ -85,6 +87,21 @@ describe('parseReviewsResponse — batchexecute envelope', () => {
   });
   test('envelope without a ListUgcPosts payload → empty, never throws', () => {
     expect(parseReviewsResponse(envelope('/Some.Other.Rpc', '[]'))).toEqual({ reviews: [], nextCursor: null });
+  });
+});
+
+describe('isStaleReviewsResponse', () => {
+  test('true for the [null,…,true] expired/rejected-session payload', () => {
+    const expired = envelope('/MapsUgcPostService.ListUgcPosts', JSON.stringify([null, null, null, null, null, true]));
+    expect(isStaleReviewsResponse(expired)).toBe(true);
+  });
+  test('false for a valid response, even with zero matching reviews', () => {
+    expect(isStaleReviewsResponse(batchPage([], 'cur'))).toBe(false);
+    expect(isStaleReviewsResponse(batchPage([mkWrapper('a', 5, 9)], null))).toBe(false);
+  });
+  test('false for malformed / non-ListUgcPosts bodies (not a stale-session signal)', () => {
+    expect(isStaleReviewsResponse(envelope('/Some.Other.Rpc', '[]'))).toBe(false);
+    expect(isStaleReviewsResponse(")]}'\n{not json")).toBe(false);
   });
 });
 

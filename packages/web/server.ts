@@ -425,8 +425,11 @@ Bun.serve({
           const { featureId } = await req.json() as HistogramRequest;
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
-          const { histogram } = await getOrFetchPreviewBundle(featureId);
-          if (!histogram) return json({ error: 'histogram unavailable' }, 500);
+          const { histogram, meta } = await getOrFetchPreviewBundle(featureId);
+          if (!histogram) {
+            console.warn(`[histogram] unavailable for ${entry.name} (${featureId}) — preview ${Object.keys(meta).length ? 'returned a place card without the rating histogram block' : 'fetch returned no place data (geo/A-B bucket or throttle)'}`);
+            return json({ error: 'histogram unavailable' }, 500);
+          }
           return json({ histogram, overallPct: overallPctFromHistogram(histogram), cached: cache.histogramFresh(entry) } satisfies HistogramResponse);
         } catch (e) {
           console.error('[histogram]', e);
