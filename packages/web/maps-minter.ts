@@ -145,17 +145,18 @@ async function capture(cookies: string, setWs: (w: WebSocket) => void): Promise<
   await cdp('Network.setUserAgentOverride', { userAgent: USER_AGENT, acceptLanguage: 'en-US,en;q=0.9', platform: 'MacIntel' });
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});" }).catch(() => {});
 
-  // Session cookies (__Host- host-only, the rest on .google.com so they reach
-  // every subdomain) + the consent bypass, all set concurrently before nav.
-  const cookieCmds: any[] = cookies.split('; ').flatMap((pair) => {
+  // The whole jar in one CDP round-trip: the persisted session cookies (__Host-
+  // host-only, the rest on .google.com so they reach every subdomain) plus the
+  // consent bypass.
+  const cookieParams: any[] = cookies.split('; ').flatMap((pair) => {
     const eq = pair.indexOf('='); if (eq < 1) return [];
     const name = pair.slice(0, eq), value = pair.slice(eq + 1);
     return [name.startsWith('__Host-')
       ? { name, value, url: 'https://www.google.com/', secure: true, path: '/' }
       : { name, value, domain: '.google.com', path: '/', secure: true }];
   });
-  for (const [name, value] of Object.entries(SEED_COOKIES)) cookieCmds.push({ name, value, domain: '.google.com', path: '/' });
-  await Promise.all(cookieCmds.map((c) => cdp('Network.setCookie', c).catch(() => {})));
+  for (const [name, value] of Object.entries(SEED_COOKIES)) cookieParams.push({ name, value, domain: '.google.com', path: '/' });
+  await cdp('Network.setCookies', { cookies: cookieParams }).catch(() => {});
 
   await cdp('Page.navigate', { url: MINT_URL }).catch(() => {});
 
