@@ -5,7 +5,7 @@
 // reviews UI (each a separate spike failure): consent-bypass cookies on
 // .google.com, anti-headless (real UA + hidden navigator.webdriver), and a click
 // on the Reviews tab. The legacy GET endpoint is retired, hence all this.
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { rmSync } from 'fs';
 import { buildListReq, parseReviewsResponse } from '@truescore/gmaps-shared';
 import { googleFetch, setGoogleCookieOverride } from './browser';
@@ -43,11 +43,13 @@ async function runMint(cookies: string): Promise<MintedSeed | null> {
   if (!cookies) { console.warn('[maps-minter] no cookies — cannot mint (needs a prior seed)'); return null; }
   const t0 = Date.now();
   const userDataDir = `/tmp/ts-mint-${t0}`;
+  // detached:true → Chrome leads its own process group, so the whole tree (gpu,
+  // network service, crashpad) can be SIGKILLed at once in finally.
   const chrome = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${PORT}`, `--proxy-server=${proxyServer}`,
     `--user-data-dir=${userDataDir}`, '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
-    '--no-first-run', '--disable-extensions', '--window-size=1280,2000', 'about:blank',
-  ], { stdio: 'ignore' });
+    '--no-first-run', '--disable-extensions', '--disable-crash-reporter', '--window-size=1280,2000', 'about:blank',
+  ], { stdio: 'ignore', detached: true });
   let ws: WebSocket | undefined;
   try {
     const seed = await withTimeout(capture(cookies, (w) => (ws = w)), MINT_TIMEOUT_MS);
@@ -65,7 +67,12 @@ async function runMint(cookies: string): Promise<MintedSeed | null> {
     return null;
   } finally {
     try { ws?.close(); } catch {}
+    // Kill the whole process group, not just the parent pid — Chrome's children
+    // (network service, crashpad) otherwise outlive it. pkill on the unique
+    // user-data-dir mops up any straggler the group kill missed.
+    try { if (chrome.pid) process.kill(-chrome.pid, 'SIGKILL'); } catch {}
     try { chrome.kill('SIGKILL'); } catch {}
+    try { spawnSync('pkill', ['-9', '-f', userDataDir]); } catch {}
     try { rmSync(userDataDir, { recursive: true, force: true }); } catch {}
   }
 }
