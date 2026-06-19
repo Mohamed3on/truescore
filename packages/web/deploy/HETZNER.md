@@ -52,6 +52,12 @@ ssh root@65.108.153.112 'curl -s localhost/api/maps-creds -H "x-truescore-seed: 
 # clear the seeded Maps session (serves empty until the extension re-seeds)
 ssh root@65.108.153.112 'rm -f /var/lib/truescore/maps-creds.json && systemctl restart truescore'
 
+# force a headless bgkey re-mint now (self-renewal; spawns Chrome ~7s; needs cookies from a prior seed)
+ssh root@65.108.153.112 'curl -s -X POST localhost/api/maps-creds/renew -H "x-truescore-seed: $(sed -n "s/^TRUESCORE_SEED_SECRET=//p" /opt/truescore/.env)"'
+
+# tune self-renewal cadence (minutes; 0 disables -> falls back to extension reseed + the web banner)
+ssh root@65.108.153.112 'echo "TRUESCORE_MINT_INTERVAL_MIN=30" >> /opt/truescore/.env && systemctl restart truescore'
+
 # switch summarization model (llm.ts): gemini (default when unset) or openai
 ssh root@65.108.153.112 'sed -i "s/^LLM_PROVIDER=.*/LLM_PROVIDER=gemini/" /opt/truescore/.env && systemctl restart truescore'
 ```

@@ -38,18 +38,25 @@ const warnNoCreds = (where: string): void => {
 // so a stale seed shows up as "session expired" in the logs instead of a silent
 // run of empties. No abort path — the server never pauses a sort.
 const transport: Transport = async (url, init) => {
-  const body = await googleFetch(url, init);
   // Update session health from the actual review-RPC outcome (POST batchexecute
-  // only — preview GETs don't exercise the session). A Google "expired" payload
-  // marks the session stale (drives the client's reseed banner); any valid reply
-  // marks it fresh again.
+  // only — preview GETs don't exercise the session), which drives the reseed
+  // banner and the headless self-renewal. Two failure modes both mean a dead
+  // bgkey: a 200 "expired" payload, and a 4xx that googleFetch throws on after
+  // retries. A valid reply marks it fresh again.
+  let body: string;
+  try {
+    body = await googleFetch(url, init);
+  } catch (e) {
+    if (init?.method === 'POST') markSessionStale();
+    throw e;
+  }
   if (init?.method === 'POST') {
     if (isStaleReviewsResponse(body)) {
       markSessionStale();
       const now = throttledNow(lastStaleLog);
       if (now !== null) {
         lastStaleLog = now;
-        console.warn('[maps-creds] session looks expired — Google returned an empty RPC payload; reviews/highlights read empty until the extension re-seeds (open a Maps tab)');
+        console.warn('[maps-creds] session looks expired — Google returned an empty RPC payload; reviews/highlights read empty until renewal (open a Maps tab if it persists)');
       }
     } else {
       markSessionFresh();
