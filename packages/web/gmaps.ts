@@ -13,24 +13,26 @@ import {
   type Transport,
 } from '@truescore/gmaps-shared';
 import { googleFetch } from './browser';
-import { getMapsCreds, markSessionStale, markSessionFresh } from './maps-creds';
+import { getMapsCreds, onStaleRpc, onFreshRpc } from './maps-creds';
 
 export type { Review, SortKey, SortStats };
 
-// One throttle for the session-health warnings: a scrape fans out dozens of
-// requests, so an unthrottled stale/no-creds session would log a line per page.
-const HEALTH_LOG_INTERVAL_MS = 30_000;
-let lastStaleLog = 0;
-let lastNoCredsLog = 0;
-const throttledNow = (last: number): number | null => {
-  const now = Date.now();
-  return now - last > HEALTH_LOG_INTERVAL_MS ? now : null;
+// A self-contained log throttle: the returned fn is true at most once per
+// interval and owns its own cursor, so a scrape's fan-out of stale/no-creds
+// pages logs one line, not dozens.
+const throttle = (ms: number) => {
+  let last = 0;
+  return (): boolean => {
+    const now = Date.now();
+    if (now - last <= ms) return false;
+    last = now;
+    return true;
+  };
 };
+const staleLog = throttle(30_000);
+const noCredsLog = throttle(30_000);
 const warnNoCreds = (where: string): void => {
-  const now = throttledNow(lastNoCredsLog);
-  if (now === null) return;
-  lastNoCredsLog = now;
-  console.warn(`[maps-creds] no session seeded — ${where} serving empty; reseed by opening a Google Maps tab`);
+  if (noCredsLog()) console.warn(`[maps-creds] no session seeded — ${where} serving empty; reseed by opening a Google Maps tab`);
 };
 
 // The server's transport: proxy + cookies + retry all live in googleFetch. We
@@ -46,14 +48,10 @@ const transport: Transport = async (url, init) => {
   // retried, and the proactive timer covers a genuinely dead key.
   if (init?.method === 'POST') {
     if (isStaleReviewsResponse(body)) {
-      markSessionStale();
-      const now = throttledNow(lastStaleLog);
-      if (now !== null) {
-        lastStaleLog = now;
-        console.warn('[maps-creds] session looks expired — Google returned an empty RPC payload; renewing…');
-      }
+      onStaleRpc();
+      if (staleLog()) console.warn('[maps-creds] session looks expired — Google returned an empty RPC payload; renewing…');
     } else {
-      markSessionFresh();
+      onFreshRpc();
     }
   }
   return body;

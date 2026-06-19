@@ -21,7 +21,10 @@ const SEED_PATH =
   process.env.TRUESCORE_MAPS_CREDS_PATH ||
   (COOKIES_PATH ? join(dirname(COOKIES_PATH), 'maps-creds.json') : `${homedir()}/.truescore-maps-creds.json`);
 
-type Seed = { bgkey: string; bgbind: string; sessionId: string; at: string; cookies: string };
+// One session: bgkey/bgbind/sessionId/at coupled to the cookies that minted it.
+// The minter produces it, applySeed persists it. Exported so maps-minter shares
+// the shape instead of redeclaring it.
+export type Seed = { bgkey: string; bgbind: string; sessionId: string; at: string; cookies: string };
 type PersistedSeed = Seed & { ts: number };
 
 let cached: MapsCreds | null = null;
@@ -102,26 +105,25 @@ export function getMapsCreds(): MapsCreds | null {
   return null;
 }
 
-// The transport flips these from the actual RPC outcome: a Google "expired"
-// payload marks stale, a valid reviews payload marks fresh. Paired with hasCreds
-// so the client can tell "no session" / "stale session" / "healthy" apart and
-// show a reseed banner.
-// A stale RPC: trigger a renewal. Don't touch the banner — one bad reply is
-// usually transient, and the renewal (or the next good reply) resolves it.
-export function markSessionStale(): void { void maybeRenew('stale-detected'); }
-// A good review RPC proves the session works.
-export function markSessionFresh(): void { renewOk = true; }
+// The transport calls these from the actual review-RPC outcome (see gmaps.ts).
+// A stale reply only *triggers a renewal* — it deliberately doesn't flip the
+// banner, since one bad reply is usually transient and the renewal (or the next
+// good reply) resolves it. A good reply proves the session works.
+export function onStaleRpc(): void { void renewSession('stale-detected'); }
+export function onFreshRpc(): void { renewOk = true; }
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
 
 // --- self-renewal: mint a fresh bgkey via headless Chrome (maps-minter) ---
-// The cookies outlive the bgkey by months, so as long as we have them we can
-// re-mint instead of needing the extension to reseed. mintMapsCreds is itself
-// single-flight; the cooldown just stops a stale-storm from queuing attempts.
+// The cookies outlive the bgkey by months, so as long as we have them we re-mint
+// instead of needing an extension reseed. One coordinator owns both throttles:
+// the cooldown (collapses a stale-storm to one attempt; `force` bypasses it for
+// the operator endpoint) and, one layer down, mintMapsCreds's own single-flight.
 const RENEW_COOLDOWN_MS = 60_000;
 let lastRenewAttempt = 0;
 
-export async function renewSession(reason: string): Promise<boolean> {
+export async function renewSession(reason: string, force = false): Promise<boolean> {
   if (!cookieStr) { console.warn(`[maps-creds] cannot renew (${reason}) — no cookies; needs an extension reseed`); renewOk = false; return false; }
+  if (!force && Date.now() - lastRenewAttempt < RENEW_COOLDOWN_MS) return false;
   lastRenewAttempt = Date.now();
   console.log(`[maps-creds] renewing session via headless mint (${reason})…`);
   const minted = await mintMapsCreds(cookieStr);
@@ -131,19 +133,18 @@ export async function renewSession(reason: string): Promise<boolean> {
   return true;
 }
 
-// Reactive path (per-request): debounced so a fan-out of stale pages = one mint.
-async function maybeRenew(reason: string): Promise<void> {
-  if (!cookieStr || Date.now() - lastRenewAttempt < RENEW_COOLDOWN_MS) return;
-  await renewSession(reason);
-}
-
-// Proactive path: refresh on a timer so the bgkey rarely expires mid-lookup.
-// Tunable via TRUESCORE_MINT_INTERVAL_MIN (0 disables); env-tuned once the real
-// bgkey TTL is known.
+// Proactive path: refresh on a timer so the bgkey rarely expires mid-lookup,
+// but skip the launch when the session was already refreshed within the interval
+// (by an extension reseed or a reactive mint) — no point re-minting a fresh key.
+// Tunable via TRUESCORE_MINT_INTERVAL_MIN (0 disables); env-tuned once the TTL is known.
 export function startRenewTimer(): void {
   const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 30);
   if (!(min > 0)) { console.log('[maps-creds] proactive renew disabled'); return; }
-  setInterval(() => { if (cookieStr) void renewSession('timer'); }, min * 60_000);
+  const intervalMs = min * 60_000;
+  setInterval(() => {
+    if (!cookieStr || (seededAt && Date.now() - seededAt < intervalMs)) return;
+    void renewSession('timer');
+  }, intervalMs);
   console.log(`[maps-creds] proactive renew every ${min}min`);
 }
 

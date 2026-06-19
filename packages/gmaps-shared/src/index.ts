@@ -223,7 +223,7 @@ const matchTermsFromEntry = (entry: any[] | null): string[] => {
 // escaped JSON string (the same shape the legacy endpoint returned). Returns
 // null when nothing parses. One copy of the unwrap, shared by the review parser
 // and the stale-session detector below.
-const unwrapBatchPayload = (text: string): any[] | null => {
+const computeUnwrap = (text: string): any[] | null => {
   let inner = text;
   if (text.includes('"wrb.fr"')) {
     const m = text.match(/"\/MapsUgcPostService\.ListUgcPosts","((?:\\.|[^"\\])*)"/);
@@ -231,6 +231,19 @@ const unwrapBatchPayload = (text: string): any[] | null => {
     try { inner = JSON.parse(`"${m[1]}"`); } catch { return null; }
   }
   try { return JSON.parse(inner.replace(/^\)\]\}'\s*/, '')); } catch { return null; }
+};
+
+// Memoized so a body isn't unwrapped + JSON-parsed twice: the web transport
+// sniffs each page for staleness (isStaleReviewsResponse) and collectPaged then
+// parses the SAME string for reviews. The two calls share the exact string, so
+// the lookup is a reference hit; bounded to a few entries so it retains nothing.
+const unwrapCache: { raw: string; data: any[] | null }[] = [];
+const unwrapBatchPayload = (text: string): any[] | null => {
+  for (const e of unwrapCache) if (e.raw === text) return e.data;
+  const data = computeUnwrap(text);
+  unwrapCache.push({ raw: text, data });
+  if (unwrapCache.length > 4) unwrapCache.shift();
+  return data;
 };
 
 export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCursor: string | null } => {

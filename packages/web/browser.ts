@@ -3,17 +3,31 @@ import { homedir } from 'os';
 const COOKIES_PATH = process.env.TRUESCORE_COOKIES_PATH || `${homedir()}/.truescore-cookies.json`;
 const COOKIES_TTL_MS = Number(process.env.TRUESCORE_COOKIES_TTL_MS) || 7 * 24 * 60 * 60 * 1000;
 
+// The residential proxy as its three parts. Exported so the headless minter can
+// feed the auth separately to Chrome (which can't take inline proxy creds),
+// while googleFetch below assembles them into a single URL.
+export const proxyConfig = (): { server: string; user: string; pass: string } => ({
+  server: process.env.TRUESCORE_PROXY_SERVER || '',
+  user: process.env.TRUESCORE_PROXY_USER || '',
+  pass: process.env.TRUESCORE_PROXY_PASS || '',
+});
+
 const PROXY_URL = (() => {
-  const server = process.env.TRUESCORE_PROXY_SERVER;
+  const { server, user, pass } = proxyConfig();
   if (!server) return undefined;
   const u = new URL(server);
-  if (process.env.TRUESCORE_PROXY_USER) u.username = process.env.TRUESCORE_PROXY_USER;
-  if (process.env.TRUESCORE_PROXY_PASS) u.password = process.env.TRUESCORE_PROXY_PASS;
+  if (user) u.username = user;
+  if (pass) u.password = pass;
   return u.toString();
 })();
 
+// One canonical Chrome identity for the whole package — googleFetch sends it as a
+// header; the headless minter feeds it to Network.setUserAgentOverride. Must stay
+// a real Chrome UA (a "HeadlessChrome" UA makes Google serve a reviews-less page).
+export const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
+
 const FETCH_HEADERS_BASE = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+  'User-Agent': USER_AGENT,
   'Accept': '*/*',
   'Accept-Language': 'en-US,en;q=0.9',
   'Referer': 'https://www.google.com/maps/',
@@ -22,7 +36,8 @@ const FETCH_HEADERS_BASE = {
 // Pre-seeded values that signal "consent already given" — bypasses the EU consent dance.
 // Google then issues __Secure-ENID and __Secure-BUCKET on the next page load, which
 // together with these are enough to authenticate listugcposts and preview/place RPCs.
-const SEED_COOKIES: Record<string, string> = {
+// Exported so the minter sets the same consent cookies in its headless session.
+export const SEED_COOKIES: Record<string, string> = {
   CONSENT: 'YES+cb.20210720-07-p0.en+FX+410',
   SOCS: 'CAESHAgBEhJnd3NfMjAyMzAyMDgtMF9SQzIaAmVuIAEaBgiAm6KfBg',
 };

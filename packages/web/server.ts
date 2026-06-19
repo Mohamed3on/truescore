@@ -384,7 +384,7 @@ Bun.serve({
         const secret = process.env.TRUESCORE_SEED_SECRET;
         if (!secret) return json({ error: 'seeding disabled' }, 404);
         if (req.headers.get('x-truescore-seed') !== secret) return json({ error: 'forbidden' }, 403);
-        const ok = await renewSession('manual');
+        const ok = await renewSession('manual', true);
         return json({ ok, ...mapsCredsStatus() });
       },
     },

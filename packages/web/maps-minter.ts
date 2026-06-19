@@ -8,9 +8,8 @@
 import { spawn, spawnSync } from 'child_process';
 import { rmSync } from 'fs';
 import { buildListReq, parseReviewsResponse } from '@truescore/gmaps-shared';
-import { googleFetch, setGoogleCookieOverride } from './browser';
-
-export type MintedSeed = { bgkey: string; bgbind: string; sessionId: string; at: string; cookies: string };
+import { googleFetch, setGoogleCookieOverride, proxyConfig, SEED_COOKIES, USER_AGENT } from './browser';
+import type { Seed } from './maps-creds';
 
 const CHROME = process.env.TRUESCORE_CHROME_PATH || '/usr/bin/google-chrome';
 const PORT = Number(process.env.TRUESCORE_MINT_PORT) || 9333;
@@ -18,27 +17,27 @@ const PORT = Number(process.env.TRUESCORE_MINT_PORT) || 9333;
 // place works as the mint target.
 const MINT_FID = '0x47e66e2964e34e2d:0x8ddca9ee380ef7e0';
 const MINT_URL = `https://www.google.com/maps?q=&ftid=${MINT_FID}`;
-const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
+// Mirrors the 81-tagged sessionId regex in packages/extension/src/sites/gmaps-capture.ts.
 const SID_RE = /\["([A-Za-z0-9_-]{16,}?)",null,null,null,null,null,81\]/;
 const MINT_TIMEOUT_MS = 50_000;
 
-const proxyServer = process.env.TRUESCORE_PROXY_SERVER || '';
-const proxyUser = process.env.TRUESCORE_PROXY_USER || '';
-const proxyPass = process.env.TRUESCORE_PROXY_PASS || '';
+const { server: proxyServer, user: proxyUser, pass: proxyPass } = proxyConfig();
 
-type Caps = { bgkey: string; bgbind: string; sessionId: string; at: string; hl: string };
+// The captured creds minus the cookies they were minted with (the caller pairs
+// them back). Same shape as the persisted Seed otherwise.
+type Caps = Omit<Seed, 'cookies'>;
 
-let inFlight: Promise<MintedSeed | null> | null = null;
+let inFlight: Promise<Seed | null> | null = null;
 
 // Single-flight: a stale-storm of triggers collapses to one Chrome launch.
-export function mintMapsCreds(cookies: string): Promise<MintedSeed | null> {
+export function mintMapsCreds(cookies: string): Promise<Seed | null> {
   return (inFlight ??= runMint(cookies).finally(() => { inFlight = null; }));
 }
 
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
   Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`timeout after ${ms}ms`)), ms))]);
 
-async function runMint(cookies: string): Promise<MintedSeed | null> {
+async function runMint(cookies: string): Promise<Seed | null> {
   if (!proxyServer) { console.warn('[maps-minter] no proxy configured — cannot mint'); return null; }
   if (!cookies) { console.warn('[maps-minter] no cookies — cannot mint (needs a prior seed)'); return null; }
   const t0 = Date.now();
@@ -52,16 +51,16 @@ async function runMint(cookies: string): Promise<MintedSeed | null> {
   ], { stdio: 'ignore', detached: true });
   let ws: WebSocket | undefined;
   try {
-    const seed = await withTimeout(capture(cookies, (w) => (ws = w)), MINT_TIMEOUT_MS);
-    if (!seed?.bgkey) { console.warn(`[maps-minter] no bgkey captured in ${Date.now() - t0}ms`); return null; }
+    const caps = await withTimeout(capture(cookies, (w) => (ws = w)), MINT_TIMEOUT_MS);
+    if (!caps?.bgkey) { console.warn(`[maps-minter] no bgkey captured in ${Date.now() - t0}ms`); return null; }
     // Verify the minted bgkey actually fetches reviews through the server's own
     // path before we trust it; the cookies it was minted with are the override.
     setGoogleCookieOverride(cookies);
-    const req = buildListReq(MINT_FID, 'newest', seed);
+    const req = buildListReq(MINT_FID, 'newest', { ...caps, hl: 'en' });
     const { reviews } = parseReviewsResponse(await googleFetch(req.url, req.init));
     if (!reviews.length) { console.warn('[maps-minter] minted bgkey verified empty — discarding'); return null; }
-    console.log(`[maps-minter] minted bgkey …${seed.bgkey.slice(-6)} in ${Date.now() - t0}ms (verify: ${reviews.length} reviews)`);
-    return { bgkey: seed.bgkey, bgbind: seed.bgbind, sessionId: seed.sessionId, at: seed.at, cookies };
+    console.log(`[maps-minter] minted bgkey …${caps.bgkey.slice(-6)} in ${Date.now() - t0}ms (verify: ${reviews.length} reviews)`);
+    return { ...caps, cookies };
   } catch (e) {
     console.warn('[maps-minter] mint error:', e instanceof Error ? e.message : e);
     return null;
@@ -108,55 +107,59 @@ async function capture(cookies: string, setWs: (w: WebSocket) => void): Promise<
   let captured: Caps | null = null;
   listeners.push(async (msg) => {
     if (msg.method === 'Fetch.authRequired') {
+      // The only reason Fetch is enabled — Chrome can't take inline proxy creds,
+      // so the proxy's auth challenge is answered here.
       await cdp('Fetch.continueWithAuth', { requestId: msg.params.requestId, authChallengeResponse: { response: 'ProvideCredentials', username: proxyUser, password: proxyPass } }).catch(() => {});
     } else if (msg.method === 'Fetch.requestPaused') {
+      // No-op with patterns:[] (nothing pauses); only fires if the pattern is ever
+      // widened, in which case we must release the request or the page hangs.
+      await cdp('Fetch.continueRequest', { requestId: msg.params.requestId }).catch(() => {});
+    } else if (msg.method === 'Network.requestWillBeSent' && !captured) {
+      // Capture passively from the page's own review RPC — no request pausing, so
+      // the SPA loads natively. Field extraction mirrors gmaps-capture.ts.
       const { requestId, request } = msg.params;
-      try {
-        if (!captured && request.url.includes('batchexecute')) {
-          const h: Record<string, string> = {};
-          for (const k in request.headers) h[k.toLowerCase()] = request.headers[k];
-          if (h['x-maps-bgkey']) {
-            let postData = request.postData || '';
-            if (!postData) { try { postData = (await cdp('Fetch.getRequestPostData', { requestId })).postData || ''; } catch {} }
-            let decoded = postData; try { decoded = decodeURIComponent(postData); } catch {}
-            const bgbind = h['x-maps-bgbind'] || '';
-            const atRaw = (postData.match(/(?:^|&)at=([^&]+)/) || [])[1];
-            captured = { bgkey: h['x-maps-bgkey'], bgbind, sessionId: (bgbind.match(SID_RE) || decoded.match(SID_RE) || [])[1] || '', at: atRaw ? decodeURIComponent(atRaw) : '', hl: 'en' };
-          }
-        }
-      } catch { /* swallow — still continue the request below */ }
-      await cdp('Fetch.continueRequest', { requestId }).catch(() => {});
+      if (!request.url.includes('batchexecute')) return;
+      const h: Record<string, string> = {};
+      for (const k in request.headers) h[k.toLowerCase()] = request.headers[k];
+      if (!h['x-maps-bgkey']) return;
+      let postData = request.postData || '';
+      if (!postData && request.hasPostData) { try { postData = (await cdp('Network.getRequestPostData', { requestId })).postData || ''; } catch {} }
+      let decoded = postData; try { decoded = decodeURIComponent(postData); } catch {}
+      const bgbind = h['x-maps-bgbind'] || '';
+      const atRaw = (postData.match(/(?:^|&)at=([^&]+)/) || [])[1];
+      captured = { bgkey: h['x-maps-bgkey'], bgbind, sessionId: (bgbind.match(SID_RE) || decoded.match(SID_RE) || [])[1] || '', at: atRaw ? decodeURIComponent(atRaw) : '' };
     }
   });
 
   await cdp('Network.enable');
   await cdp('Page.enable');
   await cdp('Runtime.enable');
-  await cdp('Fetch.enable', { handleAuthRequests: true, patterns: [{ urlPattern: '*' }] });
+  // Fetch enabled ONLY for the proxy auth challenge: patterns:[] so no request is
+  // paused at the Request stage — the page loads at full speed and capture stays
+  // passive (Network.requestWillBeSent above).
+  await cdp('Fetch.enable', { handleAuthRequests: true, patterns: [] });
   // Anti-headless: a "HeadlessChrome" UA or navigator.webdriver=true makes Google
   // serve a reviews-less stripped page, so no qv9Egd ever fires.
-  await cdp('Network.setUserAgentOverride', { userAgent: UA, acceptLanguage: 'en-US,en;q=0.9', platform: 'MacIntel' });
+  await cdp('Network.setUserAgentOverride', { userAgent: USER_AGENT, acceptLanguage: 'en-US,en;q=0.9', platform: 'MacIntel' });
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});" }).catch(() => {});
 
-  for (const pair of cookies.split('; ')) {
-    const eq = pair.indexOf('='); if (eq < 1) continue;
+  // Session cookies (__Host- host-only, the rest on .google.com so they reach
+  // every subdomain) + the consent bypass, all set concurrently before nav.
+  const cookieCmds: any[] = cookies.split('; ').flatMap((pair) => {
+    const eq = pair.indexOf('='); if (eq < 1) return [];
     const name = pair.slice(0, eq), value = pair.slice(eq + 1);
-    // __Host- must stay host-only; everything else on .google.com (secure) so the
-    // session cookies reach every google subdomain.
-    const params: any = name.startsWith('__Host-')
+    return [name.startsWith('__Host-')
       ? { name, value, url: 'https://www.google.com/', secure: true, path: '/' }
-      : { name, value, domain: '.google.com', path: '/', secure: true };
-    await cdp('Network.setCookie', params).catch(() => {});
-  }
-  // Consent bypass (same values browser.ts bakes), on .google.com, so the EU
-  // "Before you continue" wall doesn't intercept the load.
-  await cdp('Network.setCookie', { name: 'SOCS', value: 'CAESHAgBEhJnd3NfMjAyMzAyMDgtMF9SQzIaAmVuIAEaBgiAm6KfBg', domain: '.google.com', path: '/' }).catch(() => {});
-  await cdp('Network.setCookie', { name: 'CONSENT', value: 'YES+cb.20210720-07-p0.en+FX+410', domain: '.google.com', path: '/' }).catch(() => {});
+      : { name, value, domain: '.google.com', path: '/', secure: true }];
+  });
+  for (const [name, value] of Object.entries(SEED_COOKIES)) cookieCmds.push({ name, value, domain: '.google.com', path: '/' });
+  await Promise.all(cookieCmds.map((c) => cdp('Network.setCookie', c).catch(() => {})));
 
   await cdp('Page.navigate', { url: MINT_URL }).catch(() => {});
 
   // Once the Reviews tab renders, clicking it fires qv9Egd; poll+nudge until the
-  // interceptor captures the bgkey (or the outer timeout fires).
+  // Network listener captures the bgkey (or the outer timeout fires). Selectors
+  // mirror packages/extension/src/sites/gmaps-capture.ts.
   const nudge = `(function(){document.querySelector('button[role="tab"][aria-label*="eview" i]')?.click();var el=document.querySelector('.jftiEf[data-review-id]');el=el?el.parentElement:null;while(el){var s=getComputedStyle(el);if((s.overflowY==='auto'||s.overflowY==='scroll')&&el.scrollHeight>el.clientHeight){el.scrollBy({top:1e6});break;}el=el.parentElement;}return 1;})()`;
   for (let i = 0; i < 45 && !captured; i++) { await Bun.sleep(800); await cdp('Runtime.evaluate', { expression: nudge }).catch(() => {}); }
   return captured;
