@@ -24,7 +24,7 @@ import {
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
-import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy } from './maps-creds';
+import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, startRenewTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
@@ -322,8 +322,10 @@ function getOrFetchPreviewBundle(featureId: string): Promise<PreviewBundle> {
 }
 
 // Restore the last extension-seeded session before serving, so a deploy/restart
-// doesn't blank reviews until the next Maps visit re-seeds.
+// doesn't blank reviews until the next Maps visit re-seeds. Then start the
+// headless self-renewal timer so the bgkey refreshes itself between visits.
 await loadPersistedSeed();
+startRenewTimer();
 
 Bun.serve({
   port: PORT,
@@ -374,6 +376,17 @@ Bun.serve({
     // usable Maps session right now. Just a boolean — no secret, no timing.
     '/api/session-health': {
       GET: () => json({ healthy: mapsSessionHealthy() }),
+    },
+    // Force a headless bgkey re-mint (testing / manual recovery). Behind the seed
+    // secret since it spawns Chrome.
+    '/api/maps-creds/renew': {
+      POST: async (req) => {
+        const secret = process.env.TRUESCORE_SEED_SECRET;
+        if (!secret) return json({ error: 'seeding disabled' }, 404);
+        if (req.headers.get('x-truescore-seed') !== secret) return json({ error: 'forbidden' }, 403);
+        const ok = await renewSession('manual');
+        return json({ ok, ...mapsCredsStatus() });
+      },
     },
     // Read-only cache peek for the extension: returns summary/highlights/etc
     // if the place was already looked up via the web. Never triggers compute.

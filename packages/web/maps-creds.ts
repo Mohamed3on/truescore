@@ -3,6 +3,7 @@ import { dirname, join } from 'path';
 import { writeFileSync, renameSync } from 'fs';
 import type { MapsCreds } from '@truescore/gmaps-shared';
 import { setGoogleCookieOverride } from './browser';
+import { mintMapsCreds } from './maps-minter';
 
 // Botguard creds for the ListUgcPosts batchexecute RPC (the legacy GET endpoint
 // is retired and the server has no browser JS to mint an x-maps-bgkey itself).
@@ -25,6 +26,9 @@ type PersistedSeed = Seed & { ts: number };
 
 let cached: MapsCreds | null = null;
 let seededAt: number | null = null;
+// The cookies the live session was seeded with — kept so the headless minter can
+// renew the bgkey against them without a manual reseed.
+let cookieStr: string | null = null;
 // Whether the live session is believed usable. Credless, or a Google "expired"
 // RPC reply, makes the web read empty — the client polls health (below) to show
 // a reseed banner instead of silent emptiness. Optimistically fresh on (re)seed;
@@ -38,6 +42,7 @@ export function setMapsCreds(creds: MapsCreds): void {
 const apply = (s: Seed): void => {
   setMapsCreds({ bgkey: s.bgkey, bgbind: s.bgbind, sessionId: s.sessionId, at: s.at, hl: 'en' });
   setGoogleCookieOverride(s.cookies);
+  cookieStr = s.cookies;
   sessionStale = false;
 };
 
@@ -101,9 +106,48 @@ export function getMapsCreds(): MapsCreds | null {
 // payload marks stale, a valid reviews payload marks fresh. Paired with hasCreds
 // so the client can tell "no session" / "stale session" / "healthy" apart and
 // show a reseed banner.
-export function markSessionStale(): void { sessionStale = true; }
+export function markSessionStale(): void {
+  sessionStale = true;
+  // A stale RPC means the bgkey expired — try to self-heal by minting a fresh
+  // one headless, instead of waiting for a manual Maps visit.
+  void maybeRenew('stale-detected');
+}
 export function markSessionFresh(): void { sessionStale = false; }
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && !sessionStale; }
+
+// --- self-renewal: mint a fresh bgkey via headless Chrome (maps-minter) ---
+// The cookies outlive the bgkey by months, so as long as we have them we can
+// re-mint instead of needing the extension to reseed. mintMapsCreds is itself
+// single-flight; the cooldown just stops a stale-storm from queuing attempts.
+const RENEW_COOLDOWN_MS = 60_000;
+let lastRenewAttempt = 0;
+
+export async function renewSession(reason: string): Promise<boolean> {
+  if (!cookieStr) { console.warn(`[maps-creds] cannot renew (${reason}) — no cookies; needs an extension reseed`); return false; }
+  lastRenewAttempt = Date.now();
+  console.log(`[maps-creds] renewing session via headless mint (${reason})…`);
+  const minted = await mintMapsCreds(cookieStr);
+  if (!minted) { console.warn(`[maps-creds] renew failed (${reason}) — session stays stale, banner stays up`); return false; }
+  applySeed(minted);
+  console.log(`[maps-creds] session renewed (${reason})`);
+  return true;
+}
+
+// Reactive path (per-request): debounced so a fan-out of stale pages = one mint.
+async function maybeRenew(reason: string): Promise<void> {
+  if (!cookieStr || Date.now() - lastRenewAttempt < RENEW_COOLDOWN_MS) return;
+  await renewSession(reason);
+}
+
+// Proactive path: refresh on a timer so the bgkey rarely expires mid-lookup.
+// Tunable via TRUESCORE_MINT_INTERVAL_MIN (0 disables); env-tuned once the real
+// bgkey TTL is known.
+export function startRenewTimer(): void {
+  const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 30);
+  if (!(min > 0)) { console.log('[maps-creds] proactive renew disabled'); return; }
+  setInterval(() => { if (cookieStr) void renewSession('timer'); }, min * 60_000);
+  console.log(`[maps-creds] proactive renew every ${min}min`);
+}
 
 // Liveness + age for the GET probe on /api/maps-creds. Never returns the secrets
 // themselves — just whether we have a session, how old it is, and if it's stale.
