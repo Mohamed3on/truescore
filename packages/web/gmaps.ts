@@ -63,7 +63,16 @@ export function fetchAllForSearch(
 export async function fetchAllForToken(featureId: string, token: string): Promise<Review[]> {
   const creds = getMapsCreds();
   if (!creds) return [];
-  return collectToken(featureId, token, transport, { creds });
+  // A topic-token fetch coming back empty while the list path works is the
+  // recurring highlights failure; capture the raw RPC body so we can see whether
+  // Google rejected the token, expired the session, or just had no matches.
+  let lastRaw = '';
+  const tap: Transport = async (url, init) => (lastRaw = await transport(url, init));
+  const reviews = await collectToken(featureId, token, tap, { creds });
+  if (!reviews.length) {
+    console.warn(`[token] 0 reviews ${featureId} token=${token} raw[0:200]=${lastRaw.slice(0, 200).replace(/\s+/g, ' ')}`);
+  }
+  return reviews;
 }
 
 export async function scorePlace(
