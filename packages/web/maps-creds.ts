@@ -1,4 +1,5 @@
 import { homedir } from 'os';
+import { dirname, join } from 'path';
 import { writeFileSync, renameSync } from 'fs';
 import type { MapsCreds } from '@truescore/gmaps-shared';
 import { setGoogleCookieOverride } from './browser';
@@ -10,7 +11,14 @@ import { setGoogleCookieOverride } from './browser';
 // the web auto-deploys on every push, and each restart would otherwise blank the
 // session until the next Maps visit re-seeds. bgkey and cookies persist as one
 // coupled blob — the token only validates against the session that minted it.
-const SEED_PATH = process.env.TRUESCORE_MAPS_CREDS_PATH || `${homedir()}/.truescore-maps-creds.json`;
+// Live next to the cookies file (TRUESCORE_COOKIES_PATH → /var/lib/truescore on
+// the box) so the coupled bgkey+cookies session persists in the same managed
+// state dir, not the service user's home; fall back to the home dir for local
+// dev. TRUESCORE_MAPS_CREDS_PATH overrides outright.
+const COOKIES_PATH = process.env.TRUESCORE_COOKIES_PATH;
+const SEED_PATH =
+  process.env.TRUESCORE_MAPS_CREDS_PATH ||
+  (COOKIES_PATH ? join(dirname(COOKIES_PATH), 'maps-creds.json') : `${homedir()}/.truescore-maps-creds.json`);
 
 type Seed = { bgkey: string; bgbind: string; sessionId: string; at: string; cookies: string };
 type PersistedSeed = Seed & { ts: number };

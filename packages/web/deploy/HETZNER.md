@@ -11,7 +11,7 @@ TLS: Cloudflare edge (Flexible mode — edge ↔ origin is plain HTTP)
 |---|---|
 | App dir | `/opt/truescore` |
 | .env | `/opt/truescore/.env` (PORT=80, Decodo creds, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `LLM_PROVIDER`, paths) |
-| Code/cache state | `/var/lib/truescore/{cache.sqlite,cookies.json}` (legacy `cache.json` migrated on first start) |
+| Code/cache state | `/var/lib/truescore/{cache.sqlite,cookies.json,maps-creds.json}` (legacy `cache.json` migrated on first start; `maps-creds.json` = last extension-seeded Maps session, `0600`) |
 | systemd unit | `/etc/systemd/system/truescore.service` |
 | Service user | `truescore` |
 | Bun | `/usr/local/bin/bun` |
@@ -45,6 +45,12 @@ ssh root@65.108.153.112 'rm -f /var/lib/truescore/cache.sqlite* && systemctl res
 
 # wipe cookies (forces re-bake via proxy)
 ssh root@65.108.153.112 'rm /var/lib/truescore/cookies.json && systemctl restart truescore'
+
+# check the seeded Maps session age (bgkey freshness) — empty hasCreds=false means re-seed by opening a Maps tab
+ssh root@65.108.153.112 'curl -s localhost/api/maps-creds -H "x-truescore-seed: $(sed -n "s/^TRUESCORE_SEED_SECRET=//p" /opt/truescore/.env)"'
+
+# clear the seeded Maps session (serves empty until the extension re-seeds)
+ssh root@65.108.153.112 'rm -f /var/lib/truescore/maps-creds.json && systemctl restart truescore'
 
 # switch summarization model (llm.ts): gemini (default when unset) or openai
 ssh root@65.108.153.112 'sed -i "s/^LLM_PROVIDER=.*/LLM_PROVIDER=gemini/" /opt/truescore/.env && systemctl restart truescore'
