@@ -861,6 +861,9 @@ section#result::before {
 }
 .status.err { color: var(--neg); }
 
+/* Author `display:flex` below would otherwise beat the UA `[hidden]{display:none}`
+   rule, leaving the banner permanently visible — keep it honoring `hidden`. */
+.session-banner[hidden] { display: none; }
 .session-banner {
   margin: 0 0 20px;
   padding: 12px 16px;
