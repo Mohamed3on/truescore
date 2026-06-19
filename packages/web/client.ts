@@ -1266,6 +1266,9 @@ askForm.addEventListener('submit', async (e) => {
 });
 
 refreshSessionHealth();
+// Poll so the banner clears (or appears) as the server's self-renewal heals or
+// the session genuinely dies — not only on the next lookup.
+setInterval(refreshSessionHealth, 30_000);
 const sharedUrl = new URLSearchParams(location.search).get('url');
 if (sharedUrl) {
   urlInput.value = sharedUrl;

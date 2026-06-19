@@ -29,11 +29,11 @@ let seededAt: number | null = null;
 // The cookies the live session was seeded with — kept so the headless minter can
 // renew the bgkey against them without a manual reseed.
 let cookieStr: string | null = null;
-// Whether the live session is believed usable. Credless, or a Google "expired"
-// RPC reply, makes the web read empty — the client polls health (below) to show
-// a reseed banner instead of silent emptiness. Optimistically fresh on (re)seed;
-// the transport flips it on the first stale RPC reply.
-let sessionStale = true;
+// Banner health: true while the session is usable OR self-renewal is keeping up.
+// Flipped false ONLY when a renewal attempt fails (or we're credless) — NOT on a
+// single stale RPC, which just triggers a renewal. (Keying the banner on per-RPC
+// staleness flapped it on transient proxy blips while reviews still worked.)
+let renewOk = true;
 
 export function setMapsCreds(creds: MapsCreds): void {
   cached = creds;
@@ -43,7 +43,7 @@ const apply = (s: Seed): void => {
   setMapsCreds({ bgkey: s.bgkey, bgbind: s.bgbind, sessionId: s.sessionId, at: s.at, hl: 'en' });
   setGoogleCookieOverride(s.cookies);
   cookieStr = s.cookies;
-  sessionStale = false;
+  renewOk = true;
 };
 
 // Write the seed atomically at 0600: create a fresh temp at that mode, then
@@ -106,14 +106,12 @@ export function getMapsCreds(): MapsCreds | null {
 // payload marks stale, a valid reviews payload marks fresh. Paired with hasCreds
 // so the client can tell "no session" / "stale session" / "healthy" apart and
 // show a reseed banner.
-export function markSessionStale(): void {
-  sessionStale = true;
-  // A stale RPC means the bgkey expired — try to self-heal by minting a fresh
-  // one headless, instead of waiting for a manual Maps visit.
-  void maybeRenew('stale-detected');
-}
-export function markSessionFresh(): void { sessionStale = false; }
-export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && !sessionStale; }
+// A stale RPC: trigger a renewal. Don't touch the banner — one bad reply is
+// usually transient, and the renewal (or the next good reply) resolves it.
+export function markSessionStale(): void { void maybeRenew('stale-detected'); }
+// A good review RPC proves the session works.
+export function markSessionFresh(): void { renewOk = true; }
+export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
 
 // --- self-renewal: mint a fresh bgkey via headless Chrome (maps-minter) ---
 // The cookies outlive the bgkey by months, so as long as we have them we can
@@ -123,12 +121,12 @@ const RENEW_COOLDOWN_MS = 60_000;
 let lastRenewAttempt = 0;
 
 export async function renewSession(reason: string): Promise<boolean> {
-  if (!cookieStr) { console.warn(`[maps-creds] cannot renew (${reason}) — no cookies; needs an extension reseed`); return false; }
+  if (!cookieStr) { console.warn(`[maps-creds] cannot renew (${reason}) — no cookies; needs an extension reseed`); renewOk = false; return false; }
   lastRenewAttempt = Date.now();
   console.log(`[maps-creds] renewing session via headless mint (${reason})…`);
   const minted = await mintMapsCreds(cookieStr);
-  if (!minted) { console.warn(`[maps-creds] renew failed (${reason}) — session stays stale, banner stays up`); return false; }
-  applySeed(minted);
+  if (!minted) { console.warn(`[maps-creds] renew failed (${reason}) — banner shows until the cookies are refreshed`); renewOk = false; return false; }
+  applySeed(minted); // sets renewOk = true
   console.log(`[maps-creds] session renewed (${reason})`);
   return true;
 }
@@ -155,7 +153,7 @@ export function mapsCredsStatus(): { hasCreds: boolean; healthy: boolean; stale:
   return {
     hasCreds: !!getMapsCreds(),
     healthy: mapsSessionHealthy(),
-    stale: sessionStale,
+    stale: !renewOk,
     seededAt: seededAt ? new Date(seededAt).toISOString() : null,
     ageMinutes: seededAt ? Math.round((Date.now() - seededAt) / 60000) : null,
   };
