@@ -87,8 +87,6 @@ ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned
 
 If 2+ reviewers mention a specific better nearby alternative hotel, apartment, or chain, note it and explain the comparison.
 
-Check for signs of review manipulation: repetitive phrasing across reviews, suspiciously similar wording or structure, generic praise without concrete detail, or signs of incentivized reviews. If reviews appear genuine, leave suspiciousPatterns empty.
-
 End with a short summary: the gist of what guests say, anything to watch out for, any better-value alternatives mentioned, and whether this is the best stay you can get for the price.`;
 
 const formatGuest = (value: string) =>

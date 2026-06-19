@@ -357,7 +357,6 @@ const buildPanel = (
       ? `COURSE CONTENTS — the official volume/chapter breakdown with timestamps. Use it to translate vague reviewer references ("the leg lock part", "volume 3") into specific named chapters, and to judge which advertised sections reviewers actually praise or skip:\n\n${courseContent}`
       : undefined,
     fetchReviews: async () => bundle.reviews.map(reviewToText).filter(Boolean),
-    skipSuspicious: true,
     autoSummarize: true,
   });
 

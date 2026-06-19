@@ -174,8 +174,6 @@ ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned
 
 If 2+ reviewers mention a specific better alternative product, note it and explain how reviewers compare it to this product.
 
-Check for signs of review manipulation: repetitive phrasing across reviews, suspiciously similar wording or sentence structure, lack of specific/unique details, generic praise that reads like astroturfing, or signs of incentivized reviews. If detected, warn about it. If reviews appear genuine, leave suspiciousPatterns empty.
-
 End with a short summary: the gist of what owners say, anything to watch out for, any better alternatives mentioned, and whether this is the best you can get for the price.`;
 
 const addSummarizeUI = (anchor: Element, tld: string, locale: string, sku: string, productId: string) => {

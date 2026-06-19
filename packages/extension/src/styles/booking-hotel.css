@@ -489,11 +489,6 @@
   border-color: rgba(109, 211, 206, 0.14);
 }
 
-.ts-bp .ars-section--suspicious {
-  background: rgba(232, 184, 109, 0.1);
-  border-color: rgba(232, 184, 109, 0.2);
-}
-
 .ts-bp .ars-section-title {
   font-size: 9px;
   letter-spacing: 0.12em;
@@ -513,11 +508,6 @@
 .ts-bp .ars-section--alt .ars-section-title,
 .ts-bp .ars-section--alt .ars-section-item::before {
   color: #6DD3CE;
-}
-
-.ts-bp .ars-section--suspicious .ars-section-title,
-.ts-bp .ars-section--suspicious .ars-section-item::before {
-  color: var(--ts-mid);
 }
 
 .ts-bp .ars-section-item {

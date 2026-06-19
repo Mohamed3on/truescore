@@ -584,7 +584,6 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
           summaryPrompt: keywordSummaryPrompt(query),
           fetchReviews: async () => texts,
           questionPlaceholder: `Ask about “${query}” reviews…`,
-          skipSuspicious: true,
         });
       }
     };
@@ -602,8 +601,6 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should be one concrete point, e.g. "Too sweet for some tastes".
 
 If 2+ reviewers mention a specific better alternative product, note it and explain how reviewers compare it to this product (e.g. what's better/worse about the alternative).
-
-Check for signs of review manipulation: repetitive phrasing across reviews, suspiciously similar wording or sentence structure, lack of specific/unique details, generic praise that reads like astroturfing, or signs of incentivized reviews. If detected, warn about it. If reviews appear genuine, leave suspiciousPatterns empty.
 
 End with a short summary: the gist of what owners say, anything to watch out for, any better alternatives mentioned, and whether this is the best you can get for the price.`;
 

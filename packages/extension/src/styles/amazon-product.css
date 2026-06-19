@@ -280,13 +280,6 @@
   background: #FFF7ED;
   border-left-color: #EA580C;
 }
-.ars-section--suspicious {
-  background: #FEF2F2;
-  border-left-color: #DC2626;
-}
-.ars-section--suspicious .ars-section-title { color: #DC2626; }
-.ars-section--suspicious .ars-section-item::before { color: #DC2626; }
-
 .ars-section-title {
   font-size: 10.5px;
   font-weight: 700;

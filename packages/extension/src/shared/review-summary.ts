@@ -3,8 +3,7 @@ import { el, renderMarkdown, renderMarkdownInline } from './utils';
 
 export const renderStructuredSummary = (
   container: HTMLElement,
-  { complaints, praised, conclusion, betterAlternative, suspiciousPatterns }: any,
-  opts: { skipSuspicious?: boolean } = {},
+  { complaints, praised, conclusion, betterAlternative }: any,
 ) => {
   container.textContent = '';
   if (conclusion) {
@@ -44,19 +43,6 @@ export const renderStructuredSummary = (
     section.appendChild(item);
     container.appendChild(section);
   }
-  if (suspiciousPatterns && !opts.skipSuspicious) {
-    const section = document.createElement('div');
-    section.className = 'ars-section ars-section--suspicious';
-    const heading = document.createElement('div');
-    heading.className = 'ars-section-title';
-    heading.textContent = '\u26A0 Suspicious patterns';
-    section.appendChild(heading);
-    const item = document.createElement('div');
-    item.className = 'ars-section-item';
-    renderMarkdownInline(item, suspiciousPatterns);
-    section.appendChild(item);
-    container.appendChild(section);
-  }
 };
 
 const SUMMARY_SCHEMA = {
@@ -65,8 +51,7 @@ const SUMMARY_SCHEMA = {
     complaints: { type: 'array' as const, items: { type: 'string' as const } },
     praised: { type: 'array' as const, items: { type: 'string' as const } },
     conclusion: { type: 'string' as const },
-    betterAlternative: { type: 'string' as const, nullable: true },
-    suspiciousPatterns: { type: 'string' as const, description: 'Warning about review manipulation if detected: repetitive phrasing, astroturfing, suspiciously similar wording, lack of unique detail, incentivized reviews, etc. Empty string if reviews appear genuine.', nullable: true }
+    betterAlternative: { type: 'string' as const, nullable: true }
   },
   required: ['complaints', 'praised', 'conclusion']
 };
@@ -224,7 +209,6 @@ interface SummarizeWidgetOpts {
   context?: string;
   cacheMeta?: any;
   alternates?: AlternatesConfig;
-  skipSuspicious?: boolean;
   autoSummarize?: boolean;
 }
 
@@ -269,10 +253,8 @@ export const buildSummarizeWidget = ({
   context,
   cacheMeta,
   alternates,
-  skipSuspicious,
   autoSummarize,
 }: SummarizeWidgetOpts) => {
-  const renderOpts = { skipSuspicious };
   // Reference material (e.g. a course's volume/chapter breakdown) appended to
   // both the structured-summary prompt and every Ask, so questions can map vague
   // reviewer mentions to specific named sections too — not just the summary.
@@ -341,7 +323,7 @@ export const buildSummarizeWidget = ({
       bumpRateLimit();
       summaryTs = Date.now();
       localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta }));
-      renderStructuredSummary(summaryPanel, parsed, renderOpts);
+      renderStructuredSummary(summaryPanel, parsed);
       summaryPanel.style.display = 'block';
       panelMode = 'summary';
     } catch (e: any) {
@@ -437,7 +419,7 @@ export const buildSummarizeWidget = ({
   }
   if (cached?.parsed) {
     summaryTs = cached.ts;
-    renderStructuredSummary(summaryPanel, cached.parsed, renderOpts);
+    renderStructuredSummary(summaryPanel, cached.parsed);
     summaryPanel.style.display = 'block';
     panelMode = 'summary';
   }
