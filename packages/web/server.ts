@@ -34,7 +34,7 @@ import { createInflight } from './inflight';
 import index from './index.html';
 
 const json = (v: any, status = 200) =>
-  new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json' } });
+  new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 
 // Extension-facing endpoints. CORS is open so any extension content script can
 // reach us; we don't expose anything that could be abused as a Google-proxy on
@@ -43,7 +43,7 @@ const json = (v: any, status = 200) =>
 const corsJson = (v: any, status = 200) =>
   new Response(JSON.stringify(v), {
     status,
-    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+    headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
   });
 const corsOptions = () => new Response(null, {
   headers: {

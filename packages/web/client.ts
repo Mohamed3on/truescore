@@ -158,7 +158,7 @@ function setStatus(msg: string, isErr = false) {
 const sessionBanner = $('sessionBanner') as HTMLElement;
 async function refreshSessionHealth() {
   try {
-    const r = await fetch('/api/session-health');
+    const r = await fetch('/api/session-health', { cache: 'no-store' });
     if (!r.ok) return;
     const { healthy } = (await r.json()) as { healthy: boolean };
     sessionBanner.hidden = healthy;
