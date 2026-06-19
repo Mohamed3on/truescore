@@ -1,5 +1,5 @@
 import { homedir } from 'os';
-import { chmodSync } from 'fs';
+import { writeFileSync, renameSync } from 'fs';
 import type { MapsCreds } from '@truescore/gmaps-shared';
 import { setGoogleCookieOverride } from './browser';
 
@@ -27,13 +27,27 @@ const apply = (s: Seed): void => {
   setGoogleCookieOverride(s.cookies);
 };
 
-// A fresh seed from the extension: apply in memory, then mirror to disk (0600 —
-// it carries a logged-in Google session) so it survives the next restart.
-export async function applySeed(seed: Seed): Promise<void> {
+// Write the seed atomically at 0600: create a fresh temp at that mode, then
+// rename over the target, so the real file — a logged-in Google session — never
+// exists world-readable (no chmod-after-write window). New temp each call, so
+// the mode always applies on creation.
+const persistSeed = (data: PersistedSeed): void => {
+  const tmp = `${SEED_PATH}.tmp`;
+  writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
+  renameSync(tmp, SEED_PATH);
+};
+
+// A fresh seed from the extension: apply in memory, then mirror to disk so it
+// survives the next restart. The in-memory seed is what serves reviews, so a
+// disk failure is logged loudly (never swallowed) but doesn't fail the seed.
+export function applySeed(seed: Seed): void {
   apply(seed);
   seededAt = Date.now();
-  await Bun.write(SEED_PATH, JSON.stringify({ ...seed, ts: seededAt } satisfies PersistedSeed));
-  try { chmodSync(SEED_PATH, 0o600); } catch {}
+  try {
+    persistSeed({ ...seed, ts: seededAt });
+  } catch (e) {
+    console.error('[maps-creds] failed to persist seed to disk — in-memory seed still active, but it will not survive a restart', e);
+  }
   console.log(`[maps-creds] seeded bgkey …${seed.bgkey.slice(-6)} (${seed.cookies.length}b cookies) at ${new Date(seededAt).toISOString()}`);
 }
 
