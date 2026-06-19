@@ -107,37 +107,39 @@ async function capture(cookies: string, setWs: (w: WebSocket) => void): Promise<
   let captured: Caps | null = null;
   listeners.push(async (msg) => {
     if (msg.method === 'Fetch.authRequired') {
-      // The only reason Fetch is enabled — Chrome can't take inline proxy creds,
-      // so the proxy's auth challenge is answered here.
+      // The reason Fetch is enabled at all: Chrome can't take inline proxy creds,
+      // so we answer the proxy's auth challenge here.
       await cdp('Fetch.continueWithAuth', { requestId: msg.params.requestId, authChallengeResponse: { response: 'ProvideCredentials', username: proxyUser, password: proxyPass } }).catch(() => {});
     } else if (msg.method === 'Fetch.requestPaused') {
-      // No-op with patterns:[] (nothing pauses); only fires if the pattern is ever
-      // widened, in which case we must release the request or the page hangs.
-      await cdp('Fetch.continueRequest', { requestId: msg.params.requestId }).catch(() => {});
-    } else if (msg.method === 'Network.requestWillBeSent' && !captured) {
-      // Capture passively from the page's own review RPC — no request pausing, so
-      // the SPA loads natively. Field extraction mirrors gmaps-capture.ts.
       const { requestId, request } = msg.params;
-      if (!request.url.includes('batchexecute')) return;
-      const h: Record<string, string> = {};
-      for (const k in request.headers) h[k.toLowerCase()] = request.headers[k];
-      if (!h['x-maps-bgkey']) return;
-      let postData = request.postData || '';
-      if (!postData && request.hasPostData) { try { postData = (await cdp('Network.getRequestPostData', { requestId })).postData || ''; } catch {} }
-      let decoded = postData; try { decoded = decodeURIComponent(postData); } catch {}
-      const bgbind = h['x-maps-bgbind'] || '';
-      const atRaw = (postData.match(/(?:^|&)at=([^&]+)/) || [])[1];
-      captured = { bgkey: h['x-maps-bgkey'], bgbind, sessionId: (bgbind.match(SID_RE) || decoded.match(SID_RE) || [])[1] || '', at: atRaw ? decodeURIComponent(atRaw) : '' };
+      // Every request pauses (auth needs interception — see Fetch.enable below),
+      // so grab the bgkey off the one batchexecute en route, then release it.
+      // Field extraction mirrors packages/extension/src/sites/gmaps-capture.ts.
+      try {
+        if (!captured && request.url.includes('batchexecute')) {
+          const h: Record<string, string> = {};
+          for (const k in request.headers) h[k.toLowerCase()] = request.headers[k];
+          if (h['x-maps-bgkey']) {
+            let postData = request.postData || '';
+            if (!postData) { try { postData = (await cdp('Fetch.getRequestPostData', { requestId })).postData || ''; } catch {} }
+            let decoded = postData; try { decoded = decodeURIComponent(postData); } catch {}
+            const bgbind = h['x-maps-bgbind'] || '';
+            const atRaw = (postData.match(/(?:^|&)at=([^&]+)/) || [])[1];
+            captured = { bgkey: h['x-maps-bgkey'], bgbind, sessionId: (bgbind.match(SID_RE) || decoded.match(SID_RE) || [])[1] || '', at: atRaw ? decodeURIComponent(atRaw) : '' };
+          }
+        }
+      } catch { /* swallow — still release the request below */ }
+      await cdp('Fetch.continueRequest', { requestId }).catch(() => {});
     }
   });
 
   await cdp('Network.enable');
   await cdp('Page.enable');
   await cdp('Runtime.enable');
-  // Fetch enabled ONLY for the proxy auth challenge: patterns:[] so no request is
-  // paused at the Request stage — the page loads at full speed and capture stays
-  // passive (Network.requestWillBeSent above).
-  await cdp('Fetch.enable', { handleAuthRequests: true, patterns: [] });
+  // Fetch must intercept (non-empty patterns) to feed the proxy its credentials —
+  // CDP rejects handleAuthRequests with empty patterns, and the rotating proxy
+  // needs auth per-connection — so every request pauses and we continue it.
+  await cdp('Fetch.enable', { handleAuthRequests: true, patterns: [{ urlPattern: '*' }] });
   // Anti-headless: a "HeadlessChrome" UA or navigator.webdriver=true makes Google
   // serve a reviews-less stripped page, so no qv9Egd ever fires.
   await cdp('Network.setUserAgentOverride', { userAgent: USER_AGENT, acceptLanguage: 'en-US,en;q=0.9', platform: 'MacIntel' });
@@ -158,8 +160,8 @@ async function capture(cookies: string, setWs: (w: WebSocket) => void): Promise<
   await cdp('Page.navigate', { url: MINT_URL }).catch(() => {});
 
   // Once the Reviews tab renders, clicking it fires qv9Egd; poll+nudge until the
-  // Network listener captures the bgkey (or the outer timeout fires). Selectors
-  // mirror packages/extension/src/sites/gmaps-capture.ts.
+  // interceptor captures the bgkey (or the outer timeout fires). Selectors mirror
+  // packages/extension/src/sites/gmaps-capture.ts.
   const nudge = `(function(){document.querySelector('button[role="tab"][aria-label*="eview" i]')?.click();var el=document.querySelector('.jftiEf[data-review-id]');el=el?el.parentElement:null;while(el){var s=getComputedStyle(el);if((s.overflowY==='auto'||s.overflowY==='scroll')&&el.scrollHeight>el.clientHeight){el.scrollBy({top:1e6});break;}el=el.parentElement;}return 1;})()`;
   for (let i = 0; i < 45 && !captured; i++) { await Bun.sleep(800); await cdp('Runtime.evaluate', { expression: nudge }).catch(() => {}); }
   return captured;
