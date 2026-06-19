@@ -25,6 +25,11 @@ type PersistedSeed = Seed & { ts: number };
 
 let cached: MapsCreds | null = null;
 let seededAt: number | null = null;
+// Whether the live session is believed usable. Credless, or a Google "expired"
+// RPC reply, makes the web read empty — the client polls health (below) to show
+// a reseed banner instead of silent emptiness. Optimistically fresh on (re)seed;
+// the transport flips it on the first stale RPC reply.
+let sessionStale = true;
 
 export function setMapsCreds(creds: MapsCreds): void {
   cached = creds;
@@ -33,6 +38,7 @@ export function setMapsCreds(creds: MapsCreds): void {
 const apply = (s: Seed): void => {
   setMapsCreds({ bgkey: s.bgkey, bgbind: s.bgbind, sessionId: s.sessionId, at: s.at, hl: 'en' });
   setGoogleCookieOverride(s.cookies);
+  sessionStale = false;
 };
 
 // Write the seed atomically at 0600: create a fresh temp at that mode, then
@@ -91,11 +97,21 @@ export function getMapsCreds(): MapsCreds | null {
   return null;
 }
 
+// The transport flips these from the actual RPC outcome: a Google "expired"
+// payload marks stale, a valid reviews payload marks fresh. Paired with hasCreds
+// so the client can tell "no session" / "stale session" / "healthy" apart and
+// show a reseed banner.
+export function markSessionStale(): void { sessionStale = true; }
+export function markSessionFresh(): void { sessionStale = false; }
+export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && !sessionStale; }
+
 // Liveness + age for the GET probe on /api/maps-creds. Never returns the secrets
-// themselves — just whether we have a session and how old the last seed is.
-export function mapsCredsStatus(): { hasCreds: boolean; seededAt: string | null; ageMinutes: number | null } {
+// themselves — just whether we have a session, how old it is, and if it's stale.
+export function mapsCredsStatus(): { hasCreds: boolean; healthy: boolean; stale: boolean; seededAt: string | null; ageMinutes: number | null } {
   return {
     hasCreds: !!getMapsCreds(),
+    healthy: mapsSessionHealthy(),
+    stale: sessionStale,
     seededAt: seededAt ? new Date(seededAt).toISOString() : null,
     ageMinutes: seededAt ? Math.round((Date.now() - seededAt) / 60000) : null,
   };

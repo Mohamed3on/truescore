@@ -152,6 +152,19 @@ function setStatus(msg: string, isErr = false) {
   status.classList.toggle('err', isErr);
 }
 
+// Session-health banner: the server can only fetch reviews while the extension
+// has seeded a live Google Maps session. When it's stale/credless every lookup
+// reads empty, so surface an actionable reseed prompt instead of silent zeros.
+const sessionBanner = $('sessionBanner') as HTMLElement;
+async function refreshSessionHealth() {
+  try {
+    const r = await fetch('/api/session-health');
+    if (!r.ok) return;
+    const { healthy } = (await r.json()) as { healthy: boolean };
+    sessionBanner.hidden = healthy;
+  } catch { /* transient network issue — leave the banner as-is */ }
+}
+
 function scoreClass(pct: number) {
   if (pct >= 60) return 'pos';
   if (pct <= 30) return 'neg';
@@ -1096,6 +1109,9 @@ form.addEventListener('submit', async (e) => {
   } finally {
     goBtn.disabled = false;
     goBtn.textContent = 'SCORE';
+    // A lookup is when staleness surfaces (empty reviews) — re-check health so
+    // the banner appears right when the user hits it.
+    refreshSessionHealth();
   }
 });
 
@@ -1249,6 +1265,7 @@ askForm.addEventListener('submit', async (e) => {
   }
 });
 
+refreshSessionHealth();
 const sharedUrl = new URLSearchParams(location.search).get('url');
 if (sharedUrl) {
   urlInput.value = sharedUrl;

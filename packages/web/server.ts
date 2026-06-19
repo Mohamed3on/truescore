@@ -24,7 +24,7 @@ import {
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
-import { applySeed, loadPersistedSeed, mapsCredsStatus } from './maps-creds';
+import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
@@ -369,6 +369,11 @@ Bun.serve({
           return json(errBody(e), 400);
         }
       },
+    },
+    // Public health for the web client's reseed banner: whether the server has a
+    // usable Maps session right now. Just a boolean — no secret, no timing.
+    '/api/session-health': {
+      GET: () => json({ healthy: mapsSessionHealthy() }),
     },
     // Read-only cache peek for the extension: returns summary/highlights/etc
     // if the place was already looked up via the web. Never triggers compute.

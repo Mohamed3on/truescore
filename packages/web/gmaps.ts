@@ -13,7 +13,7 @@ import {
   type Transport,
 } from '@truescore/gmaps-shared';
 import { googleFetch } from './browser';
-import { getMapsCreds } from './maps-creds';
+import { getMapsCreds, markSessionStale, markSessionFresh } from './maps-creds';
 
 export type { Review, SortKey, SortStats };
 
@@ -39,11 +39,20 @@ const warnNoCreds = (where: string): void => {
 // run of empties. No abort path — the server never pauses a sort.
 const transport: Transport = async (url, init) => {
   const body = await googleFetch(url, init);
-  if (isStaleReviewsResponse(body)) {
-    const now = throttledNow(lastStaleLog);
-    if (now !== null) {
-      lastStaleLog = now;
-      console.warn('[maps-creds] session looks expired — Google returned an empty RPC payload; reviews/highlights read empty until the extension re-seeds (open a Maps tab)');
+  // Update session health from the actual review-RPC outcome (POST batchexecute
+  // only — preview GETs don't exercise the session). A Google "expired" payload
+  // marks the session stale (drives the client's reseed banner); any valid reply
+  // marks it fresh again.
+  if (init?.method === 'POST') {
+    if (isStaleReviewsResponse(body)) {
+      markSessionStale();
+      const now = throttledNow(lastStaleLog);
+      if (now !== null) {
+        lastStaleLog = now;
+        console.warn('[maps-creds] session looks expired — Google returned an empty RPC payload; reviews/highlights read empty until the extension re-seeds (open a Maps tab)');
+      }
+    } else {
+      markSessionFresh();
     }
   }
   return body;
