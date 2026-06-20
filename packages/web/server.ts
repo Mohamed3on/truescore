@@ -337,7 +337,12 @@ Bun.serve({
           const { url } = await req.json() as LookupRequest;
           const { featureId, name, resolvedUrl } = await resolvePlace(url);
           const cached = cache.get(featureId);
-          if (cached) return streamCachedLookup(featureId, name, resolvedUrl, cached);
+          // A contribution-only stub (scoreTs 0) carries the extension's summary +
+          // highlights but a placeholder 0-review score the server never computed.
+          // Serving it cached paints "0 reviews" until revalidate lands — route it to
+          // the fresh path so the score scrapes first (the contributed summary +
+          // highlights still load from cache right after the score settles).
+          if (cached?.scoreTs) return streamCachedLookup(featureId, name, resolvedUrl, cached);
           return streamFreshLookup(featureId, name, resolvedUrl);
         } catch (e) {
           console.error(`[lookup] ${e instanceof Error ? e.message : e}`);
