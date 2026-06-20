@@ -777,7 +777,7 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
         store.ingest(sortKey, pageReviews);
         state.pageCount = index + 1;
         if (nextCursor) state.cursor = nextCursor;
-        updateUI();
+        scheduleUpdateUI();
 
         if (sortKey === 'newest' && index === 0 && pageReviews[0]?.reviewId) {
           reconcileWithLiveHead(pageReviews[0].reviewId);
@@ -1417,6 +1417,17 @@ const createUIElements = () => {
   document.body.appendChild(c);
 };
 
+// Coalesce the per-page repaint: both sorts deliver pages in parallel and each
+// updateUI() recomputes store.mergedStats (a full merge over every review so far,
+// O(n)). Collapsing co-temporal pages into one animation frame keeps that off the
+// scrape's hot path; the stabilize check and head-reconcile don't need the paint.
+let updateUIScheduled = false;
+const scheduleUpdateUI = () => {
+  if (updateUIScheduled) return;
+  updateUIScheduled = true;
+  requestAnimationFrame(() => { updateUIScheduled = false; updateUI(); });
+};
+
 const updateUI = () => {
   const { totalCount, totalAll, totalTrusted, mergedPct } = store.mergedStats(currentOption);
   let anyFetching = false, allDone = true;
@@ -1463,15 +1474,24 @@ const updateUI = () => {
       els.pctEl.style.textShadow = `0 0 24px ${color}40`;
       els.diffEl.style.display = 'none';
       if (!fullPctObserver) {
-        fullPctObserver = new MutationObserver(() => {
-          if (calculateFullPercentage() !== null) {
-            fullPctObserver!.disconnect();
-            fullPctObserver = null;
+        // Throttle to one histogram read per frame: .jANrlb mutates rapidly while
+        // the rating panel renders, and each readHistogramCounts is a
+        // querySelectorAll + parse. Self-disconnects once the counts are readable.
+        let pending = false;
+        const obs = new MutationObserver(() => {
+          if (pending) return;
+          pending = true;
+          requestAnimationFrame(() => {
+            pending = false;
+            if (calculateFullPercentage() === null) return;
+            obs.disconnect();
+            if (fullPctObserver === obs) fullPctObserver = null;
             updateUI();
-          }
+          });
         });
+        fullPctObserver = obs;
         const target = document.querySelector('.jANrlb') || document.body;
-        fullPctObserver.observe(target, { childList: true, subtree: true });
+        obs.observe(target, { childList: true, subtree: true });
       }
     }
 
@@ -1750,7 +1770,11 @@ const triggerSummarize = async () => {
   }
 };
 
-const observer = new MutationObserver(() => {
+// Maps mutates its DOM continuously (tiles, panning, hover cards), so run the
+// place-detection pass on a trailing throttle instead of on every mutation — a
+// burst collapses to one run. Nothing here is latency-critical (idempotent score
+// injection + SPA-nav detection), so ~200ms is imperceptible.
+const handleDomMutation = () => {
   const url = location.href;
 
   const placeDetails = document.querySelector<HTMLElement>('.dmRWX');
@@ -1794,6 +1818,12 @@ const observer = new MutationObserver(() => {
     updateUI();
     if (shouldStartScoring()) startFetching();
   }
+};
+
+let domMutationTimer: ReturnType<typeof setTimeout> | null = null;
+const observer = new MutationObserver(() => {
+  if (domMutationTimer) return;
+  domMutationTimer = setTimeout(() => { domMutationTimer = null; handleDomMutation(); }, 200);
 });
 
 observer.observe(document.body, { childList: true, subtree: true });
