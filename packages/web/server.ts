@@ -107,12 +107,22 @@ const highlightsRecomputeInflight = createInflight<void>();
 
 const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
 
+// Prefer the chips the preview RPC already returned (cached on the entry by the
+// lookup's getOrFetchPreviewBundle) over a fresh harvestTokens — a second 2-RPC
+// preview fetch with A-B-bucket retries. Only harvest when we have none yet
+// (never looked up, or every prior preview bucket was chip-less).
+async function chipsFor(featureId: string): Promise<ChipMeta[]> {
+  const cached = cache.get(featureId)?.chipMeta;
+  if (cached?.length) return cached;
+  return harvestTokens(mapsUrlFor(featureId));
+}
+
 // Always harvest chips off the canonical /maps?q=&ftid=… URL. The share-link
 // redirect target carries a session fingerprint (shh/lucs/g_ep/skid) that
 // pushes Google's preview RPC into A-B buckets where the chip slot is empty —
 // retries thrash and sometimes give up. The bare ftid URL avoids that.
 async function recomputeHighlights(featureId: string, name: string): Promise<void> {
-  const chips = await harvestTokens(mapsUrlFor(featureId));
+  const chips = await chipsFor(featureId);
   if (!chips.length) return;
   const successes: Chip[] = [];
   let failures = 0;
@@ -125,9 +135,11 @@ async function recomputeHighlights(featureId: string, name: string): Promise<voi
     }
   }));
   const totalFetched = successes.reduce((a, h) => a + (h.fetched ?? 0), 0);
-  if (failures === 0 && totalFetched > 0) {
+  // Cache whatever succeeded, even on partial failure — a transient error on one
+  // chip shouldn't discard the rest and force a full re-scrape next time.
+  if (totalFetched > 0) {
     await cache.putHighlights(featureId, successes);
-    console.log(`[recompute-highlights] ${name} (${featureId}): ${successes.length}/${chips.length} chips, ${totalFetched} reviews`);
+    console.log(`[recompute-highlights] ${name} (${featureId}): ${successes.length}/${chips.length} chips, ${totalFetched} reviews${failures ? `, ${failures} failed` : ''}`);
   } else {
     console.log(`[recompute-highlights] ${name} (${featureId}): not cached (${successes.length}/${chips.length} chips, ${failures} failed, ${totalFetched} reviews)`);
   }
@@ -170,8 +182,8 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
   });
 }
 
-// Cache only on full success so the next request retries cleanly when any
-// chip failed.
+// Cache whatever chips succeeded, even on partial failure, so one transient chip
+// error doesn't discard the rest and force a full re-scrape next lookup.
 function streamHighlights(name: string, featureId: string, url: string, chips: ChipMeta[]): Response {
   return ndjsonStream<HighlightEvent>(async (write) => {
     write({ type: 'chips', chips });
@@ -191,10 +203,10 @@ function streamHighlights(name: string, featureId: string, url: string, chips: C
     }));
 
     const totalFetched = successes.reduce((a, h) => a + (h.fetched ?? 0), 0);
-    const cacheable = failures === 0 && totalFetched > 0;
+    const cacheable = totalFetched > 0;
     if (cacheable) {
       await cache.putHighlights(featureId, successes);
-    } else if (totalFetched === 0 && failures === 0) {
+    } else if (failures === 0) {
       console.warn(
         `[highlights] ${name} (${featureId}): all ${chips.length} chips fetched 0 reviews ` +
           `(likely upstream throttle). chips=[${chips.map((c) => c.label).join(', ')}] url=${url}`,
@@ -291,7 +303,7 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string)
       .catch((e) => {
         console.error('[preview]', e);
         write({ type: 'preview', histogram: null, overallPct: null, meta: {} });
-        return { histogram: null, meta: {} } as PreviewBundle;
+        return { histogram: null, meta: {}, chips: [] } as PreviewBundle;
       });
 
     const score = await scorePlace(featureId, (partial) => {
@@ -312,7 +324,7 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string)
 function getOrFetchPreviewBundle(featureId: string): Promise<PreviewBundle> {
   const existing = cache.get(featureId);
   if (existing?.histogram && existing.meta && cache.histogramFresh(existing)) {
-    return Promise.resolve({ histogram: existing.histogram, meta: existing.meta });
+    return Promise.resolve({ histogram: existing.histogram, meta: existing.meta, chips: existing.chipMeta ?? [] });
   }
   return previewInflight.run(featureId, async () => {
     const bundle = await fetchPreviewBundle(mapsUrlFor(featureId));
@@ -507,7 +519,7 @@ Bun.serve({
           if (!entry) return json({ error: 'look up the place first' }, 404);
           if (entry.highlights && !body.force) return json({ highlights: entry.highlights, cached: true } satisfies HighlightsResponse);
           const url = mapsUrlFor(featureId);
-          const chips = await harvestTokens(url);
+          const chips = await chipsFor(featureId);
           if (!chips.length) {
             console.warn(`[highlights] ${entry.name} (${featureId}): preview returned no chips after retries — ${url}`);
             return json({ error: "Google didn't return any topic chips for this place" }, 404);

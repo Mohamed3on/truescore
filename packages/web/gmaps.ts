@@ -121,8 +121,16 @@ export async function scorePlace(
   let latestRelevant: Review[] = [];
   let latestNewest: Review[] = [];
 
+  let lastEmit = 0;
   const emit = () => {
     if (!onProgress) return;
+    // Coalesce: each page from either sort would otherwise re-merge + re-stat the
+    // whole running set (O(n) × pages ≈ O(n²)). These numbers are cosmetic
+    // progress — the authoritative final score is returned below — so cap the
+    // recompute at ~once / 250ms; the trailing pages settle into the `score` event.
+    const now = Date.now();
+    if (now - lastEmit < 250) return;
+    lastEmit = now;
     const all = mergeByReviewId(latestRelevant, latestNewest);
     const m = statsForReviews(all);
     onProgress({

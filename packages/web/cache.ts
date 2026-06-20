@@ -2,7 +2,7 @@ import { homedir } from 'os';
 import { Database } from 'bun:sqlite';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './llm';
-import type { Chip, PlaceMeta } from '@truescore/gmaps-shared';
+import type { Chip, ChipMeta, PlaceMeta } from '@truescore/gmaps-shared';
 
 const LEGACY_JSON_PATH = process.env.TRUESCORE_CACHE_PATH || `${homedir()}/.truescore-cache.json`;
 const DB_PATH = process.env.TRUESCORE_CACHE_DB_PATH || LEGACY_JSON_PATH.replace(/\.json$/, '') + '.sqlite';
@@ -20,6 +20,9 @@ export type CacheEntry = {
   summaryTs?: number;
   highlights?: Chip[];
   highlightsTs?: number;
+  // Unscored topic chips harvested from the preview RPC. Cached so /api/highlights
+  // can score them without a second preview fetch. Last non-empty set wins.
+  chipMeta?: ChipMeta[];
   highlightSummaries?: Record<string, Summary>; // keyed by token
   searches?: Record<string, SearchResult>; // keyed by lowercase query
   histogram?: number[];
@@ -184,10 +187,12 @@ export const cache = {
       }
     }
   },
-  async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta }) {
+  async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta; chips?: ChipMeta[] }) {
     const existing = store.get(featureId);
     if (!existing) return;
     const next: CacheEntry = { ...existing, meta: bundle.meta };
+    // Keep the last non-empty chip set: a later empty A-B bucket mustn't wipe good chips.
+    if (bundle.chips?.length) next.chipMeta = bundle.chips;
     const histogramChanged = bundle.histogram &&
       (!existing.histogram || existing.histogram.some((v, i) => v !== bundle.histogram![i]));
     if (histogramChanged) {

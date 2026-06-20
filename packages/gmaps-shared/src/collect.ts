@@ -80,7 +80,7 @@ export function collectSort(featureId: string, sort: SortKey, transport: Transpo
 export async function collectToken(featureId: string, token: string, transport: Transport, opts: ShareOptions): Promise<Review[]> {
   const { locale, creds, ...rest } = opts;
   const c2 = withHl(creds, locale);
-  const { reviews } = await collectPaged((c) => buildTokenReq(featureId, token, c2, c), transport, { maxPages: 30, ...rest });
+  const { reviews } = await collectPaged((c) => buildTokenReq(featureId, token, c2, c), transport, { maxPages: 30, stabilize: true, ...rest });
   return reviews;
 }
 
@@ -103,6 +103,7 @@ export async function collectSearchTerms(
     terms.map((term) =>
       collectPaged((c) => reqFor(term, c), transport, {
         maxPages: 30,
+        stabilize: true,
         onPage: (_running, { pageReviews }) => {
           for (const r of pageReviews) union.set(r.reviewId, r);
           onMerged?.([...union.values()]);
