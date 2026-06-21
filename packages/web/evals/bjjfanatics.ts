@@ -8,8 +8,8 @@
 //
 //   bun evals/bjjfanatics.ts                 # 3 models + nano thinking ladder, on the shipped prompt
 //   bun evals/bjjfanatics.ts --judge         # + blind gpt-5.4 pairwise quality scoring
-//   bun evals/bjjfanatics.ts --ab            # run shipped vs fixed prompt (formatting A/B)
-//   bun evals/bjjfanatics.ts --fixed         # run only the fixed prompt
+//   bun evals/bjjfanatics.ts --ab            # A/B current shipped prompt vs the grounded candidate
+//   bun evals/bjjfanatics.ts --grounded      # run only the grounded candidate
 //
 // Every run also reports "bold health": whether **bold** lands on concrete
 // specifics or on filler connectors ("start with the", "don't skip the"). That
@@ -20,7 +20,7 @@ import { z } from 'zod';
 
 const JUDGE = process.argv.includes('--judge');
 const AB = process.argv.includes('--ab');
-const FIXED_ONLY = process.argv.includes('--fixed');
+const GROUNDED_ONLY = process.argv.includes('--grounded');
 
 // ── Prompt (mirrors packages/extension/src/sites/bjjfanatics-pdp.ts SUMMARY_PROMPT).
 // Body is shared; only the final formatting sentence differs between variants —
@@ -40,15 +40,19 @@ If 2+ reviewers mention a specific better alternative course or instructor by na
 The conclusion is the most important field — write it like a buying verdict, not an essay. Lead with the bottom line: buy or skip, and for whom. Then the single most important takeaway reviewers walked away with, what to watch first, and what this course doesn't deliver so the reader knows when to pass. Be punchy and decisive, cite specific techniques and volumes by name, no hedging like "many reviewers say".`;
 
 const PROMPT_TAILS = {
-  // Shipped: "bolded leads" is read by nano as "bold each clause's lead-in",
-  // which bolds connectors ("start with the", "don't skip the") instead of specifics.
-  shipped: ` Format however reads best — a few short paragraphs, bolded leads, or short bullets are all fine.`,
-  // Fixed: bold is pinned to concrete specifics, connectors explicitly excluded.
-  fixed: ` Format however reads best — a few short paragraphs or short bullets. Use **bold** only on the concrete specifics (techniques, volumes/parts, the buy-or-skip call) — never on connecting phrases like "start with the" or "don't skip the".`,
+  // Shipped = current production tail (bjjfanatics-pdp.ts after 77c685a): bold
+  // pinned to specifics. It fixed the formatting, but nano still stays generic
+  // ("systematic approach") and leaves real review-named details on the table.
+  shipped: ` Format however reads best — a few short paragraphs or short bullets. Use **bold** only on the concrete specifics (techniques, volumes/parts, the buy-or-skip call) — never on connecting phrases like "start with the" or "don't skip the".`,
+  // Grounded candidate: force a concrete, review-sourced takeaway so nano stops
+  // hiding behind generalities, AND add rails so the new specificity can't turn
+  // into over-claiming (the gemini/deepseek failure modes) — cite only to locate
+  // a point a reviewer actually made; never rank, invent, or declare gaps.
+  grounded: ` Make the most important takeaway concrete — name the specific technique, sweep, grip, or detail a reviewer actually credited (a sweep someone hit, the cue that unlocked a position), not a generic "systematic approach". The verdict may spotlight one such vivid, named detail even if only one or two reviewers mention it, as long as you attribute it honestly — the 3+ threshold governs the ranked bullets, not the verdict's specifics. Use the course contents only to turn a vague reviewer reference ("the darce part") into its real named chapter; never rank or recommend sections reviewers didn't single out, invent chapter contents, or claim the course omits something reviewers didn't say it omits. Format however reads best — a few short paragraphs or short bullets. Use **bold** only on concrete specifics, never on connecting phrases.`,
 };
 const PROMPTS = {
   shipped: PROMPT_BODY + PROMPT_TAILS.shipped,
-  fixed: PROMPT_BODY + PROMPT_TAILS.fixed,
+  grounded: PROMPT_BODY + PROMPT_TAILS.grounded,
 };
 const ENGLISH_PIN = '\n\nAlways respond in English, even if the reviews are written in another language.\n\nReviews:\n\n';
 
@@ -194,7 +198,7 @@ const load = async (f: (typeof FIXTURES)[number]) => ({
 });
 const fixtures = await Promise.all(FIXTURES.filter((f) => !fixtureArg || f.name.includes(fixtureArg)).map(load));
 
-const variants: (keyof typeof PROMPTS)[] = AB ? ['shipped', 'fixed'] : FIXED_ONLY ? ['fixed'] : ['shipped'];
+const variants: (keyof typeof PROMPTS)[] = AB ? ['shipped', 'grounded'] : GROUNDED_ONLY ? ['grounded'] : ['shipped'];
 
 const available = CONTESTANTS.filter((c) => {
   if (!KEYS[c.provider]) {
