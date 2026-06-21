@@ -354,7 +354,7 @@ const buildPanel = (
     cacheKey: `bjj-summary-${info.id}`,
     summaryPrompt: SUMMARY_PROMPT,
     context: courseContent
-      ? `COURSE CONTENTS — the official volume/chapter breakdown with timestamps. Use it to translate vague reviewer references ("the leg lock part", "volume 3") into specific named chapters, and to judge which advertised sections reviewers actually praise or skip:\n\n${courseContent}`
+      ? `COURSE CONTENTS — the official volume/part/chapter breakdown. Use it to translate vague reviewer references ("the leg lock part", "volume 3") into specific named chapters, and to judge which advertised sections reviewers actually praise or skip:\n\n${courseContent}`
       : undefined,
     fetchReviews: async () => bundle.reviews.map(reviewToText).filter(Boolean),
     autoSummarize: true,
@@ -376,13 +376,33 @@ const openCourseAccordions = () => {
   }
 };
 
+// Pull the "What Exactly Is On This Series?" breakdown out of the product
+// description: each <ul> is a part's technique list, labelled by the "Part N:"
+// paragraph right before it. Skips the marketing copy, images, and pricing.
+// Used as a fallback for products without the per-volume timestamp tables.
+const getDescriptionContents = (): string => {
+  const desc = document.querySelector('.product__description');
+  if (!desc) return '';
+  const blocks: string[] = [];
+  for (const ul of desc.querySelectorAll('ul')) {
+    const items = Array.from(ul.querySelectorAll('li'))
+      .map((li) => li.textContent?.trim().replace(/\s+/g, ' '))
+      .filter(Boolean);
+    if (!items.length) continue;
+    const label = ul.previousElementSibling?.textContent?.trim().replace(/\s+/g, ' ') || '';
+    blocks.push((label ? `${label}\n` : '') + items.map((i) => `- ${i}`).join('\n'));
+  }
+  return blocks.join('\n\n');
+};
+
 // Flatten the per-volume chapter/timestamp tables into plain text so the
 // summarizer can map vague reviewer mentions to specific volumes and chapters.
+// Products without those tables (e.g. seated open guard) fall back to the
+// "Part N:" breakdown carried in the description.
 const getCourseContent = (): string => {
   const root = document.getElementById('contents');
-  if (!root) return '';
   const blocks: string[] = [];
-  for (const title of root.querySelectorAll('.product__course-title')) {
+  for (const title of root?.querySelectorAll('.product__course-title') || []) {
     const rows = Array.from(title.nextElementSibling?.querySelectorAll('table tr') || [])
       .map((tr) =>
         Array.from(tr.querySelectorAll('td'))
@@ -392,7 +412,7 @@ const getCourseContent = (): string => {
       .filter(Boolean);
     if (rows.length) blocks.push(`${title.textContent?.trim()}\n${rows.join('\n')}`);
   }
-  return blocks.join('\n\n');
+  return blocks.length ? blocks.join('\n\n') : getDescriptionContents();
 };
 
 openCourseAccordions();
