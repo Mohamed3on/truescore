@@ -27,7 +27,13 @@ const escapeHtml = (s: string) =>
 export const mdInline = (s: string): string => {
   s = escapeHtml(s);
   s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
-  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  // Bold: the **…** must hug its content (CommonMark-style flanking — opener
+  // followed by non-space, closer preceded by non-space). Without this, a stray
+  // or odd ** from the model (e.g. "…techniques.**** The") pairs with the wrong
+  // neighbor and inverts emphasis across the rest of the line, bolding the
+  // connectors instead of the specifics. Then drop any leftover unpaired **.
+  s = s.replace(/\*\*(?=\S)([^*\n]+?)(?<=\S)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*\*/g, '');
   s = s.replace(/(^|[^*\w])\*([^*\n]+?)\*(?!\w)/g, '$1<em>$2</em>');
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
   return s;
