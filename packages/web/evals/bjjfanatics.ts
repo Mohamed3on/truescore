@@ -1,5 +1,5 @@
 // Eval for the extension's BJJ Fanatics structured summary (complaints / praised
-// / conclusion / betterAlternative / suspiciousPatterns) — the flow behind the
+// / conclusion / betterAlternative) — the flow behind the
 // product-page panel, NOT the server summarize() path (which has a different
 // schema). It hits each provider exactly the way the extension does
 // (packages/extension/src/shared/review-summary.ts: raw fetch, reasoning_effort
@@ -52,7 +52,7 @@ const PROMPTS = {
 };
 const ENGLISH_PIN = '\n\nAlways respond in English, even if the reviews are written in another language.\n\nReviews:\n\n';
 
-// Same shape the extension sends, including suspiciousPatterns. Authored
+// Same shape the extension sends (review-summary.ts SUMMARY_SCHEMA). Authored
 // Gemini-friendly (nullable); toStrictSchema converts it for OpenAI strict mode.
 const SUMMARY_SCHEMA = {
   type: 'object' as const,
@@ -61,12 +61,6 @@ const SUMMARY_SCHEMA = {
     praised: { type: 'array' as const, items: { type: 'string' as const } },
     conclusion: { type: 'string' as const },
     betterAlternative: { type: 'string' as const, nullable: true },
-    suspiciousPatterns: {
-      type: 'string' as const,
-      nullable: true,
-      description:
-        'Warning about review manipulation if detected: repetitive phrasing, astroturfing, suspiciously similar wording, lack of unique detail, incentivized reviews, etc. Empty string if reviews appear genuine.',
-    },
   },
   required: ['complaints', 'praised', 'conclusion'],
 };
@@ -244,7 +238,6 @@ for (const fx of fixtures) {
           `praised ${parsed.praised?.length ?? 0} · complaints ${parsed.complaints?.length ?? 0} · alt ${parsed.betterAlternative ? JSON.stringify(parsed.betterAlternative) : '—'}`,
           `bold: ${health.spans.length} spans${flag}${health.filler.length ? ` → ${JSON.stringify(health.filler)}` : ''}`,
           fx.context ? `volumes cited: ${vols.length ? vols.join(', ') : '—'}${badVols.length ? ` ⚠ OUT OF RANGE (max ${maxVol}): ${badVols.join(', ')}` : ''}` : `volumes cited: ${vols.length ? `${vols.join(', ')} ⚠ (no contents provided — invented)` : '—'}`,
-          `suspicious: ${parsed.suspiciousPatterns ? JSON.stringify(parsed.suspiciousPatterns) : '— (none flagged)'}`,
           `conclusion:\n${parsed.conclusion}`,
         ].join('\n') + '\n',
       );
