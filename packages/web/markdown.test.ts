@@ -39,3 +39,23 @@ test('multiple clean bold spans are all preserved', () => {
   expect(out).toContain('<strong>shoulder crunch sweep</strong>');
   expect(out).toContain('<strong>sumi gaeshi</strong>');
 });
+
+// Models also emit underscore emphasis (_italic_ / __bold__); the renderer used
+// to print the literal underscores ("…signature _shoulder crunch sweep_.").
+test('underscore emphasis renders, including nested inside a bold lead', () => {
+  expect(mdInline("the signature _shoulder crunch sweep_.")).toContain('<em>shoulder crunch sweep</em>');
+  const out = mdInline('**finish with the signature _shoulder crunch sweep_.**');
+  expect(out).toContain('<strong>');
+  expect(out).toContain('<em>shoulder crunch sweep</em>');
+  expect(out).not.toContain('_');
+});
+
+test('__double underscore__ is bold', () => {
+  expect(mdInline('the __shoulder crunch__ sweep')).toContain('<strong>shoulder crunch</strong>');
+});
+
+test('intra-word underscores (snake_case, urls) are left alone', () => {
+  const out = mdInline('use snake_case_here in code');
+  expect(out).not.toContain('<em>');
+  expect(out).toContain('snake_case_here');
+});

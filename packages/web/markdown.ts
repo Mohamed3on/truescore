@@ -12,6 +12,11 @@ export const mdInline = (s: string): string => {
   s = s.replace(/\*\*(?=\S)([^*\n]+?)(?<=\S)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/\*\*/g, '');
   s = s.replace(/(^|[^*\w])\*([^*\n]+?)\*(?!\w)/g, '$1<em>$2</em>');
+  // Underscore emphasis (__bold__ / _italic_), which models emit too. Word-
+  // boundary guards keep intra-word underscores (snake_case, URLs) from becoming
+  // emphasis. Runs before the link rule so its injected target="_blank" is safe.
+  s = s.replace(/(^|[^\w_])__(?=\S)([^_\n]+?)(?<=\S)__(?=[^\w_]|$)/g, '$1<strong>$2</strong>');
+  s = s.replace(/(^|[^\w_])_(?=\S)([^_\n]+?)(?<=\S)_(?=[^\w_]|$)/g, '$1<em>$2</em>');
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
   return s;
 };
