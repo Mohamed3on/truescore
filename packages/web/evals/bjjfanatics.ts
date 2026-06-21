@@ -188,6 +188,9 @@ const boldHealth = (md: string) => {
 // inventing them. Filter with --fixture=<substr>.
 const FIXTURES = [
   { name: 'open-guard', reviews: 'bjjfanatics-openguard.txt' },
+  // Same reviews, but with the Part 1–8 breakdown extracted from the product
+  // description as context — the fallback when a product has no chapter list.
+  { name: 'open-guard+desc', reviews: 'bjjfanatics-openguard.txt', context: 'bjjfanatics-openguard.context.txt' },
   { name: 'half-guard+contents', reviews: 'bjjfanatics-halfguard.txt', context: 'bjjfanatics-halfguard.context.txt' },
 ];
 const fixtureArg = process.argv.find((a) => a.startsWith('--fixture='))?.split('=')[1];
@@ -211,14 +214,14 @@ const available = CONTESTANTS.filter((c) => {
 // Volume numbers a conclusion claims. For a fixture WITH official contents, any
 // number outside the real range is invented outright; whether it mapped the
 // right *content* to a volume is a judgment left to reading the output.
-const volumesCited = (md: string) => [...new Set([...md.matchAll(/\bvol(?:ume)?\.?\s*0?(\d{1,2})\b/gi)].map((m) => +m[1]!))];
+const volumesCited = (md: string) => [...new Set([...md.matchAll(/\b(?:vol(?:ume)?|part)\.?\s*0?(\d{1,2})\b/gi)].map((m) => +m[1]!))];
 
 type Row = { fixture: string; variant: string; label: string; provider: Provider; ms: number; usage: Usage; parsed: any; health: ReturnType<typeof boldHealth>; volumes: number[]; error?: string };
 const rows: Row[] = [];
 
 for (const fx of fixtures) {
   const reviewCount = fx.reviews.split('\n---\n').length;
-  const maxVol = fx.context ? Math.max(0, ...[...fx.context.matchAll(/\bVolume\s*0?(\d{1,2})\b/g)].map((m) => +m[1]!)) : 0;
+  const maxVol = fx.context ? Math.max(0, ...[...fx.context.matchAll(/\b(?:Volume|Part)\s*0?(\d{1,2})\b/g)].map((m) => +m[1]!)) : 0;
   for (const variant of variants) {
     const fullPrompt = PROMPTS[variant] + (fx.context ? `\n\n${fx.context}` : '') + ENGLISH_PIN + fx.reviews;
     console.log(`\n${'='.repeat(74)}\n## ${fx.name} · prompt=${variant} — ${reviewCount} reviews${fx.context ? ` (+ contents, ${maxVol} vols)` : ''}\n`);
