@@ -153,12 +153,13 @@ const callGemini = async (fullPrompt: string): Promise<Call> => {
   return { parsed: JSON.parse(raw), ms, usage: { in: u.promptTokenCount ?? 0, out: u.candidatesTokenCount ?? 0, reasoning: u.thoughtsTokenCount ?? 0 } };
 };
 
+// The three configs we actually ship — each at its production thinking setting.
+// (The nano effort ladder was dropped: higher effort cost latency without
+// improving summary quality in earlier runs.)
 type Contestant = { label: string; provider: Provider; effort?: string };
 const CONTESTANTS: Contestant[] = [
   { label: 'gemini:minimal', provider: 'gemini' },
   { label: 'nano:low', provider: 'openai', effort: 'low' },
-  { label: 'nano:medium', provider: 'openai', effort: 'medium' },
-  { label: 'nano:high', provider: 'openai', effort: 'high' },
   { label: 'deepseek:off', provider: 'deepseek' },
 ];
 
@@ -183,10 +184,21 @@ const boldHealth = (md: string) => {
   return { spans, filler, oddMarkers };
 };
 
-const reviews = (await Bun.file(new URL('./fixtures/bjjfanatics-openguard.txt', import.meta.url)).text())
-  .trim()
-  .split('\n---\n');
-const reviewBlock = reviews.join('\n---\n');
+// Each fixture is a product. `context` is the official volume/chapter breakdown
+// the extension appends (buildSummarizeWidget's `context`) so the model can
+// ground "volume 3 / the darce dilemma" references in real chapters instead of
+// inventing them. Filter with --fixture=<substr>.
+const FIXTURES = [
+  { name: 'open-guard', reviews: 'bjjfanatics-openguard.txt' },
+  { name: 'half-guard+contents', reviews: 'bjjfanatics-halfguard.txt', context: 'bjjfanatics-halfguard.context.txt' },
+];
+const fixtureArg = process.argv.find((a) => a.startsWith('--fixture='))?.split('=')[1];
+const load = async (f: (typeof FIXTURES)[number]) => ({
+  name: f.name,
+  reviews: (await Bun.file(new URL(`./fixtures/${f.reviews}`, import.meta.url)).text()).trim(),
+  context: 'context' in f && f.context ? (await Bun.file(new URL(`./fixtures/${f.context}`, import.meta.url)).text()).trim() : '',
+});
+const fixtures = await Promise.all(FIXTURES.filter((f) => !fixtureArg || f.name.includes(fixtureArg)).map(load));
 
 const variants: (keyof typeof PROMPTS)[] = AB ? ['shipped', 'fixed'] : FIXED_ONLY ? ['fixed'] : ['shipped'];
 
@@ -198,33 +210,46 @@ const available = CONTESTANTS.filter((c) => {
   return true;
 });
 
-type Row = { variant: string; label: string; provider: Provider; ms: number; usage: Usage; parsed: any; health: ReturnType<typeof boldHealth>; error?: string };
+// Volume numbers a conclusion claims. For a fixture WITH official contents, any
+// number outside the real range is invented outright; whether it mapped the
+// right *content* to a volume is a judgment left to reading the output.
+const volumesCited = (md: string) => [...new Set([...md.matchAll(/\bvol(?:ume)?\.?\s*0?(\d{1,2})\b/gi)].map((m) => +m[1]!))];
+
+type Row = { fixture: string; variant: string; label: string; provider: Provider; ms: number; usage: Usage; parsed: any; health: ReturnType<typeof boldHealth>; volumes: number[]; error?: string };
 const rows: Row[] = [];
 
-for (const variant of variants) {
-  const fullPrompt = PROMPTS[variant] + ENGLISH_PIN + reviewBlock;
-  console.log(`\n${'='.repeat(74)}\n## prompt = ${variant} — ${reviews.length} reviews\n`);
-  const results = await Promise.allSettled(available.map((c) => call(c, fullPrompt)));
-  results.forEach((r, i) => {
-    const c = available[i]!;
-    if (r.status === 'rejected') {
-      console.log(`### ${c.label} — ERROR: ${r.reason?.message ?? r.reason}\n`);
-      rows.push({ variant, label: c.label, provider: c.provider, ms: 0, usage: { in: 0, out: 0, reasoning: 0 }, parsed: null, health: boldHealth(''), error: String(r.reason?.message ?? r.reason) });
-      return;
-    }
-    const { parsed, ms, usage } = r.value;
-    const health = boldHealth(parsed.conclusion ?? '');
-    rows.push({ variant, label: c.label, provider: c.provider, ms, usage, parsed, health });
-    const flag = health.oddMarkers ? ' ⚠ ODD ** MARKERS' : health.filler.length ? ` ⚠ ${health.filler.length} filler-bold` : ' ✓ clean';
-    console.log(
-      [
-        `### ${c.label} — ${ms}ms · ${usage.in} in / ${usage.out} out${usage.reasoning ? ` (${usage.reasoning} reasoning)` : ''}`,
-        `praised ${parsed.praised?.length ?? 0} · complaints ${parsed.complaints?.length ?? 0} · alt ${parsed.betterAlternative ? JSON.stringify(parsed.betterAlternative) : '—'} · suspicious ${parsed.suspiciousPatterns ? JSON.stringify(parsed.suspiciousPatterns) : '—'}`,
-        `bold: ${health.spans.length} spans${flag}${health.filler.length ? ` → ${JSON.stringify(health.filler)}` : ''}`,
-        `conclusion:\n${parsed.conclusion}`,
-      ].join('\n') + '\n',
-    );
-  });
+for (const fx of fixtures) {
+  const reviewCount = fx.reviews.split('\n---\n').length;
+  const maxVol = fx.context ? Math.max(0, ...[...fx.context.matchAll(/\bVolume\s*0?(\d{1,2})\b/g)].map((m) => +m[1]!)) : 0;
+  for (const variant of variants) {
+    const fullPrompt = PROMPTS[variant] + (fx.context ? `\n\n${fx.context}` : '') + ENGLISH_PIN + fx.reviews;
+    console.log(`\n${'='.repeat(74)}\n## ${fx.name} · prompt=${variant} — ${reviewCount} reviews${fx.context ? ` (+ contents, ${maxVol} vols)` : ''}\n`);
+    const results = await Promise.allSettled(available.map((c) => call(c, fullPrompt)));
+    results.forEach((r, i) => {
+      const c = available[i]!;
+      if (r.status === 'rejected') {
+        console.log(`### ${c.label} — ERROR: ${r.reason?.message ?? r.reason}\n`);
+        rows.push({ fixture: fx.name, variant, label: c.label, provider: c.provider, ms: 0, usage: { in: 0, out: 0, reasoning: 0 }, parsed: null, health: boldHealth(''), volumes: [], error: String(r.reason?.message ?? r.reason) });
+        return;
+      }
+      const { parsed, ms, usage } = r.value;
+      const health = boldHealth(parsed.conclusion ?? '');
+      const vols = volumesCited(parsed.conclusion ?? '');
+      const badVols = fx.context ? vols.filter((v) => v < 1 || v > maxVol) : [];
+      rows.push({ fixture: fx.name, variant, label: c.label, provider: c.provider, ms, usage, parsed, health, volumes: vols });
+      const flag = health.oddMarkers ? ' ⚠ ODD **' : health.filler.length ? ` ⚠ ${health.filler.length} filler-bold` : ' ✓ clean';
+      console.log(
+        [
+          `### ${c.label} — ${ms}ms · ${usage.in} in / ${usage.out} out${usage.reasoning ? ` (${usage.reasoning} reasoning)` : ''}`,
+          `praised ${parsed.praised?.length ?? 0} · complaints ${parsed.complaints?.length ?? 0} · alt ${parsed.betterAlternative ? JSON.stringify(parsed.betterAlternative) : '—'}`,
+          `bold: ${health.spans.length} spans${flag}${health.filler.length ? ` → ${JSON.stringify(health.filler)}` : ''}`,
+          fx.context ? `volumes cited: ${vols.length ? vols.join(', ') : '—'}${badVols.length ? ` ⚠ OUT OF RANGE (max ${maxVol}): ${badVols.join(', ')}` : ''}` : `volumes cited: ${vols.length ? `${vols.join(', ')} ⚠ (no contents provided — invented)` : '—'}`,
+          `suspicious: ${parsed.suspiciousPatterns ? JSON.stringify(parsed.suspiciousPatterns) : '— (none flagged)'}`,
+          `conclusion:\n${parsed.conclusion}`,
+        ].join('\n') + '\n',
+      );
+    });
+  }
 }
 
 // ── Blind quality judge (gpt-5.4 thinking), pairwise within each prompt variant,
@@ -241,23 +266,36 @@ if (JUDGE && KEYS.openai) {
   const acc = (p: string) => (tally[p] ??= { w: 0, t: 0, l: 0, g: 0, s: 0, u: 0, n: 0 });
   const out = (x: any) => JSON.stringify({ conclusion: x.conclusion, praised: x.praised, complaints: x.complaints, betterAlternative: x.betterAlternative }, null, 1);
 
-  for (const variant of variants) {
-    const ok = rows.filter((r) => r.variant === variant && r.parsed);
+  const groups = [...new Set(rows.filter((r) => r.parsed).map((r) => `${r.fixture}::${r.variant}`))];
+  for (const g of groups) {
+    const ok = rows.filter((r) => r.parsed && `${r.fixture}::${r.variant}` === g);
+    const fx = fixtures.find((f) => f.name === ok[0]!.fixture)!;
+    // The judge MUST see the same course contents the summary saw. Otherwise it
+    // scores valid volume/chapter citations (e.g. "rolling commentary, Vol 9-10")
+    // as hallucinations — they aren't in the reviews, only in the contents.
+    const reviewBlock = (fx.context ? `OFFICIAL COURSE CONTENTS (citations matching these volumes/chapters are grounded, not invented):\n${fx.context}\n\n---\n\n` : '') + `REVIEWS:\n${fx.reviews}`;
     const pairs: [Row, Row][] = [];
     for (let a = 0; a < ok.length; a++) for (let b = a + 1; b < ok.length; b++) pairs.push([ok[a]!, ok[b]!]);
-    console.log(`\n${'='.repeat(74)}\n## judge (gpt-5.4 thinking, blind) — prompt = ${variant}\n`);
-    for (const [k, [r0, r1]] of pairs.entries()) {
-      const flip = k % 2 === 1;
-      const [a, b] = flip ? [r1, r0] : [r0, r1];
-      const { object } = await generateObject({
-        model: judgeModel,
-        providerOptions: { openai: { reasoningEffort: 'high' } },
-        schema: judgeSchema,
-        prompt: `${reviewBlock}\n\n---\n\nTwo anonymous models summarized the BJJ instructional reviews above. Score each 1-5 on: grounded (claims traceable to the reviews, nothing invented), specific (named techniques/volumes over vague adjectives), useful (helps someone decide buy/skip). Then pick the overall winner.\n\nOutput A:\n${out(a.parsed)}\n\nOutput B:\n${out(b.parsed)}`,
-      });
-      const scores = flip ? { [r0.label]: object.b, [r1.label]: object.a } : { [r0.label]: object.a, [r1.label]: object.b };
-      const winner = object.winner === 'tie' ? 'tie' : (object.winner === 'A') !== flip ? r0.label : r1.label;
-      console.log(`${r0.label} vs ${r1.label}: ${Object.entries(scores).map(([p, s]) => `${p} g${s.grounded}/s${s.specific}/u${s.useful}`).join(' | ')} → ${winner}${winner === 'tie' ? '' : `: ${object.reason}`}`);
+    console.log(`\n${'='.repeat(74)}\n## judge (gpt-5.4 thinking, blind) — ${g.replace('::', ' · prompt=')}\n`);
+    // Judge every pair concurrently; fold the verdicts into the tally after, so
+    // the shared counters stay deterministic regardless of completion order.
+    const judged = await Promise.all(
+      pairs.map(async ([r0, r1], k) => {
+        const flip = k % 2 === 1;
+        const [a, b] = flip ? [r1, r0] : [r0, r1];
+        const { object } = await generateObject({
+          model: judgeModel,
+          providerOptions: { openai: { reasoningEffort: 'high' } },
+          schema: judgeSchema,
+          prompt: `${reviewBlock}\n\n---\n\nTwo anonymous models summarized the source above (reviews, plus official course contents when present). Score each 1-5 on: grounded (every claim traceable to the reviews OR the official contents — a volume/chapter citation that matches the contents is grounded, NOT invented), specific (named techniques/volumes over vague adjectives), useful (helps someone decide buy/skip). Then pick the overall winner.\n\nOutput A:\n${out(a.parsed)}\n\nOutput B:\n${out(b.parsed)}`,
+        });
+        const scores = flip ? { [r0.label]: object.b, [r1.label]: object.a } : { [r0.label]: object.a, [r1.label]: object.b };
+        const winner = object.winner === 'tie' ? 'tie' : (object.winner === 'A') !== flip ? r0.label : r1.label;
+        return { r0, r1, scores, winner, reason: object.reason };
+      }),
+    );
+    for (const { r0, r1, scores, winner, reason } of judged) {
+      console.log(`${r0.label} vs ${r1.label}: ${Object.entries(scores).map(([p, s]) => `${p} g${s.grounded}/s${s.specific}/u${s.useful}`).join(' | ')} → ${winner}${winner === 'tie' ? '' : `: ${reason}`}`);
       for (const [p, s] of Object.entries(scores)) {
         const x = acc(p);
         x.g += s.grounded; x.s += s.specific; x.u += s.useful; x.n++;
@@ -276,5 +314,5 @@ if (JUDGE && KEYS.openai) {
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const outPath = new URL(`./out/bjjfanatics-${stamp}.json`, import.meta.url);
-await Bun.write(outPath, JSON.stringify({ stamp, reviewCount: reviews.length, rows }, null, 2));
+await Bun.write(outPath, JSON.stringify({ stamp, fixtures: fixtures.map((f) => f.name), rows }, null, 2));
 console.log(`\nwrote ${outPath.pathname}`);
