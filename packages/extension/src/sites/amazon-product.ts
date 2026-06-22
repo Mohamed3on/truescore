@@ -1,6 +1,6 @@
 import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas, el, npsColor, npsStats } from '../shared/utils';
-import { buildSummarizeWidget } from '../shared/review-summary';
+import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { queryTerms, buildReviewCard } from '../shared/review-search';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 
@@ -596,20 +596,12 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
   if (numberOfParsedReviews > 0) {
     scores.recent.percentage = scores.recent.percentage || (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
-    const SUMMARY_PROMPT = `Analyze these Amazon product reviews. Ignore anything about shipping, delivery, packaging, or seller issues \u2014 focus ONLY on the product itself. Skip generic praise like "great product".
-
-ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should be one concrete point, e.g. "Too sweet for some tastes".
-
-If 2+ reviewers mention a specific better alternative product, note it and explain how reviewers compare it to this product (e.g. what's better/worse about the alternative).
-
-End with a short summary: the gist of what owners say, anything to watch out for, any better alternatives mentioned, and whether this is the best you can get for the price.`;
-
     buildKeywordSearch();
 
     buildSummarizeWidget({
       wrapper,
       cacheKey: `review-summary-${cacheASIN}`,
-      summaryPrompt: SUMMARY_PROMPT,
+      summaryPrompt: PRODUCT_SUMMARY_PROMPT,
       fetchReviews: fetchFreshReviewTexts,
     });
   }

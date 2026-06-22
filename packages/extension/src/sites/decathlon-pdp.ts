@@ -1,6 +1,6 @@
 import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
-import { buildSummarizeWidget } from '../shared/review-summary';
+import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
 
@@ -168,14 +168,6 @@ const fetchReviewTexts = async (tld: string, locale: string, sku: string, produc
   return texts;
 };
 
-const SUMMARY_PROMPT = `Analyze these product reviews. Ignore anything about shipping, delivery, packaging, or seller issues \u2014 focus ONLY on the product itself. Skip generic praise like "great product".
-
-ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should be one concrete point, e.g. "Too sweet for some tastes".
-
-If 2+ reviewers mention a specific better alternative product, note it and explain how reviewers compare it to this product.
-
-End with a short summary: the gist of what owners say, anything to watch out for, any better alternatives mentioned, and whether this is the best you can get for the price.`;
-
 const addSummarizeUI = (anchor: Element, tld: string, locale: string, sku: string, productId: string) => {
   if (document.querySelector('.ars-wrapper')) return;
 
@@ -189,7 +181,7 @@ const addSummarizeUI = (anchor: Element, tld: string, locale: string, sku: strin
   buildSummarizeWidget({
     wrapper,
     cacheKey: `dkt-summary-${productId}`,
-    summaryPrompt: SUMMARY_PROMPT,
+    summaryPrompt: PRODUCT_SUMMARY_PROMPT,
     fetchReviews: () => fetchReviewTexts(tld, locale, sku, productId),
   });
 

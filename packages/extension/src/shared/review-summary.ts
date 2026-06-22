@@ -1,6 +1,16 @@
 import { getActiveLLM, geminiEndpoint, OPENAI_ENDPOINT, OPENAI_MODEL, DEEPSEEK_ENDPOINT, DEEPSEEK_MODEL } from './config';
 import { el, renderMarkdown, renderMarkdownInline } from './utils';
 
+// Shared default summary prompt for retail product pages (Amazon, Decathlon, dm…).
+// Domain-specific pages (hotels, films, BJJ courses) keep their own prompts.
+export const PRODUCT_SUMMARY_PROMPT = `Analyze these product reviews. Ignore shipping, delivery, packaging, or seller issues — focus ONLY on the product itself. Skip generic praise like "great product".
+
+Cover the recurring themes mentioned by 3+ reviewers, ranked by how often they come up. Each bullet is one concrete, specific point with enough detail to be useful — e.g. "Adhesive lifts at the edges after a few hours", not just "doesn't stick". When reviewers disagree on a point, say so. Give the 4–6 strongest points for praised and for complaints; don't pad with weak or one-off mentions.
+
+Only set betterAlternative if 2+ reviewers name a specific competing product, and explain how they say it compares. Otherwise leave it empty — never write that no alternative was mentioned.
+
+conclusion: 2–4 sentences — the overall verdict: what owners consistently say, who it suits best or the main thing to watch out for, and whether it's good value when reviewers mention price. Don't just restate the bullets, and don't mention what reviewers didn't say.`;
+
 export const renderStructuredSummary = (
   container: HTMLElement,
   { complaints, praised, conclusion, betterAlternative }: any,
