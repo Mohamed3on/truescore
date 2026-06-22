@@ -113,11 +113,14 @@ export function onStaleRpc(): void { void renewSession('stale-detected'); }
 export function onFreshRpc(): void { renewOk = true; }
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
 
-// --- self-renewal: mint a fresh bgkey via headless Chrome (maps-minter) ---
-// The cookies outlive the bgkey by months, so as long as we have them we re-mint
-// instead of needing an extension reseed. One coordinator owns both throttles:
-// the cooldown (collapses a stale-storm to one attempt; `force` bypasses it for
-// the operator endpoint) and, one layer down, mintMapsCreds's own single-flight.
+// --- reactive self-renewal: mint a fresh bgkey via headless Chrome (maps-minter) ---
+// The bgkey is a BotGuard token only a real browser can compute, so this is the
+// one server-side way to refresh it. It's session-bound, not short-lived: the
+// cookie roll-forward keeps the session trusted, so the seeded bgkey stays valid
+// and we only re-mint when a review RPC actually comes back stale (onStaleRpc).
+// One coordinator owns both throttles: the cooldown (collapses a stale-storm to one
+// attempt; `force` bypasses it for the operator endpoint) and, one layer down,
+// mintMapsCreds's own single-flight.
 const RENEW_COOLDOWN_MS = 60_000;
 let lastRenewAttempt = 0;
 
@@ -195,12 +198,13 @@ export function startCookieRefreshTimer(): void {
   console.log(`[maps-creds] cookie refresh every ${min}min (+ boot)`);
 }
 
-// Proactive path: refresh on a timer so the bgkey rarely expires mid-lookup,
-// but skip the launch when the session was already refreshed within the interval
-// (by an extension reseed or a reactive mint) — no point re-minting a fresh key.
-// Tunable via TRUESCORE_MINT_INTERVAL_MIN (0 disables); env-tuned once the TTL is known.
+// Proactive mint (OFF by default): the cookie roll-forward keeps the session
+// trusted, which keeps the seeded bgkey valid, so there's no need to re-mint on a
+// timer — the reactive mint (onStaleRpc) covers a genuinely expired bgkey on
+// demand, and the headless mint is the heaviest proxy-traffic source (it loads a
+// full Maps page in Chrome). Set TRUESCORE_MINT_INTERVAL_MIN>0 to re-enable it.
 export function startRenewTimer(): void {
-  const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 30);
+  const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 0);
   if (!(min > 0)) { console.log('[maps-creds] proactive renew disabled'); return; }
   const intervalMs = min * 60_000;
   setInterval(() => {

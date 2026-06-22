@@ -55,7 +55,10 @@ ssh root@65.108.153.112 'rm -f /var/lib/truescore/maps-creds.json && systemctl r
 # force a headless bgkey re-mint now (self-renewal; spawns Chrome ~7s; needs cookies from a prior seed)
 ssh root@65.108.153.112 'curl -s -X POST localhost/api/maps-creds/renew -H "x-truescore-seed: $(sed -n "s/^TRUESCORE_SEED_SECRET=//p" /opt/truescore/.env)"'
 
-# tune self-renewal cadence (minutes; 0 disables -> falls back to extension reseed + the web banner)
+# proactive headless mint is OFF by default (reactive-only: the bgkey re-mints on
+# demand when a lookup comes back stale; the cookie refresh below keeps the session
+# alive so that's rare). The headless mint loads a full Maps page through the proxy,
+# so the proactive timer was the biggest traffic source. Re-enable with minutes >0:
 ssh root@65.108.153.112 'echo "TRUESCORE_MINT_INTERVAL_MIN=30" >> /opt/truescore/.env && systemctl restart truescore'
 
 # tune cookie roll-forward cadence (minutes; 0 disables). The server refreshes the
