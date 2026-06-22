@@ -51,26 +51,24 @@ const extractStats = (payload: any, requestedProductId: string) => {
   return null;
 };
 
+// Shared by the stats + reviews BazaarVoice calls.
+const REVIEW_REQUEST_INIT: RequestInit = {
+  method: 'GET',
+  mode: 'cors',
+  credentials: 'omit',
+  headers: { accept: '*/*', 'bv-bfd-token': BFD_TOKEN },
+  referrer: 'https://www.dm.de/',
+};
+
 const fetchStats = async (productId: string) => {
   const cacheKey = `nps_dm_stats_${productId}`;
   const cached = cacheGet(cacheKey, CACHE_TTL);
   if (cached) return cached;
 
-  const requestInit: RequestInit = {
-    method: 'GET',
-    mode: 'cors',
-    credentials: 'omit',
-    headers: {
-      accept: '*/*',
-      'bv-bfd-token': BFD_TOKEN,
-    },
-    referrer: 'https://www.dm.de/',
-  };
-
   const urls = [buildUrl(productId, true), buildUrl(productId, false)];
   for (const url of urls) {
     try {
-      const res = await fetch(url, requestInit);
+      const res = await fetch(url, REVIEW_REQUEST_INIT);
       if (!res.ok) continue;
       const json = await res.json();
       const stats = extractStats(json, productId);
@@ -121,18 +119,10 @@ const fetchReviews = async (productId: string, totalCount = REVIEWS_PAGE * REVIE
   const cached = cacheGet(cacheKey, REVIEWS_TTL);
   if (cached) return cached;
 
-  const requestInit: RequestInit = {
-    method: 'GET',
-    mode: 'cors',
-    credentials: 'omit',
-    headers: { accept: '*/*', 'bv-bfd-token': BFD_TOKEN },
-    referrer: 'https://www.dm.de/',
-  };
-
   const pageCount = Math.min(REVIEWS_MAX_PAGES, Math.max(1, Math.ceil(totalCount / REVIEWS_PAGE)));
   const pages = await Promise.allSettled(
     Array.from({ length: pageCount }, (_, i) =>
-      fetch(buildReviewsUrl(productId, i * REVIEWS_PAGE), requestInit).then((r) => (r.ok ? r.json() : null))
+      fetch(buildReviewsUrl(productId, i * REVIEWS_PAGE), REVIEW_REQUEST_INIT).then((r) => (r.ok ? r.json() : null))
     )
   );
 
@@ -287,8 +277,6 @@ const extractExpectedReviewCount = () => {
   }
 };
 
-const insightsColor = (pct: number) => `hsl(${Math.min(120, Math.max(0, (pct - 50) * 3))},70%,40%)`;
-
 // Recommend rate (its own line) + key stats + any secondary ratings. The big
 // gauge above this is the recent-positive score, built in buildCard.
 const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: number; nps: number } | null) => {
@@ -323,7 +311,7 @@ const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: nu
     const pct = (metric.AverageRating / metric.ValueRange) * 100;
     barsHtml += `<div style="display:flex;align-items:center;gap:8px">
       <span style="width:150px;flex-shrink:0;font-size:11.5px;color:#57534E;overflow-wrap:break-word">${key}</span>
-      <div style="flex:1;height:5px;background:#E7E5E4;border-radius:3px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${insightsColor(pct)};border-radius:3px"></div></div>
+      <div style="flex:1;height:5px;background:#E7E5E4;border-radius:3px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${npsColor(pct)};border-radius:3px"></div></div>
       <span style="width:26px;text-align:right;font-size:12px;font-weight:700;color:#1C1917">${metric.AverageRating.toFixed(1)}</span>
     </div>`;
   }
@@ -345,7 +333,6 @@ const cleanup = () => {
     activeObserver.disconnect();
     activeObserver = null;
   }
-  document.querySelectorAll('.nps-dm-insights').forEach((el) => el.remove());
   document.querySelectorAll('.nps-dm-rating-badge').forEach((el) => el.remove());
   document.querySelectorAll('.ars-wrapper').forEach((el) => el.remove());
 };
@@ -433,8 +420,9 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
         if (ratio == null) return gauge.remove();
         const pct = Math.round(ratio * 100);
         const color = npsColor(pct);
-        (gauge.querySelector('.ars-gauge-pct') as HTMLElement).textContent = `${pct}%`;
-        (gauge.querySelector('.ars-gauge-pct') as HTMLElement).style.color = color;
+        const pctEl = gauge.querySelector('.ars-gauge-pct') as HTMLElement;
+        pctEl.textContent = `${pct}%`;
+        pctEl.style.color = color;
         const fill = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
         fill.style.background = color;
         fill.style.transform = `scaleX(${Math.max(0, Math.min(1, ratio))})`;
@@ -451,17 +439,18 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
 };
 
 const injectUi = (scoreData: any, stats: any, productId: string) => {
+  if (scoreData) injectScoreBadgeNearRating(scoreData);
+
+  // Card already placed — skip the anchor resolution on every later mutation.
+  if (document.querySelector('.ars-wrapper')) return true;
+
   const anchor = resolvePanelAnchor();
   if (!anchor) return false;
 
-  if (scoreData) injectScoreBadgeNearRating(scoreData);
-
-  if (!document.querySelector('.ars-wrapper')) {
-    const card = buildCard(stats, scoreData, productId);
-    if (card) {
-      if (anchor.position === 'before') anchor.node.before(card);
-      else anchor.node.after(card);
-    }
+  const card = buildCard(stats, scoreData, productId);
+  if (card) {
+    if (anchor.position === 'before') anchor.node.before(card);
+    else anchor.node.after(card);
   }
 
   return true;
@@ -485,48 +474,37 @@ const init = async () => {
     if (!candidates.length) return;
     const expectedReviewCount = extractExpectedReviewCount();
 
-    let stats: any = null;
-    let matchedProductId = '';
-    let fallbackStats: any = null;
-    let fallbackProductId = '';
-    let fallbackTotal = -1;
+    let matched: { id: string; stats: any } | null = null;
+    let fallback: { id: string; stats: any } | null = null;
     for (const productId of candidates) {
       const candidateStats = await fetchStats(productId);
       if (gen !== generation) return;
       if (!candidateStats) continue;
 
       const candidateTotal = Number(candidateStats.TotalReviewCount) || 0;
-      if (candidateTotal > fallbackTotal) {
-        fallbackTotal = candidateTotal;
-        fallbackStats = candidateStats;
-        fallbackProductId = productId;
+      if (!fallback || candidateTotal > (Number(fallback.stats.TotalReviewCount) || 0)) {
+        fallback = { id: productId, stats: candidateStats };
       }
 
-      if (expectedReviewCount != null && candidateTotal === expectedReviewCount) {
-        stats = candidateStats;
-        matchedProductId = productId;
-        break;
-      }
-
-      if (expectedReviewCount == null && (candidateStats.RatingDistribution?.length || candidateTotal > 0)) {
-        stats = candidateStats;
-        matchedProductId = productId;
+      const isMatch =
+        expectedReviewCount != null
+          ? candidateTotal === expectedReviewCount
+          : !!(candidateStats.RatingDistribution?.length || candidateTotal > 0);
+      if (isMatch) {
+        matched = { id: productId, stats: candidateStats };
         break;
       }
     }
-    if (!stats) {
-      stats = fallbackStats;
-      matchedProductId = fallbackProductId;
-    }
-    if (!stats) return;
+    const chosen = matched ?? fallback;
+    if (!chosen) return;
 
-    const scoreData = getScoreFromStats(stats);
+    const scoreData = getScoreFromStats(chosen.stats);
     const tryInject = () => {
       if (gen !== generation) {
         if (activeObserver) activeObserver.disconnect();
         return;
       }
-      injectUi(scoreData, stats, matchedProductId);
+      injectUi(scoreData, chosen.stats, chosen.id);
     };
 
     tryInject();
@@ -545,18 +523,27 @@ const scheduleInit = () => {
 };
 
 let lastUrl = location.href;
-new MutationObserver(() => {
+// Client-side route change: invalidate any in-flight init and drop the previous
+// product's badge/card so it can't linger as a stale score, then re-init if the
+// new URL is a product page. scheduleInit's debounce + domObserver wait for the
+// new page's DOM (incl. JSON-LD) to settle before resolving the product.
+const onUrlChange = () => {
   if (location.href === lastUrl) return;
   lastUrl = location.href;
-  // Client-side route change: invalidate any in-flight init and drop the previous
-  // product's badge/card so it can't linger as a stale score, then re-init if the
-  // new URL is itself a product page. scheduleInit's debounce waits for the new
-  // page's DOM (incl. JSON-LD) to settle before resolving the product.
   generation++;
   initInProgress = false;
   cleanup();
   if (isProductPage()) scheduleInit();
-}).observe(document, { childList: true, subtree: true });
+};
+// Navigation API covers pushState/replaceState/popstate/hash; fall back to
+// popstate+hashchange. Avoids a document-subtree MutationObserver firing on every
+// DOM mutation just to compare hrefs (see shared/spa-injector.ts).
+const nav = (window as any).navigation;
+if (nav?.addEventListener) nav.addEventListener('navigatesuccess', onUrlChange);
+else {
+  window.addEventListener('popstate', onUrlChange);
+  window.addEventListener('hashchange', onUrlChange);
+}
 
 const domObserver = new MutationObserver(() => {
   if (!isProductPage()) return;
