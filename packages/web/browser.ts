@@ -156,6 +156,38 @@ export async function googleFetch(
   throw new Error('googleFetch: unreachable');
 }
 
+// Keep the seeded session alive the way Chrome does: a periodic RotateCookies POST
+// mints fresh __Secure-1PSIDTS/3PSIDTS — the session-trust tokens. googleFetch
+// discards Set-Cookie and a normal Maps request never rotates *SIDTS, so without
+// this the seeded jar freezes and Google soft-rejects it (empty review RPCs) in
+// ~a day — the manual extension reseed we want to avoid. Returns the merged jar
+// when something rotated, null otherwise (caller keeps the current jar).
+export async function rotateSessionCookies(cookie: string): Promise<string | null> {
+  const r = await fetch('https://accounts.google.com/RotateCookies', {
+    proxy: PROXY_URL,
+    method: 'POST',
+    body: '[0,null]',
+    headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/json', Cookie: cookie },
+  });
+  if (!r.ok) return null;
+  const setCookies: string[] = (r.headers as any).getAll
+    ? (r.headers as any).getAll('set-cookie')
+    : ([r.headers.get('set-cookie')].filter(Boolean) as string[]);
+  const jar = new Map<string, string>();
+  for (const pair of cookie.split('; ')) {
+    const i = pair.indexOf('=');
+    if (i > 0) jar.set(pair.slice(0, i), pair.slice(i + 1));
+  }
+  let changed = false;
+  for (const c of setCookies) {
+    const m = c.match(/^([^=]+)=([^;]*)/);
+    if (!m?.[1]) continue;
+    const name = m[1], value = m[2] ?? '';
+    if (jar.get(name) !== value) { jar.set(name, value); changed = true; }
+  }
+  return changed ? [...jar].map(([k, v]) => `${k}=${v}`).join('; ') : null;
+}
+
 export async function fetchPlacePreview(placeUrl: string): Promise<any> {
   const html = await googleFetch(placeUrl);
   const m = html.match(/\/maps\/preview\/place\?[^"\s<>]+/);

@@ -24,7 +24,7 @@ import {
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
-import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, startRenewTimer, renewSession } from './maps-creds';
+import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, startRenewTimer, startCookieRefreshTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
@@ -335,9 +335,12 @@ function getOrFetchPreviewBundle(featureId: string): Promise<PreviewBundle> {
 
 // Restore the last extension-seeded session before serving, so a deploy/restart
 // doesn't blank reviews until the next Maps visit re-seeds. Then start the
-// headless self-renewal timer so the bgkey refreshes itself between visits.
+// headless self-renewal timer (re-mints the bgkey) and the cookie roll-forward
+// timer (refreshes the session-trust tokens via RotateCookies) so the session
+// sustains itself between visits without a manual reseed.
 await loadPersistedSeed();
 startRenewTimer();
+startCookieRefreshTimer();
 
 Bun.serve({
   port: PORT,

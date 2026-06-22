@@ -1,8 +1,8 @@
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { writeFileSync, renameSync } from 'fs';
-import type { MapsCreds } from '@truescore/gmaps-shared';
-import { setGoogleCookieOverride } from './browser';
+import { buildListReq, parseReviewsResponse, type MapsCreds } from '@truescore/gmaps-shared';
+import { setGoogleCookieOverride, googleFetch, rotateSessionCookies } from './browser';
 import { mintMapsCreds } from './maps-minter';
 
 // Botguard creds for the ListUgcPosts batchexecute RPC (the legacy GET endpoint
@@ -131,6 +131,68 @@ export async function renewSession(reason: string, force = false): Promise<boole
   applySeed(minted); // sets renewOk = true
   console.log(`[maps-creds] session renewed (${reason})`);
   return true;
+}
+
+// --- cookie roll-forward: refresh the session-trust tokens (no Chrome) ---
+// renewSession above re-mints the bgkey but reuses the seeded cookies verbatim,
+// and googleFetch throws away Set-Cookie — so __Secure-1PSIDTS/3PSIDTS are never
+// refreshed and the jar goes stale in ~a day, forcing a manual extension reseed.
+// A periodic RotateCookies POST rolls them forward; we verify reviews still load
+// before adopting the new jar, so a bad rotation can't poison a working session.
+const VERIFY_FID = '0x47e66e2964e34e2d:0x8ddca9ee380ef7e0'; // Eiffel Tower — always has reviews; the bgkey is place-independent.
+
+// Swap in a refreshed jar WITHOUT touching seededAt: the bgkey is unchanged, so
+// its age (and the mint timer keyed on it) must keep ticking from the real mint.
+function adoptCookies(cookies: string): void {
+  if (!cached) return;
+  setGoogleCookieOverride(cookies);
+  cookieStr = cookies;
+  renewOk = true;
+  try {
+    persistSeed({ bgkey: cached.bgkey, bgbind: cached.bgbind, sessionId: cached.sessionId, at: cached.at, cookies, ts: seededAt ?? Date.now() });
+  } catch (e) {
+    console.error('[maps-creds] failed to persist refreshed cookies — in-memory jar still active', e);
+  }
+}
+
+export async function refreshSessionCookies(reason: string): Promise<boolean> {
+  if (!cookieStr || !cached) return false;
+  let rolled: string | null = null;
+  try {
+    rolled = await rotateSessionCookies(cookieStr);
+  } catch (e) {
+    console.warn(`[maps-creds] cookie rotate error (${reason})`, e instanceof Error ? e.message : e);
+  }
+  if (!rolled) return false; // nothing rotated — keep the current jar
+  // Verify against the live RPC before adopting. The probe flips the global
+  // override to the candidate jar, so restore it if the candidate comes back empty.
+  setGoogleCookieOverride(rolled);
+  let ok = false;
+  try {
+    const req = buildListReq(VERIFY_FID, 'newest', cached);
+    ok = parseReviewsResponse(await googleFetch(req.url, req.init)).reviews.length > 0;
+  } catch { /* network/parse failure counts as not-ok */ }
+  if (!ok) {
+    setGoogleCookieOverride(cookieStr);
+    console.warn(`[maps-creds] cookie refresh (${reason}) verified empty — keeping current jar`);
+    return false;
+  }
+  adoptCookies(rolled);
+  console.log(`[maps-creds] session cookies refreshed (${reason})`);
+  return true;
+}
+
+// Roll cookies forward well inside the ~day it takes the jar to go stale. Cheap
+// (one HTTP POST, no Chrome), and it also fires ~10s after boot so a burst of
+// deploys — each resetting the interval — can't starve it. 0 disables -> falls
+// back to the extension reseed + the web banner. TRUESCORE_COOKIE_REFRESH_MIN.
+export function startCookieRefreshTimer(): void {
+  const min = Number(process.env.TRUESCORE_COOKIE_REFRESH_MIN ?? 30);
+  if (!(min > 0)) { console.log('[maps-creds] cookie refresh disabled'); return; }
+  const tick = () => { void refreshSessionCookies('timer'); };
+  setInterval(tick, min * 60_000);
+  setTimeout(tick, 10_000);
+  console.log(`[maps-creds] cookie refresh every ${min}min (+ boot)`);
 }
 
 // Proactive path: refresh on a timer so the bgkey rarely expires mid-lookup,

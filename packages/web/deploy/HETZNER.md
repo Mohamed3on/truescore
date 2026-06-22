@@ -58,6 +58,13 @@ ssh root@65.108.153.112 'curl -s -X POST localhost/api/maps-creds/renew -H "x-tr
 # tune self-renewal cadence (minutes; 0 disables -> falls back to extension reseed + the web banner)
 ssh root@65.108.153.112 'echo "TRUESCORE_MINT_INTERVAL_MIN=30" >> /opt/truescore/.env && systemctl restart truescore'
 
+# tune cookie roll-forward cadence (minutes; 0 disables). The server refreshes the
+# session-trust tokens (__Secure-1PSIDTS/3PSIDTS) via RotateCookies on this cadence
+# + ~10s after boot, so the seeded Maps session sustains itself without a manual
+# reseed. This is what stops the slow ~daily "session needs a refresh" death; the
+# bgkey mint above only re-mints the botguard token and reuses the frozen jar.
+ssh root@65.108.153.112 'echo "TRUESCORE_COOKIE_REFRESH_MIN=30" >> /opt/truescore/.env && systemctl restart truescore'
+
 # switch summarization model (llm.ts): gemini (default when unset) or openai
 ssh root@65.108.153.112 'sed -i "s/^LLM_PROVIDER=.*/LLM_PROVIDER=gemini/" /opt/truescore/.env && systemctl restart truescore'
 ```
