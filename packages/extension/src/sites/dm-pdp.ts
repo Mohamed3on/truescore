@@ -1,6 +1,7 @@
 import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { setupSpaInjector } from '../shared/spa-injector';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const API_BASE = 'https://apps.bazaarvoice.com/bfd/v1/clients/dm-de/api-products/cv2/resources/data/reviews.json';
@@ -323,16 +324,7 @@ const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: nu
   }
 };
 
-let generation = 0;
-let activeObserver: MutationObserver | null = null;
-let initInProgress = false;
-let initDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
 const cleanup = () => {
-  if (activeObserver) {
-    activeObserver.disconnect();
-    activeObserver = null;
-  }
   document.querySelectorAll('.nps-dm-rating-badge').forEach((el) => el.remove());
   document.querySelectorAll('.ars-wrapper').forEach((el) => el.remove());
 };
@@ -456,29 +448,20 @@ const injectUi = (scoreData: any, stats: any, productId: string) => {
   return true;
 };
 
-const init = async () => {
-  if (!isProductPage()) return;
-  if (initInProgress) return;
-  initInProgress = true;
-
-  try {
-    // Avoid redundant re-fetch if UI is already present.
-    if (document.querySelector('.nps-dm-rating-badge')) {
-      return;
-    }
-
-    const gen = ++generation;
-    cleanup();
-
+// dm derives the product id from late-arriving DOM (JSON-LD / data-attrs), so
+// load() returns null until that resolves and setupSpaInjector retries until it
+// does — the DOM-id PDP case ADR 0001 carved out, now served by the shared helper.
+setupSpaInjector<{ stats: any; scoreData: { score: number; nps: number } | null; productId: string }>({
+  match: isProductPage,
+  load: async () => {
     const candidates = extractCandidateProductIds();
-    if (!candidates.length) return;
+    if (!candidates.length) return null;
     const expectedReviewCount = extractExpectedReviewCount();
 
     let matched: { id: string; stats: any } | null = null;
     let fallback: { id: string; stats: any } | null = null;
     for (const productId of candidates) {
       const candidateStats = await fetchStats(productId);
-      if (gen !== generation) return;
       if (!candidateStats) continue;
 
       const candidateTotal = Number(candidateStats.TotalReviewCount) || 0;
@@ -495,61 +478,14 @@ const init = async () => {
         break;
       }
     }
+
     const chosen = matched ?? fallback;
-    if (!chosen) return;
-
-    const scoreData = getScoreFromStats(chosen.stats);
-    const tryInject = () => {
-      if (gen !== generation) {
-        if (activeObserver) activeObserver.disconnect();
-        return;
-      }
-      injectUi(scoreData, chosen.stats, chosen.id);
-    };
-
-    tryInject();
-    activeObserver = new MutationObserver(tryInject);
-    activeObserver.observe(document.body, { childList: true, subtree: true });
-  } finally {
-    initInProgress = false;
-  }
-};
-
-const scheduleInit = () => {
-  clearTimeout(initDebounceTimer!);
-  initDebounceTimer = setTimeout(() => {
-    if (isProductPage()) init();
-  }, 200);
-};
-
-let lastUrl = location.href;
-// Client-side route change: invalidate any in-flight init and drop the previous
-// product's badge/card so it can't linger as a stale score, then re-init if the
-// new URL is a product page. scheduleInit's debounce + domObserver wait for the
-// new page's DOM (incl. JSON-LD) to settle before resolving the product.
-const onUrlChange = () => {
-  if (location.href === lastUrl) return;
-  lastUrl = location.href;
-  generation++;
-  initInProgress = false;
-  cleanup();
-  if (isProductPage()) scheduleInit();
-};
-// Navigation API covers pushState/replaceState/popstate/hash; fall back to
-// popstate+hashchange. Avoids a document-subtree MutationObserver firing on every
-// DOM mutation just to compare hrefs (see shared/spa-injector.ts).
-const nav = (window as any).navigation;
-if (nav?.addEventListener) nav.addEventListener('navigatesuccess', onUrlChange);
-else {
-  window.addEventListener('popstate', onUrlChange);
-  window.addEventListener('hashchange', onUrlChange);
-}
-
-const domObserver = new MutationObserver(() => {
-  if (!isProductPage()) return;
-  if (document.querySelector('.nps-dm-rating-badge')) return;
-  scheduleInit();
+    if (!chosen) return null;
+    return { stats: chosen.stats, scoreData: getScoreFromStats(chosen.stats), productId: chosen.id };
+  },
+  inject: ({ stats, scoreData, productId }) => {
+    injectUi(scoreData, stats, productId);
+  },
+  cleanup,
+  retryUntilLoaded: true,
 });
-
-domObserver.observe(document.body, { childList: true, subtree: true });
-scheduleInit();

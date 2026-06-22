@@ -44,5 +44,15 @@ its shared surface (~2 lines) fails the deletion test.
   `CONTEXT.md`.
 - A future architecture review should not re-suggest a blanket
   `runSiteScript` migration — the hand-rollers are heterogeneous by need, not by
-  neglect. Per-site lifecycle differences (DOM-id timing, grids, bespoke
-  injection) are correctly divergent.
+  neglect. Per-site lifecycle differences (grids, bespoke injection) are
+  correctly divergent.
+
+## Update (2026-06-22)
+
+The DOM-id timing case is no longer divergent. `setupSpaInjector` gained an opt-in
+`retryUntilLoaded` flag that retries `load()` — debounced on body mutations —
+until it returns non-null, instead of calling it once per navigation. This closes
+the "PDPs that derive their id from the DOM" gap above, and `dm-pdp` now adopts
+`setupSpaInjector` (its candidate resolution lives in `load`, returning null until
+the product DOM is present). The blanket-migration caution still holds for
+PLPs/grids, one-shot DOM-compute, and the complex-bespoke sites.
