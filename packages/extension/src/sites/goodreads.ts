@@ -1,6 +1,6 @@
 import { cacheGet, cacheSet } from '../shared/cache';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
-import { addCommas, el, renderMarkdownInline } from '../shared/utils';
+import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 import { llmSummarize } from '../shared/review-summary';
 
 const CONFIG = {
@@ -8,8 +8,6 @@ const CONFIG = {
   SHELF_SCORE_CACHE_MS: 30 * 24 * 60 * 60 * 1000,
   PICKS_CACHE_MS: 7 * 24 * 60 * 60 * 1000,
   SUMMARY_CACHE_MS: 14 * 24 * 60 * 60 * 1000,
-  SUMMARY_REVIEW_LIMIT: 100,
-  REVIEW_TRUNCATE_CHARS: 1500,
   MAX_CONCURRENCY: 15,
   PAGE_BATCH: 2,
   MAX_PAGES: 25,
@@ -210,6 +208,8 @@ const STYLES = `
   .gr-summary-relink { font-size: 12px; color: #00635d; cursor: pointer; user-select: none; }
   .gr-summary-relink:hover { text-decoration: underline; }
   .gr-summary-btn {
+    flex-shrink: 0;
+    white-space: nowrap;
     font-size: 14px;
     font-weight: 700;
     color: #fff;
@@ -221,6 +221,7 @@ const STYLES = `
     transition: background .15s ease;
   }
   .gr-summary-btn:hover { background: #00524d; }
+  .gr-summary-btn:disabled { opacity: .6; cursor: default; }
   .gr-summary-sec { margin-bottom: 12px; }
   .gr-summary-sec:last-child { margin-bottom: 0; }
   .gr-summary-label {
@@ -234,7 +235,38 @@ const STYLES = `
   .gr-summary-text { font-size: 14px; line-height: 1.55; color: #382110; }
   .gr-summary-text strong { font-weight: 700; }
   .gr-summary-progress { color: #8b7355; font-size: 13px; padding: 4px 0; }
-  .gr-summary-error { color: #c24a32; font-size: 13px; margin-bottom: 10px; }
+  .gr-summary-error { color: #c24a32; font-size: 13px; }
+  .gr-summary-ask { display: flex; gap: 8px; margin-bottom: 12px; }
+  .gr-summary-input {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 12px;
+    font-size: 14px;
+    color: #382110;
+    background: #fff;
+    border: 1px solid #d6cdbf;
+    border-radius: 6px;
+    outline: none;
+  }
+  .gr-summary-input:focus { border-color: #00635d; }
+  .gr-summary-input::placeholder { color: #8b7355; }
+  .gr-summary-qa { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+  .gr-summary-qa-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #8b7355; }
+  .gr-summary-qa-chip {
+    font-size: 12px;
+    color: #00635d;
+    background: #fff;
+    border: 1px solid #d6cdbf;
+    border-radius: 999px;
+    padding: 4px 12px;
+    cursor: pointer;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: border-color .15s ease;
+  }
+  .gr-summary-qa-chip:hover { border-color: #00635d; }
 `;
 
 function injectStyles() {
@@ -758,7 +790,7 @@ const getEmbeddedReviewTexts = (): (string | null | undefined)[] => {
   } catch { return []; }
 };
 
-/** Strip, dedupe, truncate and cap raw review HTML into LLM-ready text. */
+/** Strip and dedupe raw review HTML into LLM-ready text. */
 const collectReviewTexts = (htmls: (string | null | undefined)[]): string[] => {
   const seen = new Set<string>();
   const texts: string[] = [];
@@ -767,8 +799,7 @@ const collectReviewTexts = (htmls: (string | null | undefined)[]): string[] => {
     const text = stripReviewHtml(html);
     if (text.length < 20 || seen.has(text)) continue;
     seen.add(text);
-    texts.push(text.length > CONFIG.REVIEW_TRUNCATE_CHARS ? text.slice(0, CONFIG.REVIEW_TRUNCATE_CHARS).trimEnd() + '…' : text);
-    if (texts.length >= CONFIG.SUMMARY_REVIEW_LIMIT) break;
+    texts.push(text);
   }
   return texts;
 };
@@ -792,53 +823,154 @@ const renderSummary = (body: HTMLElement, data: BookSummary) => {
   }
 };
 
-/** Mounts the AI review-summary section after `anchor`; summarizes the pre-fetched review prose on demand. */
+const QUESTION_PROMPT = `Answer this question using ONLY evidence from the book reviews below. Quote or paraphrase the concrete details reviewers give. If reviewers disagree, surface the tension. Avoid plot spoilers. Be direct and practical.`;
+
+type QAEntry = { q: string; a: string };
+const QA_LIMIT = 10;
+
+const loadQAs = (key: string | null): QAEntry[] => {
+  if (!key) return [];
+  try { const p = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(p) ? p : []; }
+  catch { return []; }
+};
+const saveQA = (key: string | null, entry: QAEntry) => {
+  if (!key) return;
+  const next = [entry, ...loadQAs(key).filter((e) => e.q !== entry.q)].slice(0, QA_LIMIT);
+  try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+};
+
+const renderAnswer = (body: HTMLElement, text: string) => {
+  body.textContent = '';
+  const div = el('div', 'gr-summary-text');
+  renderMarkdown(div, text);
+  body.append(div);
+};
+
+/**
+ * Mounts the AI section after `anchor`. The shared input drives both modes:
+ * empty → "Summarize reviews" (structured book summary), text → "Ask" (free-form
+ * answer). Both run over the same pre-fetched review prose; answers are cached.
+ */
 const displaySummary = (reviewTexts: string[], bookId: string | null, anchor: Element): HTMLElement => {
   const section = el('section', 'gr-summary');
   const head = el('div', 'gr-summary-head');
   head.append(el('h3', 'gr-summary-header', 'Reader Reviews'));
+  const relink = el('span', 'gr-summary-relink', '↻ Re-summarize');
+  relink.style.display = 'none';
+  relink.addEventListener('click', () => runSummary());
+  head.append(relink);
+
+  const askRow = el('div', 'gr-summary-ask');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'gr-summary-input';
+  input.placeholder = 'Ask about this book…';
+  const btn = el('button', 'gr-summary-btn') as HTMLButtonElement;
+  askRow.append(input, btn);
+
   const body = el('div', 'gr-summary-body');
-  section.append(head, body);
+  body.style.display = 'none';
+  const qaRow = el('div', 'gr-summary-qa');
+  qaRow.style.display = 'none';
+
+  section.append(head, askRow, body, qaRow);
   anchor.parentNode!.insertBefore(section, anchor.nextSibling);
 
-  const cacheKey = bookId ? `gr_summary_${bookId}` : null;
-  let relink: HTMLElement | null = null;
+  const summaryKey = bookId ? `gr_summary_${bookId}` : null;
+  const qaKey = bookId ? `gr_qa_${bookId}` : null;
+  let mode: 'none' | 'summary' | 'answer' = 'none';
 
-  const showRelink = () => {
-    if (relink) return;
-    relink = el('span', 'gr-summary-relink', '↻ Re-summarize');
-    relink.addEventListener('click', () => summarize());
-    head.append(relink);
+  const syncBtn = () => {
+    const asking = !!input.value.trim();
+    btn.textContent = asking ? 'Ask' : '✦ Summarize reviews';
+    btn.style.display = !asking && mode === 'summary' ? 'none' : '';
+    relink.style.display = !asking && mode === 'summary' ? '' : 'none';
   };
 
-  const showButton = (label: string) => {
+  const progress = (label: string) => {
     body.textContent = '';
-    const btn = el('button', 'gr-summary-btn', label) as HTMLButtonElement;
-    btn.addEventListener('click', () => summarize());
-    body.append(btn);
+    body.append(el('div', 'gr-summary-progress', label));
+    body.style.display = 'block';
   };
 
-  const summarize = async () => {
-    relink?.remove();
-    relink = null;
+  const fail = (msg: string) => {
     body.textContent = '';
-    body.append(el('div', 'gr-summary-progress', '✦ Summarizing…'));
+    body.append(el('div', 'gr-summary-error', msg));
+    body.style.display = 'block';
+  };
+
+  const runSummary = async () => {
+    btn.disabled = true;
+    progress('✦ Summarizing…');
     try {
       if (!reviewTexts.length) throw new Error('No written reviews found yet.');
       const data = (await llmSummarize(reviewTexts, SUMMARY_PROMPT, SUMMARY_SCHEMA)) as BookSummary;
-      if (cacheKey) cacheSet(cacheKey, data);
+      if (summaryKey) cacheSet(summaryKey, data);
       renderSummary(body, data);
-      showRelink();
+      body.style.display = 'block';
+      mode = 'summary';
     } catch (e: any) {
-      body.textContent = '';
-      body.append(el('div', 'gr-summary-error', e.message));
-      showButton('↻ Try again');
+      fail(e.message);
+    } finally {
+      btn.disabled = false;
+      syncBtn();
     }
   };
 
-  const cached = cacheKey ? (cacheGet(cacheKey, CONFIG.SUMMARY_CACHE_MS) as BookSummary | null) : null;
-  if (cached?.summary) { renderSummary(body, cached); showRelink(); }
-  else showButton('✦ Summarize reviews');
+  const showAnswer = (text: string) => {
+    renderAnswer(body, text);
+    body.style.display = 'block';
+    mode = 'answer';
+  };
+
+  const runAsk = async (question: string) => {
+    const hit = loadQAs(qaKey).find((e) => e.q.toLowerCase() === question.toLowerCase());
+    if (hit) { showAnswer(hit.a); syncBtn(); return; }
+    btn.disabled = true;
+    progress('⏳ Reading reviews…');
+    try {
+      if (!reviewTexts.length) throw new Error('No written reviews found yet.');
+      const answer = (await llmSummarize(reviewTexts, `${QUESTION_PROMPT}\n\nQuestion: ${question}`, null)) as string;
+      saveQA(qaKey, { q: question, a: answer });
+      showAnswer(answer);
+      renderQA();
+    } catch (e: any) {
+      fail(e.message);
+    } finally {
+      btn.disabled = false;
+      syncBtn();
+    }
+  };
+
+  const renderQA = () => {
+    const items = loadQAs(qaKey);
+    qaRow.textContent = '';
+    if (!items.length) { qaRow.style.display = 'none'; return; }
+    qaRow.style.display = 'flex';
+    qaRow.append(el('span', 'gr-summary-qa-label', 'Recent questions'));
+    for (const item of items) {
+      const chip = el('button', 'gr-summary-qa-chip', item.q) as HTMLButtonElement;
+      chip.title = item.q;
+      chip.addEventListener('click', () => { input.value = item.q; showAnswer(item.a); syncBtn(); });
+      qaRow.append(chip);
+    }
+  };
+
+  btn.addEventListener('click', () => {
+    const q = input.value.trim();
+    if (q) runAsk(q); else runSummary();
+  });
+  input.addEventListener('input', syncBtn);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
+
+  const cached = summaryKey ? (cacheGet(summaryKey, CONFIG.SUMMARY_CACHE_MS) as BookSummary | null) : null;
+  if (cached?.summary) {
+    renderSummary(body, cached);
+    body.style.display = 'block';
+    mode = 'summary';
+  }
+  renderQA();
+  syncBtn();
 
   return section;
 };
