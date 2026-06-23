@@ -654,6 +654,61 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
   return wrap;
 };
 
+type PickRecent = Record<string, number | null>;
+type SimilarView = { shelf: string; result: SimilarResult; recent: PickRecent; refRecentRatio: number | null };
+
+/** Renders a fully-resolved picks view (no network) — shared by the fresh and cached paths. */
+const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: BookStats) => {
+  const { shelf, result, recent, refRecentRatio } = view;
+  const threshold = refRecentRatio !== null ? Math.round(refRecentRatio * 100) : null;
+  section.textContent = '';
+
+  const header = el('h3', 'gr-similar-header');
+  header.append(document.createTextNode('Better picks in '));
+  header.append(el('span', 'gr-similar-shelf', `"${shelf}"`));
+  section.append(header);
+
+  const sub = el('p', 'gr-similar-sub');
+  sub.append(anchorLink(shelfURL(shelf), undefined, 'browse shelf →'));
+  const refInfo = el('span', 'gr-similar-ref');
+  refInfo.append(document.createTextNode('beat reference '));
+  refInfo.append(el('strong', undefined, addCommas(Math.round(currentStats.score))));
+  refInfo.append(document.createTextNode(` (${Math.round(currentStats.ratio * 100)}%)`));
+  sub.append(refInfo);
+  section.append(sub);
+
+  if (!result.qualifying.length) {
+    section.append(winnerBanner('Winner! Nothing in this shelf beats it.', shelf));
+    section.append(debugPane(shelf, result, threshold, currentStats.score));
+    return;
+  }
+
+  const list = el('ul', 'gr-similar-list');
+  let passCount = 0;
+  for (const pick of result.qualifying) {
+    const { item, recent: recentEl } = buildItem(pick);
+    const rr = recent[pick.bookId] ?? null;
+    const rrPct = rr !== null ? Math.round(rr * 100) : null;
+    const passes = refRecentRatio === null || (rr !== null && rr >= refRecentRatio);
+    recentEl.textContent = rrPct !== null ? `Recent: ${rrPct}%` : 'Recent: N/A';
+    if (passes) {
+      passCount++;
+      if (rrPct !== null) recentEl.classList.add('-pass');
+    } else {
+      item.classList.add('-excluded');
+      recentEl.classList.add('-fail');
+      item.append(el('span', 'gr-similar-reason', `need ≥${threshold}%`));
+    }
+    list.append(item);
+  }
+
+  if (passCount === 0 && threshold !== null) {
+    section.append(winnerBanner('Winner! No book matches score AND recent reviews.', shelf));
+  }
+  section.append(list);
+  section.append(debugPane(shelf, result, threshold, currentStats.score));
+};
+
 const renderSimilarPicks = async (
   anchor: Element,
   currentBookURL: string,
@@ -662,6 +717,12 @@ const renderSimilarPicks = async (
 ) => {
   const section = el('section', 'gr-similar');
   anchor.parentNode!.insertBefore(section, anchor.nextSibling);
+
+  // Cached full view → restore instantly; no shelf lookup or book fetches on refresh.
+  const viewKey = `gr_picks_view_${getBookIdFromURL(currentBookURL)}`;
+  const cachedView = cacheGet(viewKey, CONFIG.PICKS_CACHE_MS) as SimilarView | null;
+  if (cachedView) { renderPicksView(section, cachedView, currentStats); return; }
+
   renderProgress(section, 0);
 
   let shelf: string;
@@ -698,63 +759,16 @@ const renderSimilarPicks = async (
     return;
   }
 
-  section.textContent = '';
-
-  const header = el('h3', 'gr-similar-header');
-  header.append(document.createTextNode('Better picks in '));
-  header.append(el('span', 'gr-similar-shelf', `"${shelf}"`));
-  section.append(header);
-
-  const sub = el('p', 'gr-similar-sub');
-  sub.append(anchorLink(shelfURL(shelf), undefined, 'browse shelf →'));
-  const refInfo = el('span', 'gr-similar-ref');
-  refInfo.append(document.createTextNode('beat reference '));
-  refInfo.append(el('strong', undefined, addCommas(Math.round(currentStats.score))));
-  refInfo.append(document.createTextNode(` (${Math.round(currentStats.ratio * 100)}%)`));
-  sub.append(refInfo);
-  section.append(sub);
-
-  const threshold = currentRecentRatio !== null ? Math.round(currentRecentRatio * 100) : null;
-
-  if (!result.qualifying.length) {
-    section.append(winnerBanner('Winner! Nothing in this shelf beats it.', shelf));
-    section.append(debugPane(shelf, result, threshold, currentStats.score));
-    return;
-  }
-
-  const list = el('ul', 'gr-similar-list');
-  const nodes = new Map<string, { item: HTMLElement; recent: HTMLElement }>();
-  for (const pick of result.qualifying) {
-    const n = buildItem(pick);
-    list.append(n.item);
-    nodes.set(pick.bookId, n);
-  }
-  section.append(list);
-  section.append(debugPane(shelf, result, threshold, currentStats.score));
-
-  let passCount = 0;
+  // Resolve each pick's recent ratio, then cache + render the complete view.
+  const recent: PickRecent = {};
   await Promise.all(result.qualifying.map(async (pick) => {
-    const node = nodes.get(pick.bookId);
-    if (!node) return;
-    const rr = await getRecentRatio(pick.workId, currentStats.jwtToken);
-    const rrPct = rr !== null ? Math.round(rr * 100) : null;
-    const passes = currentRecentRatio === null || (rr !== null && rr >= currentRecentRatio);
-
-    if (passes) {
-      passCount++;
-      node.recent.textContent = rrPct !== null ? `Recent: ${rrPct}%` : 'Recent: N/A';
-      if (rrPct !== null) node.recent.classList.add('-pass');
-    } else {
-      node.item.classList.add('-excluded');
-      node.recent.textContent = rrPct !== null ? `Recent: ${rrPct}%` : 'Recent: N/A';
-      node.recent.classList.add('-fail');
-      node.item.append(el('span', 'gr-similar-reason', `need ≥${threshold}%`));
-    }
+    recent[pick.bookId] = await getRecentRatio(pick.workId, currentStats.jwtToken);
   }));
 
-  if (passCount === 0 && threshold !== null) {
-    section.insertBefore(winnerBanner('Winner! No book matches score AND recent reviews.', shelf), list);
-  }
+  const view: SimilarView = { shelf, result, recent, refRecentRatio: currentRecentRatio };
+  // Persist a slim copy — allScored is a large per-candidate debug list we don't need to keep.
+  cacheSet(viewKey, { ...view, result: { ...result, allScored: [] } });
+  renderPicksView(section, view, currentStats);
 };
 
 // =============================================================================
@@ -851,7 +865,7 @@ const renderAnswer = (body: HTMLElement, text: string) => {
  * empty → "Summarize reviews" (structured book summary), text → "Ask" (free-form
  * answer). Both run over the same pre-fetched review prose; answers are cached.
  */
-const displaySummary = (reviewTexts: string[], bookId: string | null, anchor: Element): HTMLElement => {
+const displaySummary = (workId: string, jwtToken: string | null, bookId: string | null, anchor: Element): HTMLElement => {
   const section = el('section', 'gr-summary');
   const head = el('div', 'gr-summary-head');
   head.append(el('h3', 'gr-summary-header', 'Reader Reviews'));
@@ -880,6 +894,16 @@ const displaySummary = (reviewTexts: string[], bookId: string | null, anchor: El
   const qaKey = bookId ? `gr_qa_${bookId}` : null;
   let mode: 'none' | 'summary' | 'answer' = 'none';
 
+  // Lazy + memoized: fetch the newest reviews' full text only when the user first
+  // summarizes or asks. Falls back to the reviews embedded in the page when logged out.
+  let textsPromise: Promise<string[]> | null = null;
+  const getTexts = (): Promise<string[]> =>
+    (textsPromise ??= (async () => {
+      let nodes: ReviewNode[] = [];
+      if (jwtToken) { try { nodes = await fetchReviewNodes(workId, jwtToken, true); } catch {} }
+      return collectReviewTexts(nodes.length ? nodes.map((n) => n.text) : getEmbeddedReviewTexts());
+    })());
+
   const syncBtn = () => {
     const asking = !!input.value.trim();
     btn.textContent = asking ? 'Ask' : '✦ Summarize reviews';
@@ -901,10 +925,12 @@ const displaySummary = (reviewTexts: string[], bookId: string | null, anchor: El
 
   const runSummary = async () => {
     btn.disabled = true;
-    progress('✦ Summarizing…');
+    progress('⏳ Reading reviews…');
     try {
-      if (!reviewTexts.length) throw new Error('No written reviews found yet.');
-      const data = (await llmSummarize(reviewTexts, SUMMARY_PROMPT, SUMMARY_SCHEMA)) as BookSummary;
+      const texts = await getTexts();
+      if (!texts.length) throw new Error('No written reviews found yet.');
+      progress('✦ Summarizing…');
+      const data = (await llmSummarize(texts, SUMMARY_PROMPT, SUMMARY_SCHEMA)) as BookSummary;
       if (summaryKey) cacheSet(summaryKey, data);
       renderSummary(body, data);
       body.style.display = 'block';
@@ -929,8 +955,10 @@ const displaySummary = (reviewTexts: string[], bookId: string | null, anchor: El
     btn.disabled = true;
     progress('⏳ Reading reviews…');
     try {
-      if (!reviewTexts.length) throw new Error('No written reviews found yet.');
-      const answer = (await llmSummarize(reviewTexts, `${QUESTION_PROMPT}\n\nQuestion: ${question}`, null)) as string;
+      const texts = await getTexts();
+      if (!texts.length) throw new Error('No written reviews found yet.');
+      progress('⏳ Asking…');
+      const answer = (await llmSummarize(texts, `${QUESTION_PROMPT}\n\nQuestion: ${question}`, null)) as string;
       saveQA(qaKey, { q: question, a: answer });
       showAnswer(answer);
       renderQA();
@@ -994,20 +1022,16 @@ const appendScore = async (bookTitle: Element) => {
   recentElement.style.cssText = 'font-size: 16px; margin-top: 4px; color: #666;';
   scoreElement.parentNode!.insertBefore(recentElement, scoreElement.nextSibling);
 
-  // One getReviews call powers both the recent ratio and the AI summary's review prose.
-  let reviewNodes: ReviewNode[] | null = null;
-  if (stats.jwtToken) {
-    try { reviewNodes = await fetchReviewNodes(stats.workId, stats.jwtToken, true); } catch {}
-  }
-  const recentRatio = reviewNodes ? recentRatioFromNodes(reviewNodes) : null;
+  // Mount the AI panel synchronously so a cached summary / Q&A restores instantly —
+  // it reads localStorage and never blocks on the network. Review text is fetched
+  // lazily, only when the user actually summarizes or asks (see displaySummary).
+  const summarySection = displaySummary(stats.workId, stats.jwtToken, currentId, recentElement);
+
+  // Ratings-only fetch (fast) for the recent ratio + the picks' recent-% threshold.
+  const recentRatio = await getRecentRatio(stats.workId, stats.jwtToken);
   recentElement.textContent = recentRatio !== null
     ? `Recent: ${Math.round(recentRatio * 100)}%`
     : 'Recent: N/A';
-
-  const reviewTexts = collectReviewTexts(
-    reviewNodes?.length ? reviewNodes.map((n) => n.text) : getEmbeddedReviewTexts(),
-  );
-  const summarySection = displaySummary(reviewTexts, currentId, recentElement);
 
   renderSimilarPicks(summarySection, window.location.href, stats, recentRatio);
 };
