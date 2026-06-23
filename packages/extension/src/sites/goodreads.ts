@@ -1,11 +1,15 @@
 import { cacheGet, cacheSet } from '../shared/cache';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
-import { addCommas, el } from '../shared/utils';
+import { addCommas, el, renderMarkdownInline } from '../shared/utils';
+import { llmSummarize } from '../shared/review-summary';
 
 const CONFIG = {
   BOOK_CACHE_MS: 14 * 24 * 60 * 60 * 1000,
   SHELF_SCORE_CACHE_MS: 30 * 24 * 60 * 60 * 1000,
   PICKS_CACHE_MS: 7 * 24 * 60 * 60 * 1000,
+  SUMMARY_CACHE_MS: 14 * 24 * 60 * 60 * 1000,
+  SUMMARY_REVIEW_LIMIT: 100,
+  REVIEW_TRUNCATE_CHARS: 1500,
   MAX_CONCURRENCY: 15,
   PAGE_BATCH: 2,
   MAX_PAGES: 25,
@@ -184,6 +188,53 @@ const STYLES = `
     max-height: 300px;
     overflow-y: auto;
   }
+
+  .gr-summary {
+    margin: 24px 0;
+    padding: 20px;
+    background: #f4f1ea;
+    border: 1px solid #e4ddd0;
+    border-radius: 8px;
+    max-width: 720px;
+    box-sizing: border-box;
+  }
+  .gr-summary-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+  .gr-summary-header {
+    font-family: 'Merriweather', Georgia, serif;
+    font-size: 20px;
+    font-weight: 700;
+    color: #382110;
+    margin: 0;
+    letter-spacing: -.01em;
+  }
+  .gr-summary-relink { font-size: 12px; color: #00635d; cursor: pointer; user-select: none; }
+  .gr-summary-relink:hover { text-decoration: underline; }
+  .gr-summary-btn {
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    background: #00635d;
+    border: none;
+    border-radius: 6px;
+    padding: 9px 16px;
+    cursor: pointer;
+    transition: background .15s ease;
+  }
+  .gr-summary-btn:hover { background: #00524d; }
+  .gr-summary-sec { margin-bottom: 12px; }
+  .gr-summary-sec:last-child { margin-bottom: 0; }
+  .gr-summary-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #8b7355;
+    margin-bottom: 3px;
+  }
+  .gr-summary-text { font-size: 14px; line-height: 1.55; color: #382110; }
+  .gr-summary-text strong { font-weight: 700; }
+  .gr-summary-progress { color: #8b7355; font-size: 13px; padding: 4px 0; }
+  .gr-summary-error { color: #c24a32; font-size: 13px; margin-bottom: 10px; }
 `;
 
 function injectStyles() {
@@ -269,38 +320,38 @@ const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
 // Recent ratio (GraphQL)
 // =============================================================================
 
-const fetchRecentRatings = async (workId: string, jwtToken: string): Promise<number[]> => {
-  const res = await throttledFetch(
-    'https://kxbwmqov6jgg3daaamb744ycu4.appsync-api.us-east-1.amazonaws.com/graphql',
-    {
-      method: 'POST',
-      credentials: 'omit',
-      headers: { 'content-type': 'application/json', authorization: jwtToken },
-      body: JSON.stringify({
-        operationName: 'getReviews',
-        variables: {
-          filters: { resourceType: 'WORK', resourceId: workId, sort: 'NEWEST' },
-          pagination: { limit: 100 },
-        },
-        query: `query getReviews($filters: BookReviewsFilterInput!, $pagination: PaginationInput) {
-          getReviews(filters: $filters, pagination: $pagination) {
-            edges { node { rating createdAt } }
-          }
-        }`,
-      }),
-    }
-  );
+const GRAPHQL_ENDPOINT = 'https://kxbwmqov6jgg3daaamb744ycu4.appsync-api.us-east-1.amazonaws.com/graphql';
+
+type ReviewNode = { rating?: number | null; createdAt?: number | null; text?: string | null };
+
+/** One getReviews call (newest first). `withText` also pulls the review prose for the AI summary. */
+const fetchReviewNodes = async (workId: string, jwtToken: string, withText = false): Promise<ReviewNode[]> => {
+  const res = await throttledFetch(GRAPHQL_ENDPOINT, {
+    method: 'POST',
+    credentials: 'omit',
+    headers: { 'content-type': 'application/json', authorization: jwtToken },
+    body: JSON.stringify({
+      operationName: 'getReviews',
+      variables: {
+        filters: { resourceType: 'WORK', resourceId: workId, sort: 'NEWEST' },
+        pagination: { limit: 100 },
+      },
+      query: `query getReviews($filters: BookReviewsFilterInput!, $pagination: PaginationInput) {
+        getReviews(filters: $filters, pagination: $pagination) {
+          edges { node { rating createdAt${withText ? ' text' : ''} } }
+        }
+      }`,
+    }),
+  });
   const data = await res.json();
-  const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
-  return (
-    data?.data?.getReviews?.edges
-      ?.map((e: any) => e.node)
-      .filter((n: any) => n.rating && n.createdAt >= oneYearAgo)
-      .map((n: any) => n.rating) || []
-  );
+  return (data?.data?.getReviews?.edges?.map((e: any) => e.node).filter(Boolean) as ReviewNode[]) || [];
 };
 
-const calculateRecentRatio = (ratings: number[]): number | null => {
+const recentRatioFromNodes = (nodes: ReviewNode[]): number | null => {
+  const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
+  const ratings = nodes
+    .filter((n) => n.rating && n.createdAt != null && n.createdAt >= oneYearAgo)
+    .map((n) => n.rating as number);
   if (!ratings.length) return null;
   let s = 0;
   for (const r of ratings) { if (r === 5) s++; if (r === 1) s--; }
@@ -309,7 +360,7 @@ const calculateRecentRatio = (ratings: number[]): number | null => {
 
 const getRecentRatio = async (workId: string, jwtToken: string | null): Promise<number | null> => {
   if (!jwtToken) return null;
-  try { return calculateRecentRatio(await fetchRecentRatings(workId, jwtToken)); }
+  try { return recentRatioFromNodes(await fetchReviewNodes(workId, jwtToken)); }
   catch { return null; }
 };
 
@@ -675,6 +726,124 @@ const renderSimilarPicks = async (
 };
 
 // =============================================================================
+// Review summary (AI)
+// =============================================================================
+
+type BookSummary = { summary: string; recommendation: string; dislikes?: string; audience: string };
+
+const SUMMARY_SCHEMA = {
+  type: 'object' as const,
+  properties: {
+    summary: { type: 'string' as const, description: '1–2 sentences on the overall sentiment and what reviewers make of the book.' },
+    recommendation: { type: 'string' as const, description: 'The verdict: is it worth reading, and how strongly do reviewers recommend it.' },
+    dislikes: { type: 'string' as const, description: "What readers most commonly didn't enjoy. Empty string if there is no shared complaint." },
+    audience: { type: 'string' as const, description: "Who it's for and who it's not for." },
+  },
+  required: ['summary', 'recommendation', 'audience'],
+};
+
+const SUMMARY_PROMPT = `Summarize these Goodreads reviews for someone deciding whether to read this book. Be concise and specific to THIS book (writing style, characters, pacing, plot, themes, ending). Only use points raised by multiple reviewers; ignore reading-challenge notes, shelving chatter, and contentless one-liners. Do not reveal plot spoilers. You may use **bold** for emphasis. Each field is one or two short sentences, no preamble.`;
+
+const stripReviewHtml = (html: string): string =>
+  (new DOMParser().parseFromString(html.replace(/<br\s*\/?>/gi, ' '), 'text/html').body.textContent || '')
+    .replace(/\s+/g, ' ').trim();
+
+/** Reviews are server-rendered into __NEXT_DATA__ apolloState — a no-auth fallback when there's no GraphQL token. */
+const getEmbeddedReviewTexts = (): (string | null | undefined)[] => {
+  const script = document.querySelector('#__NEXT_DATA__');
+  if (!script?.textContent) return [];
+  try {
+    const apollo = JSON.parse(script.textContent)?.props?.pageProps?.apolloState || {};
+    return Object.keys(apollo).filter((k) => k.startsWith('Review:')).map((k) => apollo[k]?.text);
+  } catch { return []; }
+};
+
+/** Strip, dedupe, truncate and cap raw review HTML into LLM-ready text. */
+const collectReviewTexts = (htmls: (string | null | undefined)[]): string[] => {
+  const seen = new Set<string>();
+  const texts: string[] = [];
+  for (const html of htmls) {
+    if (typeof html !== 'string') continue;
+    const text = stripReviewHtml(html);
+    if (text.length < 20 || seen.has(text)) continue;
+    seen.add(text);
+    texts.push(text.length > CONFIG.REVIEW_TRUNCATE_CHARS ? text.slice(0, CONFIG.REVIEW_TRUNCATE_CHARS).trimEnd() + '…' : text);
+    if (texts.length >= CONFIG.SUMMARY_REVIEW_LIMIT) break;
+  }
+  return texts;
+};
+
+const renderSummary = (body: HTMLElement, data: BookSummary) => {
+  body.textContent = '';
+  const sections: [string, string | undefined][] = [
+    ['Summary', data.summary],
+    ['Verdict', data.recommendation],
+    ['Didn’t enjoy', data.dislikes],
+    ['Who it’s for', data.audience],
+  ];
+  for (const [label, value] of sections) {
+    if (!value?.trim()) continue;
+    const sec = el('div', 'gr-summary-sec');
+    sec.append(el('div', 'gr-summary-label', label));
+    const text = el('div', 'gr-summary-text');
+    renderMarkdownInline(text, value);
+    sec.append(text);
+    body.append(sec);
+  }
+};
+
+/** Mounts the AI review-summary section after `anchor`; summarizes the pre-fetched review prose on demand. */
+const displaySummary = (reviewTexts: string[], bookId: string | null, anchor: Element): HTMLElement => {
+  const section = el('section', 'gr-summary');
+  const head = el('div', 'gr-summary-head');
+  head.append(el('h3', 'gr-summary-header', 'Reader Reviews'));
+  const body = el('div', 'gr-summary-body');
+  section.append(head, body);
+  anchor.parentNode!.insertBefore(section, anchor.nextSibling);
+
+  const cacheKey = bookId ? `gr_summary_${bookId}` : null;
+  let relink: HTMLElement | null = null;
+
+  const showRelink = () => {
+    if (relink) return;
+    relink = el('span', 'gr-summary-relink', '↻ Re-summarize');
+    relink.addEventListener('click', () => summarize());
+    head.append(relink);
+  };
+
+  const showButton = (label: string) => {
+    body.textContent = '';
+    const btn = el('button', 'gr-summary-btn', label) as HTMLButtonElement;
+    btn.addEventListener('click', () => summarize());
+    body.append(btn);
+  };
+
+  const summarize = async () => {
+    relink?.remove();
+    relink = null;
+    body.textContent = '';
+    body.append(el('div', 'gr-summary-progress', '✦ Summarizing…'));
+    try {
+      if (!reviewTexts.length) throw new Error('No written reviews found yet.');
+      const data = (await llmSummarize(reviewTexts, SUMMARY_PROMPT, SUMMARY_SCHEMA)) as BookSummary;
+      if (cacheKey) cacheSet(cacheKey, data);
+      renderSummary(body, data);
+      showRelink();
+    } catch (e: any) {
+      body.textContent = '';
+      body.append(el('div', 'gr-summary-error', e.message));
+      showButton('↻ Try again');
+    }
+  };
+
+  const cached = cacheKey ? (cacheGet(cacheKey, CONFIG.SUMMARY_CACHE_MS) as BookSummary | null) : null;
+  if (cached?.summary) { renderSummary(body, cached); showRelink(); }
+  else showButton('✦ Summarize reviews');
+
+  return section;
+};
+
+// =============================================================================
 // Score display
 // =============================================================================
 
@@ -693,12 +862,22 @@ const appendScore = async (bookTitle: Element) => {
   recentElement.style.cssText = 'font-size: 16px; margin-top: 4px; color: #666;';
   scoreElement.parentNode!.insertBefore(recentElement, scoreElement.nextSibling);
 
-  const recentRatio = await getRecentRatio(stats.workId, stats.jwtToken);
+  // One getReviews call powers both the recent ratio and the AI summary's review prose.
+  let reviewNodes: ReviewNode[] | null = null;
+  if (stats.jwtToken) {
+    try { reviewNodes = await fetchReviewNodes(stats.workId, stats.jwtToken, true); } catch {}
+  }
+  const recentRatio = reviewNodes ? recentRatioFromNodes(reviewNodes) : null;
   recentElement.textContent = recentRatio !== null
     ? `Recent: ${Math.round(recentRatio * 100)}%`
     : 'Recent: N/A';
 
-  renderSimilarPicks(recentElement, window.location.href, stats, recentRatio);
+  const reviewTexts = collectReviewTexts(
+    reviewNodes?.length ? reviewNodes.map((n) => n.text) : getEmbeddedReviewTexts(),
+  );
+  const summarySection = displaySummary(reviewTexts, currentId, recentElement);
+
+  renderSimilarPicks(summarySection, window.location.href, stats, recentRatio);
 };
 
 const init = () => {
