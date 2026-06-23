@@ -1,4 +1,5 @@
 import { cacheGet, cacheSet } from '../shared/cache';
+import { idbGet, idbSet } from '../shared/idb-cache';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 import { llmSummarize } from '../shared/review-summary';
@@ -336,7 +337,7 @@ const bookCacheKey = (id: string) => `gr_book_${id}`;
 const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
   const id = getBookIdFromURL(bookURL);
   if (id) {
-    const cached = cacheGet(bookCacheKey(id), CONFIG.BOOK_CACHE_MS);
+    const cached = await idbGet(bookCacheKey(id), CONFIG.BOOK_CACHE_MS);
     if (cached) return cached;
   }
   const doc = await fetchDoc(bookURL);
@@ -344,7 +345,7 @@ const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
   if (!script?.textContent) throw new Error('no __NEXT_DATA__ on ' + bookURL);
   const stats = parseBookNextData(JSON.parse(script.textContent));
   if (!stats) throw new Error('could not parse book stats ' + bookURL);
-  if (id) cacheSet(bookCacheKey(id), stats);
+  if (id) idbSet(bookCacheKey(id), stats);
   return stats;
 };
 
@@ -410,13 +411,13 @@ const getBookShelves = async (bookURL: string): Promise<string[]> => {
 
 const getShelfScore = async (shelf: string): Promise<number> => {
   const cacheKey = `gr_shelf_score_${shelf}`;
-  const cached = cacheGet(cacheKey, CONFIG.SHELF_SCORE_CACHE_MS);
+  const cached = await idbGet(cacheKey, CONFIG.SHELF_SCORE_CACHE_MS);
   if (cached !== null) return cached;
   const doc = await fetchDoc(`https://www.goodreads.com/shelf/show/${shelf}`);
   const liked = doc.querySelectorAll('[data-rating="4"], [data-rating="5"]').length;
   const disliked = doc.querySelectorAll('[data-rating="1"], [data-rating="2"]').length;
   const score = liked - disliked;
-  cacheSet(cacheKey, score);
+  idbSet(cacheKey, score);
   return score;
 };
 
@@ -490,7 +491,7 @@ const findSimilarPicks = async (params: {
   const { originalBookURL, shelf, refScore, refRatio, refAvgRating } = params;
   const originalId = getBookIdFromURL(originalBookURL);
   const cacheKey = `gr_picks_${originalId}_${shelf}`;
-  const cached = cacheGet(cacheKey, CONFIG.PICKS_CACHE_MS) as SimilarResult | null;
+  const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
   if (cached) return cached;
   const refAvg = parseFloat(refAvgRating);
 
@@ -546,7 +547,7 @@ const findSimilarPicks = async (params: {
 
     if (qualifying.length) {
       const result: SimilarResult = { qualifying, allScored, totalEligible, pagesSearched, foundOnPage };
-      cacheSet(cacheKey, result);
+      idbSet(cacheKey, result);
       return result;
     }
 
@@ -555,7 +556,7 @@ const findSimilarPicks = async (params: {
   }
 
   const result: SimilarResult = { qualifying: [], allScored, totalEligible, pagesSearched, foundOnPage };
-  cacheSet(cacheKey, result);
+  idbSet(cacheKey, result);
   return result;
 };
 
@@ -720,7 +721,7 @@ const renderSimilarPicks = async (
 
   // Cached full view → restore instantly; no shelf lookup or book fetches on refresh.
   const viewKey = `gr_picks_view_${getBookIdFromURL(currentBookURL)}`;
-  const cachedView = cacheGet(viewKey, CONFIG.PICKS_CACHE_MS) as SimilarView | null;
+  const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
   if (cachedView) { renderPicksView(section, cachedView, currentStats); return; }
 
   renderProgress(section, 0);
@@ -767,7 +768,7 @@ const renderSimilarPicks = async (
 
   const view: SimilarView = { shelf, result, recent, refRecentRatio: currentRecentRatio };
   // Persist a slim copy — allScored is a large per-candidate debug list we don't need to keep.
-  cacheSet(viewKey, { ...view, result: { ...result, allScored: [] } });
+  idbSet(viewKey, { ...view, result: { ...result, allScored: [] } });
   renderPicksView(section, view, currentStats);
 };
 
@@ -1013,7 +1014,7 @@ const appendScore = async (bookTitle: Element) => {
   if (!stats) return;
 
   const currentId = getBookIdFromURL(window.location.href);
-  if (currentId) cacheSet(bookCacheKey(currentId), stats);
+  if (currentId) idbSet(bookCacheKey(currentId), stats);
 
   const scoreElement = el('h1', undefined, `${addCommas(Math.round(stats.score))} (${Math.round(stats.ratio * 100)}%)`);
   bookTitle.parentNode!.insertBefore(scoreElement, bookTitle.nextSibling);
