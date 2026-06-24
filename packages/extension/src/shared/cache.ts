@@ -1,22 +1,3 @@
-// Drop the oldest cache entries (those carrying a numeric `ts`) to free room.
-// Plain localStorage values without a `ts` (e.g. Q&A history, rate-limit) are skipped.
-const evictOldest = (): boolean => {
-  const entries: { key: string; ts: number }[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (!k) continue;
-    try {
-      const ts = JSON.parse(localStorage.getItem(k) || '{}')?.ts;
-      if (typeof ts === 'number') entries.push({ key: k, ts });
-    } catch {}
-  }
-  if (!entries.length) return false;
-  entries.sort((a, b) => a.ts - b.ts);
-  const drop = Math.max(1, Math.ceil(entries.length / 4));
-  for (let i = 0; i < drop; i++) localStorage.removeItem(entries[i].key);
-  return true;
-};
-
 export const cacheGet = (key: string, ttl: number): any => {
   try {
     const raw = localStorage.getItem(key);
@@ -29,9 +10,24 @@ export const cacheGet = (key: string, ttl: number): any => {
 
 export const cacheSet = (key: string, data: any): void => {
   const raw = JSON.stringify({ data, ts: Date.now() });
-  // Retry past QuotaExceededError by evicting the oldest entries until it fits.
-  for (let attempt = 0; attempt < 6; attempt++) {
-    try { localStorage.setItem(key, raw); return; }
-    catch { if (!evictOldest()) return; }
+  try { localStorage.setItem(key, raw); return; } catch {}
+
+  // Quota hit: scan once for the oldest cache entries (those carrying a numeric
+  // `ts`) and drop them in batches until the write fits. Values without a `ts`
+  // (Q&A history, rate-limit counters) are small and left alone.
+  const entries: { key: string; ts: number }[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k) continue;
+    try {
+      const ts = JSON.parse(localStorage.getItem(k) || '{}')?.ts;
+      if (typeof ts === 'number') entries.push({ key: k, ts });
+    } catch {}
+  }
+  entries.sort((a, b) => a.ts - b.ts);
+  const batch = Math.max(1, Math.ceil(entries.length / 4));
+  for (let i = 0; i < entries.length; i += batch) {
+    for (let j = i; j < i + batch && j < entries.length; j++) localStorage.removeItem(entries[j].key);
+    try { localStorage.setItem(key, raw); return; } catch {}
   }
 };

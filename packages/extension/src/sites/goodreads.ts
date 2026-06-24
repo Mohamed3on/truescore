@@ -836,6 +836,7 @@ const renderSummary = (body: HTMLElement, data: BookSummary) => {
     sec.append(text);
     body.append(sec);
   }
+  body.style.display = 'block';
 };
 
 const QUESTION_PROMPT = `Answer this question using ONLY evidence from the book reviews below. Quote or paraphrase the concrete details reviewers give. If reviewers disagree, surface the tension. Avoid plot spoilers. Be direct and practical.`;
@@ -859,6 +860,7 @@ const renderAnswer = (body: HTMLElement, text: string) => {
   const div = el('div', 'gr-summary-text');
   renderMarkdown(div, text);
   body.append(div);
+  body.style.display = 'block';
 };
 
 /**
@@ -893,7 +895,7 @@ const displaySummary = (workId: string, jwtToken: string | null, bookId: string 
 
   const summaryKey = bookId ? `gr_summary_${bookId}` : null;
   const qaKey = bookId ? `gr_qa_${bookId}` : null;
-  let mode: 'none' | 'summary' | 'answer' = 'none';
+  let showingSummary = false;
 
   // Lazy + memoized: fetch the newest reviews' full text only when the user first
   // summarizes or asks. Falls back to the reviews embedded in the page when logged out.
@@ -908,36 +910,30 @@ const displaySummary = (workId: string, jwtToken: string | null, bookId: string 
   const syncBtn = () => {
     const asking = !!input.value.trim();
     btn.textContent = asking ? 'Ask' : '✦ Summarize reviews';
-    btn.style.display = !asking && mode === 'summary' ? 'none' : '';
-    relink.style.display = !asking && mode === 'summary' ? '' : 'none';
+    const showControls = !asking && showingSummary;
+    btn.style.display = showControls ? 'none' : '';
+    relink.style.display = showControls ? '' : 'none';
   };
 
-  const progress = (label: string) => {
+  const note = (cls: string, msg: string) => {
     body.textContent = '';
-    body.append(el('div', 'gr-summary-progress', label));
-    body.style.display = 'block';
-  };
-
-  const fail = (msg: string) => {
-    body.textContent = '';
-    body.append(el('div', 'gr-summary-error', msg));
+    body.append(el('div', cls, msg));
     body.style.display = 'block';
   };
 
   const runSummary = async () => {
     btn.disabled = true;
-    progress('⏳ Reading reviews…');
+    note('gr-summary-progress', '⏳ Reading reviews…');
     try {
       const texts = await getTexts();
       if (!texts.length) throw new Error('No written reviews found yet.');
-      progress('✦ Summarizing…');
+      note('gr-summary-progress', '✦ Summarizing…');
       const data = (await llmSummarize(texts, SUMMARY_PROMPT, SUMMARY_SCHEMA)) as BookSummary;
       if (summaryKey) cacheSet(summaryKey, data);
       renderSummary(body, data);
-      body.style.display = 'block';
-      mode = 'summary';
+      showingSummary = true;
     } catch (e: any) {
-      fail(e.message);
+      note('gr-summary-error', e.message);
     } finally {
       btn.disabled = false;
       syncBtn();
@@ -946,25 +942,24 @@ const displaySummary = (workId: string, jwtToken: string | null, bookId: string 
 
   const showAnswer = (text: string) => {
     renderAnswer(body, text);
-    body.style.display = 'block';
-    mode = 'answer';
+    showingSummary = false;
   };
 
   const runAsk = async (question: string) => {
     const hit = loadQAs(qaKey).find((e) => e.q.toLowerCase() === question.toLowerCase());
     if (hit) { showAnswer(hit.a); syncBtn(); return; }
     btn.disabled = true;
-    progress('⏳ Reading reviews…');
+    note('gr-summary-progress', '⏳ Reading reviews…');
     try {
       const texts = await getTexts();
       if (!texts.length) throw new Error('No written reviews found yet.');
-      progress('⏳ Asking…');
+      note('gr-summary-progress', '⏳ Asking…');
       const answer = (await llmSummarize(texts, `${QUESTION_PROMPT}\n\nQuestion: ${question}`, null)) as string;
       saveQA(qaKey, { q: question, a: answer });
       showAnswer(answer);
       renderQA();
     } catch (e: any) {
-      fail(e.message);
+      note('gr-summary-error', e.message);
     } finally {
       btn.disabled = false;
       syncBtn();
@@ -995,8 +990,7 @@ const displaySummary = (workId: string, jwtToken: string | null, bookId: string 
   const cached = summaryKey ? (cacheGet(summaryKey, CONFIG.SUMMARY_CACHE_MS) as BookSummary | null) : null;
   if (cached?.summary) {
     renderSummary(body, cached);
-    body.style.display = 'block';
-    mode = 'summary';
+    showingSummary = true;
   }
   renderQA();
   syncBtn();
