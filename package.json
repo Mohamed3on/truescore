@@ -10,7 +10,13 @@
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
+    "@semantic-release/commit-analyzer": "^13.0.1",
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.8",
+    "@semantic-release/release-notes-generator": "^14.1.1",
     "@types/bun": "latest",
-    "@types/node": "latest"
+    "@types/node": "latest",
+    "semantic-release": "^25.0.5"
   }
 }

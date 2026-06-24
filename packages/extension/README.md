@@ -6,7 +6,7 @@ A browser extension that replaces useless 4.2-vs-4.3 star ratings with a score t
 
 Every rating system on the internet is broken the same way. Everything sits between 4.0 and 4.8 stars. A 4.3 on Amazon could be a mass-produced disaster with 10,000 pity reviews or a genuinely great product with 200 honest ones. Stars don't tell you which.
 
-## How CreamCrop scores things
+## How TrueScore scores things
 
 The core idea: **what matters is how many people loved it vs hated it, and how many people bothered to say so.**
 
@@ -43,28 +43,21 @@ Each site adapts this formula to what data is available (star histograms, like/d
 
 ## Install & setup
 
-Not on the Chrome Web Store yet, so you load it unpacked from a local build (~1 minute).
+### Install
 
-**1. Build** — needs [Bun](https://bun.sh). From the repo root:
+Not on the Chrome Web Store — you load it unpacked. No build required:
 
-```sh
-bun install              # first time only
-bun run build:extension  # → packages/extension/truescore/
-```
+1. Download the latest **[`truescore.zip`](https://github.com/Mohamed3on/truescore-monorepo/releases/latest)** from Releases and unzip it.
+2. Open `chrome://extensions` and turn on **Developer mode** (top-right).
+3. Click **Load unpacked** and select the unzipped **`truescore/`** folder.
 
-(Or from this folder: `bun install && bun build.ts`.)
+Pin the icon so the setup popup is one click away. Works in any Chromium browser (Chrome, Edge, Brave, Arc). To update, download the newer zip and click the refresh ↻ icon on the TrueScore card.
 
-**2. Load in Chrome**
+> Prefer to build it yourself? See [Develop](#develop).
 
-1. Open `chrome://extensions`
-2. Enable **Developer mode** (top-right)
-3. **Load unpacked** → select the built **`packages/extension/truescore/`** folder — the build output, not `src/`
+### API key — optional, for AI summaries
 
-Pin the icon so the setup popup is one click away. Any Chromium browser works (Chrome, Edge, Brave, Arc).
-
-**3. Add an API key — optional, only for AI summaries**
-
-Everything that's pure math works with zero setup: score sorting on Amazon/Booking, IMDB/Letterboxd/Goodreads scores, Transfermarkt sorting, NPS breakdowns — plus **Google Maps summaries**, which run on TrueScore's hosted server (no key needed).
+Everything that's pure math works immediately: score sorting on Amazon/Booking, IMDB/Letterboxd/Goodreads scores, Transfermarkt sorting, NPS breakdowns — plus **Google Maps summaries**, which run on TrueScore's hosted server (no key needed).
 
 The **on-device review summaries** (Amazon product pages, Letterboxd/Goodreads review Q&A) call an LLM straight from your browser, so they need your own key. Click the TrueScore icon and:
 
@@ -72,8 +65,6 @@ The **on-device review summaries** (Amazon product pages, Letterboxd/Goodreads r
 - Pick the **Model** used for summaries.
 
 Keys are stored in `chrome.storage.sync` (synced to your Google account, never bundled into the extension). With no key, every score still works.
-
-**Updating:** re-run the build, then click the refresh ↻ icon on the TrueScore card in `chrome://extensions`.
 
 ## Develop
 
@@ -94,3 +85,9 @@ bun build.ts    # rebuild after changes
 ```
 
 Each site is a self-contained content script. Adding a new site means adding a `.ts` file in `src/sites/`, an entry in `build.ts`, and a `content_scripts` block in `src/manifest.json`.
+
+## Releases
+
+Automated with [semantic-release](https://semantic-release.gitbook.io/). Every push to `main` that touches the extension runs [`release-extension.yml`](../../.github/workflows/release-extension.yml), which derives the next version from the commit history, stamps it into the manifest, builds `truescore.zip`, and publishes it to [Releases](https://github.com/Mohamed3on/truescore-monorepo/releases) with a generated changelog.
+
+Versioning follows [Conventional Commits](https://www.conventionalcommits.org/): `feat:` → minor, `fix:` → patch, `feat!:` or a `BREAKING CHANGE:` footer → major. Other prefixes (`docs:`, `chore:`, `refactor:`, `ext:`) ship no release. Nothing to run by hand — just write a `feat:`/`fix:` commit and push.

@@ -23,9 +23,15 @@ bun --cwd packages/web run dev           # local web dev server
 SERVER=root@65.108.153.112 ./deploy/sync.sh   # deploy web to Hetzner
 ```
 
-CI: pushes to `main` that touch `packages/web/`, `packages/gmaps-shared/`, or
-`deploy/` trigger `.github/workflows/deploy-web.yml` which rsyncs and restarts
-the Hetzner service.
+CI:
+
+- Pushes to `main` touching `packages/web/`, `packages/gmaps-shared/`, or
+  `deploy/` trigger `.github/workflows/deploy-web.yml` which rsyncs and restarts
+  the Hetzner service.
+- Pushes touching `packages/extension/` or `packages/gmaps-shared/` trigger
+  `.github/workflows/release-extension.yml`, which builds the extension and
+  publishes `truescore.zip` to [GitHub Releases](https://github.com/Mohamed3on/truescore-monorepo/releases)
+  via semantic-release (versioned from Conventional Commits).
 
 ## Where to look
 
