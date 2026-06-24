@@ -1,7 +1,7 @@
-import { cacheGet, cacheSet } from '../shared/cache';
-import { llmSummarize } from '../shared/review-summary';
+import { idbGet, idbSet } from '../shared/idb-cache';
+import { buildMediaSummary } from '../shared/review-summary';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
-import { addCommas, el, renderMarkdownInline } from '../shared/utils';
+import { addCommas, el } from '../shared/utils';
 
 // =============================================================================
 // Configuration
@@ -212,6 +212,7 @@ const STYLES = `
   .lbx-summary-text a { color: #40bcf4; text-decoration: none; }
   .lbx-summary-text a:hover { text-decoration: underline; }
   .lbx-summary-error { color: #e54; font-size: .85rem; }
+  .lbx-summary-progress { color: #678; font-size: .9rem; }
 `;
 
 function injectStyles() {
@@ -322,14 +323,15 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
 // Cache
 // =============================================================================
 
-const getCachedFilmData = (slug: string) => cacheGet(`lbx_film_v2_${slug}`, CONFIG.CACHE_EXPIRY_MS);
-const setCachedFilmData = (slug: string, data: any) => cacheSet(`lbx_film_v2_${slug}`, data);
-const getCachedRecentRatings = (slug: string) => cacheGet(`lbx_recent_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
-const setCachedRecentRatings = (slug: string, data: any) => cacheSet(`lbx_recent_${slug}`, data);
-const getCachedSimilarPicks = (slug: string) => cacheGet(`lbx_similar_v2_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
-const setCachedSimilarPicks = (slug: string, data: any) => cacheSet(`lbx_similar_v2_${slug}`, data);
-const getCachedSummary = (slug: string) => cacheGet(`lbx_summary_${slug}`, CONFIG.SUMMARY_CACHE_MS);
-const setCachedSummary = (slug: string, data: any) => cacheSet(`lbx_summary_${slug}`, data);
+// Heavy per-film accumulators (one entry per candidate film during similar-picks)
+// live in IndexedDB — they'd otherwise fill the ~5MB localStorage cap. The small
+// summary cache stays on localStorage (owned by buildMediaSummary).
+const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v2_${slug}`, CONFIG.CACHE_EXPIRY_MS);
+const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v2_${slug}`, data);
+const getCachedRecentRatings = (slug: string) => idbGet(`lbx_recent_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
+const setCachedRecentRatings = (slug: string, data: any) => idbSet(`lbx_recent_${slug}`, data);
+const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v2_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
+const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v2_${slug}`, data);
 
 (function purgeOrphanedCacheKeys() {
   if (localStorage.getItem('lbx_purged_v2')) return;
@@ -486,7 +488,7 @@ async function getRecentRatingsSummary(slug: string | null = null) {
   const effectiveSlug = slug || extractSlugFromUrl(window.location.href);
   if (!effectiveSlug) return { totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 };
 
-  const cached = getCachedRecentRatings(effectiveSlug);
+  const cached = await getCachedRecentRatings(effectiveSlug);
   if (cached) return cached;
 
   const baseUrl = `https://letterboxd.com/film/${effectiveSlug}/`;
@@ -512,8 +514,6 @@ async function getRecentRatingsSummary(slug: string | null = null) {
 // =============================================================================
 // Recent-review AI summary
 // =============================================================================
-
-type FilmSummary = { summary: string; recommendation: string; dislikes?: string; audience: string };
 
 const SUMMARY_SCHEMA = {
   type: 'object' as const,
@@ -550,77 +550,6 @@ async function fetchRecentReviewTexts(slug: string): Promise<string[]> {
   return texts;
 }
 
-/** Renders the structured summary as labeled sections (inline markdown per field) */
-function renderSummary(body: HTMLElement, data: FilmSummary) {
-  body.textContent = '';
-  const sections: [string, string | undefined][] = [
-    ['Summary', data.summary],
-    ['Verdict', data.recommendation],
-    ['Didn’t enjoy', data.dislikes],
-    ['Who it’s for', data.audience],
-  ];
-  for (const [label, value] of sections) {
-    if (!value?.trim()) continue;
-    const sec = el('div', 'lbx-summary-sec');
-    sec.append(el('div', 'lbx-summary-label', label));
-    const text = el('div', 'lbx-summary-text');
-    renderMarkdownInline(text, value);
-    sec.append(text);
-    body.append(sec);
-  }
-}
-
-/** Mounts the recent-review AI summary section after `anchor`; returns the section. */
-function displaySummary(slug: string, anchor: HTMLElement): HTMLElement {
-  const section = el('section', 'lbx-summary');
-  const head = el('div', 'lbx-summary-head');
-  head.append(el('h3', 'lbx-summary-header', 'Recent Reviews'));
-  const body = el('div', 'lbx-summary-body');
-  section.append(head, body);
-  anchor.after(section);
-
-  let relink: HTMLElement | null = null;
-  const showRelink = () => {
-    if (relink) return;
-    relink = el('span', 'lbx-summary-relink', '↻ Re-summarize');
-    relink.addEventListener('click', () => summarize());
-    head.append(relink);
-  };
-
-  const showButton = (label: string) => {
-    body.textContent = '';
-    const btn = el('button', 'lbx-summary-btn', label) as HTMLButtonElement;
-    btn.addEventListener('click', () => summarize());
-    body.append(btn);
-  };
-
-  const summarize = async () => {
-    relink?.remove();
-    relink = null;
-    body.textContent = '';
-    body.append(el('div', 'lbx-progress', '⏳ Reading recent reviews…'));
-    try {
-      const texts = await fetchRecentReviewTexts(slug);
-      if (!texts.length) throw new Error('No written reviews found yet.');
-      body.textContent = '';
-      body.append(el('div', 'lbx-progress', '✦ Summarizing…'));
-      const data = (await llmSummarize(texts, SUMMARY_PROMPT, SUMMARY_SCHEMA)) as FilmSummary;
-      setCachedSummary(slug, data);
-      renderSummary(body, data);
-      showRelink();
-    } catch (e: any) {
-      body.textContent = '';
-      body.append(el('div', 'lbx-summary-error', e.message));
-      showButton('↻ Try again');
-    }
-  };
-
-  const cached = getCachedSummary(slug) as FilmSummary | null;
-  if (cached?.summary) { renderSummary(body, cached); showRelink(); }
-  else showButton('✦ Summarize recent reviews');
-
-  return section;
-}
 
 // =============================================================================
 // Similar Picks
@@ -672,7 +601,7 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
   }
   debug(`Film ${isWatched ? 'is' : 'is not'} watched (uid=${productionUid}), filmFilter=${isWatched ? 'cleared' : 'hide-watched'}`);
 
-  const cached = getCachedSimilarPicks(currentSlug);
+  const cached = await getCachedSimilarPicks(currentSlug);
   if (cached && cached.listLink) {
     // Re-fetch list with cookies to exclude newly watched films
     const listUrl = `https://letterboxd.com${cached.listLink}by/rating/`;
@@ -762,7 +691,7 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
     const allBasicData = await Promise.all(
       allFilmSlugs.map(async ({ slug, link }) => {
         try {
-          const cached = getCachedFilmData(slug);
+          const cached = await getCachedFilmData(slug);
           if (cached) return { slug, link, ...cached, fromCache: true };
           const basic = await getFilmBasicData(slug);
           return { slug, link, ...basic, fromCache: false };
@@ -941,7 +870,7 @@ async function run(ratings: number[]) {
   const currentYear = extractYear(document);
   const currentFilmName = document.querySelector('h1.headline-1')?.textContent?.trim() || currentSlug;
 
-  const cachedFilmRaw = currentSlug ? getCachedFilmData(currentSlug) : null;
+  const cachedFilmRaw = currentSlug ? await getCachedFilmData(currentSlug) : null;
   const cachedFilm = cachedFilmRaw?.score > 0 ? cachedFilmRaw : null;
   const recentRatingsRaw = getRecentRatingsSummary().catch(() => ({ totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 }));
 
@@ -996,7 +925,20 @@ async function run(ratings: number[]) {
   });
 
   // AI summary of recent reviews sits between the trending line and Similar Picks.
-  const summaryAnchor = currentSlug ? displaySummary(currentSlug, trendingElement) : trendingElement;
+  const summaryAnchor = currentSlug
+    ? buildMediaSummary({
+        anchor: trendingElement,
+        classPrefix: 'lbx-summary',
+        heading: 'Recent Reviews',
+        summaryPrompt: SUMMARY_PROMPT,
+        schema: SUMMARY_SCHEMA,
+        sections: [['Summary', 'summary'], ['Verdict', 'recommendation'], ['Didn’t enjoy', 'dislikes'], ['Who it’s for', 'audience']],
+        summaryCacheKey: `lbx_summary_${currentSlug}`,
+        summaryTtl: CONFIG.SUMMARY_CACHE_MS,
+        initialButtonLabel: '✦ Summarize recent reviews',
+        fetchReviews: () => fetchRecentReviewTexts(currentSlug),
+      })
+    : trendingElement;
 
   const similarPicksPromise = currentSlug && currentRuntime
     ? displaySimilarPicks(currentSlug, scorePromise, currentRuntime, summaryAnchor, recentRatingsPromise)

@@ -1,8 +1,7 @@
-import { cacheGet, cacheSet } from '../shared/cache';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
-import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
-import { llmSummarize } from '../shared/review-summary';
+import { addCommas, el } from '../shared/utils';
+import { buildMediaSummary } from '../shared/review-summary';
 
 const CONFIG = {
   BOOK_CACHE_MS: 14 * 24 * 60 * 60 * 1000,
@@ -776,8 +775,6 @@ const renderSimilarPicks = async (
 // Review summary (AI)
 // =============================================================================
 
-type BookSummary = { summary: string; recommendation: string; dislikes?: string; audience: string };
-
 const SUMMARY_SCHEMA = {
   type: 'object' as const,
   properties: {
@@ -819,183 +816,18 @@ const collectReviewTexts = (htmls: (string | null | undefined)[]): string[] => {
   return texts;
 };
 
-const renderSummary = (body: HTMLElement, data: BookSummary) => {
-  body.textContent = '';
-  const sections: [string, string | undefined][] = [
-    ['Summary', data.summary],
-    ['Verdict', data.recommendation],
-    ['Didn’t enjoy', data.dislikes],
-    ['Who it’s for', data.audience],
-  ];
-  for (const [label, value] of sections) {
-    if (!value?.trim()) continue;
-    const sec = el('div', 'gr-summary-sec');
-    sec.append(el('div', 'gr-summary-label', label));
-    const text = el('div', 'gr-summary-text');
-    renderMarkdownInline(text, value);
-    sec.append(text);
-    body.append(sec);
-  }
-  body.style.display = 'block';
-};
+const GR_QUESTION_PROMPT = `Answer this question using ONLY evidence from the book reviews below. Quote or paraphrase the concrete details reviewers give. If reviewers disagree, surface the tension. Avoid plot spoilers. Be direct and practical.`;
 
-const QUESTION_PROMPT = `Answer this question using ONLY evidence from the book reviews below. Quote or paraphrase the concrete details reviewers give. If reviewers disagree, surface the tension. Avoid plot spoilers. Be direct and practical.`;
-
-type QAEntry = { q: string; a: string };
-const QA_LIMIT = 10;
-
-const loadQAs = (key: string | null): QAEntry[] => {
-  if (!key) return [];
-  try { const p = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(p) ? p : []; }
-  catch { return []; }
-};
-const saveQA = (key: string | null, entry: QAEntry) => {
-  if (!key) return;
-  const next = [entry, ...loadQAs(key).filter((e) => e.q !== entry.q)].slice(0, QA_LIMIT);
-  try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
-};
-
-const renderAnswer = (body: HTMLElement, text: string) => {
-  body.textContent = '';
-  const div = el('div', 'gr-summary-text');
-  renderMarkdown(div, text);
-  body.append(div);
-  body.style.display = 'block';
-};
-
-/**
- * Mounts the AI section after `anchor`. The shared input drives both modes:
- * empty → "Summarize reviews" (structured book summary), text → "Ask" (free-form
- * answer). Both run over the same pre-fetched review prose; answers are cached.
- */
-const displaySummary = (workId: string, jwtToken: string | null, bookId: string | null, anchor: Element): HTMLElement => {
-  const section = el('section', 'gr-summary');
-  const head = el('div', 'gr-summary-head');
-  head.append(el('h3', 'gr-summary-header', 'Reader Reviews'));
-  const relink = el('span', 'gr-summary-relink', '↻ Re-summarize');
-  relink.style.display = 'none';
-  relink.addEventListener('click', () => runSummary());
-  head.append(relink);
-
-  const askRow = el('div', 'gr-summary-ask');
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'gr-summary-input';
-  input.placeholder = 'Ask about this book…';
-  const btn = el('button', 'gr-summary-btn') as HTMLButtonElement;
-  askRow.append(input, btn);
-
-  const body = el('div', 'gr-summary-body');
-  body.style.display = 'none';
-  const qaRow = el('div', 'gr-summary-qa');
-  qaRow.style.display = 'none';
-
-  section.append(head, askRow, body, qaRow);
-  anchor.parentNode!.insertBefore(section, anchor.nextSibling);
-
-  const summaryKey = bookId ? `gr_summary_${bookId}` : null;
-  const qaKey = bookId ? `gr_qa_${bookId}` : null;
-  let showingSummary = false;
-
-  // Lazy + memoized: fetch the newest reviews' full text only when the user first
-  // summarizes or asks. Falls back to the reviews embedded in the page when logged out.
+// Lazy + memoized review-text fetch for the summary widget: the newest reviews'
+// full text via GraphQL when logged in, else the reviews embedded in the page.
+const makeGetTexts = (workId: string, jwtToken: string | null): (() => Promise<string[]>) => {
   let textsPromise: Promise<string[]> | null = null;
-  const getTexts = (): Promise<string[]> =>
+  return () =>
     (textsPromise ??= (async () => {
       let nodes: ReviewNode[] = [];
       if (jwtToken) { try { nodes = await fetchReviewNodes(workId, jwtToken, true); } catch {} }
       return collectReviewTexts(nodes.length ? nodes.map((n) => n.text) : getEmbeddedReviewTexts());
     })());
-
-  const syncBtn = () => {
-    const asking = !!input.value.trim();
-    btn.textContent = asking ? 'Ask' : '✦ Summarize reviews';
-    const showControls = !asking && showingSummary;
-    btn.style.display = showControls ? 'none' : '';
-    relink.style.display = showControls ? '' : 'none';
-  };
-
-  const note = (cls: string, msg: string) => {
-    body.textContent = '';
-    body.append(el('div', cls, msg));
-    body.style.display = 'block';
-  };
-
-  const runSummary = async () => {
-    btn.disabled = true;
-    note('gr-summary-progress', '⏳ Reading reviews…');
-    try {
-      const texts = await getTexts();
-      if (!texts.length) throw new Error('No written reviews found yet.');
-      note('gr-summary-progress', '✦ Summarizing…');
-      const data = (await llmSummarize(texts, SUMMARY_PROMPT, SUMMARY_SCHEMA)) as BookSummary;
-      if (summaryKey) cacheSet(summaryKey, data);
-      renderSummary(body, data);
-      showingSummary = true;
-    } catch (e: any) {
-      note('gr-summary-error', e.message);
-    } finally {
-      btn.disabled = false;
-      syncBtn();
-    }
-  };
-
-  const showAnswer = (text: string) => {
-    renderAnswer(body, text);
-    showingSummary = false;
-  };
-
-  const runAsk = async (question: string) => {
-    const hit = loadQAs(qaKey).find((e) => e.q.toLowerCase() === question.toLowerCase());
-    if (hit) { showAnswer(hit.a); syncBtn(); return; }
-    btn.disabled = true;
-    note('gr-summary-progress', '⏳ Reading reviews…');
-    try {
-      const texts = await getTexts();
-      if (!texts.length) throw new Error('No written reviews found yet.');
-      note('gr-summary-progress', '⏳ Asking…');
-      const answer = (await llmSummarize(texts, `${QUESTION_PROMPT}\n\nQuestion: ${question}`, null)) as string;
-      saveQA(qaKey, { q: question, a: answer });
-      showAnswer(answer);
-      renderQA();
-    } catch (e: any) {
-      note('gr-summary-error', e.message);
-    } finally {
-      btn.disabled = false;
-      syncBtn();
-    }
-  };
-
-  const renderQA = () => {
-    const items = loadQAs(qaKey);
-    qaRow.textContent = '';
-    if (!items.length) { qaRow.style.display = 'none'; return; }
-    qaRow.style.display = 'flex';
-    qaRow.append(el('span', 'gr-summary-qa-label', 'Recent questions'));
-    for (const item of items) {
-      const chip = el('button', 'gr-summary-qa-chip', item.q) as HTMLButtonElement;
-      chip.title = item.q;
-      chip.addEventListener('click', () => { input.value = item.q; showAnswer(item.a); syncBtn(); });
-      qaRow.append(chip);
-    }
-  };
-
-  btn.addEventListener('click', () => {
-    const q = input.value.trim();
-    if (q) runAsk(q); else runSummary();
-  });
-  input.addEventListener('input', syncBtn);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
-
-  const cached = summaryKey ? (cacheGet(summaryKey, CONFIG.SUMMARY_CACHE_MS) as BookSummary | null) : null;
-  if (cached?.summary) {
-    renderSummary(body, cached);
-    showingSummary = true;
-  }
-  renderQA();
-  syncBtn();
-
-  return section;
 };
 
 // =============================================================================
@@ -1018,9 +850,21 @@ const appendScore = async (bookTitle: Element) => {
   scoreElement.parentNode!.insertBefore(recentElement, scoreElement.nextSibling);
 
   // Mount the AI panel synchronously so a cached summary / Q&A restores instantly —
-  // it reads localStorage and never blocks on the network. Review text is fetched
-  // lazily, only when the user actually summarizes or asks (see displaySummary).
-  const summarySection = displaySummary(stats.workId, stats.jwtToken, currentId, recentElement);
+  // buildMediaSummary reads localStorage and never blocks on the network. Review
+  // text is fetched lazily, only when the user actually summarizes or asks.
+  const summarySection = buildMediaSummary({
+    anchor: recentElement,
+    classPrefix: 'gr-summary',
+    heading: 'Reader Reviews',
+    summaryPrompt: SUMMARY_PROMPT,
+    schema: SUMMARY_SCHEMA,
+    sections: [['Summary', 'summary'], ['Verdict', 'recommendation'], ['Didn’t enjoy', 'dislikes'], ['Who it’s for', 'audience']],
+    summaryCacheKey: currentId ? `gr_summary_${currentId}` : null,
+    summaryTtl: CONFIG.SUMMARY_CACHE_MS,
+    initialButtonLabel: '✦ Summarize reviews',
+    fetchReviews: makeGetTexts(stats.workId, stats.jwtToken),
+    ask: { placeholder: 'Ask about this book…', questionPrompt: GR_QUESTION_PROMPT, qaCacheKey: currentId ? `gr_summary_${currentId}` : null },
+  });
 
   // Ratings-only fetch (fast) for the recent ratio + the picks' recent-% threshold.
   const recentRatio = await getRecentRatio(stats.workId, stats.jwtToken);

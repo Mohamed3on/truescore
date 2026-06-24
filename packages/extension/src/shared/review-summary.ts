@@ -1,5 +1,6 @@
 import { getActiveLLM, geminiEndpoint, OPENAI_ENDPOINT, OPENAI_MODEL, DEEPSEEK_ENDPOINT, DEEPSEEK_MODEL } from './config';
 import { el, renderMarkdown, renderMarkdownInline } from './utils';
+import { cacheGet, cacheSet } from './cache';
 
 // Shared default summary prompt for retail product pages (Amazon, Decathlon, dm…).
 // Domain-specific pages (hotels, films, BJJ courses) keep their own prompts.
@@ -452,4 +453,193 @@ export const buildSummarizeWidget = ({
       if (key && !questionInput.value.trim()) summarizeBtn.click();
     });
   }
+};
+
+interface MediaSummaryOpts {
+  anchor: Element;
+  classPrefix: string;
+  heading: string;
+  summaryPrompt: string;
+  schema: any;
+  sections: [string, string][];
+  summaryCacheKey: string | null;
+  summaryTtl: number;
+  fetchReviews: () => Promise<string[]>;
+  initialButtonLabel: string;
+  ask?: { placeholder: string; questionPrompt: string; qaCacheKey: string | null };
+}
+
+// Shared summary + Q&A panel for media-review sites (Goodreads books, Letterboxd
+// films): a labeled structured summary over a caller-supplied schema/sections,
+// instant synchronous restore of the cached summary on mount, and an optional
+// free-form Ask with cached recent-question chips. Styled entirely by the host
+// via `classPrefix` (each site ships its own CSS using the same suffixes). This
+// is the editorial counterpart to buildSummarizeWidget (the retail praised/
+// complaints product widget with hardcoded ars-* styling); both share the
+// llmSummarize / rate-limit / Q&A primitives above.
+export const buildMediaSummary = ({
+  anchor,
+  classPrefix: p,
+  heading,
+  summaryPrompt,
+  schema,
+  sections,
+  summaryCacheKey,
+  summaryTtl,
+  fetchReviews,
+  initialButtonLabel,
+  ask,
+}: MediaSummaryOpts): HTMLElement => {
+  const section = el('section', p);
+  const head = el('div', `${p}-head`);
+  head.append(el('h3', `${p}-header`, heading));
+  const relink = el('span', `${p}-relink`, '↻ Re-summarize');
+  relink.style.display = 'none';
+  relink.addEventListener('click', () => runSummary());
+  head.append(relink);
+
+  const askRow = el('div', `${p}-ask`);
+  let input: HTMLInputElement | null = null;
+  if (ask) {
+    input = document.createElement('input');
+    input.type = 'text';
+    input.className = `${p}-input`;
+    input.placeholder = ask.placeholder;
+    askRow.append(input);
+  }
+  const btn = el('button', `${p}-btn`) as HTMLButtonElement;
+  askRow.append(btn);
+
+  const body = el('div', `${p}-body`);
+  body.style.display = 'none';
+  const qaRow = ask ? el('div', `${p}-qa`) : null;
+  if (qaRow) qaRow.style.display = 'none';
+
+  section.append(head, askRow, body);
+  if (qaRow) section.append(qaRow);
+  anchor.parentNode!.insertBefore(section, anchor.nextSibling);
+
+  let showingSummary = false;
+
+  const renderMediaSummary = (data: any) => {
+    body.textContent = '';
+    for (const [label, field] of sections) {
+      const value = data?.[field];
+      if (!value || !String(value).trim()) continue;
+      const sec = el('div', `${p}-sec`);
+      sec.append(el('div', `${p}-label`, label));
+      const text = el('div', `${p}-text`);
+      renderMarkdownInline(text, String(value));
+      sec.append(text);
+      body.append(sec);
+    }
+    body.style.display = 'block';
+  };
+
+  const renderAnswer = (text: string) => {
+    body.textContent = '';
+    const div = el('div', `${p}-text`);
+    renderMarkdown(div, text);
+    body.append(div);
+    body.style.display = 'block';
+  };
+
+  const note = (cls: string, msg: string) => {
+    body.textContent = '';
+    body.append(el('div', cls, msg));
+    body.style.display = 'block';
+  };
+
+  const syncBtn = () => {
+    const asking = !!input?.value.trim();
+    btn.textContent = asking ? 'Ask' : initialButtonLabel;
+    const showControls = !asking && showingSummary;
+    btn.style.display = showControls ? 'none' : '';
+    relink.style.display = showControls && checkRateLimit().count < RL_MAX ? '' : 'none';
+  };
+
+  const runSummary = async () => {
+    btn.disabled = true;
+    note(`${p}-progress`, '⏳ Reading reviews…');
+    try {
+      const texts = await fetchReviews();
+      if (!texts.length) throw new Error('No written reviews found yet.');
+      note(`${p}-progress`, '✦ Summarizing…');
+      const data = await llmSummarize(texts, summaryPrompt, schema);
+      bumpRateLimit();
+      if (summaryCacheKey) cacheSet(summaryCacheKey, data);
+      renderMediaSummary(data);
+      showingSummary = true;
+    } catch (e: any) {
+      note(`${p}-error`, e.message);
+    } finally {
+      btn.disabled = false;
+      syncBtn();
+    }
+  };
+
+  const renderQA = () => {
+    if (!qaRow || !ask) return;
+    const items = ask.qaCacheKey ? loadQAs(ask.qaCacheKey) : [];
+    qaRow.textContent = '';
+    if (!items.length) { qaRow.style.display = 'none'; return; }
+    qaRow.style.display = 'flex';
+    qaRow.append(el('span', `${p}-qa-label`, 'Recent questions'));
+    for (const item of items) {
+      const chip = el('button', `${p}-qa-chip`, item.q) as HTMLButtonElement;
+      chip.title = item.q;
+      chip.addEventListener('click', () => {
+        if (input) input.value = item.q;
+        renderAnswer(item.a);
+        showingSummary = false;
+        syncBtn();
+      });
+      qaRow.append(chip);
+    }
+  };
+
+  const runAsk = async (question: string) => {
+    if (!ask) return;
+    const cachedQAs = ask.qaCacheKey ? loadQAs(ask.qaCacheKey) : [];
+    const hit = cachedQAs.find((e) => e.q.toLowerCase() === question.toLowerCase());
+    if (hit) { renderAnswer(hit.a); showingSummary = false; syncBtn(); return; }
+    btn.disabled = true;
+    note(`${p}-progress`, '⏳ Reading reviews…');
+    try {
+      const texts = await fetchReviews();
+      if (!texts.length) throw new Error('No written reviews found yet.');
+      note(`${p}-progress`, '⏳ Asking…');
+      const answer = (await llmSummarize(texts, `${ask.questionPrompt}\n\nQuestion: ${question}`, null)) as string;
+      bumpRateLimit();
+      if (ask.qaCacheKey) saveQA(ask.qaCacheKey, { q: question, a: answer, ts: Date.now() });
+      renderAnswer(answer);
+      showingSummary = false;
+      renderQA();
+    } catch (e: any) {
+      note(`${p}-error`, e.message);
+    } finally {
+      btn.disabled = false;
+      syncBtn();
+    }
+  };
+
+  btn.addEventListener('click', () => {
+    const q = input?.value.trim();
+    if (ask && q) runAsk(q);
+    else runSummary();
+  });
+  if (input) {
+    input.addEventListener('input', syncBtn);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
+  }
+
+  const cached = summaryCacheKey ? cacheGet(summaryCacheKey, summaryTtl) : null;
+  if (cached?.summary) {
+    renderMediaSummary(cached);
+    showingSummary = true;
+  }
+  renderQA();
+  syncBtn();
+
+  return section;
 };
