@@ -41,14 +41,39 @@ Each site adapts this formula to what data is available (star histograms, like/d
 **Sports**
 - **Transfermarkt** — Click any table header to sort. Shift+click fetches all pages and sorts globally. Adds a ranking column and a points-vs-expected column based on squad market value.
 
-## Install
+## Install & setup
+
+Not on the Chrome Web Store yet, so you load it unpacked from a local build (~1 minute).
+
+**1. Build** — needs [Bun](https://bun.sh). From the repo root:
 
 ```sh
-bun install
-bun build.ts
+bun install              # first time only
+bun run build:extension  # → packages/extension/truescore/
 ```
 
-In Chrome: **chrome://extensions** → Developer Mode → Load unpacked → select the `truescore/` folder.
+(Or from this folder: `bun install && bun build.ts`.)
+
+**2. Load in Chrome**
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode** (top-right)
+3. **Load unpacked** → select the built **`packages/extension/truescore/`** folder — the build output, not `src/`
+
+Pin the icon so the setup popup is one click away. Any Chromium browser works (Chrome, Edge, Brave, Arc).
+
+**3. Add an API key — optional, only for AI summaries**
+
+Everything that's pure math works with zero setup: score sorting on Amazon/Booking, IMDB/Letterboxd/Goodreads scores, Transfermarkt sorting, NPS breakdowns — plus **Google Maps summaries**, which run on TrueScore's hosted server (no key needed).
+
+The **on-device review summaries** (Amazon product pages, Letterboxd/Goodreads review Q&A) call an LLM straight from your browser, so they need your own key. Click the TrueScore icon and:
+
+- Paste a **[free Gemini key](https://aistudio.google.com/apikey)** (recommended, no cost) — or use OpenAI / DeepSeek instead.
+- Pick the **Model** used for summaries.
+
+Keys are stored in `chrome.storage.sync` (synced to your Google account, never bundled into the extension). With no key, every score still works.
+
+**Updating:** re-run the build, then click the refresh ↻ icon on the TrueScore card in `chrome://extensions`.
 
 ## Develop
 
@@ -61,7 +86,7 @@ src/
   popup/
   manifest.json
 
-creamcrop/    ← build output, this is what Chrome loads
+truescore/    ← build output, this is what Chrome loads
 ```
 
 ```sh
