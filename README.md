@@ -3,6 +3,12 @@
 Monorepo for the TrueScore browser extension and the truescore-web (Hetzner-hosted)
 SPA. Both replace inflated star ratings with scores that mean something.
 
+## Install
+
+Grab the latest **[`truescore.zip`](https://github.com/Mohamed3on/truescore/releases/latest)** from Releases and unzip it, then in `chrome://extensions` turn on **Developer mode** → **Load unpacked** → pick the `truescore/` folder. Works in any Chromium browser (Chrome, Edge, Brave, Arc).
+
+Scores and sorting work with no setup; the AI review summaries take an optional (free) API key. Full walkthrough — keys, and building from source — in the [extension README](packages/extension/README.md#install--setup).
+
 ## Layout
 
 | Package | What |
@@ -35,7 +41,6 @@ CI:
 
 ## Where to look
 
-- Install the extension: [`packages/extension/README.md`](packages/extension/README.md#install--setup)
 - Web ops: [`packages/web/deploy/HETZNER.md`](packages/web/deploy/HETZNER.md)
 - Extension dev: [`packages/extension/CLAUDE.md`](packages/extension/CLAUDE.md)
 - Shelved Workers migration (postmortem + porting plan): [`packages/web/WORKERS-SHELVED.md`](packages/web/WORKERS-SHELVED.md)
