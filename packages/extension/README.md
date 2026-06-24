@@ -47,7 +47,7 @@ Each site adapts this formula to what data is available (star histograms, like/d
 
 Not on the Chrome Web Store — you load it unpacked. No build required:
 
-1. Download the latest **[`truescore.zip`](https://github.com/Mohamed3on/truescore-monorepo/releases/latest)** from Releases and unzip it.
+1. Download the latest **[`truescore.zip`](https://github.com/Mohamed3on/truescore/releases/latest)** from Releases and unzip it.
 2. Open `chrome://extensions` and turn on **Developer mode** (top-right).
 3. Click **Load unpacked** and select the unzipped **`truescore/`** folder.
 
@@ -88,6 +88,6 @@ Each site is a self-contained content script. Adding a new site means adding a `
 
 ## Releases
 
-Automated with [semantic-release](https://semantic-release.gitbook.io/). Every push to `main` that touches the extension runs [`release-extension.yml`](../../.github/workflows/release-extension.yml), which derives the next version from the commit history, stamps it into the manifest, builds `truescore.zip`, and publishes it to [Releases](https://github.com/Mohamed3on/truescore-monorepo/releases) with a generated changelog.
+Automated with [semantic-release](https://semantic-release.gitbook.io/). Every push to `main` that touches the extension runs [`release-extension.yml`](../../.github/workflows/release-extension.yml), which derives the next version from the commit history, stamps it into the manifest, builds `truescore.zip`, and publishes it to [Releases](https://github.com/Mohamed3on/truescore/releases) with a generated changelog.
 
 Versioning follows [Conventional Commits](https://www.conventionalcommits.org/): `feat:` → minor, `fix:` → patch, `feat!:` or a `BREAKING CHANGE:` footer → major. Other prefixes (`docs:`, `chore:`, `refactor:`, `ext:`) ship no release. Nothing to run by hand — just write a `feat:`/`fix:` commit and push.

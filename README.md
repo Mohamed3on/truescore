@@ -30,7 +30,7 @@ CI:
   the Hetzner service.
 - Pushes touching `packages/extension/` or `packages/gmaps-shared/` trigger
   `.github/workflows/release-extension.yml`, which builds the extension and
-  publishes `truescore.zip` to [GitHub Releases](https://github.com/Mohamed3on/truescore-monorepo/releases)
+  publishes `truescore.zip` to [GitHub Releases](https://github.com/Mohamed3on/truescore/releases)
   via semantic-release (versioned from Conventional Commits).
 
 ## Where to look
