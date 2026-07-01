@@ -16,7 +16,11 @@ const PORT = Number(process.env.TRUESCORE_MINT_PORT) || 9333;
 // Eiffel Tower — always has reviews; the bgkey is place-independent so any busy
 // place works as the mint target.
 const MINT_FID = '0x47e66e2964e34e2d:0x8ddca9ee380ef7e0';
-const MINT_URL = `https://www.google.com/maps?q=&ftid=${MINT_FID}`;
+// Pin hl=en (gl=us) so Google serves English tab labels regardless of the proxy
+// exit's country — the Reviews-tab nudge below matches aria-label*="eview", which
+// silently misses localized labels ("Reseñas", "Avis", …) and never fires qv9Egd,
+// so the mint captures no bgkey. Every other path (googleFetch/preview) pins hl too.
+const MINT_URL = `https://www.google.com/maps?q=&ftid=${MINT_FID}&hl=en&gl=us`;
 // Mirrors the 81-tagged sessionId regex in packages/extension/src/sites/gmaps-capture.ts.
 const SID_RE = /\["([A-Za-z0-9_-]{16,}?)",null,null,null,null,null,81\]/;
 const MINT_TIMEOUT_MS = 50_000;
