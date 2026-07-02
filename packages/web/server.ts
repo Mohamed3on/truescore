@@ -24,7 +24,7 @@ import {
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
-import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, startCookieRefreshTimer } from './maps-creds';
+import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, startCookieRefreshTimer, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
@@ -337,12 +337,12 @@ function getOrFetchPreviewBundle(featureId: string): Promise<PreviewBundle> {
 }
 
 // Restore the last extension-seeded session before serving, so a deploy/restart
-// doesn't blank reviews until the next Maps visit re-seeds. Then start the cookie
-// roll-forward timer (refreshes the session-trust tokens via RotateCookies) to
-// stretch session life. The server can't mint a bgkey itself (Google serves
-// automated browsers a review-less page), so a genuinely dead session is healed by
-// an extension reseed — see onStaleRpc.
+// doesn't blank reviews until the first mint lands. Then start the hands-off mint
+// timer (a stealth-cloaked headless browser captures a fresh anonymous bgkey — mints
+// on boot if credless, refreshes on a timer) and the cookie roll-forward timer
+// (stretches an extension-seeded logged-in session between refreshes).
 await loadPersistedSeed();
+startMintTimer();
 startCookieRefreshTimer();
 
 Bun.serve({
@@ -399,6 +399,17 @@ Bun.serve({
     // usable Maps session right now. Just a boolean — no secret, no timing.
     '/api/session-health': {
       GET: () => json({ healthy: mapsSessionHealthy() }),
+    },
+    // Force a fresh mint now (testing / manual recovery). Behind the seed secret
+    // since it launches a browser through the proxy.
+    '/api/maps-creds/renew': {
+      POST: async (req) => {
+        const secret = process.env.TRUESCORE_SEED_SECRET;
+        if (!secret) return json({ error: 'seeding disabled' }, 404);
+        if (req.headers.get('x-truescore-seed') !== secret) return json({ error: 'forbidden' }, 403);
+        const ok = await renewSession('manual', true);
+        return json({ ok, ...mapsCredsStatus() });
+      },
     },
     // Read-only cache peek for the extension: returns summary/highlights/etc
     // if the place was already looked up via the web. Never triggers compute.

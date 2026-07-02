@@ -52,19 +52,24 @@ ssh root@65.108.153.112 'curl -s localhost/api/maps-creds -H "x-truescore-seed: 
 # clear the seeded Maps session (serves empty until the extension re-seeds)
 ssh root@65.108.153.112 'rm -f /var/lib/truescore/maps-creds.json && systemctl restart truescore'
 
-# NOTE: server-side bgkey minting was REMOVED (2026-07-02). Google serves any
-# automated/CDP-driven browser a review-less Maps page regardless of proxy, headless
-# vs headful, UA, or IP — proven by diffing an automated Chrome against a real one on
-# the same machine (identical JS fingerprint, only the debug attachment differs). So
-# there is no /api/maps-creds/renew and no TRUESCORE_MINT_INTERVAL_MIN. A genuinely
-# expired session emits a `needs-reseed` event (see observability) and is healed by an
-# extension reseed (a real browser). Watch for it:
-ssh root@65.108.153.112 "journalctl -u truescore --no-pager --since today | grep 'type=needs-reseed'"
+# HANDS-OFF SELF-MINT (rebuilt 2026-07-02, stealth): the server mints its own fresh
+# ANONYMOUS bgkey — no extension, no login. A naive automated browser gets served a
+# review-less page (Google detects the debug attachment, not a spoofable fingerprint),
+# but puppeteer-extra-plugin-stealth cloaks it; maps-minter drives the system Chrome
+# through the proxy to a busy place's reviews deeplink, scrolls to fire qv9Egd, and
+# lifts the bgkey. Runs on boot (if credless), on a timer, and reactively on a stale
+# lookup. If stealth ever stops working it emits `needs-reseed` and the extension is
+# the fallback. Force a mint now (spawns Chrome ~10-15s via the proxy):
+ssh root@65.108.153.112 'curl -s -X POST localhost/api/maps-creds/renew -H "x-truescore-seed: $(sed -n "s/^TRUESCORE_SEED_SECRET=//p" /opt/truescore/.env)"'
 
-# tune cookie roll-forward cadence (minutes; 0 disables). The server refreshes the
-# session-trust tokens (__Secure-1PSIDTS/3PSIDTS) via RotateCookies on this cadence
-# + ~10s after boot, stretching session life between reseeds. This is the only
-# server-side keepalive; it can't refresh the bgkey, only the cookie jar.
+# tune proactive mint cadence (minutes; default 240 = every 4h; 0 disables → reactive
+# + boot only). Well inside the ~day a session lasts, so it never expires in front of
+# a user. Watch mints: journalctl … | grep 'type=mint'
+ssh root@65.108.153.112 'echo "TRUESCORE_MINT_INTERVAL_MIN=240" >> /opt/truescore/.env && systemctl restart truescore'
+
+# tune cookie roll-forward cadence (minutes; 0 disables). RotateCookies refreshes the
+# session-trust tokens of an extension-seeded LOGGED-IN session between mints; a no-op
+# for anonymous minted sessions (no *SIDTS to roll). TRUESCORE_COOKIE_REFRESH_MIN.
 ssh root@65.108.153.112 'echo "TRUESCORE_COOKIE_REFRESH_MIN=30" >> /opt/truescore/.env && systemctl restart truescore'
 
 # switch summarization model (llm.ts): gemini (default when unset) or openai

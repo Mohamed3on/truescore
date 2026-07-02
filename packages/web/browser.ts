@@ -121,9 +121,12 @@ const MAX_ATTEMPTS = 4;
 export async function googleFetch(
   url: string,
   init?: { method?: string; body?: string; headers?: Record<string, string> },
+  cookieOverride?: string,
 ): Promise<string> {
   assertGoogleHost(url);
-  const cookie = await getGoogleCookieHeader();
+  // cookieOverride lets the minter verify a freshly-minted (anonymous) jar without
+  // flipping the global override — so a failed verify can't poison the live session.
+  const cookie = cookieOverride ?? await getGoogleCookieHeader();
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     let r: Response | null = null;
     let networkErr: Error | null = null;

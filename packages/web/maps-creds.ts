@@ -3,6 +3,7 @@ import { dirname, join } from 'path';
 import { writeFileSync, renameSync } from 'fs';
 import { buildListReq, parseReviewsResponse, type MapsCreds } from '@truescore/gmaps-shared';
 import { setGoogleCookieOverride, googleFetch, rotateSessionCookies } from './browser';
+import { mintMapsCreds } from './maps-minter';
 import { logEvent } from './events';
 
 // Botguard creds for the ListUgcPosts batchexecute RPC (the legacy GET endpoint
@@ -69,7 +70,7 @@ const persistSeed = (data: PersistedSeed): void => {
 // A fresh seed from the extension: apply in memory, then mirror to disk so it
 // survives the next restart. The in-memory seed is what serves reviews, so a
 // disk failure is logged loudly (never swallowed) but doesn't fail the seed.
-export function applySeed(seed: Seed): void {
+export function applySeed(seed: Seed, src: 'extension' | 'mint' = 'extension'): void {
   apply(seed);
   seededAt = Date.now();
   try {
@@ -78,7 +79,7 @@ export function applySeed(seed: Seed): void {
     console.error('[maps-creds] failed to persist seed to disk — in-memory seed still active, but it will not survive a restart', e);
   }
   console.log(`[maps-creds] seeded bgkey …${seed.bgkey.slice(-6)} (${seed.cookies.length}b cookies) at ${new Date(seededAt).toISOString()}`);
-  logEvent('seed', { src: 'extension', bgkey: seed.bgkey.slice(-6), cookieBytes: seed.cookies.length });
+  logEvent('seed', { src, bgkey: seed.bgkey.slice(-6), cookieBytes: seed.cookies.length });
 }
 
 // Reload the last seed on boot so a deploy/restart doesn't serve empty until the
@@ -115,24 +116,44 @@ export function getMapsCreds(): MapsCreds | null {
 }
 
 // The transport calls these from the actual review-RPC outcome (see gmaps.ts),
-// AFTER its own retries. onStaleRpc means reviews came back empty even on retry —
-// a genuinely expired session. The server CANNOT mint a fresh bgkey itself: Google
-// serves any automated/CDP-driven browser a review-less page (proven — headless and
-// headful, on a clean residential IP, are JS-identical to a real browser yet get no
-// Reviews tab; the tell is the debug attachment, not a spoofable fingerprint). So a
-// dead session needs a real-browser (extension) reseed — we flip the banner and
-// alert once per episode instead of spawning a doomed headless Chrome.
-const RESEED_ALERT_COOLDOWN_MS = 10 * 60_000;
-let lastReseedAlert = 0;
-export function onStaleRpc(): void {
-  setRenewOk(false, 'stale-exhausted');
-  if (Date.now() - lastReseedAlert < RESEED_ALERT_COOLDOWN_MS) return;
-  lastReseedAlert = Date.now();
-  logEvent('needs-reseed', { note: 'review RPCs empty after retries — reseed via the extension' });
-  console.warn('[maps-creds] session expired — reseed via the extension (server-side mint is not possible)');
-}
+// AFTER its own retries. A stale reply (reviews empty even on retry) triggers a fresh
+// mint; a good reply proves the session works. The mint is anonymous — no extension,
+// no human. A good reply doesn't itself flip the banner; renewSession/onMintFailed own that.
+export function onStaleRpc(): void { void renewSession('stale-detected'); }
 export function onFreshRpc(): void { setRenewOk(true, 'fresh-rpc'); }
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
+
+// --- self-mint: refresh the bgkey via a stealth-cloaked headless browser ---
+// Google serves an automated browser a review-less page UNLESS it's cloaked by
+// puppeteer-extra-plugin-stealth (see maps-minter). mintMapsCreds captures a fresh
+// ANONYMOUS session, so the server keeps itself seeded with no human and no extension.
+// A cooldown collapses a stale-storm to one attempt (force bypasses it for the timer /
+// operator endpoint); mintMapsCreds has its own single-flight one layer down.
+const RENEW_COOLDOWN_MS = 60_000;
+const RESEED_ALERT_COOLDOWN_MS = 10 * 60_000;
+let lastRenewAttempt = 0;
+let lastReseedAlert = 0;
+
+export async function renewSession(reason: string, force = false): Promise<boolean> {
+  if (!force && Date.now() - lastRenewAttempt < RENEW_COOLDOWN_MS) return false;
+  lastRenewAttempt = Date.now();
+  console.log(`[maps-creds] minting a fresh session (${reason})…`);
+  const minted = await mintMapsCreds();
+  if (!minted) {
+    setRenewOk(false, `mint-failed:${reason}`);
+    // Stealth is an arms race; if minting starts failing, an extension reseed is the
+    // fallback. Alert once per episode rather than on every stale RPC.
+    if (Date.now() - lastReseedAlert >= RESEED_ALERT_COOLDOWN_MS) {
+      lastReseedAlert = Date.now();
+      logEvent('needs-reseed', { note: 'auto-mint failed — extension reseed as fallback' });
+      console.warn('[maps-creds] auto-mint failed — falling back to extension reseed');
+    }
+    return false;
+  }
+  applySeed(minted, 'mint'); // sets renewOk = true
+  console.log(`[maps-creds] session renewed (${reason})`);
+  return true;
+}
 
 // --- cookie roll-forward: refresh the session-trust tokens (no Chrome) ---
 // renewSession above re-mints the bgkey but reuses the seeded cookies verbatim,
@@ -198,6 +219,18 @@ export function startCookieRefreshTimer(): void {
   setInterval(tick, min * 60_000);
   setTimeout(tick, 10_000);
   console.log(`[maps-creds] cookie refresh every ${min}min (+ boot)`);
+}
+
+// Hands-off engine: mint on boot if we have no creds, then refresh on a timer well
+// inside the ~day a session lasts, so it never expires in front of a user. The
+// reactive path (onStaleRpc) is the backstop; the extension is the fallback if
+// stealth minting ever fails. TRUESCORE_MINT_INTERVAL_MIN (default 240; 0 disables).
+export function startMintTimer(): void {
+  if (!getMapsCreds()) void renewSession('boot', true);
+  const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 240);
+  if (!(min > 0)) { console.log('[maps-creds] proactive mint disabled'); return; }
+  setInterval(() => { void renewSession('timer'); }, min * 60_000);
+  console.log(`[maps-creds] proactive mint every ${min}min (+ boot if credless)`);
 }
 
 // Liveness + age for the GET probe on /api/maps-creds. Never returns the secrets
