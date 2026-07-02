@@ -90,11 +90,15 @@ const ensureEntry = (featureId: string, name: string): void => {
   persist(featureId, { name, score: emptyScore(featureId), scoreTs: 0 });
 };
 
-// 0 reviews scraped while the live histogram total is > 0 means Google returned a
-// 200 + empty body (throttle), not a review-less place — never trust it as a real
-// result, neither to persist nor to serve.
+// A 0-review scrape is only a trustworthy "review-less place" result when the live
+// histogram CONFIRMS zero (liveTotal === 0). If the histogram shows reviews
+// (liveTotal > 0) the empty is a throttle — Google's 200 + empty body. If the
+// histogram is unknown (null/undefined — the preview fetch failed, or the featureId
+// is dead) we can't confirm the place is genuinely empty. In both cases don't trust
+// the 0 — never persist or serve it — so a transient preview failure can't poison the
+// cache with a false 0.
 const isThrottledScrape = (totalReviews: number, liveTotal: number | null | undefined): boolean =>
-  totalReviews === 0 && (liveTotal ?? 0) > 0;
+  totalReviews === 0 && liveTotal !== 0;
 
 export const cache = {
   get(featureId: string): CacheEntry | undefined {
@@ -108,17 +112,18 @@ export const cache = {
     if (entry.totalReviewsAtCache == null) return false;
     return entry.totalReviewsAtCache === currentTotal;
   },
-  // A cached score of 0 while the live histogram shows reviews is a throttled
-  // scrape, not a real result — treat it as unusable so revalidate re-scrapes.
+  // A cached 0-review score is only usable when the live histogram confirms zero; if
+  // it shows reviews (throttle) or is unknown (preview failed), treat it as unusable
+  // so revalidate re-scrapes instead of serving a possibly-false 0.
   scoreUsable(entry: CacheEntry, currentTotal?: number | null): boolean {
     return !isThrottledScrape(entry.score.totalReviews, currentTotal);
   },
   histogramFresh(entry: CacheEntry): boolean {
     return !!entry.histogramTs && Date.now() - entry.histogramTs < HISTOGRAM_TTL_MS;
   },
-  // Returns false when the scrape is rejected as a throttle artifact (0 reviews
-  // vs a non-zero histogram): nothing is persisted, so the prior entry stands and
-  // the next lookup retries.
+  // Returns false when a 0-review scrape can't be confirmed genuine (histogram shows
+  // reviews = throttle, or histogram unknown = preview failed / dead featureId):
+  // nothing is persisted, so the prior entry stands and the next lookup retries.
   async putScore(featureId: string, name: string, score: ScoreResult, totalReviewsAtCache: number | null, resolvedUrl?: string): Promise<boolean> {
     const existing = store.get(featureId);
     if (isThrottledScrape(score.totalReviews, totalReviewsAtCache)) return false;
