@@ -42,7 +42,9 @@ export type SearchResult = {
   ts: number;
 };
 
-const db = new Database(DB_PATH, { create: true });
+// Exported so events.ts can persist the session-event log into the same sqlite
+// file (one WAL connection, no second handle).
+export const db = new Database(DB_PATH, { create: true });
 db.run('PRAGMA journal_mode = WAL');
 db.run('CREATE TABLE IF NOT EXISTS entries (featureId TEXT PRIMARY KEY, data TEXT NOT NULL)');
 

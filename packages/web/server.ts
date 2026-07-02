@@ -30,6 +30,7 @@ import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, scoreHighlight } from './highlights';
 import { cache, type CacheEntry } from './cache';
+import { logEvent } from './events';
 import { createInflight } from './inflight';
 import index from './index.html';
 
@@ -165,6 +166,7 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
     // prior entry and let the next request retry.
     if (!(await cache.putScore(featureId, name, score, currentTotal, resolvedUrl))) {
       console.warn(`[revalidate] ${name} (${featureId}): re-scrape got 0 vs histogram ${currentTotal} — keeping prior entry (likely throttle)`);
+      logEvent('throttle', { where: 'revalidate', name, fid: featureId, histogram: currentTotal });
       return;
     }
     console.log(`[revalidate] ${name}: total ${prevTotal ?? 'unset'} → ${currentTotal}, re-scored`);
@@ -316,6 +318,7 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string)
     // result. Genuinely review-less places have currentTotal 0 and still cache.
     if (!(await cache.putScore(featureId, name, score, currentTotal, resolvedUrl))) {
       console.warn(`[lookup] ${name} (${featureId}): scraped 0 but histogram has ${currentTotal} — not caching (likely throttle)`);
+      logEvent('throttle', { where: 'lookup', name, fid: featureId, histogram: currentTotal });
     }
     write({ type: 'score', score, fetchMs: Date.now() - t0 });
   });

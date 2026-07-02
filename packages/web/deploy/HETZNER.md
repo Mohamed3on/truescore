@@ -72,6 +72,33 @@ ssh root@65.108.153.112 'echo "TRUESCORE_COOKIE_REFRESH_MIN=30" >> /opt/truescor
 ssh root@65.108.153.112 'sed -i "s/^LLM_PROVIDER=.*/LLM_PROVIDER=gemini/" /opt/truescore/.env && systemctl restart truescore'
 ```
 
+## Session observability (`[ts-event]`)
+
+Every Maps-session lifecycle moment is emitted as one structured line
+`[ts-event] type=<t> k=v …` AND mirrored to the `session_events` table in
+`cache.sqlite` (durable across restarts, pruned to 14 days). This is the fast path
+for "web is empty/0% — why": you no longer have to reconstruct it from scattered
+`warn()` lines. Event types: `seed` (src=extension|mint|disk), `mint`
+(result=ok|fail; a failed mint carries `page={title,tabs,english,consent,bodyLen}`
+explaining why the Reviews UI didn't render), `rpc-stale` / `rpc-recovered` /
+`rpc-stale-final` (the throttle-retry: recovered = transient throttle, stale-final =
+genuine expiry → renewal), `throttle`, `cookie-rotate` (result=adopted|unchanged|
+verify-empty|error), `health` (renewOk transitions), `fetch-fail` (status+body — 407
+quota vs 4xx bgkey).
+
+```bash
+# live tail of just the session events
+ssh root@65.108.153.112 "journalctl -u truescore -f -n0 | grep --line-buffered '\[ts-event\]'"
+
+# durable history from sqlite (bun, since sqlite3 CLI isn't installed). Last 40:
+ssh root@65.108.153.112 'set -a; . /opt/truescore/.env; set +a
+  bun -e "const {Database}=require(\"bun:sqlite\");const p=process.env.TRUESCORE_CACHE_DB_PATH||\"/var/lib/truescore/cache.sqlite\";const db=new Database(p,{readonly:true});for(const r of db.prepare(\"SELECT ts,type,data FROM session_events ORDER BY ts DESC LIMIT 40\").all())console.log(new Date(r.ts).toISOString(),r.type,r.data)"'
+
+# counts by type over the last day (is the cookie keepalive actually adopting? are mints failing?)
+ssh root@65.108.153.112 'set -a; . /opt/truescore/.env; set +a
+  bun -e "const {Database}=require(\"bun:sqlite\");const p=process.env.TRUESCORE_CACHE_DB_PATH||\"/var/lib/truescore/cache.sqlite\";const db=new Database(p,{readonly:true});const since=Date.now()-864e5;for(const r of db.prepare(\"SELECT type,count(*) n FROM session_events WHERE ts>? GROUP BY type ORDER BY n DESC\").all(since))console.log(String(r.n).padStart(5),r.type)"'
+```
+
 ## Residential proxy (Decodo)
 
 All Google fetches in `browser.ts` go through a Decodo residential proxy, set in `/opt/truescore/.env`:

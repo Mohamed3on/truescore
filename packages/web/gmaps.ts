@@ -14,6 +14,7 @@ import {
 } from '@truescore/gmaps-shared';
 import { googleFetch } from './browser';
 import { getMapsCreds, onStaleRpc, onFreshRpc } from './maps-creds';
+import { logEvent } from './events';
 
 export type { Review, SortKey, SortStats };
 
@@ -35,25 +36,39 @@ const warnNoCreds = (where: string): void => {
   if (noCredsLog()) console.warn(`[maps-creds] no session seeded — ${where} serving empty; reseed by opening a Google Maps tab`);
 };
 
+// A [null,…,true] payload is NOT a reliable dead-session signal: it's also what
+// Google returns on a transient throttle, and a plain retry on a fresh proxy exit
+// usually recovers it (verified — a single retry brought a "stale" session back).
+// So on the stale shape we retry a couple times (the rotating gateway hands out a
+// new IP per request) before concluding the session is actually expired. Only
+// then do we trigger a renewal. This turns the common case — a throttle blip that
+// used to surface as empty/0% and spawn a doomed headless mint — into a silent
+// self-recovery, and the rpc-recovered / rpc-stale-final events tell the two apart.
+const STALE_RETRY_ATTEMPTS = 2;
+
 // The server's transport: proxy + cookies + retry all live in googleFetch. We
-// also sniff each batchexecute body for the expired-session shape and warn once,
-// so a stale seed shows up as "session expired" in the logs instead of a silent
-// run of empties. No abort path — the server never pauses a sort.
+// also sniff each batchexecute body for the expired-session shape (POST
+// batchexecute only — preview GETs don't exercise the session). No abort path —
+// the server never pauses a sort.
 const transport: Transport = async (url, init) => {
-  const body = await googleFetch(url, init);
-  // Update session health from the actual review-RPC outcome (POST batchexecute
-  // only — preview GETs don't exercise the session). A 200 "expired" payload
-  // (the reliable dead-bgkey signal) triggers a renewal; a valid reply marks the
-  // session healthy. Transient throws are left alone — googleFetch already
-  // retried, and the proactive timer covers a genuinely dead key.
-  if (init?.method === 'POST') {
-    if (isStaleReviewsResponse(body)) {
-      onStaleRpc();
-      if (staleLog()) console.warn('[maps-creds] session looks expired — Google returned an empty RPC payload; renewing…');
-    } else {
+  let body = await googleFetch(url, init);
+  if (init?.method !== 'POST') return body;
+  if (!isStaleReviewsResponse(body)) { onFreshRpc(); return body; }
+  // stale shape — could be a transient throttle; retry before believing it
+  for (let attempt = 1; attempt <= STALE_RETRY_ATTEMPTS; attempt++) {
+    logEvent('rpc-stale', { attempt });
+    await Bun.sleep(300 * attempt); // brief backoff; the retry lands on a fresh exit IP
+    body = await googleFetch(url, init);
+    if (!isStaleReviewsResponse(body)) {
       onFreshRpc();
+      logEvent('rpc-recovered', { attempt }); // throttle, not expiry — no renewal needed
+      return body;
     }
   }
+  // still stale after retries → treat as a genuinely expired session
+  onStaleRpc();
+  logEvent('rpc-stale-final', { attempts: STALE_RETRY_ATTEMPTS + 1 });
+  if (staleLog()) console.warn('[maps-creds] session looks expired after retries — Google returned empty payloads; renewing…');
   return body;
 };
 

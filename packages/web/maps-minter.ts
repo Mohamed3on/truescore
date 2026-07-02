@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'child_process';
 import { rmSync } from 'fs';
 import { buildListReq, parseReviewsResponse } from '@truescore/gmaps-shared';
 import { googleFetch, setGoogleCookieOverride, proxyConfig, SEED_COOKIES, USER_AGENT } from './browser';
+import { logEvent } from './events';
 import type { Seed } from './maps-creds';
 
 const CHROME = process.env.TRUESCORE_CHROME_PATH || '/usr/bin/google-chrome';
@@ -55,18 +56,30 @@ async function runMint(cookies: string): Promise<Seed | null> {
   ], { stdio: 'ignore', detached: true });
   let ws: WebSocket | undefined;
   try {
-    const caps = await withTimeout(capture(cookies, (w) => (ws = w)), MINT_TIMEOUT_MS);
-    if (!caps?.bgkey) { console.warn(`[maps-minter] no bgkey captured in ${Date.now() - t0}ms`); return null; }
+    const { caps, page } = await withTimeout(capture(cookies, (w) => (ws = w)), MINT_TIMEOUT_MS);
+    if (!caps?.bgkey) {
+      // page carries WHY the Reviews UI never rendered (locale, consent wall,
+      // stripped/blank page) — the context every past "no bgkey" debug lacked.
+      console.warn(`[maps-minter] no bgkey captured in ${Date.now() - t0}ms`);
+      logEvent('mint', { result: 'fail', reason: 'no-bgkey', ms: Date.now() - t0, ...(page ? { page } : {}) });
+      return null;
+    }
     // Verify the minted bgkey actually fetches reviews through the server's own
     // path before we trust it; the cookies it was minted with are the override.
     setGoogleCookieOverride(cookies);
     const req = buildListReq(MINT_FID, 'newest', { ...caps, hl: 'en' });
     const { reviews } = parseReviewsResponse(await googleFetch(req.url, req.init));
-    if (!reviews.length) { console.warn('[maps-minter] minted bgkey verified empty — discarding'); return null; }
+    if (!reviews.length) {
+      console.warn('[maps-minter] minted bgkey verified empty — discarding');
+      logEvent('mint', { result: 'fail', reason: 'verify-empty', ms: Date.now() - t0, bgkey: caps.bgkey.slice(-6) });
+      return null;
+    }
     console.log(`[maps-minter] minted bgkey …${caps.bgkey.slice(-6)} in ${Date.now() - t0}ms (verify: ${reviews.length} reviews)`);
+    logEvent('mint', { result: 'ok', ms: Date.now() - t0, bgkey: caps.bgkey.slice(-6), verify: reviews.length });
     return { ...caps, cookies };
   } catch (e) {
     console.warn('[maps-minter] mint error:', e instanceof Error ? e.message : e);
+    logEvent('mint', { result: 'fail', reason: 'error', ms: Date.now() - t0, msg: e instanceof Error ? e.message : String(e) });
     return null;
   } finally {
     try { ws?.close(); } catch {}
@@ -80,7 +93,7 @@ async function runMint(cookies: string): Promise<Seed | null> {
   }
 }
 
-async function capture(cookies: string, setWs: (w: WebSocket) => void): Promise<Caps | null> {
+async function capture(cookies: string, setWs: (w: WebSocket) => void): Promise<{ caps: Caps | null; page?: Record<string, unknown> }> {
   // Wait for DevTools; the /json ws url is port-less when fetched with
   // Host: localhost (rebind guard), so rebuild it against 127.0.0.1:port.
   let wsUrl = '';
@@ -169,5 +182,12 @@ async function capture(cookies: string, setWs: (w: WebSocket) => void): Promise<
   // packages/extension/src/sites/gmaps-capture.ts.
   const nudge = `(function(){document.querySelector('button[role="tab"][aria-label*="eview" i]')?.click();var el=document.querySelector('.jftiEf[data-review-id]');el=el?el.parentElement:null;while(el){var s=getComputedStyle(el);if((s.overflowY==='auto'||s.overflowY==='scroll')&&el.scrollHeight>el.clientHeight){el.scrollBy({top:1e6});break;}el=el.parentElement;}return 1;})()`;
   for (let i = 0; i < 45 && !captured; i++) { await Bun.sleep(800); await cdp('Runtime.evaluate', { expression: nudge }).catch(() => {}); }
-  return captured;
+  if (captured) return { caps: captured };
+  // Capture failed — snapshot WHY the Reviews UI never rendered so the mint event
+  // self-explains: locale (english=false → the tab label wasn't "Reviews"), a
+  // consent/anti-bot wall, or a stripped/blank page (bodyLen tiny, tabs=0).
+  const diagExpr = `JSON.stringify({title:document.title,tabs:document.querySelectorAll('button[role="tab"]').length,english:!!document.querySelector('button[role="tab"][aria-label*="eview" i]'),consent:/before you continue|verify it|unusual traffic|not a robot|sign in/i.test(document.body?document.body.innerText:''),bodyLen:(document.body?document.body.innerText:'').length})`;
+  let page: Record<string, unknown> | undefined;
+  try { page = JSON.parse((await cdp('Runtime.evaluate', { expression: diagExpr, returnByValue: true })).result.value); } catch { /* page dump is best-effort */ }
+  return { caps: null, page };
 }

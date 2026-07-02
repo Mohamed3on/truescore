@@ -1,4 +1,5 @@
 import { homedir } from 'os';
+import { logEvent } from './events';
 
 const COOKIES_PATH = process.env.TRUESCORE_COOKIES_PATH || `${homedir()}/.truescore-cookies.json`;
 const COOKIES_TTL_MS = Number(process.env.TRUESCORE_COOKIES_TTL_MS) || 7 * 24 * 60 * 60 * 1000;
@@ -141,10 +142,16 @@ export async function googleFetch(
     const retryable = networkErr !== null || RETRY_STATUSES.has(status);
     const last = attempt === MAX_ATTEMPTS - 1;
     if (!retryable || last) {
-      if (networkErr) throw networkErr;
+      if (networkErr) {
+        logEvent('fetch-fail', { kind: 'network', msg: networkErr.message, url: url.slice(0, 60) });
+        throw networkErr;
+      }
       // Google explains 4xx rejections (stale bgkey/at, quota) in the body —
       // keep a snippet so the handler's catch logs *why*, not just the status.
+      // The event captures it too — a 407 "reached your traffic limit" (proxy
+      // quota) vs a 4xx bgkey rejection look identical without the body.
       const snippet = (await r!.text().catch(() => '')).slice(0, 200).replace(/\s+/g, ' ');
+      logEvent('fetch-fail', { kind: 'http', status, body: snippet.slice(0, 80), url: url.slice(0, 60) });
       throw new Error(`googleFetch ${status} for ${url.slice(0, 80)}…${snippet ? ` body=${snippet}` : ''}`);
     }
     const delay = 500 * 2 ** attempt + Math.floor(Math.random() * 250);

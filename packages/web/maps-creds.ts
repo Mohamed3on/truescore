@@ -4,6 +4,7 @@ import { writeFileSync, renameSync } from 'fs';
 import { buildListReq, parseReviewsResponse, type MapsCreds } from '@truescore/gmaps-shared';
 import { setGoogleCookieOverride, googleFetch, rotateSessionCookies } from './browser';
 import { mintMapsCreds } from './maps-minter';
+import { logEvent } from './events';
 
 // Botguard creds for the ListUgcPosts batchexecute RPC (the legacy GET endpoint
 // is retired and the server has no browser JS to mint an x-maps-bgkey itself).
@@ -38,6 +39,14 @@ let cookieStr: string | null = null;
 // staleness flapped it on transient proxy blips while reviews still worked.)
 let renewOk = true;
 
+// Flip session health, logging only real transitions — renewOk is touched on every
+// good/bad RPC, so a raw assignment would be per-RPC noise; we want the edges.
+const setRenewOk = (v: boolean, reason: string): void => {
+  if (v === renewOk) return;
+  renewOk = v;
+  logEvent('health', { renewOk: v, reason });
+};
+
 export function setMapsCreds(creds: MapsCreds): void {
   cached = creds;
 }
@@ -46,7 +55,7 @@ const apply = (s: Seed): void => {
   setMapsCreds({ bgkey: s.bgkey, bgbind: s.bgbind, sessionId: s.sessionId, at: s.at, hl: 'en' });
   setGoogleCookieOverride(s.cookies);
   cookieStr = s.cookies;
-  renewOk = true;
+  setRenewOk(true, 'apply');
 };
 
 // Write the seed atomically at 0600: create a fresh temp at that mode, then
@@ -62,7 +71,7 @@ const persistSeed = (data: PersistedSeed): void => {
 // A fresh seed from the extension: apply in memory, then mirror to disk so it
 // survives the next restart. The in-memory seed is what serves reviews, so a
 // disk failure is logged loudly (never swallowed) but doesn't fail the seed.
-export function applySeed(seed: Seed): void {
+export function applySeed(seed: Seed, src: 'extension' | 'mint' = 'extension'): void {
   apply(seed);
   seededAt = Date.now();
   try {
@@ -71,6 +80,7 @@ export function applySeed(seed: Seed): void {
     console.error('[maps-creds] failed to persist seed to disk — in-memory seed still active, but it will not survive a restart', e);
   }
   console.log(`[maps-creds] seeded bgkey …${seed.bgkey.slice(-6)} (${seed.cookies.length}b cookies) at ${new Date(seededAt).toISOString()}`);
+  logEvent('seed', { src, bgkey: seed.bgkey.slice(-6), cookieBytes: seed.cookies.length });
 }
 
 // Reload the last seed on boot so a deploy/restart doesn't serve empty until the
@@ -84,6 +94,7 @@ export async function loadPersistedSeed(): Promise<void> {
     apply(s);
     seededAt = typeof s.ts === 'number' ? s.ts : null;
     console.log(`[maps-creds] restored seed from disk, bgkey …${s.bgkey.slice(-6)}, last seeded ${seededAt ? new Date(seededAt).toISOString() : '?'}`);
+    logEvent('seed', { src: 'disk', bgkey: s.bgkey.slice(-6), cookieBytes: s.cookies.length });
   } catch (e) {
     console.warn('[maps-creds] failed to restore seed', e);
   }
@@ -110,7 +121,7 @@ export function getMapsCreds(): MapsCreds | null {
 // banner, since one bad reply is usually transient and the renewal (or the next
 // good reply) resolves it. A good reply proves the session works.
 export function onStaleRpc(): void { void renewSession('stale-detected'); }
-export function onFreshRpc(): void { renewOk = true; }
+export function onFreshRpc(): void { setRenewOk(true, 'fresh-rpc'); }
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
 
 // --- reactive self-renewal: mint a fresh bgkey via headless Chrome (maps-minter) ---
@@ -125,13 +136,13 @@ const RENEW_COOLDOWN_MS = 60_000;
 let lastRenewAttempt = 0;
 
 export async function renewSession(reason: string, force = false): Promise<boolean> {
-  if (!cookieStr) { console.warn(`[maps-creds] cannot renew (${reason}) — no cookies; needs an extension reseed`); renewOk = false; return false; }
+  if (!cookieStr) { console.warn(`[maps-creds] cannot renew (${reason}) — no cookies; needs an extension reseed`); setRenewOk(false, 'no-cookies'); return false; }
   if (!force && Date.now() - lastRenewAttempt < RENEW_COOLDOWN_MS) return false;
   lastRenewAttempt = Date.now();
   console.log(`[maps-creds] renewing session via headless mint (${reason})…`);
   const minted = await mintMapsCreds(cookieStr);
-  if (!minted) { console.warn(`[maps-creds] renew failed (${reason}) — banner shows until the cookies are refreshed`); renewOk = false; return false; }
-  applySeed(minted); // sets renewOk = true
+  if (!minted) { console.warn(`[maps-creds] renew failed (${reason}) — banner shows until the cookies are refreshed`); setRenewOk(false, `renew-failed:${reason}`); return false; }
+  applySeed(minted, 'mint'); // sets renewOk = true
   console.log(`[maps-creds] session renewed (${reason})`);
   return true;
 }
@@ -150,7 +161,7 @@ function adoptCookies(cookies: string): void {
   if (!cached) return;
   setGoogleCookieOverride(cookies);
   cookieStr = cookies;
-  renewOk = true;
+  setRenewOk(true, 'cookie-rotate');
   try {
     persistSeed({ bgkey: cached.bgkey, bgbind: cached.bgbind, sessionId: cached.sessionId, at: cached.at, cookies, ts: seededAt ?? Date.now() });
   } catch (e) {
@@ -165,8 +176,10 @@ export async function refreshSessionCookies(reason: string): Promise<boolean> {
     rolled = await rotateSessionCookies(cookieStr);
   } catch (e) {
     console.warn(`[maps-creds] cookie rotate error (${reason})`, e instanceof Error ? e.message : e);
+    logEvent('cookie-rotate', { result: 'error', reason, msg: e instanceof Error ? e.message : String(e) });
+    return false;
   }
-  if (!rolled) return false; // nothing rotated — keep the current jar
+  if (!rolled) { logEvent('cookie-rotate', { result: 'unchanged', reason }); return false; } // RotateCookies returned no new tokens — jar already current
   // Verify against the live RPC before adopting. The probe flips the global
   // override to the candidate jar, so restore it if the candidate comes back empty.
   setGoogleCookieOverride(rolled);
@@ -178,10 +191,12 @@ export async function refreshSessionCookies(reason: string): Promise<boolean> {
   if (!ok) {
     setGoogleCookieOverride(cookieStr);
     console.warn(`[maps-creds] cookie refresh (${reason}) verified empty — keeping current jar`);
+    logEvent('cookie-rotate', { result: 'verify-empty', reason });
     return false;
   }
   adoptCookies(rolled);
   console.log(`[maps-creds] session cookies refreshed (${reason})`);
+  logEvent('cookie-rotate', { result: 'adopted', reason });
   return true;
 }
 
