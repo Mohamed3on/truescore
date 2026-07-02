@@ -10,8 +10,8 @@
 import { addExtra } from 'puppeteer-extra';
 import puppeteerCore, { type Browser, type HTTPRequest } from 'puppeteer-core';
 import Stealth from 'puppeteer-extra-plugin-stealth';
-import { buildListReq, parseReviewsResponse } from '@truescore/gmaps-shared';
-import { googleFetch, proxyConfig, SEED_COOKIES, REVIEW_PROBE_FID } from './browser';
+import { credsFromBatchExecute } from '@truescore/gmaps-shared';
+import { verifyReviewsLoad, proxyConfig, SEED_COOKIES, REVIEW_PROBE_FID } from './browser';
 import type { Seed } from './maps-creds';
 import { logEvent } from './events';
 
@@ -27,8 +27,6 @@ const MINT_FID = REVIEW_PROBE_FID;
 const MINT_URL =
   'https://www.google.com/maps/place/Eiffel+Tower/@48.8583701,2.2944813,16z/data=' +
   `!4m8!3m7!1s${MINT_FID}!8m2!3d48.8583701!4d2.2944813!9m1!1b1!16s%2Fm%2F02j81!18m1!1e1?hl=en`;
-// Mirrors the 81-tagged sessionId regex in packages/extension/src/sites/gmaps-capture.ts.
-const SID_RE = /\["([A-Za-z0-9_-]{16,}?)",null,null,null,null,null,81\]/;
 const MINT_TIMEOUT_MS = 70_000;
 
 let inFlight: Promise<Seed | null> | null = null;
@@ -49,14 +47,12 @@ async function runMint(): Promise<Seed | null> {
   try {
     const seed = await withTimeout(capture(server, user, pass, (b) => (browser = b)), MINT_TIMEOUT_MS);
     if (!seed) { console.warn(`[maps-minter] no bgkey captured in ${Date.now() - t0}ms`); logEvent('mint', { result: 'fail', reason: 'no-bgkey', ms: Date.now() - t0 }); return null; }
-    // Verify the minted creds actually fetch reviews through the server's own path
-    // before we trust them — using a cookie override so a bad mint can't clobber the
-    // live session's global jar.
-    const req = buildListReq(MINT_FID, 'newest', { ...seed, hl: 'en' });
-    const { reviews } = parseReviewsResponse(await googleFetch(req.url, req.init, seed.cookies));
-    if (!reviews.length) { console.warn('[maps-minter] minted bgkey verified empty — discarding'); logEvent('mint', { result: 'fail', reason: 'verify-empty', ms: Date.now() - t0, bgkey: seed.bgkey.slice(-6) }); return null; }
-    console.log(`[maps-minter] minted bgkey …${seed.bgkey.slice(-6)} in ${Date.now() - t0}ms (verify: ${reviews.length} reviews)`);
-    logEvent('mint', { result: 'ok', ms: Date.now() - t0, bgkey: seed.bgkey.slice(-6), verify: reviews.length });
+    // Verify the minted creds actually serve reviews before we trust them — via a
+    // cookie override so a bad mint can't clobber the live session's global jar.
+    const verify = await verifyReviewsLoad({ ...seed, hl: 'en' }, seed.cookies);
+    if (!verify) { console.warn('[maps-minter] minted bgkey verified empty — discarding'); logEvent('mint', { result: 'fail', reason: 'verify-empty', ms: Date.now() - t0, bgkey: seed.bgkey.slice(-6) }); return null; }
+    console.log(`[maps-minter] minted bgkey …${seed.bgkey.slice(-6)} in ${Date.now() - t0}ms (verify: ${verify} reviews)`);
+    logEvent('mint', { result: 'ok', ms: Date.now() - t0, bgkey: seed.bgkey.slice(-6), verify });
     return seed;
   } catch (e) {
     console.warn('[maps-minter] mint error:', e instanceof Error ? e.message : e);
@@ -107,8 +103,5 @@ async function capture(
   if (!got) return null;
 
   const cookies = (await page.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
-  let decoded = got.postData; try { decoded = decodeURIComponent(got.postData); } catch { /* raw */ }
-  const sessionId = (got.bgbind.match(SID_RE) || decoded.match(SID_RE) || [])[1] || '';
-  const atRaw = (got.postData.match(/(?:^|&)at=([^&]+)/) || [])[1];
-  return { bgkey: got.bgkey, bgbind: got.bgbind, sessionId, at: atRaw ? decodeURIComponent(atRaw) : '', cookies };
+  return { ...credsFromBatchExecute(got.bgkey, got.bgbind, got.postData), cookies };
 }

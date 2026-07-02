@@ -1,8 +1,8 @@
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { writeFileSync, renameSync } from 'fs';
-import { buildListReq, parseReviewsResponse, type MapsCreds } from '@truescore/gmaps-shared';
-import { setGoogleCookieOverride, googleFetch, rotateSessionCookies, REVIEW_PROBE_FID } from './browser';
+import { type MapsCreds } from '@truescore/gmaps-shared';
+import { setGoogleCookieOverride } from './browser';
 import { logEvent } from './events';
 
 // Botguard creds for the ListUgcPosts batchexecute RPC (the legacy GET endpoint
@@ -28,9 +28,6 @@ type PersistedSeed = Seed & { ts: number };
 
 let cached: MapsCreds | null = null;
 let seededAt: number | null = null;
-// The cookies the live session was seeded with — kept for the RotateCookies
-// keepalive (refreshSessionCookies) to roll the session-trust tokens forward.
-let cookieStr: string | null = null;
 // Banner health: true while reviews load. Flipped false only when review RPCs come
 // back empty even after the transport's retries (a genuinely expired session that
 // needs a reseed), and true again on the next good reply — so a transient throttle
@@ -52,7 +49,6 @@ export function setMapsCreds(creds: MapsCreds): void {
 const apply = (s: Seed): void => {
   setMapsCreds({ bgkey: s.bgkey, bgbind: s.bgbind, sessionId: s.sessionId, at: s.at, hl: 'en' });
   setGoogleCookieOverride(s.cookies);
-  cookieStr = s.cookies;
   setRenewOk(true, 'apply');
 };
 
@@ -155,73 +151,6 @@ export async function renewSession(reason: string, force = false): Promise<boole
   applySeed(minted, 'mint'); // sets renewOk = true
   console.log(`[maps-creds] session renewed (${reason})`);
   return true;
-}
-
-// --- cookie roll-forward: refresh the session-trust tokens (no Chrome) ---
-// ONLY relevant to a logged-in EXTENSION-seeded session: its __Secure-1PSIDTS/3PSIDTS
-// trust tokens go stale in ~a day, and a periodic RotateCookies POST rolls them forward
-// (verified against a live RPC before adopting, so a bad roll can't poison a working
-// jar). The default ANONYMOUS minted session has no such tokens, so refreshSessionCookies
-// no-ops for it — the 4h re-mint replaces that jar wholesale instead.
-
-// Swap in a refreshed jar WITHOUT touching seededAt: the bgkey is unchanged, so its
-// age must keep ticking from the real seed, not reset on every cookie roll.
-function adoptCookies(cookies: string): void {
-  if (!cached) return;
-  setGoogleCookieOverride(cookies);
-  cookieStr = cookies;
-  setRenewOk(true, 'cookie-rotate');
-  try {
-    persistSeed({ bgkey: cached.bgkey, bgbind: cached.bgbind, sessionId: cached.sessionId, at: cached.at, cookies, ts: seededAt ?? Date.now() });
-  } catch (e) {
-    console.error('[maps-creds] failed to persist refreshed cookies — in-memory jar still active', e);
-  }
-}
-
-export async function refreshSessionCookies(reason: string): Promise<boolean> {
-  // RotateCookies only rolls the *SIDTS login-trust tokens — an anonymous minted jar
-  // has none, so skip the (metered) proxy POST entirely for it.
-  if (!cookieStr || !cached || !cookieStr.includes('__Secure-1PSIDTS')) return false;
-  let rolled: string | null = null;
-  try {
-    rolled = await rotateSessionCookies(cookieStr);
-  } catch (e) {
-    console.warn(`[maps-creds] cookie rotate error (${reason})`, e instanceof Error ? e.message : e);
-    logEvent('cookie-rotate', { result: 'error', reason, msg: e instanceof Error ? e.message : String(e) });
-    return false;
-  }
-  if (!rolled) { logEvent('cookie-rotate', { result: 'unchanged', reason }); return false; } // RotateCookies returned no new tokens — jar already current
-  // Verify against the live RPC before adopting. The probe flips the global
-  // override to the candidate jar, so restore it if the candidate comes back empty.
-  setGoogleCookieOverride(rolled);
-  let ok = false;
-  try {
-    const req = buildListReq(REVIEW_PROBE_FID, 'newest', cached);
-    ok = parseReviewsResponse(await googleFetch(req.url, req.init)).reviews.length > 0;
-  } catch { /* network/parse failure counts as not-ok */ }
-  if (!ok) {
-    setGoogleCookieOverride(cookieStr);
-    console.warn(`[maps-creds] cookie refresh (${reason}) verified empty — keeping current jar`);
-    logEvent('cookie-rotate', { result: 'verify-empty', reason });
-    return false;
-  }
-  adoptCookies(rolled);
-  console.log(`[maps-creds] session cookies refreshed (${reason})`);
-  logEvent('cookie-rotate', { result: 'adopted', reason });
-  return true;
-}
-
-// Roll cookies forward well inside the ~day it takes the jar to go stale. Cheap
-// (one HTTP POST, no Chrome), and it also fires ~10s after boot so a burst of
-// deploys — each resetting the interval — can't starve it. 0 disables -> falls
-// back to the extension reseed + the web banner. TRUESCORE_COOKIE_REFRESH_MIN.
-export function startCookieRefreshTimer(): void {
-  const min = Number(process.env.TRUESCORE_COOKIE_REFRESH_MIN ?? 30);
-  if (!(min > 0)) { console.log('[maps-creds] cookie refresh disabled'); return; }
-  const tick = () => { void refreshSessionCookies('timer'); };
-  setInterval(tick, min * 60_000);
-  setTimeout(tick, 10_000);
-  console.log(`[maps-creds] cookie refresh every ${min}min (+ boot)`);
 }
 
 // Hands-off engine: mint on boot if we have no creds, then refresh on a timer well

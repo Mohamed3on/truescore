@@ -67,11 +67,6 @@ ssh root@65.108.153.112 'curl -s -X POST localhost/api/maps-creds/renew -H "x-tr
 # a user. Watch mints: journalctl … | grep 'type=mint'
 ssh root@65.108.153.112 'echo "TRUESCORE_MINT_INTERVAL_MIN=240" >> /opt/truescore/.env && systemctl restart truescore'
 
-# tune cookie roll-forward cadence (minutes; 0 disables). RotateCookies refreshes the
-# session-trust tokens of an extension-seeded LOGGED-IN session between mints; a no-op
-# for anonymous minted sessions (no *SIDTS to roll). TRUESCORE_COOKIE_REFRESH_MIN.
-ssh root@65.108.153.112 'echo "TRUESCORE_COOKIE_REFRESH_MIN=30" >> /opt/truescore/.env && systemctl restart truescore'
-
 # switch summarization model (llm.ts): gemini (default when unset) or openai
 ssh root@65.108.153.112 'sed -i "s/^LLM_PROVIDER=.*/LLM_PROVIDER=gemini/" /opt/truescore/.env && systemctl restart truescore'
 ```
@@ -86,9 +81,9 @@ for "web is empty/0% — why": you no longer have to reconstruct it from scatter
 (result=ok|fail; a failed mint carries `page={title,tabs,english,consent,bodyLen}`
 explaining why the Reviews UI didn't render), `rpc-stale` / `rpc-recovered` /
 `rpc-stale-final` (the throttle-retry: recovered = transient throttle, stale-final =
-genuine expiry → renewal), `throttle`, `cookie-rotate` (result=adopted|unchanged|
-verify-empty|error), `health` (renewOk transitions), `fetch-fail` (status+body — 407
-quota vs 4xx bgkey).
+genuine expiry → renewal), `throttle`, `needs-reseed` (auto-mint failed → extension
+fallback), `health` (renewOk transitions), `fetch-fail` (status+body — 407 quota vs
+4xx bgkey).
 
 ```bash
 # live tail of just the session events
@@ -98,7 +93,7 @@ ssh root@65.108.153.112 "journalctl -u truescore -f -n0 | grep --line-buffered '
 ssh root@65.108.153.112 'set -a; . /opt/truescore/.env; set +a
   bun -e "const {Database}=require(\"bun:sqlite\");const p=process.env.TRUESCORE_CACHE_DB_PATH||\"/var/lib/truescore/cache.sqlite\";const db=new Database(p,{readonly:true});for(const r of db.prepare(\"SELECT ts,type,data FROM session_events ORDER BY ts DESC LIMIT 40\").all())console.log(new Date(r.ts).toISOString(),r.type,r.data)"'
 
-# counts by type over the last day (is the cookie keepalive actually adopting? are mints failing?)
+# counts by type over the last day (are mints succeeding? any needs-reseed?)
 ssh root@65.108.153.112 'set -a; . /opt/truescore/.env; set +a
   bun -e "const {Database}=require(\"bun:sqlite\");const p=process.env.TRUESCORE_CACHE_DB_PATH||\"/var/lib/truescore/cache.sqlite\";const db=new Database(p,{readonly:true});const since=Date.now()-864e5;for(const r of db.prepare(\"SELECT type,count(*) n FROM session_events WHERE ts>? GROUP BY type ORDER BY n DESC\").all(since))console.log(String(r.n).padStart(5),r.type)"'
 ```

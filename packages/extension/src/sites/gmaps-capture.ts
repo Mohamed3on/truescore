@@ -1,4 +1,5 @@
 import { MAPS_CREDS_CAPTURED, PREVIEW_CAPTURED, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
+import { credsFromBatchExecute } from '@truescore/gmaps-shared';
 
 // MAIN world, document_start — early enough that our fetch/XHR patches wrap the
 // references before Maps' own app grabs them. Two captures:
@@ -55,10 +56,8 @@ import { MAPS_CREDS_CAPTURED, PREVIEW_CAPTURED, type MapsCapturedCreds } from '.
     return h;
   };
 
-  // The only request carrying x-maps-bgkey is the review-list batchexecute, so
-  // that header alone identifies it. sessionId is the 81-tagged token in the
-  // bgbind (or the f.req body): ["<sid>",null,null,null,null,null,81].
-  const SID_RE = /\["([A-Za-z0-9_-]{16,}?)",null,null,null,null,null,81\]/;
+  // The only request carrying x-maps-bgkey is the review-list batchexecute, so that
+  // header alone identifies it; credsFromBatchExecute lifts sessionId + at from it.
 
   // Active half of the capture: nudge Maps into firing a review batchexecute on
   // demand and resolve when storeCreds next intercepts one. The consumer
@@ -103,18 +102,9 @@ import { MAPS_CREDS_CAPTURED, PREVIEW_CAPTURED, type MapsCapturedCreds } from '.
     if (!bgkey) return;
     const bgbind = headers['x-maps-bgbind'] || '';
     const bodyStr = typeof body === 'string' ? body : '';
-    let decoded = bodyStr;
-    try { decoded = decodeURIComponent(bodyStr); } catch {}
-    const sessionId = (bgbind.match(SID_RE) || decoded.match(SID_RE) || [])[1];
+    const { sessionId, at } = credsFromBatchExecute(bgkey, bgbind, bodyStr);
     if (!sessionId) return;
-    const atRaw = (bodyStr.match(/(?:^|&)at=([^&]+)/) || [])[1];
-    const creds: MapsCapturedCreds = {
-      bgkey,
-      bgbind,
-      sessionId,
-      at: atRaw ? decodeURIComponent(atRaw) : '',
-      ts: Date.now(),
-    };
+    const creds: MapsCapturedCreds = { bgkey, bgbind, sessionId, at, ts: Date.now() };
     window.__truescoreMapsCreds = creds;
     document.dispatchEvent(new CustomEvent(MAPS_CREDS_CAPTURED, { detail: creds }));
     settleCapture(creds);

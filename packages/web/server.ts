@@ -24,7 +24,7 @@ import {
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
-import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, startCookieRefreshTimer, startMintTimer, renewSession } from './maps-creds';
+import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
@@ -336,14 +336,12 @@ function getOrFetchPreviewBundle(featureId: string): Promise<PreviewBundle> {
   });
 }
 
-// Restore the last extension-seeded session before serving, so a deploy/restart
-// doesn't blank reviews until the first mint lands. Then start the hands-off mint
-// timer (a stealth-cloaked headless browser captures a fresh anonymous bgkey — mints
-// on boot if credless, refreshes on a timer) and the cookie roll-forward timer
-// (stretches an extension-seeded logged-in session between refreshes).
+// Restore the last seeded session before serving, so a deploy/restart doesn't blank
+// reviews until the first mint lands. Then start the hands-off mint timer: a
+// stealth-cloaked headless browser captures a fresh anonymous bgkey — on boot if
+// credless, and on a timer well inside the session's ~day life.
 await loadPersistedSeed();
 startMintTimer();
-startCookieRefreshTimer();
 
 Bun.serve({
   port: PORT,
