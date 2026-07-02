@@ -52,20 +52,19 @@ ssh root@65.108.153.112 'curl -s localhost/api/maps-creds -H "x-truescore-seed: 
 # clear the seeded Maps session (serves empty until the extension re-seeds)
 ssh root@65.108.153.112 'rm -f /var/lib/truescore/maps-creds.json && systemctl restart truescore'
 
-# force a headless bgkey re-mint now (self-renewal; spawns Chrome ~7s; needs cookies from a prior seed)
-ssh root@65.108.153.112 'curl -s -X POST localhost/api/maps-creds/renew -H "x-truescore-seed: $(sed -n "s/^TRUESCORE_SEED_SECRET=//p" /opt/truescore/.env)"'
-
-# proactive headless mint is OFF by default (reactive-only: the bgkey re-mints on
-# demand when a lookup comes back stale; the cookie refresh below keeps the session
-# alive so that's rare). The headless mint loads a full Maps page through the proxy,
-# so the proactive timer was the biggest traffic source. Re-enable with minutes >0:
-ssh root@65.108.153.112 'echo "TRUESCORE_MINT_INTERVAL_MIN=30" >> /opt/truescore/.env && systemctl restart truescore'
+# NOTE: server-side bgkey minting was REMOVED (2026-07-02). Google serves any
+# automated/CDP-driven browser a review-less Maps page regardless of proxy, headless
+# vs headful, UA, or IP — proven by diffing an automated Chrome against a real one on
+# the same machine (identical JS fingerprint, only the debug attachment differs). So
+# there is no /api/maps-creds/renew and no TRUESCORE_MINT_INTERVAL_MIN. A genuinely
+# expired session emits a `needs-reseed` event (see observability) and is healed by an
+# extension reseed (a real browser). Watch for it:
+ssh root@65.108.153.112 "journalctl -u truescore --no-pager --since today | grep 'type=needs-reseed'"
 
 # tune cookie roll-forward cadence (minutes; 0 disables). The server refreshes the
 # session-trust tokens (__Secure-1PSIDTS/3PSIDTS) via RotateCookies on this cadence
-# + ~10s after boot, so the seeded Maps session sustains itself without a manual
-# reseed. This is what stops the slow ~daily "session needs a refresh" death; the
-# bgkey mint above only re-mints the botguard token and reuses the frozen jar.
+# + ~10s after boot, stretching session life between reseeds. This is the only
+# server-side keepalive; it can't refresh the bgkey, only the cookie jar.
 ssh root@65.108.153.112 'echo "TRUESCORE_COOKIE_REFRESH_MIN=30" >> /opt/truescore/.env && systemctl restart truescore'
 
 # switch summarization model (llm.ts): gemini (default when unset) or openai
