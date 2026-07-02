@@ -1,11 +1,8 @@
-import { homedir } from 'os';
-import { Database } from 'bun:sqlite';
+import { db, DB_PATH, LEGACY_JSON_PATH } from './db';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './llm';
 import type { Chip, ChipMeta, PlaceMeta } from '@truescore/gmaps-shared';
 
-const LEGACY_JSON_PATH = process.env.TRUESCORE_CACHE_PATH || `${homedir()}/.truescore-cache.json`;
-const DB_PATH = process.env.TRUESCORE_CACHE_DB_PATH || LEGACY_JSON_PATH.replace(/\.json$/, '') + '.sqlite';
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
 
 export type CacheEntry = {
@@ -42,10 +39,6 @@ export type SearchResult = {
   ts: number;
 };
 
-// Exported so events.ts can persist the session-event log into the same sqlite
-// file (one WAL connection, no second handle).
-export const db = new Database(DB_PATH, { create: true });
-db.run('PRAGMA journal_mode = WAL');
 db.run('CREATE TABLE IF NOT EXISTS entries (featureId TEXT PRIMARY KEY, data TEXT NOT NULL)');
 
 const upsertStmt = db.prepare<void, [string, string]>('INSERT OR REPLACE INTO entries (featureId, data) VALUES (?, ?)');

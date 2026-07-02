@@ -11,7 +11,7 @@ import { addExtra } from 'puppeteer-extra';
 import puppeteerCore, { type Browser, type HTTPRequest } from 'puppeteer-core';
 import Stealth from 'puppeteer-extra-plugin-stealth';
 import { buildListReq, parseReviewsResponse } from '@truescore/gmaps-shared';
-import { googleFetch, proxyConfig, SEED_COOKIES } from './browser';
+import { googleFetch, proxyConfig, SEED_COOKIES, REVIEW_PROBE_FID } from './browser';
 import type { Seed } from './maps-creds';
 import { logEvent } from './events';
 
@@ -23,10 +23,10 @@ const CHROME = process.env.TRUESCORE_CHROME_PATH || '/usr/bin/google-chrome';
 // bgkey is place-independent so any busy place works as the mint target. The !9m1!1b1
 // segment is the "open reviews" deeplink — WITHOUT it the reviews never load into the
 // DOM (even cloaked), so the qv9Egd RPC never fires. hl=en pins English.
-const MINT_FID = '0x47e66e2964e34e2d:0x8ddca9ee380ef7e0';
+const MINT_FID = REVIEW_PROBE_FID;
 const MINT_URL =
   'https://www.google.com/maps/place/Eiffel+Tower/@48.8583701,2.2944813,16z/data=' +
-  '!4m8!3m7!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0!8m2!3d48.8583701!4d2.2944813!9m1!1b1!16s%2Fm%2F02j81!18m1!1e1?hl=en';
+  `!4m8!3m7!1s${MINT_FID}!8m2!3d48.8583701!4d2.2944813!9m1!1b1!16s%2Fm%2F02j81!18m1!1e1?hl=en`;
 // Mirrors the 81-tagged sessionId regex in packages/extension/src/sites/gmaps-capture.ts.
 const SID_RE = /\["([A-Za-z0-9_-]{16,}?)",null,null,null,null,null,81\]/;
 const MINT_TIMEOUT_MS = 70_000;

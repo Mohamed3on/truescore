@@ -4,9 +4,9 @@
 // past session-staleness debug went). Each event is a single line:
 //   [ts-event] type=<t> k=v k=v …
 // and one row in session_events. logEvent NEVER throws: telemetry must not be able
-// to break a lookup. Reuses the cache DB connection (WAL, same file) — no second
-// handle, no contention.
-import { db } from './cache';
+// to break a lookup. Shares the one sqlite handle from db.ts (WAL) — no second
+// connection, no contention.
+import { db } from './db';
 
 db.run('CREATE TABLE IF NOT EXISTS session_events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, type TEXT NOT NULL, data TEXT)');
 db.run('CREATE INDEX IF NOT EXISTS idx_session_events_ts ON session_events (ts)');
@@ -15,11 +15,9 @@ const pruneStmt = db.prepare<void, [number]>('DELETE FROM session_events WHERE t
 const RETAIN_MS = 14 * 24 * 60 * 60 * 1000; // two weeks of history is plenty for a one-box app
 let lastPrune = 0;
 
-// Render a value for the log line: bare when safe, quoted when it has whitespace or
-// quotes, JSON for objects. Keeps lines both human-scannable and machine-splittable.
+// Render a scalar value for the log line: bare when safe, quoted when it has
+// whitespace, quotes, or '='. Keeps lines both human-scannable and splittable.
 const fmtVal = (v: unknown): string => {
-  if (v === null || v === undefined) return String(v);
-  if (typeof v === 'object') return JSON.stringify(JSON.stringify(v)); // objects → a quoted JSON string
   const s = String(v);
   return /[\s"'=]/.test(s) ? JSON.stringify(s) : s;
 };

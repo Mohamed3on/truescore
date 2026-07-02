@@ -43,6 +43,11 @@ export const SEED_COOKIES: Record<string, string> = {
   SOCS: 'CAESHAgBEhJnd3NfMjAyMzAyMDgtMF9SQzIaAmVuIAEaBgiAm6KfBg',
 };
 
+// Eiffel Tower — the canonical "always has reviews, bgkey is place-independent"
+// place. The minter uses it as the mint target (maps-minter.MINT_URL); the cookie
+// keepalive uses it to verify a rolled jar still loads reviews. One place, one const.
+export const REVIEW_PROBE_FID = '0x47e66e2964e34e2d:0x8ddca9ee380ef7e0';
+
 type CachedCookies = { header: string; ts: number };
 let cookiesCache: CachedCookies | null = null;
 let cookiesRefreshing: Promise<string> | null = null;
@@ -121,12 +126,12 @@ const MAX_ATTEMPTS = 4;
 export async function googleFetch(
   url: string,
   init?: { method?: string; body?: string; headers?: Record<string, string> },
-  cookieOverride?: string,
+  overrideCookie?: string,
 ): Promise<string> {
   assertGoogleHost(url);
-  // cookieOverride lets the minter verify a freshly-minted (anonymous) jar without
-  // flipping the global override — so a failed verify can't poison the live session.
-  const cookie = cookieOverride ?? await getGoogleCookieHeader();
+  // overrideCookie lets the minter verify a freshly-minted (anonymous) jar without
+  // flipping the global cookie override — so a failed verify can't poison the live session.
+  const cookie = overrideCookie ?? await getGoogleCookieHeader();
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     let r: Response | null = null;
     let networkErr: Error | null = null;

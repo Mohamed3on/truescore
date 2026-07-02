@@ -2,8 +2,7 @@ import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { writeFileSync, renameSync } from 'fs';
 import { buildListReq, parseReviewsResponse, type MapsCreds } from '@truescore/gmaps-shared';
-import { setGoogleCookieOverride, googleFetch, rotateSessionCookies } from './browser';
-import { mintMapsCreds } from './maps-minter';
+import { setGoogleCookieOverride, googleFetch, rotateSessionCookies, REVIEW_PROBE_FID } from './browser';
 import { logEvent } from './events';
 
 // Botguard creds for the ListUgcPosts batchexecute RPC (the legacy GET endpoint
@@ -118,7 +117,7 @@ export function getMapsCreds(): MapsCreds | null {
 // The transport calls these from the actual review-RPC outcome (see gmaps.ts),
 // AFTER its own retries. A stale reply (reviews empty even on retry) triggers a fresh
 // mint; a good reply proves the session works. The mint is anonymous — no extension,
-// no human. A good reply doesn't itself flip the banner; renewSession/onMintFailed own that.
+// no human. A good reply doesn't itself flip the banner; renewSession owns that.
 export function onStaleRpc(): void { void renewSession('stale-detected'); }
 export function onFreshRpc(): void { setRenewOk(true, 'fresh-rpc'); }
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
@@ -138,6 +137,9 @@ export async function renewSession(reason: string, force = false): Promise<boole
   if (!force && Date.now() - lastRenewAttempt < RENEW_COOLDOWN_MS) return false;
   lastRenewAttempt = Date.now();
   console.log(`[maps-creds] minting a fresh session (${reason})…`);
+  // Lazy-load the minter so puppeteer-extra + the stealth evasion graph stay out of
+  // the boot path — they're only needed the handful of times a day we actually mint.
+  const { mintMapsCreds } = await import('./maps-minter');
   const minted = await mintMapsCreds();
   if (!minted) {
     setRenewOk(false, `mint-failed:${reason}`);
@@ -156,12 +158,11 @@ export async function renewSession(reason: string, force = false): Promise<boole
 }
 
 // --- cookie roll-forward: refresh the session-trust tokens (no Chrome) ---
-// renewSession above re-mints the bgkey but reuses the seeded cookies verbatim,
-// and googleFetch throws away Set-Cookie — so __Secure-1PSIDTS/3PSIDTS are never
-// refreshed and the jar goes stale in ~a day, forcing a manual extension reseed.
-// A periodic RotateCookies POST rolls them forward; we verify reviews still load
-// before adopting the new jar, so a bad rotation can't poison a working session.
-const VERIFY_FID = '0x47e66e2964e34e2d:0x8ddca9ee380ef7e0'; // Eiffel Tower — always has reviews; the bgkey is place-independent.
+// ONLY relevant to a logged-in EXTENSION-seeded session: its __Secure-1PSIDTS/3PSIDTS
+// trust tokens go stale in ~a day, and a periodic RotateCookies POST rolls them forward
+// (verified against a live RPC before adopting, so a bad roll can't poison a working
+// jar). The default ANONYMOUS minted session has no such tokens, so refreshSessionCookies
+// no-ops for it — the 4h re-mint replaces that jar wholesale instead.
 
 // Swap in a refreshed jar WITHOUT touching seededAt: the bgkey is unchanged, so its
 // age must keep ticking from the real seed, not reset on every cookie roll.
@@ -178,7 +179,9 @@ function adoptCookies(cookies: string): void {
 }
 
 export async function refreshSessionCookies(reason: string): Promise<boolean> {
-  if (!cookieStr || !cached) return false;
+  // RotateCookies only rolls the *SIDTS login-trust tokens — an anonymous minted jar
+  // has none, so skip the (metered) proxy POST entirely for it.
+  if (!cookieStr || !cached || !cookieStr.includes('__Secure-1PSIDTS')) return false;
   let rolled: string | null = null;
   try {
     rolled = await rotateSessionCookies(cookieStr);
@@ -193,7 +196,7 @@ export async function refreshSessionCookies(reason: string): Promise<boolean> {
   setGoogleCookieOverride(rolled);
   let ok = false;
   try {
-    const req = buildListReq(VERIFY_FID, 'newest', cached);
+    const req = buildListReq(REVIEW_PROBE_FID, 'newest', cached);
     ok = parseReviewsResponse(await googleFetch(req.url, req.init)).reviews.length > 0;
   } catch { /* network/parse failure counts as not-ok */ }
   if (!ok) {
@@ -229,7 +232,12 @@ export function startMintTimer(): void {
   if (!getMapsCreds()) void renewSession('boot', true);
   const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 240);
   if (!(min > 0)) { console.log('[maps-creds] proactive mint disabled'); return; }
-  setInterval(() => { void renewSession('timer'); }, min * 60_000);
+  const intervalMs = min * 60_000;
+  setInterval(() => {
+    // Skip if a reactive mint / extension reseed already refreshed within the interval.
+    if (seededAt && Date.now() - seededAt < intervalMs) return;
+    void renewSession('timer');
+  }, intervalMs);
   console.log(`[maps-creds] proactive mint every ${min}min (+ boot if credless)`);
 }
 
