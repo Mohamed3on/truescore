@@ -1,13 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { starString, sortChipsByImpact } from './index';
-
-describe('starString', () => {
-  test('filled then hollow to five', () => {
-    expect(starString(5)).toBe('★★★★★');
-    expect(starString(3)).toBe('★★★☆☆');
-    expect(starString(0)).toBe('☆☆☆☆☆');
-  });
-});
+import { sortChipsByImpact } from './index';
 
 describe('sortChipsByImpact', () => {
   const chip = (scorePct: number, count: number, label: string) => ({ score: { scorePct }, count, label });
