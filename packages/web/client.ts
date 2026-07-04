@@ -140,8 +140,15 @@ let placesExpanded = false;
 
 let currentFeatureId = '';
 let currentMergedPct = 0;
-let activeHighlight: UiChip | null = null;
-let activeSearch: SearchResult | null = null;
+// The chip panel shows one subject at a time — a highlight chip or a free-text
+// search result — so model it as one discriminated union rather than two
+// mutually-exclusive nullable globals with a "set one, null the other" invariant.
+type ActivePanel = { kind: 'highlight'; chip: UiChip } | { kind: 'search'; result: SearchResult };
+let activePanel: ActivePanel | null = null;
+const panelReviews = (): Review[] | undefined =>
+  activePanel?.kind === 'highlight' ? activePanel.chip.reviews : activePanel?.kind === 'search' ? activePanel.result.reviews : undefined;
+const panelFilter = (): string | undefined =>
+  activePanel?.kind === 'highlight' ? activePanel.chip.label : activePanel?.kind === 'search' ? activePanel.result.query : undefined;
 let currentHighlights: UiChip[] = [];
 let highlightReviewsInflight: Promise<void> | null = null;
 
@@ -302,7 +309,7 @@ function setPanelTitle(label: string, scorePct: number, trusted: number, total: 
 }
 
 function showChipPanel(h: UiChip) {
-  activeHighlight = h;
+  activePanel = { kind: 'highlight', chip: h };
   setActiveChip(h.token);
   const score = h.score?.scorePct ?? 0;
   setPanelTitle(h.label.toUpperCase(), score, h.score?.trustedReviews ?? 0, h.reviews?.length ?? h.count);
@@ -318,8 +325,7 @@ function showChipPanel(h: UiChip) {
 }
 
 function closeChipPanel() {
-  activeHighlight = null;
-  activeSearch = null;
+  activePanel = null;
   setActiveChip(undefined);
   chipPanel.hidden = true;
   verdictRow.style.display = '';
@@ -333,8 +339,8 @@ function closeChipPanel() {
 async function askChipPanel() {
   const q = chipQuestionInput.value.trim();
   if (!q || !currentFeatureId) return;
-  const reviews = activeHighlight?.reviews ?? activeSearch?.reviews;
-  const filter = activeHighlight?.label ?? activeSearch?.query;
+  const reviews = panelReviews();
+  const filter = panelFilter();
   if (!reviews || !filter) return;
   const reviewTexts = textReviewsFor(reviews);
   if (!reviewTexts.length) { setStatus('No review text available', true); return; }
@@ -358,8 +364,7 @@ async function askChipPanel() {
 }
 
 function showSearchPanel(r: SearchResult) {
-  activeHighlight = null;
-  activeSearch = r;
+  activePanel = { kind: 'search', result: r };
   setActiveChip(undefined);
   setPanelTitle(`"${r.query.toUpperCase()}"`, r.scorePct, r.trustedReviews, r.reviews.length);
   chipPanel.hidden = false;
@@ -400,7 +405,7 @@ function renderReviewList(reviews: Review[]) {
   // Same precedence as askChipPanel's `filter`: a chip search by its label, a
   // text search by its query — tokenized to words. Only the fallback for reviews
   // with no exact offsets (e.g. a shown translation); else r.matchTerms wins.
-  const fallback = (activeHighlight ? [activeHighlight.label] : activeSearch ? parseOrQuery(activeSearch.query) : [])
+  const fallback = (activePanel?.kind === 'highlight' ? [activePanel.chip.label] : activePanel?.kind === 'search' ? parseOrQuery(activePanel.result.query) : [])
     .flatMap((t) => t.split(/\s+/));
   chipBody.replaceChildren(...sortedDisplayReviews(reviews).map((r) => {
     const meta = el('div', 'review-meta');
@@ -437,7 +442,7 @@ function renderChipSummary(summary: Summary) {
 
 async function onHighlightClick(h: UiChip) {
   if (!currentFeatureId) return;
-  if (activeHighlight?.token === h.token) {
+  if (activePanel?.kind === 'highlight' && activePanel.chip.token === h.token) {
     closeChipPanel();
     return;
   }
@@ -445,13 +450,13 @@ async function onHighlightClick(h: UiChip) {
   if (h.reviews) return;
   chipBody.replaceChildren(el('div', 'chip-loading', 'loading reviews…'));
   await ensureHighlightReviews();
-  if (activeHighlight !== h) return;
+  if (activePanel?.kind !== 'highlight' || activePanel.chip !== h) return;
   setPanelTitle(h.label.toUpperCase(), h.score?.scorePct ?? 0, h.score?.trustedReviews ?? 0, (h as Chip).reviews?.length ?? h.count);
   renderReviewList(h.reviews ?? []);
 }
 
 async function summarizeActiveChip() {
-  const h = activeHighlight;
+  const h = activePanel?.kind === 'highlight' ? activePanel.chip : null;
   if (!h || !currentFeatureId) return;
   chipSummarizeBtn.disabled = true;
   chipSummarizeBtn.textContent = 'SUMMARIZING…';
@@ -475,7 +480,7 @@ async function summarizeActiveChip() {
 }
 
 async function summarizeActiveSearch() {
-  const r = activeSearch;
+  const r = activePanel?.kind === 'search' ? activePanel.result : null;
   if (!r || !currentFeatureId) return;
   chipSummarizeBtn.disabled = true;
   chipSummarizeBtn.textContent = 'SUMMARIZING…';
@@ -493,7 +498,7 @@ async function summarizeActiveSearch() {
       } else if (evt.type === 'search-summary') {
         if (result) {
           result.summary = evt.summary;
-          activeSearch = result;
+          activePanel = { kind: 'search', result };
         }
         renderChipSummary(evt.summary);
       }
@@ -708,8 +713,7 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   result.hidden = false;
   document.body.dataset.state = 'scored';
   currentFeatureId = featureId;
-  activeHighlight = null;
-  activeSearch = null;
+  activePanel = null;
   answerEl.textContent = '';
   questionInput.value = '';
   $('valueForMoney').textContent = '—';
@@ -793,7 +797,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
         flashIfChanged($('reviewsLabel'), prevReviews);
         if (currentHighlights.length) {
           renderHighlights(currentHighlights, true);
-          if (activeHighlight) setActiveChip(activeHighlight.token);
+          if (activePanel?.kind === 'highlight') setActiveChip(activePanel.chip.token);
         }
         const diff = evt.score.totalReviews - cachedTotal;
         const diffMsg = diff > 0 ? ` (+${diff} new)` : '';
@@ -1067,13 +1071,12 @@ highlightsRefreshBtn.addEventListener('click', async () => {
 
 chipSummarizeBtn.addEventListener('click', () => {
   if (chipSummarizeBtn.textContent === 'SHOW REVIEWS') {
-    if (activeHighlight) renderReviewList(activeHighlight.reviews ?? []);
-    else if (activeSearch) renderReviewList(activeSearch.reviews);
+    renderReviewList(panelReviews() ?? []);
     chipSummarizeBtn.textContent = 'SUMMARIZE';
     return;
   }
-  if (activeHighlight) summarizeActiveChip();
-  else if (activeSearch) summarizeActiveSearch();
+  if (activePanel?.kind === 'highlight') summarizeActiveChip();
+  else if (activePanel?.kind === 'search') summarizeActiveSearch();
 });
 
 searchForm.addEventListener('submit', (e) => {
