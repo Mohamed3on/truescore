@@ -82,6 +82,16 @@ async function postNdjson(url: string, body: unknown): Promise<Response> {
   return resp;
 }
 
+// Open an NDJSON POST stream and yield its events, throwing on a server-sent
+// `error` event so callers only branch on their own event types.
+async function* streamNdjson<T extends { type: string }>(url: string, body: unknown): AsyncGenerator<T> {
+  const resp = await postNdjson(url, body);
+  for await (const evt of readNdjson<T>(resp.body!)) {
+    if (evt.type === 'error') throw new Error((evt as { error?: string }).error || 'request failed');
+    yield evt;
+  }
+}
+
 // Client-only: the wire Chip plus per-chip UI status while its score streams.
 type ChipState = 'loading' | 'done' | 'error';
 type UiChip = Chip & { state?: ChipState; error?: string };
@@ -130,7 +140,6 @@ let placesExpanded = false;
 
 let currentFeatureId = '';
 let currentMergedPct = 0;
-let baseSummary: Summary | undefined;
 let activeHighlight: UiChip | null = null;
 let activeSearch: SearchResult | null = null;
 let currentHighlights: UiChip[] = [];
@@ -175,49 +184,46 @@ function chipClass(pct: number, overall: number) {
   return pct >= overall ? 'pos' : 'neg';
 }
 
+// Build one element: tag + optional class + optional text. Collapses the
+// pervasive createElement / className / textContent triples into one call.
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+// The one chip-button shape shared by highlights, scored groups, and pending
+// placeholders: label · <pct span> · optional ·count. `pct` is the middle span's
+// {text, class}; `cls` adds button modifiers (loading / errored / alternative-chip).
+type ChipSpec = { label: string; pct: { text: string; cls: string }; count?: number | null; cls?: string; token?: string; title?: string; disabled?: boolean; onClick?: () => void };
+function chip(spec: ChipSpec): HTMLButtonElement {
+  const btn = el('button', spec.cls ? `chip ${spec.cls}` : 'chip');
+  btn.type = 'button';
+  if (spec.token) btn.dataset.token = spec.token;
+  if (spec.title) btn.title = spec.title;
+  btn.append(el('span', 'label', spec.label), el('span', `pct ${spec.pct.cls}`, spec.pct.text));
+  if (spec.count != null) btn.append(el('span', 'count', `·${spec.count}`));
+  if (spec.onClick) btn.addEventListener('click', spec.onClick);
+  if (spec.disabled) btn.disabled = true;
+  return btn;
+}
+
 function renderHighlights(highlights: UiChip[], sort = false) {
-  while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
   const list = sort ? sortChipsByImpact(highlights, currentMergedPct) : highlights;
-  for (const h of list) {
+  highlightsList.replaceChildren(...list.map((h) => {
     const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'chip';
-    btn.dataset.token = h.token;
-    if (state === 'loading') btn.classList.add('loading');
-    if (state === 'error') btn.classList.add('errored');
-    if (state === 'error' && h.error) btn.title = h.error;
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = h.label;
-    btn.appendChild(label);
-    if (state === 'done' && h.score) {
-      const pct = document.createElement('span');
-      pct.className = `pct ${chipClass(h.score.scorePct, currentMergedPct)}`;
-      pct.textContent = `${h.score.scorePct}%`;
-      btn.appendChild(pct);
-    } else if (state === 'error') {
-      const err = document.createElement('span');
-      err.className = 'pct neg';
-      err.textContent = '✗';
-      btn.appendChild(err);
-    } else {
-      const dot = document.createElement('span');
-      dot.className = 'pct chip-pending';
-      dot.textContent = '…';
-      btn.appendChild(dot);
-    }
-    const count = document.createElement('span');
-    count.className = 'count';
-    count.textContent = `·${h.count}`;
-    btn.appendChild(count);
-    if (state === 'done') {
-      btn.addEventListener('click', () => onHighlightClick(h));
-    } else {
-      btn.disabled = true;
-    }
-    highlightsList.appendChild(btn);
-  }
+    const pct = state === 'done' && h.score
+      ? { text: `${h.score.scorePct}%`, cls: chipClass(h.score.scorePct, currentMergedPct) }
+      : state === 'error' ? { text: '✗', cls: 'neg' } : { text: '…', cls: 'chip-pending' };
+    return chip({
+      label: h.label, pct, count: h.count, token: h.token,
+      cls: state === 'loading' ? 'loading' : state === 'error' ? 'errored' : undefined,
+      title: state === 'error' && h.error ? h.error : undefined,
+      disabled: state !== 'done',
+      onClick: state === 'done' ? () => onHighlightClick(h) : undefined,
+    });
+  }));
 }
 
 // Render a scored group's chips, progressive-enhancement style: items still
@@ -226,57 +232,33 @@ function renderHighlights(highlights: UiChip[], sort = false) {
 // click. Scores fill in inline; a chip that lands below 2 mentions drops out.
 function renderScored(kind: ScoredKind) {
   const g = scoredGroups[kind];
-  while (g.list.firstChild) g.list.removeChild(g.list.firstChild);
   const scored = g.chips
     .filter((d) => d.result && d.result.totalReviews >= 2)
     .sort((a, b) => b.result!.totalReviews - a.result!.totalReviews);
   const pending = g.chips.filter((d) => d.state === 'loading');
   g.row.hidden = scored.length === 0 && pending.length === 0;
-  for (const d of scored) {
-    const r = d.result!;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = g.chipClass ? `chip ${g.chipClass}` : 'chip';
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = d.item;
-    btn.appendChild(label);
-    const pct = document.createElement('span');
-    pct.className = `pct ${chipClass(r.scorePct, currentMergedPct)}`;
-    pct.textContent = r.trustedReviews ? `${r.scorePct}%` : '—';
-    btn.appendChild(pct);
-    const count = document.createElement('span');
-    count.className = 'count';
-    count.textContent = `·${r.totalReviews}`;
-    btn.appendChild(count);
-    btn.addEventListener('click', () => showSearchPanel(r));
-    g.list.appendChild(btn);
-  }
-  for (const d of pending) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = g.chipClass ? `chip ${g.chipClass} loading` : 'chip loading';
-    btn.disabled = true;
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = d.item;
-    btn.appendChild(label);
-    const dot = document.createElement('span');
-    dot.className = 'pct chip-pending';
-    dot.textContent = '…';
-    btn.appendChild(dot);
-    g.list.appendChild(btn);
-  }
+  g.list.replaceChildren(
+    ...scored.map((d) => {
+      const r = d.result!;
+      return chip({
+        label: d.item, cls: g.chipClass || undefined, count: r.totalReviews,
+        pct: { text: r.trustedReviews ? `${r.scorePct}%` : '—', cls: chipClass(r.scorePct, currentMergedPct) },
+        onClick: () => showSearchPanel(r),
+      });
+    }),
+    ...pending.map((d) => chip({
+      label: d.item, pct: { text: '…', cls: 'chip-pending' },
+      cls: g.chipClass ? `${g.chipClass} loading` : 'loading', disabled: true,
+    })),
+  );
 }
 
 async function scoreChip(kind: ScoredKind, featureId: string, d: ScoredChip) {
   try {
     // The server expands the term to its accent/hyphen/space spellings.
-    const resp = await postNdjson('/api/search', { featureId, query: d.item } satisfies SearchRequest);
     let result: SearchResult | null = null;
-    for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
+    for await (const evt of streamNdjson<SearchEvent>('/api/search', { featureId, query: d.item } satisfies SearchRequest)) {
       if (evt.type === 'search') result = evt.result;
-      else if (evt.type === 'error') throw new Error(evt.error);
     }
     if (currentFeatureId !== featureId) return;
     d.result = result ?? undefined;
@@ -302,11 +284,7 @@ function clearScored(kind: ScoredKind) {
 
 function showHighlightsLoading(msg: string) {
   highlightsRow.hidden = false;
-  while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
-  const span = document.createElement('span');
-  span.className = 'chip-loading';
-  span.textContent = msg;
-  highlightsList.appendChild(span);
+  highlightsList.replaceChildren(el('span', 'chip-loading', msg));
 }
 
 function setActiveChip(token?: string) {
@@ -316,14 +294,11 @@ function setActiveChip(token?: string) {
 }
 
 function setPanelTitle(label: string, scorePct: number, trusted: number, total: number) {
-  while (chipPanelTitle.firstChild) chipPanelTitle.removeChild(chipPanelTitle.firstChild);
-  const labelSpan = document.createElement('span');
-  labelSpan.textContent = label;
-  chipPanelTitle.append(labelSpan, document.createTextNode(' · '));
-  const pctSpan = document.createElement('span');
-  pctSpan.className = `pct ${chipClass(scorePct, currentMergedPct)}`;
-  pctSpan.textContent = `${scorePct}%`;
-  chipPanelTitle.append(pctSpan, document.createTextNode(` · ${trusted} trusted of ${total}`));
+  chipPanelTitle.replaceChildren(
+    el('span', undefined, label), ' · ',
+    el('span', `pct ${chipClass(scorePct, currentMergedPct)}`, `${scorePct}%`),
+    ` · ${trusted} trusted of ${total}`,
+  );
 }
 
 function showChipPanel(h: UiChip) {
@@ -365,20 +340,14 @@ async function askChipPanel() {
   if (!reviewTexts.length) { setStatus('No review text available', true); return; }
   chipAskBtn.disabled = true;
   setStatus(`Asking about "${filter}"…`);
-  while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
-  const loading = document.createElement('div');
-  loading.className = 'chip-loading';
-  loading.textContent = 'asking…';
-  chipBody.appendChild(loading);
+  chipBody.replaceChildren(el('div', 'chip-loading', 'asking…'));
   try {
     const data = await postJson<{ answer?: string }>('/api/ask', {
       featureId: currentFeatureId, question: q, filter, reviewTexts,
     } satisfies AskRequest);
-    while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
-    const answer = document.createElement('div');
-    answer.className = 'answer';
+    const answer = el('div', 'answer');
     renderMarkdown(answer, data.answer ?? '');
-    chipBody.appendChild(answer);
+    chipBody.replaceChildren(answer);
     chipQuestionInput.value = '';
     setStatus('');
   } catch (e) {
@@ -428,53 +397,39 @@ function highlightInto(target: HTMLElement, text: string, terms: string[]) {
 }
 
 function renderReviewList(reviews: Review[]) {
-  while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
   // Same precedence as askChipPanel's `filter`: a chip search by its label, a
   // text search by its query — tokenized to words. Only the fallback for reviews
   // with no exact offsets (e.g. a shown translation); else r.matchTerms wins.
   const fallback = (activeHighlight ? [activeHighlight.label] : activeSearch ? parseOrQuery(activeSearch.query) : [])
     .flatMap((t) => t.split(/\s+/));
-  for (const r of sortedDisplayReviews(reviews)) {
-    const card = document.createElement('div');
-    card.className = 'review-card';
-    const meta = document.createElement('div');
-    meta.className = 'review-meta';
-    const stars = document.createElement('span');
-    stars.className = 'review-stars';
-    stars.textContent = starString(r.stars);
-    const age = document.createElement('span');
-    age.className = 'review-age';
-    age.textContent = reviewAge(r.timestamp);
-    meta.append(stars, age);
-    const text = document.createElement('p');
-    text.className = 'review-text';
+  chipBody.replaceChildren(...sortedDisplayReviews(reviews).map((r) => {
+    const meta = el('div', 'review-meta');
+    meta.append(el('span', 'review-stars', starString(r.stars)), el('span', 'review-age', reviewAge(r.timestamp)));
+    const text = el('p', 'review-text');
     highlightInto(text, r.text, r.matchTerms?.length ? r.matchTerms : fallback);
+    const card = el('div', 'review-card');
     card.append(meta, text);
-    chipBody.appendChild(card);
-  }
+    return card;
+  }));
 }
 
 // One <li><span class="h-text {sentiment}"> per highlight, appended to ul.
 function renderHighlightList(ul: HTMLElement, highlights: Summary['highlights']) {
   for (const h of highlights) {
-    const li = document.createElement('li');
-    const text = document.createElement('span');
-    text.className = `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`;
+    const text = el('span', `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`);
     renderMarkdownInline(text, h.text ?? '');
+    const li = el('li');
     li.appendChild(text);
     ul.appendChild(li);
   }
 }
 
 function renderChipSummary(summary: Summary) {
-  while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
-  const verdict = document.createElement('div');
-  verdict.className = 'verdict';
+  const verdict = el('div', 'verdict');
   renderMarkdown(verdict, summary.verdict);
-  chipBody.appendChild(verdict);
+  chipBody.replaceChildren(verdict);
   if (summary.highlights?.length) {
-    const ul = document.createElement('ul');
-    ul.className = 'highlights';
+    const ul = el('ul', 'highlights');
     renderHighlightList(ul, summary.highlights);
     chipBody.appendChild(ul);
   }
@@ -488,11 +443,7 @@ async function onHighlightClick(h: UiChip) {
   }
   showChipPanel(h);
   if (h.reviews) return;
-  while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
-  const loading = document.createElement('div');
-  loading.className = 'chip-loading';
-  loading.textContent = 'loading reviews…';
-  chipBody.appendChild(loading);
+  chipBody.replaceChildren(el('div', 'chip-loading', 'loading reviews…'));
   await ensureHighlightReviews();
   if (activeHighlight !== h) return;
   setPanelTitle(h.label.toUpperCase(), h.score?.scorePct ?? 0, h.score?.trustedReviews ?? 0, (h as Chip).reviews?.length ?? h.count);
@@ -531,12 +482,11 @@ async function summarizeActiveSearch() {
   setStatus(`Summarizing "${r.query}"…`);
   const t0 = Date.now();
   try {
-    const resp = await postNdjson('/api/search', {
-      featureId: currentFeatureId, query: r.query, summarize: true,
-    } satisfies SearchRequest);
     let result: SearchResult | null = null;
     let cached = false;
-    for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
+    for await (const evt of streamNdjson<SearchEvent>('/api/search', {
+      featureId: currentFeatureId, query: r.query, summarize: true,
+    } satisfies SearchRequest)) {
       if (evt.type === 'search') {
         result = evt.result;
         cached = evt.cached;
@@ -546,8 +496,6 @@ async function summarizeActiveSearch() {
           activeSearch = result;
         }
         renderChipSummary(evt.summary);
-      } else if (evt.type === 'error') {
-        throw new Error(evt.error);
       }
     }
     chipSummarizeBtn.disabled = false;
@@ -568,10 +516,9 @@ async function runSearch(query: string, force = false) {
   setStatus(`Searching "${query}"…`);
   const t0 = Date.now();
   try {
-    const resp = await postNdjson('/api/search', {
+    for await (const evt of streamNdjson<SearchEvent>('/api/search', {
       featureId: currentFeatureId, query, force,
-    } satisfies SearchRequest);
-    for await (const evt of readNdjson<SearchEvent>(resp.body!)) {
+    } satisfies SearchRequest)) {
       if (evt.type === 'search-progress') {
         // Per-page progress: same `Searching "x" · N reviews · P%` shape so
         // the user sees the search count climb instead of staring at a fixed
@@ -584,8 +531,6 @@ async function runSearch(query: string, force = false) {
             ? `"${query}" cached · ${evt.result.totalReviews} reviews · ${evt.result.scorePct}%`
             : `"${query}" · ${evt.result.totalReviews} reviews · ${evt.result.scorePct}% in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
         );
-      } else if (evt.type === 'error') {
-        throw new Error(evt.error);
       }
     }
   } catch (e) {
@@ -763,7 +708,6 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   result.hidden = false;
   document.body.dataset.state = 'scored';
   currentFeatureId = featureId;
-  baseSummary = undefined;
   activeHighlight = null;
   activeSearch = null;
   answerEl.textContent = '';
@@ -780,9 +724,9 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   searchForm.hidden = false;
   searchInput.value = '';
   searchRefreshBtn.hidden = true;
-  while (highlightsList.firstChild) highlightsList.removeChild(highlightsList.firstChild);
-  while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
-  while (chipBody.firstChild) chipBody.removeChild(chipBody.firstChild);
+  highlightsList.replaceChildren();
+  highlightsListEl.replaceChildren();
+  chipBody.replaceChildren();
   // Wipe the previous place's meta/freshness so a fresh-lookup sequence
   // doesn't show stale photo + address until `preview` lands.
   renderPlaceMeta(undefined);
@@ -796,7 +740,6 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
 
 function renderScore(data: LookupPayload) {
   initResultPanel(data.score.featureId, data.resolvedUrl);
-  baseSummary = data.summary;
   paintScore(data);
 }
 
@@ -983,18 +926,9 @@ function renderPlaceMeta(meta: PlaceMeta | undefined) {
   showTag($('placePrice'), meta?.priceRange);
 
   if (meta?.googleRating != null) {
-    while (googleEl.firstChild) googleEl.removeChild(googleEl.firstChild);
-    const star = document.createElement('span');
-    star.className = 'star';
-    star.textContent = '★';
-    const num = document.createElement('span');
-    num.textContent = meta.googleRating.toFixed(1);
-    googleEl.append(star, num);
+    googleEl.replaceChildren(el('span', 'star', '★'), el('span', undefined, meta.googleRating.toFixed(1)));
     if (meta.googleReviewCount != null) {
-      const count = document.createElement('span');
-      count.className = 'count';
-      count.textContent = ` · ${meta.googleReviewCount.toLocaleString()} on Google`;
-      googleEl.appendChild(count);
+      googleEl.appendChild(el('span', 'count', ` · ${meta.googleReviewCount.toLocaleString()} on Google`));
     }
     googleEl.hidden = false;
   } else {
@@ -1045,7 +979,7 @@ function renderSummary(summary: Summary) {
   $('valueForMoney').textContent = `${summary.valueForMoney}/5`;
   renderMarkdown($('verdict'), summary.verdict);
   resummarizeBtn.hidden = false;
-  while (highlightsListEl.firstChild) highlightsListEl.removeChild(highlightsListEl.firstChild);
+  highlightsListEl.replaceChildren();
   renderHighlightList(highlightsListEl, summary.highlights);
   if (currentFeatureId) {
     showScored('standouts', summary.items, currentFeatureId);
@@ -1076,7 +1010,6 @@ async function fetchSummaryFor(featureId: string, force = false): Promise<{ ok: 
       return { ok: false, ms: Date.now() - t0 };
     }
     if (data.summary) {
-      baseSummary = data.summary;
       renderSummary(data.summary);
     }
     return { ok: true, ms: Date.now() - t0 };
@@ -1200,23 +1133,14 @@ function renderPlaces() {
   explainerEl.hidden = true;
   const list = placesExpanded ? placesCache : placesCache.slice(0, PLACES_TOP_N);
   for (const p of list) {
-    const tile = document.createElement('button');
+    const tile = el('button', 'place-tile');
     tile.type = 'button';
-    tile.className = 'place-tile';
-    const name = document.createElement('span');
-    name.className = 'place-name';
-    name.textContent = p.name;
-    const score = document.createElement('span');
-    score.className = `place-score ${scoreClass(p.scorePct)}`;
-    score.textContent = `${p.scorePct}`;
-    const age = document.createElement('span');
-    age.className = 'place-age';
-    age.textContent = timeAgo(p.lastAccessTs);
-    tile.append(name, score, age);
-    tile.addEventListener('click', () => {
-      urlInput.value = p.resolvedUrl;
-      form.requestSubmit();
-    });
+    tile.append(
+      el('span', 'place-name', p.name),
+      el('span', `place-score ${scoreClass(p.scorePct)}`, `${p.scorePct}`),
+      el('span', 'place-age', timeAgo(p.lastAccessTs)),
+    );
+    tile.addEventListener('click', () => { urlInput.value = p.resolvedUrl; form.requestSubmit(); });
     placesList.appendChild(tile);
   }
   if (placesCache.length > PLACES_TOP_N) {
