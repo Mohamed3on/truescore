@@ -118,6 +118,35 @@ async function chipsFor(featureId: string): Promise<ChipMeta[]> {
   return harvestTokens(mapsUrlFor(featureId));
 }
 
+// Score every chip in parallel: collect successes, count failures, and cache
+// whatever succeeded — even on partial failure, so one transient chip error
+// doesn't discard the rest and force a full re-scrape next time. Optional hooks
+// let the streaming caller emit an NDJSON event as each chip resolves.
+async function scoreChips(
+  featureId: string,
+  name: string,
+  chips: ChipMeta[],
+  hooks?: { onChip?: (h: Chip) => void; onError?: (chip: ChipMeta, e: unknown) => void },
+): Promise<{ successes: Chip[]; failures: number; totalFetched: number; cached: boolean }> {
+  const successes: Chip[] = [];
+  let failures = 0;
+  await Promise.all(chips.map(async (chip) => {
+    try {
+      const h = await scoreHighlight(featureId, chip);
+      successes.push(h);
+      hooks?.onChip?.(h);
+    } catch (e) {
+      failures++;
+      console.warn(`[highlights] ${name} (${featureId}): chip "${chip.label}" failed:`, e);
+      hooks?.onError?.(chip, e);
+    }
+  }));
+  const totalFetched = successes.reduce((a, h) => a + (h.fetched ?? 0), 0);
+  const cached = totalFetched > 0;
+  if (cached) await cache.putHighlights(featureId, successes);
+  return { successes, failures, totalFetched, cached };
+}
+
 // Always harvest chips off the canonical /maps?q=&ftid=… URL. The share-link
 // redirect target carries a session fingerprint (shh/lucs/g_ep/skid) that
 // pushes Google's preview RPC into A-B buckets where the chip slot is empty —
@@ -125,25 +154,9 @@ async function chipsFor(featureId: string): Promise<ChipMeta[]> {
 async function recomputeHighlights(featureId: string, name: string): Promise<void> {
   const chips = await chipsFor(featureId);
   if (!chips.length) return;
-  const successes: Chip[] = [];
-  let failures = 0;
-  await Promise.all(chips.map(async (chip) => {
-    try {
-      successes.push(await scoreHighlight(featureId, chip));
-    } catch (e) {
-      failures++;
-      console.warn(`[recompute-highlights] ${name} (${featureId}): chip "${chip.label}" failed:`, e);
-    }
-  }));
-  const totalFetched = successes.reduce((a, h) => a + (h.fetched ?? 0), 0);
-  // Cache whatever succeeded, even on partial failure — a transient error on one
-  // chip shouldn't discard the rest and force a full re-scrape next time.
-  if (totalFetched > 0) {
-    await cache.putHighlights(featureId, successes);
-    console.log(`[recompute-highlights] ${name} (${featureId}): ${successes.length}/${chips.length} chips, ${totalFetched} reviews${failures ? `, ${failures} failed` : ''}`);
-  } else {
-    console.log(`[recompute-highlights] ${name} (${featureId}): not cached (${successes.length}/${chips.length} chips, ${failures} failed, ${totalFetched} reviews)`);
-  }
+  const { successes, failures, totalFetched, cached } = await scoreChips(featureId, name, chips);
+  const tag = `${successes.length}/${chips.length} chips, ${totalFetched} reviews${failures ? `, ${failures} failed` : ''}`;
+  console.log(`[recompute-highlights] ${name} (${featureId}): ${cached ? tag : `not cached (${tag})`}`);
 }
 
 // Stale-while-revalidate: re-fetch the preview, compare its total to the
@@ -189,26 +202,11 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
 function streamHighlights(name: string, featureId: string, url: string, chips: ChipMeta[]): Response {
   return ndjsonStream<HighlightEvent>(async (write) => {
     write({ type: 'chips', chips });
-
-    const successes: Chip[] = [];
-    let failures = 0;
-    await Promise.all(chips.map(async (chip) => {
-      try {
-        const h = await scoreHighlight(featureId, chip);
-        successes.push(h);
-        write({ type: 'chip', highlight: h });
-      } catch (e) {
-        failures++;
-        console.warn(`[highlights] ${name} (${featureId}): chip "${chip.label}" failed:`, e);
-        write({ type: 'chip-error', token: chip.token, label: chip.label, error: friendlyError(e) });
-      }
-    }));
-
-    const totalFetched = successes.reduce((a, h) => a + (h.fetched ?? 0), 0);
-    const cacheable = totalFetched > 0;
-    if (cacheable) {
-      await cache.putHighlights(featureId, successes);
-    } else if (failures === 0) {
+    const { successes, failures, totalFetched, cached } = await scoreChips(featureId, name, chips, {
+      onChip: (h) => write({ type: 'chip', highlight: h }),
+      onError: (chip, e) => write({ type: 'chip-error', token: chip.token, label: chip.label, error: friendlyError(e) }),
+    });
+    if (!cached && failures === 0) {
       console.warn(
         `[highlights] ${name} (${featureId}): all ${chips.length} chips fetched 0 reviews ` +
           `(likely upstream throttle). chips=[${chips.map((c) => c.label).join(', ')}] url=${url}`,
@@ -217,8 +215,8 @@ function streamHighlights(name: string, featureId: string, url: string, chips: C
     const tag = failures
       ? `${successes.length}/${chips.length} ok, ${failures} failed`
       : `${chips.length} chips`;
-    console.log(`[highlights] ${name} (${featureId}): ${tag}, ${totalFetched} reviews${cacheable ? '' : ' (not cached)'}`);
-    write({ type: 'done', failures, totalFetched, cached: cacheable });
+    console.log(`[highlights] ${name} (${featureId}): ${tag}, ${totalFetched} reviews${cached ? '' : ' (not cached)'}`);
+    write({ type: 'done', failures, totalFetched, cached });
   });
 }
 
