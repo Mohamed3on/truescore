@@ -376,7 +376,11 @@ const fetchReviewNodes = async (workId: string, jwtToken: string, withText = fal
     }),
   });
   const data = await res.json();
-  return (data?.data?.getReviews?.edges?.map((e: any) => e.node).filter(Boolean) as ReviewNode[]) || [];
+  const getReviews = data?.data?.getReviews;
+  // Throw on a throttled/error response so callers can tell a real fetch failure from a
+  // genuinely empty result — an error body (429, GraphQL errors) would otherwise read as [].
+  if (!res.ok || data?.errors || !getReviews) throw new Error(`getReviews failed on ${workId}`);
+  return (getReviews.edges?.map((e: any) => e.node).filter(Boolean) as ReviewNode[]) || [];
 };
 
 const recentRatioFromNodes = (nodes: ReviewNode[]): number | null => {
@@ -719,7 +723,8 @@ const renderSimilarPicks = async (
   anchor.parentNode!.insertBefore(section, anchor.nextSibling);
 
   // Cached full view → restore instantly; no shelf lookup or book fetches on refresh.
-  const viewKey = `gr_picks_view_${getBookIdFromURL(currentBookURL)}`;
+  // v2: bumped to flush entries poisoned by cached "Recent: N/A" from failed fetches.
+  const viewKey = `gr_picks_view2_${getBookIdFromURL(currentBookURL)}`;
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
   if (cachedView) { renderPicksView(section, cachedView, currentStats); return; }
 
@@ -759,15 +764,21 @@ const renderSimilarPicks = async (
     return;
   }
 
-  // Resolve each pick's recent ratio, then cache + render the complete view.
+  // Resolve each pick's recent ratio. A thrown fetch (rate limit / transient error) or a
+  // missing token yields a null we must NOT bake into the cache as a permanent "Recent: N/A" —
+  // only persist the view when every ratio resolved cleanly, so it self-heals on the next load.
+  const { jwtToken } = currentStats;
   const recent: PickRecent = {};
+  let recentFailed = !jwtToken;
   await Promise.all(result.qualifying.map(async (pick) => {
-    recent[pick.bookId] = await getRecentRatio(pick.workId, currentStats.jwtToken);
+    if (!jwtToken) return;
+    try { recent[pick.bookId] = recentRatioFromNodes(await fetchReviewNodes(pick.workId, jwtToken)); }
+    catch { recentFailed = true; }
   }));
 
   const view: SimilarView = { shelf, result, recent, refRecentRatio: currentRecentRatio };
   // Persist a slim copy — allScored is a large per-candidate debug list we don't need to keep.
-  idbSet(viewKey, { ...view, result: { ...result, allScored: [] } });
+  if (!recentFailed) idbSet(viewKey, { ...view, result: { ...result, allScored: [] } });
   renderPicksView(section, view, currentStats);
 };
 
