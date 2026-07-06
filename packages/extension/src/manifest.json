@@ -147,6 +147,7 @@
     {
       "matches": ["*://*.uniqlo.com/*/products/*"],
       "js": ["sites/uniqlo-pdp.js"],
+      "css": ["sites/amazon-product.css"],
       "run_at": "document_end"
     },
     {

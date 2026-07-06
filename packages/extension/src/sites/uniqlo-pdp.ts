@@ -2,6 +2,13 @@ import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
+import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+
+// Uniqlo reviews are overwhelmingly about fit, fabric, and sizing, so nudge those
+// to the front as actionable buying tips rather than leaving them buried.
+const UNIQLO_SUMMARY_PROMPT = `${PRODUCT_SUMMARY_PROMPT}
+
+This is a clothing item. Treat fit and sizing as first-class: when reviewers agree on how it runs, give the concrete tip (e.g. "Runs small — size up if you're between sizes"). Fold any care or styling tips reviewers mention (shrinkage, sheerness, layering, ironing) into the conclusion.`;
 
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const MAX_PAGES = 4; // 25 reviews/page — 100 reviews is plenty for the variation breakdown
@@ -17,11 +24,19 @@ const extractProductId = () => {
   return match ? match[1] : null;
 };
 
+// The buy-box rating (aggregate stars up by the title/price) lives in the product
+// <main>; the per-review stars render in a separate section outside it. Scoping to
+// <main> keeps us off a review-card rating — "first ITORating in the document" is a
+// hydration race that binds to whichever rendered first. Returns null until the rating
+// has hydrated into <main>, letting the injector's mutation retry place it a beat later.
+const findBuyBoxRating = (): Element | null =>
+  document.querySelector('main')?.querySelector('[data-testid="ITORating"]') ?? null;
+
 // One round-trip: fetch all MAX_PAGES in parallel (the API caps `limit` at 25, so 4 pages =
 // 100 reviews). Page 0's response also carries the aggregate `rating`. Reviews are deduped by
 // id in case the API clamps an out-of-range offset. Cached a week, so it's paid ~once per product.
 const fetchReviewData = async (country: string, lang: string, productId: string) => {
-  const cacheKey = `nps_uniqlo_v2_${productId}`;
+  const cacheKey = `nps_uniqlo_v3_${productId}`;
   const cached = cacheGet(cacheKey, CACHE_TTL);
   if (cached) return cached;
 
@@ -45,12 +60,14 @@ const fetchReviewData = async (country: string, lang: string, productId: string)
       const id = rv.reviewId ?? rv.bvId ?? `${rv.name}-${rv.createDate}`;
       if (seen.has(id)) continue;
       seen.add(id);
-      // Keep only what the breakdown needs — avoids caching comment text for 100 reviews.
+      // Kept: the variation-breakdown fields plus the review prose the LLM summary needs.
       reviews.push({
         purchasedSize: rv.purchasedSize,
         purchasedColorName: rv.purchasedColorName,
         rate: rv.rate,
         fit: rv.fit,
+        title: rv.title,
+        comment: rv.comment,
       });
     }
   }
@@ -196,6 +213,43 @@ const renderInsights = (ratingEl: Element, rating: any, reviews: any[]) => {
   if (gutter) gutter.after(panel);
 };
 
+// === LLM review summary (praised / complaints / better alternative / verdict) ===
+
+const reviewTexts = (reviews: any[]): string[] => {
+  const seen = new Set<string>();
+  const texts: string[] = [];
+  for (const r of reviews) {
+    const text = [r.title, r.comment].filter(Boolean).join(': ').trim();
+    if (text && !seen.has(text)) { seen.add(text); texts.push(text); }
+  }
+  return texts;
+};
+
+const addSummarizeUI = (ratingEl: Element, productId: string, texts: string[]) => {
+  if (document.querySelector('.ars-wrapper')) return;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'ars-wrapper';
+  const header = document.createElement('div');
+  header.className = 'ars-header';
+  header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
+  wrapper.appendChild(header);
+
+  buildSummarizeWidget({
+    wrapper,
+    cacheKey: `uniqlo-summary-${productId}`,
+    summaryPrompt: UNIQLO_SUMMARY_PROMPT,
+    fetchReviews: async () => texts,
+  });
+
+  // Sit in the buy-box, directly under the rating row (above the fold) instead of
+  // after the far-down insights panel. Anchor to the rating's top-level block in the
+  // product-info column so the widget spans that column's width.
+  const gutter = ratingEl.closest('.gutter-container');
+  const block = gutter ? [...gutter.children].find((c) => c.contains(ratingEl)) : null;
+  (block ?? ratingEl).after(wrapper);
+};
+
 setupSpaInjector({
   match: extractProductId,
   load: async () => {
@@ -204,10 +258,10 @@ setupSpaInjector({
     if (!locale || !productId) return null;
     const data = await fetchReviewData(locale.country, locale.lang, productId);
     if (!data) return null;
-    return { rating: data.rating, reviews: data.reviews, scoreData: getScore(data.rating) };
+    return { productId, rating: data.rating, reviews: data.reviews, scoreData: getScore(data.rating) };
   },
-  inject: ({ rating, reviews, scoreData }) => {
-    const ratingEl = document.querySelector('[data-testid="ITORating"]');
+  inject: ({ productId, rating, reviews, scoreData }) => {
+    const ratingEl = findBuyBoxRating();
     if (!ratingEl) return;
     if (scoreData && !ratingEl.parentElement?.querySelector('.nps-score-badge')) {
       appendScore(ratingEl, scoreData);
@@ -215,9 +269,14 @@ setupSpaInjector({
     if (!document.querySelector('.nps-insights')) {
       renderInsights(ratingEl, rating, reviews);
     }
+    const texts = reviewTexts(reviews);
+    if (texts.length >= 5 && !document.querySelector('.ars-wrapper')) {
+      addSummarizeUI(ratingEl, productId, texts);
+    }
   },
   cleanup: () => {
     document.querySelectorAll('.nps-insights').forEach(el => el.remove());
     document.querySelectorAll('.nps-score-badge').forEach(el => el.remove());
+    document.querySelectorAll('.ars-wrapper').forEach(el => el.remove());
   },
 });
