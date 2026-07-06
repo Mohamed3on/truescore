@@ -8,9 +8,21 @@ export const PRODUCT_SUMMARY_PROMPT = `Analyze these product reviews. Ignore shi
 
 Cover the recurring themes mentioned by 3+ reviewers, ranked by how often they come up. Each bullet is one concrete, specific point with enough detail to be useful — e.g. "Adhesive lifts at the edges after a few hours", not just "doesn't stick". When reviewers disagree on a point, say so. Give the 4–6 strongest points for praised and for complaints; don't pad with weak or one-off mentions.
 
-Only set betterAlternative if 2+ reviewers name a specific competing product, and explain how they say it compares. Otherwise leave it empty — never write that no alternative was mentioned.
+betterAlternative: only if 2+ reviewers name a specific competing product, give its name and how they say it compares — nothing else. If no competing product is named, return an empty string for this field. Never write a sentence explaining that there's no alternative; absence must be silent.
 
 conclusion: 2–4 sentences — the overall verdict: what owners consistently say, who it suits best or the main thing to watch out for, and whether it's good value when reviewers mention price. Don't just restate the bullets, and don't mention what reviewers didn't say.`;
+
+// The model is told to leave betterAlternative empty when no competitor is named,
+// but it sometimes ignores that and writes a sentence explaining the absence instead
+// ("no distinct competitor is named", "cannot be reliably inferred"). Those aren't
+// alternatives — drop them so the section only ever shows a real recommendation.
+const isNonAlternative = (text: string): boolean => {
+  const t = text.toLowerCase();
+  return /\bno\s+(\w+\s+){0,3}(alternative|competitor|competing|other (product|brand))/.test(t)
+    || /\b(none|not)\s+(\w+\s+){0,3}(named|mentioned|inferred|identified|specified|found)/.test(t)
+    || /\bcan(?:not|['’]?t)\s+(\w+\s+){0,4}(inferred|determined|identified)/.test(t)
+    || /does\s?(?:n['’]?t|\snot)\s+appear/.test(t);
+};
 
 export const renderStructuredSummary = (
   container: HTMLElement,
@@ -41,7 +53,7 @@ export const renderStructuredSummary = (
   };
   addSection('Universally praised', praised, 'praised');
   addSection('Common complaints', complaints, 'complaints');
-  if (betterAlternative) {
+  if (betterAlternative && !isNonAlternative(betterAlternative)) {
     const section = document.createElement('div');
     section.className = 'ars-section ars-section--alt';
     const heading = document.createElement('div');
@@ -54,6 +66,18 @@ export const renderStructuredSummary = (
     section.appendChild(item);
     container.appendChild(section);
   }
+};
+
+// Just the verdict line — the compact teaser shown before the full breakdown is expanded.
+// The conclusion is the highest-value part and stays short, so it fits a narrow host
+// (e.g. a product buy-box) without shoving the page's own controls down.
+const renderVerdict = (container: HTMLElement, conclusion: string) => {
+  container.textContent = '';
+  if (!conclusion) return;
+  const el = document.createElement('div');
+  el.className = 'ars-conclusion';
+  renderMarkdown(el, conclusion);
+  container.appendChild(el);
 };
 
 const SUMMARY_SCHEMA = {
@@ -303,18 +327,34 @@ export const buildSummarizeWidget = ({
   // belongs to a summary, the Ask button to a question.
   let panelMode: 'none' | 'summary' | 'answer' = 'none';
   let summaryTs = 0;
+  // When set, holds the parsed summary whose full praised/complaints breakdown is not yet
+  // shown — only the verdict is. The button expands the rest in place (no re-summarize),
+  // clearing this. Keeps a tall panel from shoving the host's own controls down on load
+  // (e.g. a product buy-box) while still showing the verdict by default.
+  let collapsedSummary: any = null;
 
   const syncControls = () => {
     const asking = !!questionInput.value.trim();
-    summarizeBtn.textContent = asking ? 'Ask' : '\u2726 Summarize Reviews';
-    // Hide the redundant Summarize button only once the summary is on screen.
-    summarizeBtn.style.display = !asking && panelMode === 'summary' ? 'none' : '';
-    const showDate = !asking && panelMode === 'summary';
+    // Details still collapsed \u2192 the button expands them; full summary already shown \u2192 it's
+    // redundant, hide it and surface the date/Re-summarize row instead.
+    const fullShown = panelMode === 'summary' && !collapsedSummary;
+    summarizeBtn.textContent = asking ? 'Ask' : collapsedSummary ? '\u2726 Show details' : '\u2726 Summarize Reviews';
+    summarizeBtn.style.display = !asking && fullShown ? 'none' : '';
+    const showDate = !asking && fullShown;
     dateRow.style.display = showDate ? '' : 'none';
     if (showDate) {
       dateLabel.textContent = `Summarized on ${new Date(summaryTs).toLocaleDateString()}`;
       reBtn.style.display = checkRateLimit().count < RL_MAX ? '' : 'none';
     }
+  };
+
+  // Expand the full praised/complaints breakdown in place beneath the verdict — no
+  // network, just re-render the panel with everything.
+  const showDetails = () => {
+    if (!collapsedSummary) return;
+    renderStructuredSummary(summaryPanel, collapsedSummary);
+    collapsedSummary = null;
+    syncControls();
   };
 
   const loadReviews = async () => {
@@ -334,7 +374,8 @@ export const buildSummarizeWidget = ({
       bumpRateLimit();
       summaryTs = Date.now();
       localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta }));
-      renderStructuredSummary(summaryPanel, parsed);
+      collapsedSummary = parsed;
+      renderVerdict(summaryPanel, parsed.conclusion);
       summaryPanel.style.display = 'block';
       panelMode = 'summary';
     } catch (e: any) {
@@ -418,6 +459,7 @@ export const buildSummarizeWidget = ({
   summarizeBtn.addEventListener('click', () => {
     const question = questionInput.value.trim();
     if (question) runAsk(summarizeBtn, question);
+    else if (collapsedSummary) showDetails();
     else runSummary(summarizeBtn);
   });
   questionRow.appendChild(summarizeBtn);
@@ -430,7 +472,8 @@ export const buildSummarizeWidget = ({
   }
   if (cached?.parsed) {
     summaryTs = cached.ts;
-    renderStructuredSummary(summaryPanel, cached.parsed);
+    collapsedSummary = cached.parsed;
+    renderVerdict(summaryPanel, cached.parsed.conclusion); // verdict now, details on click
     summaryPanel.style.display = 'block';
     panelMode = 'summary';
   }
