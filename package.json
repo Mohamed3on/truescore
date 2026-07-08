@@ -6,7 +6,7 @@
   "scripts": {
     "build:extension": "bun --cwd packages/extension run build",
     "deploy:web": "SERVER=root@65.108.153.112 ./deploy/sync.sh",
-    "check": "bun test && bunx tsc -p packages/gmaps-shared && bunx tsc -p packages/web && bunx tsc -p packages/extension",
+    "check": "bun test && tsgo -p packages/gmaps-shared && tsgo -p packages/web && tsgo -p packages/extension",
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
@@ -17,6 +17,7 @@
     "@semantic-release/release-notes-generator": "^14.1.1",
     "@types/bun": "latest",
     "@types/node": "latest",
+    "@typescript/native-preview": "^7.0.0-dev.20260707.2",
     "semantic-release": "^25.0.5"
   }
 }
