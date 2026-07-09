@@ -58,6 +58,7 @@
     "*://*.uniqlo.com/*",
     "*://*.ikea.com/*",
     "*://*.dm.de/*",
+    "*://*.etsy.com/*",
     "*://bjjfanatics.com/products/*",
     "https://stamped.io/api/*",
     "*://apps.bazaarvoice.com/*",
@@ -174,6 +175,11 @@
     {
       "matches": ["*://*.dm.de/*"],
       "js": ["sites/dm-plp.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.etsy.com/*"],
+      "js": ["sites/etsy.js"],
       "run_at": "document_end"
     },
     {
