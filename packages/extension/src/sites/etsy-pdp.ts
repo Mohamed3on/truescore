@@ -84,10 +84,15 @@ const buildDims = (reviews: EtsyReview[], variations: Map<number, [string, strin
     }));
 };
 
-// Below Etsy's own rating block, above the review list — the panel restates the
-// same reviews Etsy just summarised, so it belongs with them, not floating above
-// the section heading.
-const panelHost = () => document.querySelector('.reviews-header');
+// In the buy box, under the price and above the variant pickers — the score is
+// worth reading while deciding, not a scroll away. Etsy's own rating block is
+// the fallback for layouts that ship no buy box (sold-out, digital downloads).
+const panelAnchor = (): [Element, InsertPosition] | null => {
+  const buyBox = document.querySelector('[data-buy-box]');
+  if (buyBox) return [buyBox, 'beforebegin'];
+  const header = document.querySelector('.reviews-header');
+  return header ? [header, 'afterend'] : null;
+};
 
 const buildGauge = ({ score, nps, total }: ItemScore) => {
   const gauge = document.createElement('div');
@@ -119,8 +124,8 @@ const buildGauge = ({ score, nps, total }: ItemScore) => {
 };
 
 const run = async (meta: ListingMeta) => {
-  const host = panelHost();
-  if (!host || document.querySelector('.ars-wrapper')) return;
+  const anchor = panelAnchor();
+  if (!anchor || document.querySelector('.ars-wrapper')) return;
 
   const [score, reviews] = await Promise.all([
     fetchItemScore(throttledFetch, meta.listingId, meta.shopId).catch(() => null),
@@ -151,7 +156,7 @@ const run = async (meta: ListingMeta) => {
       fetchReviews: async () => texts,
     });
   }
-  host.after(wrapper);
+  anchor[0].insertAdjacentElement(anchor[1], wrapper);
 
   if (!reviews.length) return;
   const dims = buildDims(reviews, await variationsFor(meta, reviews));
@@ -166,11 +171,11 @@ const run = async (meta: ListingMeta) => {
 const meta = listingMeta();
 if (meta) run(meta).catch(() => {});
 
-// Etsy hydrates the reviews section after `document_end`, so the panels' host
-// can arrive late. The second run re-reads the cache rather than the network.
-if (meta && !panelHost()) {
+// Etsy hydrates the buy box after `document_end`, so the anchor can arrive late.
+// The second run re-reads the cache rather than the network.
+if (meta && !panelAnchor()) {
   const observer = new MutationObserver(() => {
-    if (!panelHost()) return;
+    if (!panelAnchor()) return;
     observer.disconnect();
     run(meta).catch(() => {});
   });

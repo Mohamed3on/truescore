@@ -45,18 +45,20 @@ export interface ListingMeta {
 const csrfToken = () =>
   document.querySelector<HTMLMetaElement>('meta[name="csrf_nonce"]')?.content ?? null;
 
-// `listing_id` is in the URL, but `shop_id` and the taxonomy path exist only in
-// the page's inlined JSON — and the variations spec 400s without the path.
+// `listing_id` is in the URL; `shop_id` and the taxonomy path exist only in the
+// page's inlined JSON. The path is inlined solely for listings whose reviews
+// carry a purchased variant, so its absence means "no variants to break down" —
+// never a reason to give up on the score or the reviews themselves.
 export const listingMeta = (): ListingMeta | null => {
   const listingId = location.pathname.match(/\/listing\/(\d+)/)?.[1];
   if (!listingId) return null;
 
   const html = document.documentElement.innerHTML;
   const shopId = html.match(/"shop_id":(\d+)/)?.[1];
-  const categoryPath = html.match(/"category_path":\[([\d,]+)\]/)?.[1];
-  if (!shopId || !categoryPath) return null;
+  if (!shopId) return null;
 
-  return { listingId, shopId, categoryPath: categoryPath.split(',') };
+  const categoryPath = html.match(/"category_path":\[([\d,]+)\]/)?.[1];
+  return { listingId, shopId, categoryPath: categoryPath ? categoryPath.split(',') : [] };
 };
 
 const deepDive = async (
@@ -133,13 +135,15 @@ export const fetchRecentReviews = async (
 
 // Which variant each reviewer actually bought, keyed by transaction. Etsy hands
 // this back as rendered HTML, and refuses the request without both the
-// `x-etsy-protection` header and the listing's `category_path`.
+// `x-etsy-protection` header and the listing's `category_path` — an empty path
+// answers 200 with an empty body, so don't bother asking.
 export const fetchVariations = async (
   fetcher: Fetcher,
   { listingId, shopId, categoryPath }: ListingMeta,
   transactionIds: number[]
 ): Promise<Map<number, [string, string][]>> => {
   const found = new Map<number, [string, string][]>();
+  if (!categoryPath.length) return found;
 
   const qs = new URLSearchParams();
   qs.set('log_performance_metrics', 'false');
