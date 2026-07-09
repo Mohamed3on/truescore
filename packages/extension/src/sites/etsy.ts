@@ -1,62 +1,13 @@
-import { addCommas, npsColor, npsStats } from '../shared/utils';
-import { cacheGet, cacheSet } from '../shared/cache';
+import { addCommas, npsColor } from '../shared/utils';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
+import { fetchItemScore } from '../shared/etsy';
 
-const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const CARD = '.v2-listing-card[data-listing-id][data-shop-id]';
-const SPEC = 'Etsy\\Modules\\ListingPage\\Reviews\\DeepDive\\AsyncApiSpec';
-const ENDPOINT = '/api/v3/ajax/bespoke/member/neu/specs/deep_dive_reviews';
 
 const throttledFetch = createThrottledFetcher(8);
 
-// The stars on a listing card are the *shop's*, not the item's. Only the review
-// sheet on the listing page knows the item's own histogram, and this is the
-// endpoint behind it — `scope: 'listingReviews'` is what keeps the seller's
-// reviews out. Asking for a page past the last one returns the histogram with no
-// review bodies attached, which is all we need and a third of the payload.
-const fetchScore = async (listingId: string, shopId: string) => {
-  const key = `nps_etsy_${listingId}`;
-  const cached = cacheGet(key, CACHE_TTL);
-  if (cached) return cached;
-
-  const csrf = document.querySelector<HTMLMetaElement>('meta[name="csrf_nonce"]')?.content;
-  if (!csrf) return null;
-
-  const res = await throttledFetch(ENDPOINT, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'content-type': 'application/json',
-      'x-csrf-token': csrf,
-      'x-requested-with': 'XMLHttpRequest',
-    },
-    body: JSON.stringify({
-      specs: {
-        deep_dive_reviews: [SPEC, {
-          listing_id: Number(listingId),
-          shop_id: Number(shopId),
-          scope: 'listingReviews',
-          page: 9999,
-          sort_option: 'Suggested',
-          rating_filter: null,
-          tag_filters: [],
-          review_highlight_transaction_id: null,
-          should_lazy_load_images: true,
-          should_show_variations: false,
-        }],
-      },
-    }),
-  });
-  if (!res.ok) return null;
-
-  const counts = (await res.json())?.jsData?.ratingCounts;
-  const total = counts?.All;
-  if (!total) return null;
-
-  const result = { ...npsStats(counts['5'] || 0, counts['1'] || 0, total), total };
-  cacheSet(key, result);
-  return result;
-};
+const fetchScore = (listingId: string, shopId: string) =>
+  fetchItemScore(throttledFetch, listingId, shopId);
 
 const injectBadge = (card: Element, { score, nps, total }: { score: number; nps: number; total: number }) => {
   const badge = document.createElement('span');
