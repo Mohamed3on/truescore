@@ -68,18 +68,6 @@ export const renderStructuredSummary = (
   }
 };
 
-// Just the verdict line — the compact teaser shown before the full breakdown is expanded.
-// The conclusion is the highest-value part and stays short, so it fits a narrow host
-// (e.g. a product buy-box) without shoving the page's own controls down.
-const renderVerdict = (container: HTMLElement, conclusion: string) => {
-  container.textContent = '';
-  if (!conclusion) return;
-  const el = document.createElement('div');
-  el.className = 'ars-conclusion';
-  renderMarkdown(el, conclusion);
-  container.appendChild(el);
-};
-
 const SUMMARY_SCHEMA = {
   type: 'object' as const,
   properties: {
@@ -327,34 +315,18 @@ export const buildSummarizeWidget = ({
   // belongs to a summary, the Ask button to a question.
   let panelMode: 'none' | 'summary' | 'answer' = 'none';
   let summaryTs = 0;
-  // When set, holds the parsed summary whose full praised/complaints breakdown is not yet
-  // shown — only the verdict is. The button expands the rest in place (no re-summarize),
-  // clearing this. Keeps a tall panel from shoving the host's own controls down on load
-  // (e.g. a product buy-box) while still showing the verdict by default.
-  let collapsedSummary: any = null;
 
   const syncControls = () => {
     const asking = !!questionInput.value.trim();
-    // Details still collapsed \u2192 the button expands them; full summary already shown \u2192 it's
-    // redundant, hide it and surface the date/Re-summarize row instead.
-    const fullShown = panelMode === 'summary' && !collapsedSummary;
-    summarizeBtn.textContent = asking ? 'Ask' : collapsedSummary ? '\u2726 Show details' : '\u2726 Summarize Reviews';
-    summarizeBtn.style.display = !asking && fullShown ? 'none' : '';
-    const showDate = !asking && fullShown;
+    summarizeBtn.textContent = asking ? 'Ask' : '\u2726 Summarize Reviews';
+    // Hide the redundant Summarize button only once the summary is on screen.
+    summarizeBtn.style.display = !asking && panelMode === 'summary' ? 'none' : '';
+    const showDate = !asking && panelMode === 'summary';
     dateRow.style.display = showDate ? '' : 'none';
     if (showDate) {
       dateLabel.textContent = `Summarized on ${new Date(summaryTs).toLocaleDateString()}`;
       reBtn.style.display = checkRateLimit().count < RL_MAX ? '' : 'none';
     }
-  };
-
-  // Expand the full praised/complaints breakdown in place beneath the verdict — no
-  // network, just re-render the panel with everything.
-  const showDetails = () => {
-    if (!collapsedSummary) return;
-    renderStructuredSummary(summaryPanel, collapsedSummary);
-    collapsedSummary = null;
-    syncControls();
   };
 
   const loadReviews = async () => {
@@ -374,8 +346,7 @@ export const buildSummarizeWidget = ({
       bumpRateLimit();
       summaryTs = Date.now();
       localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta }));
-      collapsedSummary = parsed;
-      renderVerdict(summaryPanel, parsed.conclusion);
+      renderStructuredSummary(summaryPanel, parsed);
       summaryPanel.style.display = 'block';
       panelMode = 'summary';
     } catch (e: any) {
@@ -459,7 +430,6 @@ export const buildSummarizeWidget = ({
   summarizeBtn.addEventListener('click', () => {
     const question = questionInput.value.trim();
     if (question) runAsk(summarizeBtn, question);
-    else if (collapsedSummary) showDetails();
     else runSummary(summarizeBtn);
   });
   questionRow.appendChild(summarizeBtn);
@@ -472,8 +442,7 @@ export const buildSummarizeWidget = ({
   }
   if (cached?.parsed) {
     summaryTs = cached.ts;
-    collapsedSummary = cached.parsed;
-    renderVerdict(summaryPanel, cached.parsed.conclusion); // verdict now, details on click
+    renderStructuredSummary(summaryPanel, cached.parsed);
     summaryPanel.style.display = 'block';
     panelMode = 'summary';
   }
