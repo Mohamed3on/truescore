@@ -60,10 +60,20 @@ const fetchScore = async (listingId: string, shopId: string) => {
 
 const injectBadge = (card: Element, { score, nps, total }: { score: number; nps: number; total: number }) => {
   const badge = document.createElement('span');
-  badge.style.cssText = `color:${npsColor(nps)};font-weight:600;font-size:12px;margin-left:6px;white-space:nowrap;`;
+  badge.style.cssText = `color:${npsColor(nps)};font-weight:600;font-size:12px;white-space:nowrap;`;
   badge.textContent = `${addCommas(score)} (${Math.round(nps)}%)`;
   badge.title = `${addCommas(total)} item reviews`;
-  card.querySelector('clg-static-review-stars')?.after(badge);
+
+  // Sit beside the shop's stars so the two numbers can be read against each
+  // other. A shop page rates itself in the header and leaves its own cards
+  // starless, so there the badge goes under the price instead.
+  const stars = card.querySelector('clg-static-review-stars');
+  if (stars) {
+    badge.style.marginLeft = '6px';
+    stars.after(badge);
+  } else {
+    card.querySelector('.v2-listing-card__info')?.append(badge);
+  }
 };
 
 const bearer = (child: Element) => (child.matches(CARD) ? child : child.querySelector(CARD));
