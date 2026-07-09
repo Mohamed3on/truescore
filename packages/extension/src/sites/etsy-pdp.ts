@@ -1,4 +1,4 @@
-import { addCommas, npsColor } from '../shared/utils';
+import { addCommas, el, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
@@ -16,6 +16,11 @@ import {
 const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
 const RECENT_PAGES = 13; // 104 reviews — the newest ones, where variants still exist
 const VARIATION_BATCH = 20;
+
+// Postage stops being incidental once it takes a quarter of what the item costs.
+// A flat threshold can't say that: €19 on a €200 rug is fine, €4 on a €5 sticker
+// is not.
+const POSTAGE_WARN_RATIO = 0.25;
 
 const throttledFetch = createThrottledFetcher(8);
 
@@ -84,6 +89,74 @@ const buildDims = (reviews: EtsyReview[], variations: Map<number, [string, strin
     }));
 };
 
+const productLd = (): any => {
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const parsed = JSON.parse(script.textContent ?? '');
+      if (parsed?.['@type'] === 'Product') return parsed;
+    } catch {}
+  }
+  return null;
+};
+
+// "19,20" and "1,234.56" mean the same shape with the separators swapped: only a
+// two-digit tail is a decimal, anything else is a thousands group.
+const parseAmount = (raw: string) => {
+  const digits = raw.replace(/[^\d.,]/g, '');
+  const cut = Math.max(digits.lastIndexOf(','), digits.lastIndexOf('.'));
+  if (cut === -1) return Number(digits);
+  const fraction = digits.slice(cut + 1);
+  if (fraction.length !== 2) return Number(digits.replace(/[.,]/g, ''));
+  return Number(`${digits.slice(0, cut).replace(/[.,]/g, '')}.${fraction}`);
+};
+
+// Free postage is the only case Etsy states as data — JSON-LD carries a
+// shippingRate of 0 and omits the field entirely when postage is charged. The
+// charged amount exists only as rendered text, down in the delivery section.
+const readPostage = (): { amount: number; text: string } | null => {
+  const rate = productLd()?.offers?.shippingDetails?.shippingRate;
+  if (rate && Number(rate.value) === 0) return { amount: 0, text: 'Free' };
+
+  const strong = [...document.querySelectorAll('#shipping-and-returns-div strong')].find((s) =>
+    s.querySelector('.currency-value')
+  );
+  if (!strong) return null;
+
+  const amount = parseAmount(strong.querySelector('.currency-value')!.textContent ?? '');
+  return Number.isFinite(amount) ? { amount, text: strong.textContent!.replace(/\s+/g, '') } : null;
+};
+
+// Free is green; the tone slides through amber and lands on red at the warn
+// ratio, reusing the same hue ramp the scores are graded on.
+const postageTone = (ratio: number) => npsColor(100 - (ratio / POSTAGE_WARN_RATIO) * 50);
+
+const attachPostage = (stats: HTMLElement) => {
+  const price = Number(productLd()?.offers?.price);
+
+  const add = () => {
+    const postage = readPostage();
+    if (!postage) return false;
+
+    const stat = el('div', 'ars-stat');
+    const value = el('span', 'ars-stat-val', postage.text);
+    if (price > 0) {
+      const ratio = postage.amount / price;
+      value.style.color = postageTone(ratio);
+      stat.title = `${postage.text} postage — ${Math.round(ratio * 100)}% of the item price`;
+    }
+    stat.append(value, el('span', 'ars-stat-lbl', 'postage'));
+    if (stats.children.length) stats.append(el('div', 'ars-stat-div'));
+    stats.append(stat);
+    return true;
+  };
+
+  // The delivery section is rendered per destination, so it can land after us.
+  if (add()) return;
+  const observer = new MutationObserver(() => { if (add()) observer.disconnect(); });
+  observer.observe(document.body, { childList: true, subtree: true });
+  setTimeout(() => observer.disconnect(), 15000);
+};
+
 // In the buy box, under the price and above the variant pickers — the score is
 // worth reading while deciding, not a scroll away. Etsy's own rating block is
 // the fallback for layouts that ship no buy box (sold-out, digital downloads).
@@ -141,6 +214,12 @@ const run = async (meta: ListingMeta) => {
   header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
   wrapper.appendChild(header);
   if (score) wrapper.append(...buildGauge(score));
+
+  // Postage rides in the stats row: it belongs to the buying decision the panel
+  // is already answering, and the row exists even when there is no score.
+  let stats = wrapper.querySelector<HTMLElement>('.ars-stats');
+  if (!stats) wrapper.appendChild((stats = el('div', 'ars-stats') as HTMLElement));
+  attachPostage(stats);
 
   // Variations resolve a beat after the reviews they annotate; hold their place
   // so the summariser below doesn't end up above them.
