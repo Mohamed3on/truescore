@@ -161,19 +161,21 @@ export const setupScoreGrid = ({
 
     for (const card of cards) {
       card.setAttribute('data-nps-done', '1');
+      // Idempotent guard. Some hosts (e.g. Uniqlo's React grid) re-render a
+      // card's wrapper around a persisted rating node, so a freshly-matched card
+      // can already carry our badge. Never stack a second one — and don't
+      // re-sort for it, or the badge + re-sort mutations feed a re-render↔
+      // re-badge loop that appends the badge forever.
+      if (card.querySelector('.nps-score-badge')) continue;
       scoreForCard(card)
         .then((data) => {
-          if (!data || isNaN(data.nps)) return;
+          if (!data || isNaN(data.nps) || card.querySelector('.nps-score-badge')) return;
           card.setAttribute('data-nps', String(data.score));
           placeBadge(card, renderScoreBadge(data));
           scheduleSort();
         })
         .catch(() => {});
     }
-    // A card the host renders after the last sort still carries its own order,
-    // which would float it out of place; give the new batch a place now rather
-    // than waiting on a score that may not come.
-    scheduleSort();
   };
 
   let debounceTimer: ReturnType<typeof setTimeout>;
