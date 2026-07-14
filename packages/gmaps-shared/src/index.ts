@@ -485,3 +485,4 @@ export * from './collect';
 // The truescore-web HTTP contract (request / response / stream-event shapes),
 // shared by the server, the web client, and the extension.
 export * from './wire';
+export * from './markdown';
