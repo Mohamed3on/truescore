@@ -1,4 +1,6 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
+import { fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, streamNdjson } from './http';
+import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz } from './hours';
 import {
   chipPolarity, compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
@@ -7,90 +9,6 @@ import {
   type SortStats, type Summary, type SummarizeResponse,
   type AskRequest, type HighlightSummaryRequest, type HighlightsRequest, type HistogramRequest, type LookupRequest, type SearchRequest, type SummarizeRequest,
 } from '@truescore/gmaps-shared';
-
-// Cloudflare 5xx (502/521/522/524) returns an HTML error page, which would
-// hit resp.json() and surface as the cryptic "Unexpected token '<'". Retry
-// transient failures so the user doesn't have to refresh to recover.
-const RETRY_STATUSES = new Set([502, 503, 504, 521, 522, 524]);
-
-async function fetchWithRetry(input: RequestInfo, init?: RequestInit, retries = 2): Promise<Response> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const resp = await fetch(input, init);
-      if (!RETRY_STATUSES.has(resp.status) || attempt >= retries) return resp;
-    } catch (e) {
-      if (attempt >= retries) throw e;
-    }
-    await new Promise((r) => setTimeout(r, 400 * 2 ** attempt + Math.random() * 200));
-  }
-}
-
-async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-  const resp = await fetchWithRetry(input, init);
-  const ct = resp.headers.get('content-type') ?? '';
-  if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
-  const data = await resp.json() as T;
-  if (!resp.ok) throw new Error((data as { error?: string }).error || `request failed (${resp.status})`);
-  return data;
-}
-
-const postJson = <T>(url: string, body: unknown): Promise<T> =>
-  fetchJson<T>(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-
-// Stream NDJSON events from a fetch response body. Each JSON-line yields as
-// one event; partial lines accumulate in a buffer until the next newline.
-// Used by /api/lookup, /api/search, /api/highlights, /api/ask.
-async function* readNdjson<T>(body: ReadableStream<Uint8Array>): AsyncGenerator<T> {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let nl: number;
-      while ((nl = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line) continue;
-        try {
-          yield JSON.parse(line) as T;
-        } catch {
-          console.warn('[readNdjson] skipping unparseable line');
-        }
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-async function postNdjson(url: string, body: unknown): Promise<Response> {
-  const resp = await fetchWithRetry(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const ct = resp.headers.get('content-type') ?? '';
-  if (!resp.ok && ct.includes('json') && !ct.includes('ndjson')) {
-    const data = await resp.json().catch(() => null);
-    throw new Error(data?.error || `request failed (${resp.status})`);
-  }
-  if (!resp.ok) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
-  if (!ct.includes('ndjson') || !resp.body) throw new Error('expected NDJSON stream');
-  return resp;
-}
-
-// Open an NDJSON POST stream and yield its events, throwing on a server-sent
-// `error` event so callers only branch on their own event types.
-async function* streamNdjson<T extends { type: string }>(url: string, body: unknown): AsyncGenerator<T> {
-  const resp = await postNdjson(url, body);
-  for await (const evt of readNdjson<T>(resp.body!)) {
-    if (evt.type === 'error') throw new Error((evt as { error?: string }).error || 'request failed');
-    yield evt;
-  }
-}
 
 // Client-only: the wire Chip plus per-chip UI status while its score streams.
 type ChipState = 'loading' | 'done' | 'error';
@@ -871,43 +789,6 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
   } finally {
     freshnessLabel.classList.remove('rechecking');
   }
-}
-
-function formatHourLabel(h: number): string {
-  if (h === 0 || h === 24) return '12 AM';
-  if (h === 12) return '12 PM';
-  return h < 12 ? `${h} AM` : `${h - 12} PM`;
-}
-
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
-
-function localHourInTz(tz: string | undefined, now = new Date()): { day: number; hour: number } {
-  const fallback = { day: now.getDay(), hour: now.getHours() + now.getMinutes() / 60 };
-  if (!tz) return fallback;
-  try {
-    const fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz, weekday: 'long', hour: 'numeric', minute: 'numeric', hour12: false,
-    });
-    const parts = Object.fromEntries(fmt.formatToParts(now).map((p) => [p.type, p.value]));
-    const day = WEEKDAYS.indexOf(parts.weekday as typeof WEEKDAYS[number]);
-    return {
-      day: day >= 0 ? day : fallback.day,
-      hour: parseInt(parts.hour!, 10) + parseInt(parts.minute!, 10) / 60,
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-function isOpenNow(today: DayHours | undefined, hour: number): boolean | null {
-  if (!today) return null;
-  if (today.openHour != null && today.closeHour != null) {
-    const close = today.closeHour <= today.openHour ? today.closeHour + 24 : today.closeHour;
-    const cur = hour < today.openHour ? hour + 24 : hour;
-    return cur >= today.openHour && cur < close;
-  }
-  if (today.label === 'Closed') return false;
-  return null;
 }
 
 function renderHoursToday(meta: PlaceMeta | undefined) {
