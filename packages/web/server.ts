@@ -105,31 +105,27 @@ const PORT = Number(process.env.PORT || 3000);
 const previewInflight = createInflight<PreviewBundle>();
 const revalidateInflight = createInflight<void>();
 const highlightsRecomputeInflight = createInflight<void>();
-const warmChipsInflight = createInflight<void>();
-
-// The preview RPC serves a place's topic chips only ~15-20% of the time, at
-// random per request — but the tokens are stable, so harvesting persistently in
-// the background eventually catches a populated response and caches it for good.
-// The /api/highlights request path returns `pending` and the client re-polls;
-// this fills chipMeta so a later poll streams. Single-flight per place (bounded
-// inside harvestTokens); an empty result is recorded too, marking the place
-// topic-less so we stop re-warming it.
-async function warmChips(featureId: string, name: string): Promise<void> {
-  const chips = await harvestTokens(mapsUrlFor(featureId));
-  await cache.recordChipWarm(featureId, chips);
-  console.log(`[warm-chips] ${name} (${featureId}): ${chips.length ? `cached ${chips.length} chips` : 'no chips after warm — marked topic-less'}`);
-}
+const warmChipsInflight = createInflight<ChipMeta[]>();
 
 const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
 
-// Prefer the chips the preview RPC already returned (cached on the entry by the
-// lookup's getOrFetchPreviewBundle) over a fresh harvestTokens — a second 2-RPC
-// preview fetch with A-B-bucket retries. Only harvest when we have none yet
-// (never looked up, or every prior preview bucket was chip-less).
-async function chipsFor(featureId: string): Promise<ChipMeta[]> {
+// Get a place's topic chips: the set the lookup's preview already cached if
+// present, else harvest them. The preview RPC only serves the chips ~15-20% of
+// the time (random per request), but the tokens are stable, so the harvest is
+// single-flight per place and persistent, and records its outcome — a hit caches
+// the stable tokens, a miss stamps the entry topic-less so we stop re-warming it.
+// Shared by the /api/highlights background warm (fire-and-forget while the client
+// re-polls the 202 `pending`) and the drift recompute, so both dedup and
+// self-cache through one primitive.
+function ensureChips(featureId: string, name: string): Promise<ChipMeta[]> {
   const cached = cache.get(featureId)?.chipMeta;
-  if (cached?.length) return cached;
-  return harvestTokens(mapsUrlFor(featureId));
+  if (cached?.length) return Promise.resolve(cached);
+  return warmChipsInflight.run(featureId, async () => {
+    const chips = await harvestTokens(mapsUrlFor(featureId));
+    await cache.recordChipWarm(featureId, chips);
+    console.log(`[warm-chips] ${name} (${featureId}): ${chips.length ? `cached ${chips.length} chips` : 'no chips after warm — marked topic-less'}`);
+    return chips;
+  });
 }
 
 // Score every chip in parallel: collect successes, count failures, and cache
@@ -166,7 +162,7 @@ async function scoreChips(
 // pushes Google's preview RPC into A-B buckets where the chip slot is empty —
 // retries thrash and sometimes give up. The bare ftid URL avoids that.
 async function recomputeHighlights(featureId: string, name: string): Promise<void> {
-  const chips = await chipsFor(featureId);
+  const chips = await ensureChips(featureId, name);
   if (!chips.length) return;
   const { successes, failures, totalFetched, cached } = await scoreChips(featureId, name, chips);
   const tag = `${successes.length}/${chips.length} chips, ${totalFetched} reviews${failures ? `, ${failures} failed` : ''}`;
@@ -553,8 +549,7 @@ Bun.serve({
           // Bind just the name, not the whole entry, so the ~minute-long warm closure
           // doesn't pin the cached review arrays for its lifetime.
           const name = entry.name;
-          void warmChipsInflight.run(featureId, () =>
-            warmChips(featureId, name).catch((e) => console.error(`[warm-chips] ${name} (${featureId}):`, e)));
+          void ensureChips(featureId, name).catch((e) => console.error(`[warm-chips] ${name} (${featureId}):`, e));
           return json({ pending: true } satisfies HighlightsResponse, 202);
         } catch (e) {
           const entry = featureId ? cache.get(featureId) : null;

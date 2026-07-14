@@ -546,53 +546,55 @@ async function runSearch(query: string, force = false) {
 }
 
 // The server harvests a cold place's topic chips in the background (the preview
-// RPC only serves them intermittently) and answers 202 `pending` in the
-// meantime. Re-poll a bounded number of times until the chips arrive or it 404s.
-let highlightsRepolls = 0;
-let highlightsPollTimer: ReturnType<typeof setTimeout> | null = null;
+// RPC serves them only intermittently) and answers 202 `pending` meanwhile.
+// loadHighlights polls through that: re-request on a bounded schedule until the
+// chips stream or it 404s. `highlightsGen` supersedes an in-flight poll when the
+// place is re-looked-up or refreshed — the fetch/sleep awaits bail on a bump.
+let highlightsGen = 0;
 const HIGHLIGHTS_MAX_REPOLLS = 12;
 const HIGHLIGHTS_REPOLL_MS = 3500;
 
-function scheduleHighlightsRepoll(featureId: string) {
-  if (highlightsRepolls >= HIGHLIGHTS_MAX_REPOLLS) { highlightsPollTimer = null; highlightsRow.hidden = true; return; }
-  highlightsRepolls++;
-  highlightsPollTimer = setTimeout(() => {
-    highlightsPollTimer = null;
-    if (currentFeatureId === featureId) void loadHighlights(false, true);
-  }, HIGHLIGHTS_REPOLL_MS);
-}
-
-async function loadHighlights(force = false, isRepoll = false) {
-  if (!currentFeatureId) return;
-  if (!isRepoll) {
-    highlightsRepolls = 0;
-    if (highlightsPollTimer) { clearTimeout(highlightsPollTimer); highlightsPollTimer = null; }
-  }
-  showHighlightsLoading(force ? 'refreshing…' : isRepoll ? 'finding topics…' : 'loading highlights…');
+async function loadHighlights(force = false) {
+  const featureId = currentFeatureId;
+  if (!featureId) return;
+  const gen = ++highlightsGen;
+  const superseded = () => gen !== highlightsGen || currentFeatureId !== featureId;
+  showHighlightsLoading(force ? 'refreshing…' : 'loading highlights…');
   highlightsRefreshBtn.hidden = true;
-  try {
-    const resp = await fetchWithRetry('/api/highlights', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId: currentFeatureId, force } satisfies HighlightsRequest),
-    });
-    const ct = resp.headers.get('content-type') ?? '';
-    if (resp.ok && ct.includes('ndjson') && resp.body) {
-      await consumeHighlightStream(resp.body);
-      highlightsRefreshBtn.hidden = false;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const resp = await fetchWithRetry('/api/highlights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ featureId, force } satisfies HighlightsRequest),
+      });
+      if (superseded()) return;
+      const ct = resp.headers.get('content-type') ?? '';
+      if (resp.ok && ct.includes('ndjson') && resp.body) {
+        await consumeHighlightStream(resp.body);
+        highlightsRefreshBtn.hidden = false;
+        return;
+      }
+      if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
+      const data = await resp.json() as HighlightsResponse;
+      if (data.pending) {
+        if (attempt >= HIGHLIGHTS_MAX_REPOLLS) { highlightsRow.hidden = true; return; } // gave up waiting
+        showHighlightsLoading('finding topics…');
+        await new Promise((r) => setTimeout(r, HIGHLIGHTS_REPOLL_MS));
+        if (superseded()) return;
+        continue;
+      }
+      if (!resp.ok) {
+        if (resp.status === 404) { highlightsRow.hidden = true; return; } // no topic chips for this place
+        throw new Error(data.error || `request failed (${resp.status})`);
+      }
+      if (data.highlights?.length) showHighlights(data.highlights);
+      else highlightsRow.hidden = true;
+      return;
+    } catch (e) {
+      if (!superseded()) showHighlightsLoading(`couldn't load highlights — ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
-    if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
-    const data = await resp.json() as HighlightsResponse;
-    if (data.pending) { scheduleHighlightsRepoll(currentFeatureId); return; }
-    if (!resp.ok) {
-      if (resp.status === 404) { highlightsRow.hidden = true; return; } // no topic chips for this place
-      throw new Error(data.error || `request failed (${resp.status})`);
-    }
-    if (data.highlights?.length) showHighlights(data.highlights);
-    else highlightsRow.hidden = true;
-  } catch (e) {
-    showHighlightsLoading(`couldn't load highlights — ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
