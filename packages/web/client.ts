@@ -1,6 +1,6 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
 import {
-  compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  chipPolarity, compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
@@ -187,10 +187,6 @@ function scoreClass(pct: number) {
   return 'mid';
 }
 
-function chipClass(pct: number, overall: number) {
-  return pct >= overall ? 'pos' : 'neg';
-}
-
 // Build one element: tag + optional class + optional text. Collapses the
 // pervasive createElement / className / textContent triples into one call.
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -221,7 +217,7 @@ function renderHighlights(highlights: UiChip[], sort = false) {
   highlightsList.replaceChildren(...list.map((h) => {
     const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
     const pct = state === 'done' && h.score
-      ? { text: `${h.score.scorePct}%`, cls: chipClass(h.score.scorePct, currentMergedPct) }
+      ? { text: `${h.score.scorePct}%`, cls: chipPolarity(h.score.scorePct, currentMergedPct) }
       : state === 'error' ? { text: '✗', cls: 'neg' } : { text: '…', cls: 'chip-pending' };
     return chip({
       label: h.label, pct, count: h.count, token: h.token,
@@ -239,9 +235,7 @@ function renderHighlights(highlights: UiChip[], sort = false) {
 // click. Scores fill in inline; a chip that lands below 2 mentions drops out.
 function renderScored(kind: ScoredKind) {
   const g = scoredGroups[kind];
-  const scored = g.chips
-    .filter((d) => d.result && d.result.totalReviews >= 2)
-    .sort((a, b) => b.result!.totalReviews - a.result!.totalReviews);
+  const scored = selectScoredChips(g.chips, (d) => d.result);
   const pending = g.chips.filter((d) => d.state === 'loading');
   g.row.hidden = scored.length === 0 && pending.length === 0;
   g.list.replaceChildren(
@@ -249,7 +243,7 @@ function renderScored(kind: ScoredKind) {
       const r = d.result!;
       return chip({
         label: d.item, cls: g.chipClass || undefined, count: r.totalReviews,
-        pct: { text: r.trustedReviews ? `${r.scorePct}%` : '—', cls: chipClass(r.scorePct, currentMergedPct) },
+        pct: { text: r.trustedReviews ? `${r.scorePct}%` : '—', cls: chipPolarity(r.scorePct, currentMergedPct) },
         onClick: () => showSearchPanel(r),
       });
     }),
@@ -303,7 +297,7 @@ function setActiveChip(token?: string) {
 function setPanelTitle(label: string, scorePct: number, trusted: number, total: number) {
   chipPanelTitle.replaceChildren(
     el('span', undefined, label), ' · ',
-    el('span', `pct ${chipClass(scorePct, currentMergedPct)}`, `${scorePct}%`),
+    el('span', `pct ${chipPolarity(scorePct, currentMergedPct)}`, `${scorePct}%`),
     ` · ${trusted} trusted of ${total}`,
   );
 }

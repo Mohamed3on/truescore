@@ -7,6 +7,7 @@ import {
   type SummarizeRequest,
   type AskRequest,
   buildSearchReq,
+  chipPolarity,
   chipsFromPreview,
   collectSearchTerms,
   collectSort,
@@ -18,6 +19,7 @@ import {
   overallScoreFromHistogram,
   parseOrQuery,
   reviewAge,
+  selectScoredChips,
   sortChipsByImpact,
   sortedDisplayReviews,
   starString,
@@ -872,7 +874,6 @@ const renderHighlights = () => {
     btn.textContent = 'Refresh';
   }
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
-  const isAbove = (h: Highlight) => (h.score?.scorePct ?? 0) >= overall;
   const sorted = sortChipsByImpact(items, overall);
   for (const h of sorted) {
     const chip = el('button', 'rc-chip') as HTMLButtonElement;
@@ -880,7 +881,7 @@ const renderHighlights = () => {
     const label = el('span', 'rc-chip-label', h.label);
     chip.appendChild(label);
     if (h.score) {
-      const pctEl = el('span', `rc-chip-pct ${isAbove(h) ? 'pos' : 'neg'}`, `${h.score.scorePct}%`);
+      const pctEl = el('span', `rc-chip-pct ${chipPolarity(h.score.scorePct, overall)}`, `${h.score.scorePct}%`);
       chip.appendChild(pctEl);
     }
     const countEl = el('span', 'rc-chip-count', `·${h.count}`);
@@ -1525,7 +1526,7 @@ const paintScoredChip = (pct: HTMLElement, count: HTMLElement, stats: SortStats,
   pct.textContent = `${stats.scorePct}%`;
   // Binary green/red like the topic chips, not getDiffColor's relative gradient —
   // that can't reach green when the place overall is already high.
-  pct.style.color = stats.scorePct >= overall ? '#4ADE80' : '#F87171';
+  pct.style.color = chipPolarity(stats.scorePct, overall) === 'pos' ? '#4ADE80' : '#F87171';
   count.textContent = `·${stats.totalReviews}`;
 };
 
@@ -1568,9 +1569,7 @@ const redrawScored = (kind: ScoredKind) => {
   section.textContent = '';
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
   const rows = items.map((item) => ({ item, stats: standoutScoreCache.get(`${featureId}|${item.toLowerCase()}`) }));
-  const scored = rows
-    .filter((x): x is { item: string; stats: SortStats } => !!x.stats && x.stats.totalReviews >= 2)
-    .sort((a, b) => b.stats.totalReviews - a.stats.totalReviews);
+  const scored = selectScoredChips(rows, (x) => x.stats);
   const pending = rows.filter((x) => !x.stats);
   if (!scored.length && !pending.length) { section.style.display = 'none'; return; }
   section.style.display = '';

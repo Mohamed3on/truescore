@@ -58,6 +58,14 @@ export const sortedDisplayReviews = (reviews: Review[]): Review[] =>
 export const starString = (stars: number): string =>
   '★'.repeat(stars) + '☆'.repeat(Math.max(0, 5 - stars));
 
+// A chip reads as positive when its score is at or above the place's overall
+// score — the binary green/red the topic chips and the scored standouts/
+// alternatives both grade on, paired with sortChipsByImpact's ordering. Shared
+// because web and extension each re-derived it; callers map 'pos'/'neg' to their
+// own class ('pos'/'neg') or colour (#4ADE80/#F87171).
+export const chipPolarity = (scorePct: number, overallPct: number): 'pos' | 'neg' =>
+  scorePct >= overallPct ? 'pos' : 'neg';
+
 // Order topic chips for display: those scoring at-or-above the place's overall
 // score first, then by impact = (pct/100)·|pct/100|·count — polarity-signed,
 // weighted by how many reviews back the chip. Returns a new array. Shared
@@ -65,9 +73,24 @@ export const starString = (stars: number): string =>
 export type ChipLike = { score?: { scorePct: number } | null; count: number };
 export const sortChipsByImpact = <T extends ChipLike>(chips: T[], overallPct: number): T[] => {
   const impact = (c: T) => { const r = (c.score?.scorePct ?? 0) / 100; return r * Math.abs(r) * c.count; };
-  const above = (c: T) => (c.score?.scorePct ?? 0) >= overallPct;
+  const above = (c: T) => chipPolarity(c.score?.scorePct ?? 0, overallPct) === 'pos';
   return [...chips].sort((a, b) => (Number(above(b)) - Number(above(a))) || (impact(b) - impact(a)));
 };
+
+// The standouts / better-alternatives selection: keep the items whose auto-search
+// scored at least SCORED_CHIP_MIN_REVIEWS mentions, most-mentioned first. The gate
+// and the sort key are the policy the web and extension chip panels each reverse-
+// engineered; each renders its own DOM and its own still-loading placeholders.
+export const SCORED_CHIP_MIN_REVIEWS = 2;
+export const selectScoredChips = <T>(
+  items: T[],
+  statsOf: (item: T) => { totalReviews: number } | null | undefined
+): T[] =>
+  items
+    .map((item) => ({ item, n: statsOf(item)?.totalReviews ?? 0 }))
+    .filter((x) => x.n >= SCORED_CHIP_MIN_REVIEWS)
+    .sort((a, b) => b.n - a.n)
+    .map((x) => x.item);
 
 // Union review lists into one set, deduped by reviewId (last write wins) — the
 // fold that pairs with the collection loop: relevant∪newest, or an OR-search
