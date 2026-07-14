@@ -2,6 +2,7 @@ import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget, llmSummarize, renderFreeFormAnswer } from '../shared/review-summary';
 import { queryTerms, buildReviewCard } from '../shared/review-search';
+import { createIslandShell } from '../shared/score-island';
 
 const STAMPED_API_KEY = '8a204db0-ec09-48cf-baed-db3ca2ef99e6';
 const STAMPED_STORE = 'bjj-fanatics.myshopify.com';
@@ -337,13 +338,7 @@ const buildPanel = (
   scored: { score: number; nps: number; total: number },
   courseContent: string,
 ) => {
-  const wrapper = el('div', 'ars-wrapper');
-
-  const header = el('div', 'ars-header');
-  const accent = el('span', 'ars-header-accent');
-  accent.textContent = '◈';
-  header.append(accent, document.createTextNode(' Review Intelligence'));
-  wrapper.appendChild(header);
+  const wrapper = createIslandShell();
 
   renderScoreCard(wrapper, scored.score, scored.nps, scored.total);
 

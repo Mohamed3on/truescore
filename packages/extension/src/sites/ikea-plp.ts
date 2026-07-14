@@ -1,5 +1,6 @@
-import { addCommas, npsColor, npsStats } from '../shared/utils';
+import { npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
+import { setupScoreGrid } from '../shared/score-grid';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 
@@ -48,30 +49,6 @@ const fetchScore = async (country: string, lang: string, itemNo: string) => {
   return result;
 };
 
-const injectBadge = (card: Element, { score, nps }: { score: number; nps: number }) => {
-  const badge = document.createElement('span');
-  badge.style.cssText = `color:${npsColor(nps)};font-weight:600;font-size:12px;margin-left:6px;`;
-  badge.textContent = `${addCommas(score)} (${Math.round(nps)}%)`;
-  const target = card.querySelector('.plp-rating__label') || card.querySelector('.listing-rating__label');
-  if (target) target.after(badge);
-};
-
-const sortContainer = (gridSel: string, itemSel: string) => {
-  const grid = document.querySelector(gridSel);
-  if (!grid) return;
-  const items = [...grid.querySelectorAll(itemSel)];
-  const scored: { el: Element; score: number }[] = [], unscored: Element[] = [];
-  for (const el of items) {
-    if (el.hasAttribute('data-nps')) scored.push({ el, score: parseFloat(el.getAttribute('data-nps')!) });
-    else unscored.push(el);
-  }
-  scored.sort((a, b) => b.score - a.score);
-  sorting = true;
-  for (const { el } of scored) grid.appendChild(el);
-  for (const el of unscored) grid.appendChild(el);
-  sorting = false;
-};
-
 const getItemNo = (card: Element) => {
   // Use data-product-number attribute first, strip 's' prefix
   const num = card.getAttribute('data-product-number');
@@ -84,61 +61,19 @@ const getItemNo = (card: Element) => {
 const locale = getLocale();
 if (!locale) throw new Error('unsupported locale');
 
-let sorting = false;
-
-const processCards = () => {
-  if (sorting) return;
-  const cards = document.querySelectorAll('.plp-mastercard:not([data-nps-done]), .listing-mastercard:not([data-nps-done])');
-  if (cards.length === 0) return;
-
-  let hasPlp = false, hasListing = false;
-  const promises: Promise<void>[] = [];
-  for (const card of cards) {
+setupScoreGrid({
+  cardSelector: '.plp-mastercard, .listing-mastercard',
+  scoreForCard: (card) => {
     const itemNo = getItemNo(card);
-    if (!itemNo) continue;
-    card.setAttribute('data-nps-done', '1');
-
-    if (card.classList.contains('plp-mastercard')) hasPlp = true;
-    else hasListing = true;
-
-    promises.push(
-      fetchScore(locale.country, locale.lang, itemNo).then((data) => {
-        if (data && !isNaN(data.nps)) {
-          card.setAttribute('data-nps', data.score);
-          injectBadge(card, data);
-        }
-      }).catch(() => {})
-    );
-  }
-
-  if (promises.length > 0) Promise.all(promises).then(() => {
-    try {
-      if (hasPlp) sortContainer('.plp-product-list__products', ':scope > *');
-      if (hasListing) {
-        document.querySelectorAll('.listing-carousel__content').forEach(carousel => {
-          const slides = [...carousel.querySelectorAll('.listing-carousel-slide')];
-          const scored: { el: Element; score: number }[] = [], unscored: Element[] = [];
-          for (const el of slides) {
-            const nps = el.querySelector('[data-nps]');
-            if (nps) scored.push({ el, score: parseFloat(nps.getAttribute('data-nps')!) });
-            else unscored.push(el);
-          }
-          scored.sort((a, b) => b.score - a.score);
-          sorting = true;
-          for (const { el } of scored) carousel.appendChild(el);
-          for (const el of unscored) carousel.appendChild(el);
-          sorting = false;
-        });
-      }
-    } catch { sorting = false; }
-  });
-};
-
-let debounceTimer: ReturnType<typeof setTimeout>;
-const debouncedProcess = () => {
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(processCards, 200);
-};
-
-processCards();
-new MutationObserver(debouncedProcess).observe(document.body, { childList: true, subtree: true });
+    return itemNo ? fetchScore(locale.country, locale.lang, itemNo) : Promise.resolve(null);
+  },
+  placeBadge: (card, badge) => {
+    const target = card.querySelector('.plp-rating__label') || card.querySelector('.listing-rating__label');
+    if (target) target.after(badge);
+  },
+  // IKEA ranks two surfaces: the main product grid and any listing carousels.
+  discover: () => [
+    ...document.querySelectorAll('.plp-product-list__products'),
+    ...document.querySelectorAll('.listing-carousel__content'),
+  ],
+});

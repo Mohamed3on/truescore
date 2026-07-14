@@ -56,3 +56,30 @@ the "PDPs that derive their id from the DOM" gap above, and `dm-pdp` now adopts
 `setupSpaInjector` (its candidate resolution lives in `load`, returning null until
 the product DOM is present). The blanket-migration caution still holds for
 PLPs/grids, one-shot DOM-compute, and the complex-bespoke sites.
+
+## Update (2026-07-14)
+
+The grid picture changed again, and this time it argues *for* a scoped abstraction —
+of the *ranking*, not the lifecycle. The "~2 lines shared" premise above held for the
+2026-06 grids, but the retail PLP scrapers since then (`etsy`, `aliexpress`, plus the
+`dm`/`ikea`/`decathlon`/`uniqlo` grids) now share ~60 byte-identical lines: mark
+`data-nps-done` → fetch → set `data-nps` → inject a badge → re-rank the container by
+score (scored desc, unscored last), guarded by a reentrancy flag and a debounced
+`MutationObserver`. `etsy` and `aliexpress` are near-verbatim twins, and `aliexpress`
+is even *missing* the reentrancy guard the others carry — duplication actively shedding
+correctness.
+
+Decision: extract that spine into `setupScoreGrid` (`shared/score-grid.ts`), with the
+genuinely-varying parts as injected slots — `scoreForCard`, `placeBadge`, container
+`discover`, `applyOrder` — plus batteries-included helpers. This is the *ranking behind*
+the observer, not a grid *lifecycle* abstraction: the deletion test that failed at
+~2 lines passes emphatically at ~60. The heterogeneity caveat is preserved — genuinely
+per-site concerns stay per-site (decathlon's dup-hiding `dedupGrid`, ikea's
+grid+carousel `discover`), injected or kept in the site script rather than absorbed.
+
+Separately, `etsy-pdp` and `aliexpress-pdp` — single-entity PDPs whose buy-box hydrates
+late — now adopt `setupSpaInjector`, extending the URL-id-PDP list. Their island is built
+once in `load`; the injector's re-inject-on-mutation handles the late anchor, replacing
+each script's hand-rolled anchor observer and `.ars-wrapper` idempotency guard. The
+island *content* (`shared/score-island.ts`) is separate from this lifecycle decision, and
+the other retail PDPs adopt it incrementally.

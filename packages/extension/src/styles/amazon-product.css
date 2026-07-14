@@ -548,6 +548,67 @@
   padding: 4px 0;
 }
 
+/* Topic breakdown (Etsy curated aspect tags) */
+.ars-topics { display: flex; flex-direction: column; }
+.ars-wrapper > .ars-topics { animation: ars-enter 0.35s cubic-bezier(0.25, 1, 0.5, 1) 0.2s both; }
+.ars-topics-title {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #A8A29E;
+  margin-bottom: 4px;
+}
+.ars-topic { display: flex; flex-direction: column; }
+.ars-topic-btn {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #F5F5F4;
+  padding: 5px 0;
+  font-family: inherit;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 1fr 60px 42px;
+  align-items: center;
+  gap: 10px;
+  transition: opacity 0.15s;
+}
+.ars-topic:last-child .ars-topic-btn { border-bottom: none; }
+.ars-topic-btn:hover { opacity: 0.7; }
+.ars-topic-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ars-topic-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: #44403C;
+}
+.ars-topic-label::after {
+  content: "\25B8";
+  font-size: 8px;
+  color: #A8A29E;
+  transition: transform 0.15s;
+}
+.ars-topic-btn.is-open .ars-topic-label::after { transform: rotate(90deg); }
+.ars-topic-sub { font-size: 10px; color: #A8A29E; letter-spacing: 0.01em; }
+.ars-topic-warn { color: #C2410C; font-weight: 600; }
+.ars-topic-track { height: 5px; background: #EFEDEC; border-radius: 3px; overflow: hidden; }
+.ars-topic-fill { display: block; height: 100%; border-radius: 3px; }
+.ars-topic-pct {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.ars-topic-reviews { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 10px; }
+.ars-topic-summary { display: flex; flex-direction: column; gap: 8px; }
+.ars-topic-reviews .ars-search-list { max-height: 300px; }
+.ars-topic-loading { font-size: 11px; color: #A8A29E; font-style: italic; padding: 4px 0; }
+
 /* Accessibility: respect reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .ars-wrapper, .ars-wrapper > .ars-header, .ars-wrapper > .ars-gauge, .ars-wrapper > .ars-stats {

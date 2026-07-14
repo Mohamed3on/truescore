@@ -1,5 +1,6 @@
-import { addCommas, npsColor, npsStats } from '../shared/utils';
+import { npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
+import { setupScoreGrid, containersBySelector } from '../shared/score-grid';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 
@@ -46,58 +47,18 @@ const fetchScore = async (country: string, lang: string, productId: string) => {
   return result;
 };
 
-const injectBadge = (tile: Element, { score, nps }: { score: number; nps: number }) => {
-  const badge = document.createElement('span');
-  badge.style.cssText = `color:${npsColor(nps)};font-weight:600;font-size:12px;margin-left:6px;`;
-  badge.textContent = `${addCommas(score)} (${Math.round(nps)}%)`;
-  const target = tile.querySelector('.fr-ec-rating-static__count-product-tile');
-  if (target) target.after(badge);
-};
-
-let sorting = false;
-
-const sortGrid = () => {
-  const grid = document.querySelector('.fr-ec-product-collection--ecrenewal-grid');
-  if (!grid) return;
-  const items = [...grid.children];
-  const scores = items.map(el => ({
-    el,
-    score: parseFloat(el.querySelector('[data-nps]')?.getAttribute('data-nps') ?? '-Infinity'),
-  }));
-  scores.sort((a, b) => b.score - a.score);
-  sorting = true;
-  for (const { el } of scores) grid.appendChild(el);
-  sorting = false;
-};
-
 const locale = getLocale();
 if (!locale) throw new Error('unsupported locale');
 
-const processCards = () => {
-  if (sorting) return;
-  const tiles = document.querySelectorAll('.product-tile:not([data-nps-done]), .fr-ec-product-tile:not([data-nps-done])');
-  if (tiles.length === 0) return;
-
-  const promises: Promise<void>[] = [];
-  for (const tile of tiles) {
-    tile.setAttribute('data-nps-done', '1');
+setupScoreGrid({
+  cardSelector: '.product-tile, .fr-ec-product-tile',
+  scoreForCard: (tile) => {
     const link = tile.closest('a[href*="/products/"]') || tile.querySelector('a[href*="/products/"]');
-    if (!link) continue;
-    const productId = extractProductId(link.getAttribute('href')!);
-    if (!productId) continue;
-
-    promises.push(
-      fetchScore(locale.country, locale.lang, productId).then((data) => {
-        if (data && !isNaN(data.nps)) {
-          tile.setAttribute('data-nps', data.score);
-          injectBadge(tile, data);
-        }
-      }).catch(() => {})
-    );
-  }
-
-  if (promises.length > 0) Promise.all(promises).then(sortGrid);
-};
-
-processCards();
-new MutationObserver(processCards).observe(document.body, { childList: true, subtree: true });
+    const productId = link && extractProductId(link.getAttribute('href')!);
+    return productId ? fetchScore(locale.country, locale.lang, productId) : Promise.resolve(null);
+  },
+  placeBadge: (tile, badge) => {
+    tile.querySelector('.fr-ec-rating-static__count-product-tile')?.after(badge);
+  },
+  discover: containersBySelector('.fr-ec-product-collection--ecrenewal-grid'),
+});

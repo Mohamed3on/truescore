@@ -59,6 +59,8 @@
     "*://*.ikea.com/*",
     "*://*.dm.de/*",
     "*://*.etsy.com/*",
+    "*://*.aliexpress.com/*",
+    "*://*.aliexpress.us/*",
     "*://bjjfanatics.com/products/*",
     "https://stamped.io/api/*",
     "*://apps.bazaarvoice.com/*",
@@ -185,6 +187,17 @@
     {
       "matches": ["*://*.etsy.com/listing/*", "*://*.etsy.com/*/listing/*"],
       "js": ["sites/etsy-pdp.js"],
+      "css": ["sites/amazon-product.css"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.aliexpress.com/*", "*://*.aliexpress.us/*"],
+      "js": ["sites/aliexpress.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.aliexpress.com/item/*", "*://*.aliexpress.us/item/*"],
+      "js": ["sites/aliexpress-pdp.js"],
       "css": ["sites/amazon-product.css"],
       "run_at": "document_end"
     },

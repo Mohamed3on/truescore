@@ -4,6 +4,8 @@
 // their own ranked dimensions — the data acquisition stays per-site, only this
 // presentation is shared.
 
+import { starScore } from '@truescore/gmaps-shared';
+
 export interface VarRow {
   label: string;
   score: number; // net sentiment: sign → colour, |value| → bar width
@@ -19,6 +21,47 @@ export interface VariationCardOpts {
   title?: string; // default 'Best by variation'
   animate?: boolean; // staggered row + card entrance
 }
+
+// Fold a product's reviews into ranked dimensions: one VarDim per variation axis
+// (Colour, Size…) that has two or more values to compare, each value scored by
+// net sentiment. The per-site part is only how a review's [dim, value] pairs and
+// star rating are read — AliExpress aligns variations by index, Etsy keys them by
+// transaction id. The companion to renderVariationCard, which renders the result.
+export const tallyVariationDims = <T>(
+  items: T[],
+  opts: {
+    variationsOf: (item: T, index: number) => [string, string][];
+    ratingOf: (item: T) => number;
+  }
+): VarDim[] => {
+  const { variationsOf, ratingOf } = opts;
+  const dims = new Map<string, Map<string, { score: number; count: number }>>();
+
+  items.forEach((item, i) => {
+    for (const [dim, value] of variationsOf(item, i)) {
+      if (!value) continue;
+      let values = dims.get(dim);
+      if (!values) dims.set(dim, (values = new Map()));
+      const tally = values.get(value) ?? { score: 0, count: 0 };
+      tally.score += starScore(ratingOf(item));
+      tally.count++;
+      values.set(value, tally);
+    }
+  });
+
+  return [...dims.entries()]
+    .filter(([, values]) => values.size >= 2)
+    .map(([dim, values]) => ({
+      label: dim,
+      rows: [...values.entries()]
+        .map(([label, { score, count }]) => ({
+          label,
+          score,
+          meta: `${count} review${count === 1 ? '' : 's'}`,
+        }))
+        .sort((a, b) => b.score - a.score),
+    }));
+};
 
 const STYLE_ID = 'ts-var-styles';
 const ensureStyles = () => {

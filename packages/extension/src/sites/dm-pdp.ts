@@ -2,6 +2,7 @@ import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { setupSpaInjector } from '../shared/spa-injector';
+import { createIslandShell } from '../shared/score-island';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const API_BASE = 'https://apps.bazaarvoice.com/bfd/v1/clients/dm-de/api-products/cv2/resources/data/reviews.json';
@@ -368,12 +369,7 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
   const hasRecommend = (Number(stats?.RecommendedCount) || 0) + (Number(stats?.NotRecommendedCount) || 0) > 0;
   if (!scoreData && !hasRecommend && total < 5) return null;
 
-  const wrapper = document.createElement('div');
-  wrapper.className = 'ars-wrapper';
-  const header = document.createElement('div');
-  header.className = 'ars-header';
-  header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
-  wrapper.appendChild(header);
+  const wrapper = createIslandShell();
 
   // Recent-positive gauge — placeholder now, filled once recent reviews load.
   const gauge = document.createElement('div');

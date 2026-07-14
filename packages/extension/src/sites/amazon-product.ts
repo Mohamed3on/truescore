@@ -3,6 +3,7 @@ import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { queryTerms, buildReviewCard } from '../shared/review-search';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
+import { createIslandShell } from '../shared/score-island';
 
 const NUMBER_OF_PAGES_TO_PARSE = 10;
 
@@ -160,13 +161,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   let usedCache = false;
 
   const elementToAppendTo = document.querySelector('#averageCustomerReviews');
-  const wrapper = document.createElement('div');
-  wrapper.className = 'ars-wrapper';
-
-  const headerEl = document.createElement('div');
-  headerEl.className = 'ars-header';
-  headerEl.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
-  wrapper.appendChild(headerEl);
+  const wrapper = createIslandShell();
 
   if (cachedScores) {
     numberOfParsedReviews = cachedScores.numberOfParsedReviews;

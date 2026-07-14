@@ -3,6 +3,7 @@ import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
+import { createIslandShell } from '../shared/score-island';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -171,12 +172,7 @@ const fetchReviewTexts = async (tld: string, locale: string, sku: string, produc
 const addSummarizeUI = (anchor: Element, tld: string, locale: string, sku: string, productId: string) => {
   if (document.querySelector('.ars-wrapper')) return;
 
-  const wrapper = document.createElement('div');
-  wrapper.className = 'ars-wrapper';
-  const header = document.createElement('div');
-  header.className = 'ars-header';
-  header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
-  wrapper.appendChild(header);
+  const wrapper = createIslandShell();
 
   buildSummarizeWidget({
     wrapper,

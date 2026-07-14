@@ -2,6 +2,7 @@
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget } from '../shared/review-summary';
 import { el } from '../shared/utils';
+import { createIslandShell } from '../shared/score-island';
 
 const graphqlEndpoint = 'https://www.booking.com/dml/graphql?';
 const MIN_REVIEWS_PER_GROUP = 3;
@@ -657,12 +658,7 @@ waitForHotelData((hotelData) => {
       renderSection('By room', roomRows);
 
       if (reviewTexts.length >= MIN_REVIEWS_PER_GROUP) {
-        const summaryWrapper = document.createElement('div');
-        summaryWrapper.className = 'ars-wrapper';
-        const header = document.createElement('div');
-        header.className = 'ars-header';
-        header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
-        summaryWrapper.appendChild(header);
+        const summaryWrapper = createIslandShell();
 
         buildSummarizeWidget({
           wrapper: summaryWrapper,

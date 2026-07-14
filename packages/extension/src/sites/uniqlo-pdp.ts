@@ -3,6 +3,7 @@ import { cacheGet, cacheSet } from '../shared/cache';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { createIslandShell } from '../shared/score-island';
 
 // Uniqlo reviews are overwhelmingly about fit, fabric, and sizing, so nudge those
 // to the front as actionable buying tips rather than leaving them buried.
@@ -228,12 +229,7 @@ const reviewTexts = (reviews: any[]): string[] => {
 const addSummarizeUI = (ratingEl: Element, productId: string, texts: string[]) => {
   if (document.querySelector('.ars-wrapper')) return;
 
-  const wrapper = document.createElement('div');
-  wrapper.className = 'ars-wrapper';
-  const header = document.createElement('div');
-  header.className = 'ars-header';
-  header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
-  wrapper.appendChild(header);
+  const wrapper = createIslandShell();
 
   buildSummarizeWidget({
     wrapper,

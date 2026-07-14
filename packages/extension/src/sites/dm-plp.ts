@@ -1,5 +1,6 @@
-import { addCommas, npsColor, npsStats } from '../shared/utils';
+import { npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
+import { setupScoreGrid } from '../shared/score-grid';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const API_BASE = 'https://apps.bazaarvoice.com/bfd/v1/clients/dm-de/api-products/cv2/resources/data/reviews.json';
@@ -101,8 +102,6 @@ const getScoreFromStats = (stats: any) => {
   return { ...npsStats(five, one, total), total, five, one };
 };
 
-// --- PLP-specific code ---
-
 const fetchScore = async (productId: string) => {
   const cacheKey = `nps_dm_score_${productId}`;
   const cached = cacheGet(cacheKey, CACHE_TTL);
@@ -129,113 +128,28 @@ const fetchScore = async (productId: string) => {
   return null;
 };
 
-const injectBadge = (tile: Element, scoreData: { score: number; nps: number }) => {
-  if (tile.querySelector('.nps-score-badge')) return;
-
-  const badge = document.createElement('span');
-  badge.className = 'nps-score-badge';
-  badge.style.cssText = `color:${npsColor(scoreData.nps)};font-weight:600;font-size:12px;margin-left:6px;white-space:nowrap;`;
-  badge.textContent = `${addCommas(scoreData.score)} (${Math.round(scoreData.nps)}%)`;
-
-  const rating = tile.querySelector('[data-dmid="product-tile-rating"]');
-  const fallback = tile.querySelector('[data-dmid="price-infos"]');
-
-  if (rating) rating.after(badge);
-  else if (fallback) fallback.after(badge);
-};
-
-const tileFromChild = (child: Element) => {
-  if (child.matches?.('[data-dmid="product-tile"][data-dan]')) return child;
-  return child.querySelector('[data-dmid="product-tile"][data-dan]');
-};
-
-const sortContainer = (container: Element) => {
-  const children = [...container.children];
-  const scoredProducts: { child: Element; score: number }[] = [];
-  const unscoredProducts: Element[] = [];
-  const nonProducts: Element[] = [];
-
-  for (const child of children) {
-    const tile = tileFromChild(child);
-    if (!tile) {
-      nonProducts.push(child);
-      continue;
-    }
-
-    const scoreAttr = tile.getAttribute('data-nps');
-    const score = scoreAttr == null ? Number.NaN : Number(scoreAttr);
-    if (Number.isFinite(score)) scoredProducts.push({ child, score });
-    else unscoredProducts.push(child);
-  }
-
-  scoredProducts.sort((a, b) => b.score - a.score);
-  if (!scoredProducts.length) return;
-
-  sorting = true;
-  for (const { child } of scoredProducts) container.appendChild(child);
-  for (const child of unscoredProducts) container.appendChild(child);
-  for (const child of nonProducts) container.appendChild(child);
-  sorting = false;
-};
-
-const sortTiles = (tiles: Element[]) => {
+// dm nests its tiles in a `product-tiles` grid, or falls back to an ol/ul.
+const discover = (cards: Element[]) => {
   const containers = new Set<Element>();
-  for (const tile of tiles) {
+  for (const card of cards) {
     const container =
-      tile.closest('[data-dmid="product-tiles"]') ||
-      tile.closest('ol') ||
-      tile.closest('ul');
+      card.closest('[data-dmid="product-tiles"]') || card.closest('ol') || card.closest('ul');
     if (container) containers.add(container);
   }
-  for (const container of containers) sortContainer(container);
+  return containers;
 };
 
-let sorting = false;
-
-const processTiles = () => {
-  if (sorting) return;
-
-  const tiles = [...document.querySelectorAll('[data-dmid="product-tile"][data-dan]:not([data-nps-done])')];
-  if (!tiles.length) return;
-
-  const promises: Promise<void>[] = [];
-  for (const tile of tiles) {
-    tile.setAttribute('data-nps-done', '1');
-    const productId = tile.getAttribute('data-dan');
-    if (!productId) continue;
-
-    promises.push(
-      fetchScore(productId)
-        .then((scoreData) => {
-          if (!scoreData || Number.isNaN(scoreData.nps)) return;
-          tile.setAttribute('data-nps', String(scoreData.score));
-          injectBadge(tile, scoreData);
-        })
-        .catch(() => {})
-    );
-  }
-
-  if (promises.length) {
-    Promise.all(promises).then(() => {
-      sortTiles(tiles);
-    });
-  }
-};
-
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-const debouncedProcess = () => {
-  clearTimeout(debounceTimer!);
-  debounceTimer = setTimeout(processTiles, 200);
-};
-
-let lastUrl = location.href;
-new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
-    processTiles();
-    return;
-  }
-  debouncedProcess();
-}).observe(document.body, { childList: true, subtree: true });
-
-processTiles();
+setupScoreGrid({
+  cardSelector: '[data-dmid="product-tile"][data-dan]',
+  scoreForCard: (card) => {
+    const productId = card.getAttribute('data-dan');
+    return productId ? fetchScore(productId) : Promise.resolve(null);
+  },
+  placeBadge: (card, badge) => {
+    const rating = card.querySelector('[data-dmid="product-tile-rating"]');
+    const fallback = card.querySelector('[data-dmid="price-infos"]');
+    if (rating) rating.after(badge);
+    else if (fallback) fallback.after(badge);
+  },
+  discover,
+});

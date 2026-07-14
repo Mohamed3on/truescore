@@ -1,16 +1,20 @@
 import { addCommas, el, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
-import { renderVariationCard, type VarDim } from '../shared/variation-table';
+import { renderVariationCard, tallyVariationDims } from '../shared/variation-table';
+import { createIslandShell, buildGauge } from '../shared/score-island';
+import { setupSpaInjector } from '../shared/spa-injector';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { buildReviewCard } from '../shared/review-search';
 import {
   fetchItemScore,
   fetchRecentReviews,
+  fetchTopicReviews,
   fetchVariations,
   listingMeta,
   type EtsyReview,
-  type ItemScore,
   type ListingMeta,
+  type Topic,
 } from '../shared/etsy';
 
 const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -23,10 +27,6 @@ const VARIATION_BATCH = 20;
 const POSTAGE_WARN_RATIO = 0.25;
 
 const throttledFetch = createThrottledFetcher(8);
-
-// 5★ reads as a recommendation and 1★ as a warning; the middle is noise. Same
-// net-sentiment mapping the rest of TrueScore scores on.
-const starScore = (rating: number) => (rating === 5 ? 1 : rating === 1 ? -1 : 0);
 
 const chunk = <T,>(items: T[], size: number): T[][] => {
   const out: T[][] = [];
@@ -60,34 +60,13 @@ const variationsFor = async (meta: ListingMeta, reviews: EtsyReview[]) => {
 };
 
 // One tab per variation dimension (Colour, Size, …), each ranking that
-// dimension's values by net sentiment. A dimension with a single value has
-// nothing to compare, so it earns no tab.
-const buildDims = (reviews: EtsyReview[], variations: Map<number, [string, string][]>): VarDim[] => {
-  const dims = new Map<string, Map<string, { score: number; count: number }>>();
-  for (const review of reviews) {
-    for (const [dim, value] of variations.get(review.transactionId) ?? []) {
-      let values = dims.get(dim);
-      if (!values) dims.set(dim, (values = new Map()));
-      const tally = values.get(value) ?? { score: 0, count: 0 };
-      tally.score += starScore(review.rating);
-      tally.count++;
-      values.set(value, tally);
-    }
-  }
-
-  return [...dims.entries()]
-    .filter(([, values]) => values.size >= 2)
-    .map(([dim, values]) => ({
-      label: dim,
-      rows: [...values.entries()]
-        .map(([label, { score, count }]) => ({
-          label,
-          score,
-          meta: `${count} review${count === 1 ? '' : 's'}`,
-        }))
-        .sort((a, b) => b.score - a.score),
-    }));
-};
+// dimension's values by net sentiment. Etsy keys a review's variations by its
+// transaction id.
+const buildDims = (reviews: EtsyReview[], variations: Map<number, [string, string][]>) =>
+  tallyVariationDims(reviews, {
+    variationsOf: (r) => variations.get(r.transactionId) ?? [],
+    ratingOf: (r) => r.rating,
+  });
 
 const productLd = (): any => {
   for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
@@ -167,52 +146,130 @@ const panelAnchor = (): [Element, InsertPosition] | null => {
   return header ? [header, 'afterend'] : null;
 };
 
-const buildGauge = ({ score, nps, total }: ItemScore) => {
-  const gauge = document.createElement('div');
-  gauge.className = 'ars-gauge';
-  gauge.style.cursor = 'default';
-  gauge.innerHTML = `
-    <div class="ars-gauge-label"><span class="ars-gauge-pct"></span> positive on this item</div>
-    <div class="ars-gauge-track"><div class="ars-gauge-fill"></div></div>
-  `; // safe: no user content in template
-  const tone = npsColor(nps);
-  const pct = gauge.querySelector('.ars-gauge-pct') as HTMLElement;
-  pct.textContent = `${Math.round(nps)}%`;
-  pct.style.color = tone;
-  const fill = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
-  fill.style.cssText = `width:100%;background:${tone};transform:scaleX(${Math.max(0, nps) / 100})`;
+// Etsy tags every review against a fixed aspect vocabulary and pre-tallies the
+// sentiment, so this breakdown is free — it arrives with the score. Show the
+// most-discussed aspects, ordered best → worst so weak spots settle at the
+// bottom where the complaint count flags them.
+const TOPIC_MIN_MENTIONS = 8; // below this an aspect is too thin to trust
+const TOPIC_MAX_ROWS = 7; // keep the panel scannable
 
-  const stats = document.createElement('div');
-  stats.className = 'ars-stats';
-  stats.innerHTML = `
-    <div class="ars-stat"><span class="ars-stat-val"></span><span class="ars-stat-lbl">truescore</span></div>
-    <div class="ars-stat-div"></div>
-    <div class="ars-stat"><span class="ars-stat-val"></span><span class="ars-stat-lbl">item reviews</span></div>
-  `; // safe: no user content in template
-  const [scoreEl, totalEl] = stats.querySelectorAll('.ars-stat-val');
-  scoreEl.textContent = addCommas(score);
-  totalEl.textContent = addCommas(total);
+const TOPIC_SUMMARY_PAGES = 10; // ~80 recent aspect reviews — enough to summarize
 
-  return [gauge, stats];
+const topicNps = (t: Topic) => (t.total ? ((t.pos - t.neg) / t.total) * 100 : 0);
+
+const topicSummaryPrompt = (topic: string) =>
+  `These are Etsy reviews that mention ${topic} for this product. Focus ONLY on what buyers say about ${topic} — ignore unrelated praise or issues. List what they praise and what they complain about regarding ${topic}, most-common first; include a point only if 2+ reviewers make it. If reviewers disagree, surface the tension. End with a one-line verdict on ${topic}.`;
+
+const topicReviewTexts = async (meta: ListingMeta, tag: string): Promise<string[]> => {
+  const pages = await Promise.all(
+    Array.from({ length: TOPIC_SUMMARY_PAGES }, (_, i) =>
+      fetchTopicReviews(throttledFetch, meta, tag, i + 1).catch((): EtsyReview[] => [])
+    )
+  );
+  return [...new Set(pages.flat().map((r) => r.text).filter(Boolean))];
 };
 
-const run = async (meta: ListingMeta) => {
-  const anchor = panelAnchor();
-  if (!anchor || document.querySelector('.ars-wrapper')) return;
+// Lazy: build a topic's detail only when its row is first opened. A scoped
+// summarize widget leads — for a mostly-positive item the raw reviews below are
+// still mostly 5★ (Etsy's "complaints" are negative sentiment inside otherwise
+// glowing reviews), so the summary is what actually extracts them. Then the two
+// most-recent pages as raw reviews, no "load more" control.
+const fillTopicDetail = (detail: HTMLElement, meta: ListingMeta, t: Topic) => {
+  const summaryHost = el('div', 'ars-topic-summary');
+  buildSummarizeWidget({
+    wrapper: summaryHost,
+    cacheKey: `etsy-topic-${meta.listingId}-${t.tag.toLowerCase().replace(/\s+/g, '-')}`,
+    summaryPrompt: topicSummaryPrompt(t.name),
+    fetchReviews: () => topicReviewTexts(meta, t.tag),
+    questionPlaceholder: `Ask about ${t.name.toLowerCase()}…`,
+  });
 
+  const list = el('div', 'ars-search-list');
+  list.appendChild(el('div', 'ars-topic-loading', 'Loading reviews…'));
+  detail.append(summaryHost, list);
+
+  Promise.all([1, 2].map((p) => fetchTopicReviews(throttledFetch, meta, t.tag, p).catch((): EtsyReview[] => [])))
+    .then((pages) => {
+      const reviews = pages.flat().filter((r) => r.text);
+      list.replaceChildren();
+      if (!reviews.length) return list.appendChild(el('div', 'ars-search-empty', 'No reviews to show'));
+      for (const r of reviews) list.appendChild(buildReviewCard({ rating: r.rating, body: r.text, meta: r.date }, []));
+    })
+    .catch(() => list.replaceChildren(el('div', 'ars-search-empty', 'Could not load reviews')));
+};
+
+const renderTopics = (topics: Topic[], meta: ListingMeta): HTMLElement | null => {
+  const shown = topics
+    .filter((t) => t.total >= TOPIC_MIN_MENTIONS)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, TOPIC_MAX_ROWS)
+    .sort((a, b) => topicNps(b) - topicNps(a));
+  if (shown.length < 2) return null; // a single aspect isn't a breakdown
+
+  const box = el('div', 'ars-topics');
+  box.appendChild(el('div', 'ars-topics-title', 'What people mention'));
+
+  let open: HTMLElement | null = null; // one expanded row at a time
+  for (const t of shown) {
+    const nps = topicNps(t);
+    const tone = npsColor(nps);
+
+    const row = el('div', 'ars-topic');
+    const btn = el('button', 'ars-topic-btn') as HTMLButtonElement;
+    btn.type = 'button';
+
+    const name = el('span', 'ars-topic-name');
+    name.appendChild(el('span', 'ars-topic-label', t.name));
+    const sub = el('span', 'ars-topic-sub', `${addCommas(t.total)} mentions`);
+    if (t.neg >= 5 && t.neg / t.total >= 0.1) {
+      sub.appendChild(el('span', 'ars-topic-warn', ` · ${addCommas(t.neg)} complaints`));
+    }
+    name.append(sub);
+
+    const track = el('span', 'ars-topic-track');
+    const fill = el('i', 'ars-topic-fill');
+    fill.style.cssText = `width:${Math.max(0, nps)}%;background:${tone}`;
+    track.appendChild(fill);
+
+    const pct = el('span', 'ars-topic-pct', `${Math.round(nps)}%`);
+    pct.style.color = tone;
+
+    btn.append(name, track, pct);
+    row.appendChild(btn);
+
+    const detail = el('div', 'ars-topic-reviews');
+    detail.style.display = 'none';
+    row.appendChild(detail);
+
+    let loaded = false;
+    btn.addEventListener('click', () => {
+      const isOpen = detail.style.display !== 'none';
+      if (open && open !== detail) {
+        open.style.display = 'none';
+        (open.previousElementSibling as HTMLElement)?.classList.remove('is-open');
+      }
+      open = isOpen ? null : detail;
+      detail.style.display = isOpen ? 'none' : '';
+      btn.classList.toggle('is-open', !isOpen);
+      if (!isOpen && !loaded) {
+        loaded = true;
+        fillTopicDetail(detail, meta, t);
+      }
+    });
+
+    box.appendChild(row);
+  }
+  return box;
+};
+
+const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
   const [score, reviews] = await Promise.all([
     fetchItemScore(throttledFetch, meta.listingId, meta.shopId).catch(() => null),
     recentReviews(meta),
   ]);
-  if (!score && !reviews.length) return;
-  if (document.querySelector('.ars-wrapper')) return; // a late-hydration rerun beat us here
+  if (!score && !reviews.length) return null;
 
-  const wrapper = document.createElement('div');
-  wrapper.className = 'ars-wrapper';
-  const header = document.createElement('div');
-  header.className = 'ars-header';
-  header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence';
-  wrapper.appendChild(header);
+  const wrapper = createIslandShell();
   if (score) wrapper.append(...buildGauge(score));
 
   // Postage rides in the stats row: it belongs to the buying decision the panel
@@ -220,6 +277,13 @@ const run = async (meta: ListingMeta) => {
   let stats = wrapper.querySelector<HTMLElement>('.ars-stats');
   if (!stats) wrapper.appendChild((stats = el('div', 'ars-stats') as HTMLElement));
   attachPostage(stats);
+
+  // Aspect breakdown sits under the headline number: score first, then what
+  // people actually say about it, then which variant, then the AI summary.
+  if (score?.topics?.length) {
+    const topics = renderTopics(score.topics, meta);
+    if (topics) wrapper.appendChild(topics);
+  }
 
   // Variations resolve a beat after the reviews they annotate; hold their place
   // so the summariser below doesn't end up above them.
@@ -235,28 +299,35 @@ const run = async (meta: ListingMeta) => {
       fetchReviews: async () => texts,
     });
   }
-  anchor[0].insertAdjacentElement(anchor[1], wrapper);
+  // Variations resolve a beat after the panel is built; fill the slot once they
+  // land, by which point the injector has the island on screen.
+  if (reviews.length) {
+    variationsFor(meta, reviews)
+      .then((variations) => {
+        const dims = buildDims(reviews, variations);
+        if (!dims.length) return;
+        const card = renderVariationCard(dims, { animate: true });
+        card.style.maxWidth = '100%';
+        card.style.margin = '2px 0 0';
+        variationSlot.appendChild(card);
+      })
+      .catch(() => {});
+  }
 
-  if (!reviews.length) return;
-  const dims = buildDims(reviews, await variationsFor(meta, reviews));
-  if (!dims.length) return;
-
-  const card = renderVariationCard(dims, { animate: true });
-  card.style.maxWidth = '100%';
-  card.style.margin = '2px 0 0';
-  variationSlot.appendChild(card);
+  return wrapper;
 };
 
-const meta = listingMeta();
-if (meta) run(meta).catch(() => {});
-
-// Etsy hydrates the buy box after `document_end`, so the anchor can arrive late.
-// The second run re-reads the cache rather than the network.
-if (meta && !panelAnchor()) {
-  const observer = new MutationObserver(() => {
-    if (!panelAnchor()) return;
-    observer.disconnect();
-    run(meta).catch(() => {});
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
-}
+// Etsy hydrates the buy box after `document_end`, so the anchor arrives late; the
+// injector re-inserts the island once it appears.
+setupSpaInjector<HTMLElement>({
+  match: () => listingMeta(),
+  load: async () => {
+    const meta = listingMeta();
+    return meta ? buildIsland(meta) : null;
+  },
+  inject: (wrapper) => {
+    const anchor = panelAnchor();
+    if (anchor && !document.body.contains(wrapper)) anchor[0].insertAdjacentElement(anchor[1], wrapper);
+  },
+  cleanup: () => document.querySelectorAll('.ars-wrapper').forEach((node) => node.remove()),
+});

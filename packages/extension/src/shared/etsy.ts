@@ -28,12 +28,27 @@ export interface EtsyReview {
   transactionId: number;
   rating: number;
   text: string;
+  date?: string;
+}
+
+// One of Etsy's curated review aspects (Quality, Sizing & Fit, …). Etsy tags
+// every review against a fixed vocabulary and hands back per-aspect sentiment
+// already tallied — a breakdown a star average can't express.
+export interface Topic {
+  tag: string; // the value to filter reviews by (e.g. "Shipping & Packaging")
+  name: string; // display label; Etsy sometimes renames (→ "Delivery & Packaging")
+  total: number; // reviews mentioning this aspect
+  pos: number;
+  neg: number;
 }
 
 export interface ItemScore {
   score: number;
   nps: number;
   total: number;
+  // Rides along in the same histogram response, so the breakdown costs no extra
+  // request. Absent from pre-v2 cache entries — always read defensively.
+  topics: Topic[];
 }
 
 export interface ListingMeta {
@@ -66,7 +81,8 @@ const deepDive = async (
   listingId: string,
   shopId: string,
   page: number,
-  sort: 'Suggested' | 'Recent'
+  sort: 'Suggested' | 'Recent',
+  tagFilters: string[] = []
 ) => {
   const csrf = csrfToken();
   if (!csrf) return null;
@@ -88,7 +104,7 @@ const deepDive = async (
           page,
           sort_option: sort,
           rating_filter: null,
-          tag_filters: [],
+          tag_filters: tagFilters, // an aspect tag narrows to reviews mentioning it, server-side
           review_highlight_transaction_id: null,
           should_lazy_load_images: true,
           should_show_variations: false,
@@ -107,15 +123,26 @@ export const fetchItemScore = async (
   listingId: string,
   shopId: string
 ): Promise<ItemScore | null> => {
-  const key = `nps_etsy_${listingId}`;
+  const key = `nps_etsy_v2_${listingId}`; // v2: entries now also carry topic tags
   const cached = cacheGet(key, SCORE_TTL);
   if (cached) return cached;
 
-  const counts = (await deepDive(fetcher, listingId, shopId, HISTOGRAM_ONLY_PAGE, 'Suggested'))?.ratingCounts;
+  const js = await deepDive(fetcher, listingId, shopId, HISTOGRAM_ONLY_PAGE, 'Suggested');
+  const counts = js?.ratingCounts;
   const total = counts?.All;
   if (!total) return null;
 
-  const result = { ...npsStats(counts['5'] || 0, counts['1'] || 0, total), total };
+  const topics: Topic[] = (js?.tagFilters ?? [])
+    .map((t: any): Topic => ({
+      tag: t.tag,
+      name: t.name || t.tag,
+      total: t.frequency || 0,
+      pos: t.num_pos || 0,
+      neg: t.num_neg || 0,
+    }))
+    .filter((t: Topic) => t.tag && t.total > 0);
+
+  const result = { ...npsStats(counts['5'] || 0, counts['1'] || 0, total), total, topics };
   cacheSet(key, result);
   return result;
 };
@@ -130,6 +157,25 @@ export const fetchRecentReviews = async (
     transactionId: r.transactionId,
     rating: r.reviewInfo?.rating ?? 0,
     text: (r.reviewContent?.reviewText ?? '').trim(),
+  }));
+};
+
+// Reviews that mention one aspect tag, filtered server-side so this spans every
+// matching review. Sorted newest-first, not by 'Suggested': Etsy's relevance
+// order leads with glowing 5★ reviews and buries the complaints — and an
+// aspect's complaints are exactly what the reader clicked in to find.
+export const fetchTopicReviews = async (
+  fetcher: Fetcher,
+  { listingId, shopId }: ListingMeta,
+  tag: string,
+  page = 1
+): Promise<EtsyReview[]> => {
+  const js = await deepDive(fetcher, listingId, shopId, page, 'Recent', [tag]);
+  return (js?.reviews ?? []).map((r: any) => ({
+    transactionId: r.transactionId,
+    rating: r.reviewInfo?.rating ?? 0,
+    text: (r.reviewContent?.reviewText ?? '').trim(),
+    date: r.reviewInfo?.reviewDate ?? '',
   }));
 };
 

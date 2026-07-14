@@ -1,6 +1,7 @@
-import { addCommas, npsColor, npsStats } from '../shared/utils';
+import { npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
+import { setupScoreGrid, containersBySelector } from '../shared/score-grid';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const CONTAINERS = 'ul.product-grid, ul.carousel-slides-wrapper';
@@ -36,30 +37,9 @@ const fetchScore = async (sku: string, productId: string) => {
   return result;
 };
 
-const injectBadge = (card: Element, { score, nps }: { score: number; nps: number }) => {
-  const target = card.querySelector('.review__fullstars__votes');
-  if (!target) return;
-  const badge = document.createElement('span');
-  badge.style.cssText = `color:${npsColor(nps)};font-weight:600;font-size:12px;margin-left:6px`;
-  badge.textContent = `${addCommas(score)} (${Math.round(nps)}%)`;
-  target.after(badge);
-};
-
-let sorting = false;
-
-const sortGrid = () => {
-  for (const grid of document.querySelectorAll(CONTAINERS)) {
-    const items = [...grid.children].map(li => {
-      const val = li.querySelector('[data-nps]')?.getAttribute('data-nps');
-      return { li, score: val != null ? parseFloat(val) : -Infinity };
-    });
-    items.sort((a, b) => b.score - a.score);
-    sorting = true;
-    for (const { li } of items) grid.appendChild(li);
-    sorting = false;
-  }
-};
-
+// Decathlon lists the same product once per colourway; hide the repeats so the
+// grid ranks distinct products. This is genuinely per-site (one grid does it),
+// so it stays here with its own observer rather than in the shared ranker.
 const dedupGrid = () => {
   const seen = new Set<string>();
   for (const li of document.querySelectorAll(`:is(${CONTAINERS}) > li`)) {
@@ -72,35 +52,23 @@ const dedupGrid = () => {
   }
 };
 
-const processNewCards = () => {
-  if (sorting) return;
-  const cards = document.querySelectorAll(`${CARD}:not([data-nps-done])`);
-  if (!cards.length) return;
-
-  const promises: Promise<void>[] = [];
-  for (const card of cards) {
-    card.setAttribute('data-nps-done', '1');
+setupScoreGrid({
+  cardSelector: CARD,
+  scoreForCard: (card) => {
     const link = card.querySelector(LINK);
-    if (!link) continue;
-    const ids = extractDecathlonIds(link.getAttribute('href')!);
-    if (!ids) continue;
-    promises.push(
-      fetchScore(ids.sku, ids.productId).then((data) => {
-        if (data && !isNaN(data.nps)) {
-          card.setAttribute('data-nps', data.score);
-          injectBadge(card, data);
-        }
-      }).catch(() => {})
-    );
-  }
-  if (promises.length) Promise.all(promises).then(sortGrid);
-};
+    const ids = link && extractDecathlonIds(link.getAttribute('href')!);
+    return ids ? fetchScore(ids.sku, ids.productId) : Promise.resolve(null);
+  },
+  placeBadge: (card, badge) => {
+    card.querySelector('.review__fullstars__votes')?.after(badge);
+  },
+  discover: containersBySelector(CONTAINERS),
+});
 
-let frame: number;
-const schedule = () => {
-  cancelAnimationFrame(frame);
-  frame = requestAnimationFrame(() => { dedupGrid(); processNewCards(); });
+let dedupFrame: number;
+const scheduleDedup = () => {
+  cancelAnimationFrame(dedupFrame);
+  dedupFrame = requestAnimationFrame(dedupGrid);
 };
-
-schedule();
-new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+scheduleDedup();
+new MutationObserver(scheduleDedup).observe(document.body, { childList: true, subtree: true });
