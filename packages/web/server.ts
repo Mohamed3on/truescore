@@ -550,8 +550,11 @@ Bun.serve({
             }
           }
           // Still nothing — harvest persistently in the background and have the client re-poll.
+          // Bind just the name, not the whole entry, so the ~minute-long warm closure
+          // doesn't pin the cached review arrays for its lifetime.
+          const name = entry.name;
           void warmChipsInflight.run(featureId, () =>
-            warmChips(featureId, entry.name).catch((e) => console.error(`[warm-chips] ${entry.name} (${featureId}):`, e)));
+            warmChips(featureId, name).catch((e) => console.error(`[warm-chips] ${name} (${featureId}):`, e)));
           return json({ pending: true } satisfies HighlightsResponse, 202);
         } catch (e) {
           const entry = featureId ? cache.get(featureId) : null;

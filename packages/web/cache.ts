@@ -26,7 +26,7 @@ export type CacheEntry = {
   // When the last background chip-warm completed (success or give-up). With an
   // empty chipMeta it marks a place as recently-confirmed topic-less, so we
   // don't re-harvest on every poll. See chipWarmedEmpty.
-  chipWarmAt?: number;
+  chipWarmTs?: number;
   highlightSummaries?: Record<string, Summary>; // keyed by token
   searches?: Record<string, SearchResult>; // keyed by lowercase query
   histogram?: number[];
@@ -200,7 +200,7 @@ export const cache = {
   async recordChipWarm(featureId: string, chips: ChipMeta[]) {
     const existing = store.get(featureId);
     if (!existing) return;
-    const next: CacheEntry = { ...existing, chipWarmAt: Date.now() };
+    const next: CacheEntry = { ...existing, chipWarmTs: Date.now() };
     if (chips.length) next.chipMeta = chips;
     persist(featureId, next);
   },
@@ -208,7 +208,7 @@ export const cache = {
   // genuinely topic-less rather than harvesting again on every poll. Cleared
   // naturally once a warm does cache chips (chipMeta becomes non-empty).
   chipWarmedEmpty(entry: CacheEntry): boolean {
-    return !entry.chipMeta?.length && entry.chipWarmAt != null && Date.now() - entry.chipWarmAt < CHIP_WARM_TTL_MS;
+    return !entry.chipMeta?.length && entry.chipWarmTs != null && Date.now() - entry.chipWarmTs < CHIP_WARM_TTL_MS;
   },
   async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta; chips?: ChipMeta[] }) {
     const existing = store.get(featureId);
