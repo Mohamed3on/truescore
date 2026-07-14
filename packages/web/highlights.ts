@@ -2,44 +2,31 @@ import { chipsFromPreview, statsForReviews, type Chip, type ChipMeta } from '@tr
 import { fetchPlacePreview } from './browser';
 import { fetchAllForToken } from './gmaps';
 
-const HARVEST_ATTEMPTS = 3;
-const HARVEST_DELAY_MS = 400;
+const HARVEST_CONCURRENCY = 5;
+const HARVEST_ROUNDS = 3;
 
-// Google's /maps/preview/place RPC sometimes serves a place page without the
-// chip block at all (geo / A-B bucket dependent). Decodo rotates exit IPs per
-// request, so each retry usually lands in a different bucket.
+// Google's /maps/preview/place RPC populates the review-topic chip slot
+// ([6][153][0]) in only ~15-20% of responses — most come back with the slot
+// null or empty, independently per request (Decodo rotates the exit IP each
+// fetch). The slot location is stable; it's just intermittently unfilled. So
+// rather than a few sequential retries — which at that rate give up >50% of the
+// time — fire a small parallel batch each round and take the first populated
+// result. One round-trip of latency instead of N, and reliability compounds
+// with the shot count (miss rate ≈ 0.85^shots). Runs once per place: a success
+// is cached (entry.highlights), so this cost isn't paid on repeat requests.
 export async function harvestTokens(placeUrl: string): Promise<ChipMeta[]> {
-  for (let attempt = 0; attempt < HARVEST_ATTEMPTS; attempt++) {
-    const preview = await fetchPlacePreview(placeUrl);
-    const chips = chipsFromPreview(preview);
-    if (chips.length) return chips;
-    const shape = describePreviewShape(preview);
-    if (attempt < HARVEST_ATTEMPTS - 1) {
-      console.warn(`[harvestTokens] preview returned 0 chips, retry ${attempt + 1}/${HARVEST_ATTEMPTS - 1} — shape=${shape} url=${placeUrl}`);
-      await Bun.sleep(HARVEST_DELAY_MS);
-    } else {
-      console.warn(`[harvestTokens] preview returned 0 chips, giving up — shape=${shape} url=${placeUrl}`);
-    }
+  for (let round = 1; round <= HARVEST_ROUNDS; round++) {
+    const batch = await Promise.all(
+      Array.from({ length: HARVEST_CONCURRENCY }, () =>
+        fetchPlacePreview(placeUrl).then(chipsFromPreview).catch(() => [] as ChipMeta[])),
+    );
+    const hit = batch.find((chips) => chips.length);
+    if (hit) return hit;
+    const shots = HARVEST_CONCURRENCY * round;
+    const tail = round === HARVEST_ROUNDS ? ', giving up' : `, round ${round}/${HARVEST_ROUNDS}`;
+    console.warn(`[harvestTokens] 0 chips from ${shots} parallel shots${tail} — url=${placeUrl}`);
   }
   return [];
-}
-
-// When chipsFromPreview returns nothing, the RPC payload could be (a) the
-// chip slot simply absent, (b) chips present but malformed, or (c) the whole
-// preview struct missing. Surface enough shape info to tell these apart in
-// logs without dumping the full JSON.
-function describePreviewShape(preview: unknown): string {
-  if (!preview || typeof preview !== 'object') return `not-object(${typeof preview})`;
-  const root = preview as any;
-  const place = root?.[6];
-  if (!place) return 'no-data[6]';
-  const placeKeys = Object.keys(place).slice(0, 8).join(',');
-  const chipSlot = place?.[153];
-  if (chipSlot === undefined) return `no-data[6][153] keys=[${placeKeys}]`;
-  if (!Array.isArray(chipSlot)) return `data[6][153] not array (${typeof chipSlot})`;
-  const chipList = chipSlot?.[0];
-  if (!Array.isArray(chipList)) return `data[6][153][0] not array (${typeof chipList})`;
-  return `data[6][153][0] empty array (len=${chipList.length})`;
 }
 
 export async function scoreHighlight(featureId: string, chip: ChipMeta): Promise<Chip> {
