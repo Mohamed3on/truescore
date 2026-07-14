@@ -28,7 +28,7 @@ import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, star
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
-import { harvestTokens, scoreHighlight } from './highlights';
+import { harvestTokens, harvestQuick, scoreHighlight } from './highlights';
 import { cache, type CacheEntry } from './cache';
 import { logEvent } from './events';
 import { createInflight } from './inflight';
@@ -105,6 +105,20 @@ const PORT = Number(process.env.PORT || 3000);
 const previewInflight = createInflight<PreviewBundle>();
 const revalidateInflight = createInflight<void>();
 const highlightsRecomputeInflight = createInflight<void>();
+const warmChipsInflight = createInflight<void>();
+
+// The preview RPC serves a place's topic chips only ~15-20% of the time, at
+// random per request — but the tokens are stable, so harvesting persistently in
+// the background eventually catches a populated response and caches it for good.
+// The /api/highlights request path returns `pending` and the client re-polls;
+// this fills chipMeta so a later poll streams. Single-flight per place (bounded
+// inside harvestTokens); an empty result is recorded too, marking the place
+// topic-less so we stop re-warming it.
+async function warmChips(featureId: string, name: string): Promise<void> {
+  const chips = await harvestTokens(mapsUrlFor(featureId));
+  await cache.recordChipWarm(featureId, chips);
+  console.log(`[warm-chips] ${name} (${featureId}): ${chips.length ? `cached ${chips.length} chips` : 'no chips after warm — marked topic-less'}`);
+}
 
 const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
 
@@ -521,12 +535,24 @@ Bun.serve({
           if (!entry) return json({ error: 'look up the place first' }, 404);
           if (entry.highlights && !body.force) return json({ highlights: entry.highlights, cached: true } satisfies HighlightsResponse);
           const url = mapsUrlFor(featureId);
-          const chips = await chipsFor(featureId);
-          if (!chips.length) {
-            console.warn(`[highlights] ${entry.name} (${featureId}): preview returned no chips after retries — ${url}`);
-            return json({ error: "Google didn't return any topic chips for this place" }, 404);
+
+          // Chips already in hand (a prior harvest, or the lookup's preview) — score + stream.
+          if (entry.chipMeta?.length) return streamHighlights(entry.name, featureId, url, entry.chipMeta);
+          // A recent background warm came back empty → the place genuinely has no topics.
+          if (cache.chipWarmedEmpty(entry)) return json({ error: "Google didn't return any topic chips for this place" }, 404);
+
+          // Fast path: one quick harvest round (skip if a background warm is already running).
+          if (!warmChipsInflight.peek(featureId)) {
+            const chips = await harvestQuick(url);
+            if (chips.length) {
+              await cache.recordChipWarm(featureId, chips);
+              return streamHighlights(entry.name, featureId, url, chips);
+            }
           }
-          return streamHighlights(entry.name, featureId, url, chips);
+          // Still nothing — harvest persistently in the background and have the client re-poll.
+          void warmChipsInflight.run(featureId, () =>
+            warmChips(featureId, entry.name).catch((e) => console.error(`[warm-chips] ${entry.name} (${featureId}):`, e)));
+          return json({ pending: true } satisfies HighlightsResponse, 202);
         } catch (e) {
           const entry = featureId ? cache.get(featureId) : null;
           console.error(`[highlights] ${entry?.name ?? '?'} (${featureId || '?'}):`, e);

@@ -70,7 +70,10 @@ export type LookupEvent =
   | { type: 'error'; error: string };
 
 // ---- /api/highlights (NDJSON stream, or JSON on cache hit) ----
-export type HighlightsResponse = { highlights?: Chip[]; cached?: boolean; error?: string };
+// `pending` (HTTP 202): topic chips aren't cached yet and the server is
+// harvesting them in the background (the preview RPC only serves them
+// intermittently) — the client re-polls until they arrive or it 404s.
+export type HighlightsResponse = { highlights?: Chip[]; cached?: boolean; pending?: boolean; error?: string };
 export type HighlightEvent =
   | { type: 'chips'; chips: ChipMeta[] }
   | { type: 'chip'; highlight: Chip }

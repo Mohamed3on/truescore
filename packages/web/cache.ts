@@ -4,6 +4,9 @@ import type { Summary } from './llm';
 import type { Chip, ChipMeta, PlaceMeta } from '@truescore/gmaps-shared';
 
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
+// How long a background chip-warm that came back empty is trusted as "this place
+// genuinely has no topic chips" before we bother harvesting again.
+const CHIP_WARM_TTL_MS = 6 * 60 * 60 * 1000;
 
 export type CacheEntry = {
   name: string;
@@ -20,6 +23,10 @@ export type CacheEntry = {
   // Unscored topic chips harvested from the preview RPC. Cached so /api/highlights
   // can score them without a second preview fetch. Last non-empty set wins.
   chipMeta?: ChipMeta[];
+  // When the last background chip-warm completed (success or give-up). With an
+  // empty chipMeta it marks a place as recently-confirmed topic-less, so we
+  // don't re-harvest on every poll. See chipWarmedEmpty.
+  chipWarmAt?: number;
   highlightSummaries?: Record<string, Summary>; // keyed by token
   searches?: Record<string, SearchResult>; // keyed by lowercase query
   histogram?: number[];
@@ -186,6 +193,22 @@ export const cache = {
         await this.putHighlightSummary(featureId, token, summary);
       }
     }
+  },
+  // Record a background chip-warm outcome: cache the harvested set (stable
+  // tokens) and stamp the attempt time. An empty result stamps the time only,
+  // so chipWarmedEmpty can suppress re-harvesting a topic-less place for a while.
+  async recordChipWarm(featureId: string, chips: ChipMeta[]) {
+    const existing = store.get(featureId);
+    if (!existing) return;
+    const next: CacheEntry = { ...existing, chipWarmAt: Date.now() };
+    if (chips.length) next.chipMeta = chips;
+    persist(featureId, next);
+  },
+  // True when a recent background warm found no chips — treat the place as
+  // genuinely topic-less rather than harvesting again on every poll. Cleared
+  // naturally once a warm does cache chips (chipMeta becomes non-empty).
+  chipWarmedEmpty(entry: CacheEntry): boolean {
+    return !entry.chipMeta?.length && entry.chipWarmAt != null && Date.now() - entry.chipWarmAt < CHIP_WARM_TTL_MS;
   },
   async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta; chips?: ChipMeta[] }) {
     const existing = store.get(featureId);

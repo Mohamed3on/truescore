@@ -545,9 +545,30 @@ async function runSearch(query: string, force = false) {
   }
 }
 
-async function loadHighlights(force = false) {
+// The server harvests a cold place's topic chips in the background (the preview
+// RPC only serves them intermittently) and answers 202 `pending` in the
+// meantime. Re-poll a bounded number of times until the chips arrive or it 404s.
+let highlightsRepolls = 0;
+let highlightsPollTimer: ReturnType<typeof setTimeout> | null = null;
+const HIGHLIGHTS_MAX_REPOLLS = 12;
+const HIGHLIGHTS_REPOLL_MS = 3500;
+
+function scheduleHighlightsRepoll(featureId: string) {
+  if (highlightsRepolls >= HIGHLIGHTS_MAX_REPOLLS) { highlightsPollTimer = null; highlightsRow.hidden = true; return; }
+  highlightsRepolls++;
+  highlightsPollTimer = setTimeout(() => {
+    highlightsPollTimer = null;
+    if (currentFeatureId === featureId) void loadHighlights(false, true);
+  }, HIGHLIGHTS_REPOLL_MS);
+}
+
+async function loadHighlights(force = false, isRepoll = false) {
   if (!currentFeatureId) return;
-  showHighlightsLoading(force ? 'refreshing…' : 'loading highlights…');
+  if (!isRepoll) {
+    highlightsRepolls = 0;
+    if (highlightsPollTimer) { clearTimeout(highlightsPollTimer); highlightsPollTimer = null; }
+  }
+  showHighlightsLoading(force ? 'refreshing…' : isRepoll ? 'finding topics…' : 'loading highlights…');
   highlightsRefreshBtn.hidden = true;
   try {
     const resp = await fetchWithRetry('/api/highlights', {
@@ -563,7 +584,11 @@ async function loadHighlights(force = false) {
     }
     if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
     const data = await resp.json() as HighlightsResponse;
-    if (!resp.ok) throw new Error(data.error || `request failed (${resp.status})`);
+    if (data.pending) { scheduleHighlightsRepoll(currentFeatureId); return; }
+    if (!resp.ok) {
+      if (resp.status === 404) { highlightsRow.hidden = true; return; } // no topic chips for this place
+      throw new Error(data.error || `request failed (${resp.status})`);
+    }
     if (data.highlights?.length) showHighlights(data.highlights);
     else highlightsRow.hidden = true;
   } catch (e) {
