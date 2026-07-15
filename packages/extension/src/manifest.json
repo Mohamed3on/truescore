@@ -62,6 +62,7 @@
     "*://*.aliexpress.com/*",
     "*://*.aliexpress.us/*",
     "*://bjjfanatics.com/products/*",
+    "*://bjjfanatics.com/*/products/*",
     "https://stamped.io/api/*",
     "*://apps.bazaarvoice.com/*",
     "*://*.goodreads.com/book/show/*",
@@ -202,7 +203,7 @@
       "run_at": "document_end"
     },
     {
-      "matches": ["*://bjjfanatics.com/products/*"],
+      "matches": ["*://bjjfanatics.com/products/*", "*://bjjfanatics.com/*/products/*"],
       "js": ["sites/bjjfanatics-pdp.js"],
       "css": ["sites/amazon-product.css"],
       "run_at": "document_end"
