@@ -40,14 +40,25 @@ export interface Evaluation {
 export const productId = (): string | null =>
   location.pathname.match(/\/item\/(\d+)\.html/)?.[1] ?? null;
 
-const scoreKey = (id: string) => `nps_ali_${id}`;
+// `v2` retires the entries a `totalNum` denominator scored, which would otherwise
+// keep serving their ratio for the length of the TTL.
+const scoreKey = (id: string) => `nps_ali_v2_${id}`;
 
 // `buyerEval` is the share of five stars a review is worth, not a star count:
 // 100 → 5★, 20 → 1★.
 const stars = (buyerEval: number) => Math.round((buyerEval || 0) / 20);
 
+const STAR_NUMS = ['fiveStarNum', 'fourStarNum', 'threeStarNum', 'twoStarNum', 'oneStarNum'];
+
+// `totalNum` counts only the reviews the feed can hand back — the ones carrying a
+// body — while the histogram counts every rating behind the star average. Most
+// items rate and write in the same breath, so the two agree and the difference
+// stays invisible; where they don't, the numerator overruns its denominator and
+// the ratio leaves 1 behind (139 five-star over 37 → 376% positive). Summing the
+// histogram holds both halves to one population — the count AliExpress itself
+// prints beside the stars.
 const itemScore = (stat: any): ItemScore | null => {
-  const total = stat?.totalNum;
+  const total = STAR_NUMS.reduce((sum, field) => sum + (stat?.[field] || 0), 0);
   if (!total) return null;
   return { ...npsStats(stat.fiveStarNum || 0, stat.oneStarNum || 0, total), total };
 };
