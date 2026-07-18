@@ -144,9 +144,11 @@ const aggregate = (
 const buildVariations = (reviews: any[]): HTMLElement | null => {
   if (!reviews?.length) return null;
 
+  // Colour leads: side-by-side doesn't fit (the product column is a fixed 376px),
+  // so the more browsable dimension gets the default tab.
   const dims = [
-    { label: 'Size', rows: aggregate(reviews, (r) => r.purchasedSize, (r) => r.purchasedSize) },
     { label: 'Colour', rows: aggregate(reviews, (r) => colorCode(r.purchasedColorName), (r) => r.purchasedColorName) },
+    { label: 'Size', rows: aggregate(reviews, (r) => r.purchasedSize, (r) => r.purchasedSize) },
   ].filter((d) => d.rows.length >= 2);
 
   if (!dims.length) return null;
