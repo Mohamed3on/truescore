@@ -60,5 +60,7 @@ setupScoreGrid({
   placeBadge: (tile, badge) => {
     tile.querySelector('.fr-ec-rating-static__count-product-tile')?.after(badge);
   },
-  discover: containersBySelector('.fr-ec-product-collection--ecrenewal-grid'),
+  discover: containersBySelector(
+    '.fr-ec-product-collection--ecrenewal-grid, .fr-ec-product-collection--type-grid'
+  ),
 });
