@@ -2,7 +2,7 @@ import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget, llmSummarize, renderFreeFormAnswer } from '../shared/review-summary';
 import { queryTerms, buildReviewCard } from '../shared/review-search';
-import { appendStat, buildRecentGauge, createIslandShell, recentPositiveRatio, trendingScore } from '../shared/score-island';
+import { createIslandShell } from '../shared/score-island';
 
 const STAMPED_API_KEY = '8a204db0-ec09-48cf-baed-db3ca2ef99e6';
 const STAMPED_STORE = 'bjj-fanatics.myshopify.com';
@@ -301,13 +301,7 @@ The conclusion is the most important field — write it like a buying verdict, n
 
 const FILTERED_SUMMARY_PROMPT = `Summarize these BJJ instructional course reviews. Lead with the bottom line — what most reviewers walk away with. Cite specific volumes, parts, chapters, techniques, sweeps, or positions by name when reviewers mention them. Ignore shipping, delivery, packaging, and seller issues — focus only on the course content. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
 
-const renderScoreCard = (
-  wrapper: HTMLElement,
-  score: number,
-  nps: number,
-  total: number,
-  recentRatio: number | null,
-) => {
+const renderScoreCard = (wrapper: HTMLElement, score: number, nps: number, total: number) => {
   const card = document.createElement('a');
   card.className = 'ars-gauge';
   card.href = '#stamped-main-widget';
@@ -335,12 +329,7 @@ const renderScoreCard = (
   reviewsStat.append(el('span', 'ars-stat-val', addCommas(total)), el('span', 'ars-stat-lbl', 'reviews'));
   stats.append(scoreStat, el('div', 'ars-stat-div'), reviewsStat);
 
-  wrapper.appendChild(card);
-  if (recentRatio != null) {
-    wrapper.appendChild(buildRecentGauge(recentRatio));
-    appendStat(stats, addCommas(trendingScore(score, recentRatio)), 'trending');
-  }
-  wrapper.appendChild(stats);
+  wrapper.append(card, stats);
 };
 
 const buildPanel = (
@@ -351,13 +340,7 @@ const buildPanel = (
 ) => {
   const wrapper = createIslandShell();
 
-  // Reviews arrive newest-first (sort=recent); the freshest page is the recent
-  // window.
-  const recentRatio = recentPositiveRatio(
-    bundle.reviews.slice(0, PAGE_SIZE).map((r) => r.reviewRating)
-  );
-
-  renderScoreCard(wrapper, scored.score, scored.nps, scored.total, recentRatio);
+  renderScoreCard(wrapper, scored.score, scored.nps, scored.total);
 
   buildSearchSection(wrapper, bundle);
 
