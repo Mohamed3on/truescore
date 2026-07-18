@@ -208,7 +208,10 @@ const renderInsights = (ratingEl: Element, rating: any, reviews: any[]) => {
   panel.innerHTML = html; // safe: browser extension with controlled data
 
   const variations = buildVariations(reviews);
-  if (variations) panel.appendChild(variations);
+  if (variations) {
+    variations.style.marginTop = '0';
+    panel.prepend(variations);
+  }
 
   const gutter = ratingEl.closest('.gutter-container');
   if (gutter) gutter.after(panel);
