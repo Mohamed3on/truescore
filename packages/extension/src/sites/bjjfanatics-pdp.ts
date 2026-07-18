@@ -352,12 +352,10 @@ const buildPanel = (
   const wrapper = createIslandShell();
 
   // Reviews arrive newest-first (sort=recent); the freshest page is the recent
-  // window. Skipped when every review fits in it — the "recent" score would just
-  // restate the overall one.
-  const recentRatio =
-    bundle.reviews.length > PAGE_SIZE
-      ? recentPositiveRatio(bundle.reviews.slice(0, PAGE_SIZE).map((r) => r.reviewRating))
-      : null;
+  // window.
+  const recentRatio = recentPositiveRatio(
+    bundle.reviews.slice(0, PAGE_SIZE).map((r) => r.reviewRating)
+  );
 
   renderScoreCard(wrapper, scored.score, scored.nps, scored.total, recentRatio);
 
