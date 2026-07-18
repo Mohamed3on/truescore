@@ -2,7 +2,7 @@ import { addCommas, el, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { renderVariationCard, tallyVariationDims } from '../shared/variation-table';
-import { createIslandShell, buildGauge } from '../shared/score-island';
+import { appendStat, buildGauge, buildRecentGauge, createIslandShell, recentPositiveRatio, trendingScore } from '../shared/score-island';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { buildReviewCard } from '../shared/review-search';
@@ -270,12 +270,24 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
   if (!score && !reviews.length) return null;
 
   const wrapper = createIslandShell();
-  if (score) wrapper.append(...buildGauge(score));
+
+  // Overall gauge, then the Amazon-style recent-positive one — `reviews` are the
+  // newest ~104, so their ratings are the trend the histogram can't show.
+  const ratio = recentPositiveRatio(reviews.map((r) => r.rating));
+  if (score) {
+    const [gauge, gaugeStats] = buildGauge(score);
+    wrapper.append(gauge);
+    if (ratio != null) wrapper.append(buildRecentGauge(ratio));
+    wrapper.append(gaugeStats);
+  } else if (ratio != null) {
+    wrapper.append(buildRecentGauge(ratio));
+  }
 
   // Postage rides in the stats row: it belongs to the buying decision the panel
   // is already answering, and the row exists even when there is no score.
   let stats = wrapper.querySelector<HTMLElement>('.ars-stats');
   if (!stats) wrapper.appendChild((stats = el('div', 'ars-stats') as HTMLElement));
+  if (ratio != null && score) appendStat(stats, addCommas(trendingScore(score.score, ratio)), 'trending');
   attachPostage(stats);
 
   // Aspect breakdown sits under the headline number: score first, then what

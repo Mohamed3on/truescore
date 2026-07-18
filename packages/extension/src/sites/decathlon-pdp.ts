@@ -1,9 +1,9 @@
-import { addCommas, npsColor, npsStats } from '../shared/utils';
+import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
-import { createIslandShell } from '../shared/score-island';
+import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, trendingScore } from '../shared/score-island';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -145,13 +145,18 @@ const replaceSizometer = (stats: any) => {
   sizometer.replaceWith(wrapper);
 };
 
-const fetchReviewTexts = async (tld: string, locale: string, sku: string, productId: string): Promise<string[]> => {
-  const reviewsCacheKey = `dkt-reviews-${productId}`;
+interface DktReview { rating: number; text: string }
+
+// The newest ~500 reviews (sortBy=DATE, newest first), each with its 1–5 rating.
+// Rating-only reviews stay in — they count toward the recent gauge even with no
+// prose for the summarizer. `v2`: entries were plain texts before ratings rode along.
+const fetchRecentReviews = async (tld: string, locale: string, sku: string, productId: string): Promise<DktReview[]> => {
+  const reviewsCacheKey = `dkt-reviews-v2-${productId}`;
   const cached = cacheGet(reviewsCacheKey, 86400000);
   if (cached) return cached;
 
   const seen = new Set<string>();
-  const texts: string[] = [];
+  const reviews: DktReview[] = [];
   const results = await Promise.allSettled(
     [0, 1, 2, 3, 4].map(page =>
       fetch(`https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${sku}/product?nbItemsPerPage=100&page=${page}&sortBy=DATE`)
@@ -162,23 +167,51 @@ const fetchReviewTexts = async (tld: string, locale: string, sku: string, produc
     if (result.status !== 'fulfilled' || !result.value?.reviews) continue;
     for (const r of result.value.reviews) {
       const text = [r.title, r.comment].filter(Boolean).join(': ').trim();
-      if (text && !seen.has(text)) { seen.add(text); texts.push(text); }
+      const id = String(r.id ?? '') || text;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      reviews.push({ rating: Number(r.rating?.code) || 0, text });
     }
   }
-  if (texts.length) cacheSet(reviewsCacheKey, texts);
-  return texts;
+  if (reviews.length) cacheSet(reviewsCacheKey, reviews);
+  return reviews;
 };
 
-const addSummarizeUI = (anchor: Element, tld: string, locale: string, sku: string, productId: string) => {
+const addSummarizeUI = (
+  anchor: Element,
+  tld: string,
+  locale: string,
+  sku: string,
+  productId: string,
+  scoreData: { score: number; nps: number } | null
+) => {
   if (document.querySelector('.ars-wrapper')) return;
 
   const wrapper = createIslandShell();
+
+  // Recent-positive gauge, filled once the newest reviews land (one cached
+  // fetch shared with the summarizer), plus the trending/analyzed stats row.
+  const gauge = buildRecentGauge();
+  wrapper.appendChild(gauge);
+  const reviewsPromise = fetchRecentReviews(tld, locale, sku, productId);
+  reviewsPromise
+    .then((reviews) => {
+      const ratio = recentPositiveRatio(reviews.map((r) => r.rating));
+      fillRecentGauge(gauge, ratio);
+      if (ratio == null) return;
+      const stats = el('div', 'ars-stats') as HTMLElement;
+      if (scoreData) appendStat(stats, addCommas(trendingScore(scoreData.score, ratio)), 'trending');
+      appendStat(stats, String(reviews.length), 'analyzed');
+      gauge.after(stats);
+    })
+    .catch(() => fillRecentGauge(gauge, null));
 
   buildSummarizeWidget({
     wrapper,
     cacheKey: `dkt-summary-${productId}`,
     summaryPrompt: PRODUCT_SUMMARY_PROMPT,
-    fetchReviews: () => fetchReviewTexts(tld, locale, sku, productId),
+    fetchReviews: () =>
+      reviewsPromise.then((reviews) => [...new Set(reviews.map((r) => r.text).filter(Boolean))]),
   });
 
   anchor.after(wrapper);
@@ -202,7 +235,7 @@ setupSpaInjector({
     replaceSizometer(stats);
     if (stats.count >= 5 && !document.querySelector('.ars-wrapper')) {
       const anchor = document.querySelector('.nps-insights') || productInfo.querySelector('.product-info__description') || productInfo;
-      addSummarizeUI(anchor, site.tld, site.locale, ids.sku, ids.productId);
+      addSummarizeUI(anchor, site.tld, site.locale, ids.sku, ids.productId, scoreData);
     }
   },
   cleanup: () => {

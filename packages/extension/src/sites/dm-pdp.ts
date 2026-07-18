@@ -2,7 +2,7 @@ import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { setupSpaInjector } from '../shared/spa-injector';
-import { createIslandShell } from '../shared/score-island';
+import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, trendingScore } from '../shared/score-island';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const API_BASE = 'https://apps.bazaarvoice.com/bfd/v1/clients/dm-de/api-products/cv2/resources/data/reviews.json';
@@ -147,18 +147,6 @@ const fetchReviews = async (productId: string, totalCount = REVIEWS_PAGE * REVIE
 };
 
 const reviewTexts = (reviews: DmReview[]) => reviews.map((r) => r.text);
-
-// Amazon's "% recent positive": NPS over the most-recent reviews — (5★ − 1★) / count.
-const recentPositiveRatio = (reviews: DmReview[]): number | null => {
-  if (!reviews.length) return null;
-  let five = 0;
-  let one = 0;
-  for (const r of reviews) {
-    if (r.rating === 5) five++;
-    else if (r.rating === 1) one++;
-  }
-  return (five - one) / reviews.length;
-};
 
 const getScoreFromStats = (stats: any) => {
   const dist = stats?.RatingDistribution;
@@ -372,12 +360,7 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
   const wrapper = createIslandShell();
 
   // Recent-positive gauge — placeholder now, filled once recent reviews load.
-  const gauge = document.createElement('div');
-  gauge.className = 'ars-gauge';
-  gauge.style.cursor = 'default';
-  gauge.innerHTML = `
-    <div class="ars-gauge-label"><span class="ars-gauge-pct">—</span> recent positive <span class="ars-scan-spinner" data-ars="scanning"></span></div>
-    <div class="ars-gauge-track"><div class="ars-gauge-fill" style="transform:scaleX(0)"></div></div>`;
+  const gauge = buildRecentGauge();
   wrapper.appendChild(gauge);
 
   appendInsights(wrapper, stats, scoreData);
@@ -392,33 +375,19 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
   }
 
   // Fill the recent-positive gauge from the most-recent reviews (shares the cache
-  // with summarize, so it's one fetch per product). Drop the gauge if none load.
-  const stopScan = () => {
-    const sp = gauge.querySelector('[data-ars="scanning"]');
-    if (sp) {
-      sp.classList.add('ars-scan-done');
-      sp.addEventListener('animationend', () => sp.remove(), { once: true });
-    }
-  };
+  // with summarize, so it's one fetch per product). Drop the gauge if none load;
+  // land the trending stat (score damped by the recent ratio) beside the others.
   if (total > 0 && productId) {
     fetchReviews(productId, total)
       .then((reviews) => {
-        stopScan();
-        const ratio = recentPositiveRatio(reviews);
-        if (ratio == null) return gauge.remove();
-        const pct = Math.round(ratio * 100);
-        const color = npsColor(pct);
-        const pctEl = gauge.querySelector('.ars-gauge-pct') as HTMLElement;
-        pctEl.textContent = `${pct}%`;
-        pctEl.style.color = color;
-        const fill = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
-        fill.style.background = color;
-        fill.style.transform = `scaleX(${Math.max(0, Math.min(1, ratio))})`;
+        const ratio = recentPositiveRatio(reviews.map((r) => r.rating));
+        fillRecentGauge(gauge, ratio);
+        if (ratio != null && scoreData) {
+          const row = wrapper.querySelector<HTMLElement>('.ars-stats');
+          if (row) appendStat(row, addCommas(trendingScore(scoreData.score, ratio)), 'trending');
+        }
       })
-      .catch(() => {
-        stopScan();
-        gauge.remove();
-      });
+      .catch(() => fillRecentGauge(gauge, null));
   } else {
     gauge.remove();
   }

@@ -1,9 +1,9 @@
-import { addCommas, npsColor, npsStats } from '../shared/utils';
+import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
-import { createIslandShell } from '../shared/score-island';
+import { appendStat, buildRecentGauge, createIslandShell, recentPositiveRatio, trendingScore } from '../shared/score-island';
 
 // Uniqlo reviews are overwhelmingly about fit, fabric, and sizing, so nudge those
 // to the front as actionable buying tips rather than leaving them buried.
@@ -226,10 +226,27 @@ const reviewTexts = (reviews: any[]): string[] => {
   return texts;
 };
 
-const addSummarizeUI = (ratingEl: Element, productId: string, texts: string[]) => {
+const addSummarizeUI = (
+  ratingEl: Element,
+  productId: string,
+  texts: string[],
+  reviews: any[],
+  scoreData: { score: number; nps: number } | null
+) => {
   if (document.querySelector('.ars-wrapper')) return;
 
   const wrapper = createIslandShell();
+
+  // The reviews arrive newest-first (sort=submission_time), so they carry the
+  // Amazon-style recent-positive gauge and the trending score it damps.
+  const ratio = recentPositiveRatio(reviews.map((r) => r.rate));
+  if (ratio != null) {
+    wrapper.appendChild(buildRecentGauge(ratio));
+    const stats = el('div', 'ars-stats') as HTMLElement;
+    if (scoreData) appendStat(stats, addCommas(trendingScore(scoreData.score, ratio)), 'trending');
+    appendStat(stats, String(reviews.length), 'analyzed');
+    wrapper.appendChild(stats);
+  }
 
   buildSummarizeWidget({
     wrapper,
@@ -267,7 +284,7 @@ setupSpaInjector({
     }
     const texts = reviewTexts(reviews);
     if (texts.length >= 5 && !document.querySelector('.ars-wrapper')) {
-      addSummarizeUI(ratingEl, productId, texts);
+      addSummarizeUI(ratingEl, productId, texts, reviews, scoreData);
     }
   },
   cleanup: () => {
