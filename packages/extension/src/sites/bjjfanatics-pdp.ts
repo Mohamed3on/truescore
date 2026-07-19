@@ -1,7 +1,7 @@
 import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
-import { buildSummarizeWidget, llmSummarize, renderFreeFormAnswer } from '../shared/review-summary';
-import { queryTerms, buildReviewCard } from '../shared/review-search';
+import { buildSummarizeWidget } from '../shared/review-summary';
+import { buildSearchSection } from '../shared/review-search';
 import { createIslandShell } from '../shared/score-island';
 
 const STAMPED_API_KEY = '8a204db0-ec09-48cf-baed-db3ca2ef99e6';
@@ -127,163 +127,12 @@ const reviewToText = (r: StampedReview): string => {
   return [meta && `[${meta}]`, head].filter(Boolean).join(' ').trim();
 };
 
-const reviewHaystack = (r: StampedReview) =>
-  [r.reviewTitle, r.reviewMessage, ...(r.reviewOptionsList || []).map(o => o.value)]
-    .filter(Boolean).join(' ').toLowerCase();
-
-// `terms` are lowercased OR-terms (from queryTerms); a review matches if its
-// text contains ANY of them.
-const matchesTerms = (r: StampedReview, terms: string[]) => {
-  const h = reviewHaystack(r);
-  return terms.some(t => h.includes(t));
-};
-
-const MAX_RENDERED_RESULTS = 50;
-const SEARCH_DEBOUNCE_MS = 120;
-
 const cardFields = (r: StampedReview) => ({
   rating: r.reviewRating,
   title: r.reviewTitle,
   body: r.reviewMessage,
   meta: (r.reviewOptionsList || []).map(o => o.value).filter(Boolean).join(' · '),
 });
-
-const buildSearchSection = (wrapper: HTMLElement, bundle: ReviewBundle) => {
-  const section = el('div', 'ars-search-section');
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'ars-search-input';
-  input.placeholder = `Search ${addCommas(bundle.reviews.length)} reviews… (e.g. "guard OR mount")`;
-  section.appendChild(input);
-
-  const header = el('div', 'ars-search-header');
-  header.style.display = 'none';
-  const scoreChip = el('span', 'ars-search-score');
-  const summary = el('span', 'ars-search-summary');
-  const sumBtn = el('button', 'ars-summarize-btn ars-search-sum-btn', '✦ Summarize') as HTMLButtonElement;
-  sumBtn.type = 'button';
-  header.append(scoreChip, summary, sumBtn);
-  section.appendChild(header);
-
-  const sumPanel = el('div', 'ars-summary-panel ars-search-sum-panel');
-  sumPanel.style.display = 'none';
-  section.appendChild(sumPanel);
-
-  const list = el('div', 'ars-search-list');
-  list.style.display = 'none';
-  section.appendChild(list);
-
-  const summaryCache = new Map<string, string>();
-  let timer: number | null = null;
-  let currentQuery = '';
-
-  const hideSummary = () => {
-    sumPanel.style.display = 'none';
-    sumPanel.textContent = '';
-    sumBtn.disabled = false;
-    sumBtn.textContent = '✦ Summarize';
-  };
-
-  const renderCached = (query: string, text: string) => {
-    sumPanel.style.display = 'block';
-    renderFreeFormAnswer(sumPanel, text);
-    sumBtn.disabled = false;
-    sumBtn.textContent = `Re-summarize "${query}"`;
-  };
-
-  sumBtn.addEventListener('click', async () => {
-    const query = currentQuery;
-    if (!query) return;
-    const matches = bundle.reviews.filter(r => matchesTerms(r, queryTerms(query)));
-    const texts = matches.map(reviewToText).filter(Boolean);
-    if (!texts.length) {
-      sumPanel.style.display = 'block';
-      sumPanel.textContent = 'No review text to summarize';
-      return;
-    }
-    sumBtn.disabled = true;
-    sumBtn.textContent = '⏳ Summarizing…';
-    sumPanel.style.display = 'block';
-    sumPanel.textContent = 'Summarizing…';
-    try {
-      const text = await llmSummarize(texts, FILTERED_SUMMARY_PROMPT, null);
-      summaryCache.set(query.toLowerCase(), text);
-      if (currentQuery !== query) return;
-      renderCached(query, text);
-    } catch (e: any) {
-      sumPanel.textContent = `Error: ${e.message || 'Summarization failed'}`;
-      sumBtn.disabled = false;
-      sumBtn.textContent = `Retry "${query}"`;
-    }
-  });
-
-  const render = () => {
-    const raw = input.value.trim();
-    const q = raw.toLowerCase();
-    currentQuery = raw;
-    if (!q) {
-      header.style.display = 'none';
-      list.style.display = 'none';
-      hideSummary();
-      return;
-    }
-    const terms = queryTerms(raw);
-    const matches = bundle.reviews.filter(r => matchesTerms(r, terms));
-
-    header.style.display = '';
-    list.style.display = '';
-    summary.textContent = '';
-    summary.append(
-      el('span', 'ars-search-count', addCommas(matches.length)),
-      document.createTextNode(` of ${addCommas(bundle.reviews.length)} reviews mention "${raw}"`),
-    );
-
-    const scored = matches.length ? computeScore({ total: matches.length, reviews: matches }) : null;
-    if (scored) {
-      const pct = Math.round(scored.nps);
-      scoreChip.textContent = `${pct}%`;
-      scoreChip.style.color = npsColor(scored.nps);
-      scoreChip.style.display = '';
-    } else {
-      scoreChip.style.display = 'none';
-    }
-
-    sumBtn.disabled = matches.length === 0;
-    const cached = summaryCache.get(q);
-    if (cached) renderCached(raw, cached);
-    else hideSummary();
-    if (matches.length) sumBtn.textContent = cached ? `Re-summarize "${raw}"` : `✦ Summarize "${raw}"`;
-
-    list.textContent = '';
-    if (!matches.length) {
-      list.appendChild(el('div', 'ars-search-empty', 'No matching reviews'));
-      return;
-    }
-    const shown = matches.slice(0, MAX_RENDERED_RESULTS);
-    for (const r of shown) list.appendChild(buildReviewCard(cardFields(r), terms));
-    if (matches.length > shown.length) {
-      list.appendChild(el('div', 'ars-search-truncated',
-        `Showing first ${shown.length} — refine the search to see more.`));
-    }
-  };
-
-  input.addEventListener('input', () => {
-    if (timer != null) clearTimeout(timer);
-    timer = setTimeout(render, SEARCH_DEBOUNCE_MS) as unknown as number;
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
-      e.preventDefault();
-      e.stopPropagation();
-      input.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      input.focus();
-      input.select();
-    }
-  }, true);
-
-  wrapper.appendChild(section);
-};
 
 const SUMMARY_PROMPT = `Analyze these reviews of a BJJ instructional course. Ignore shipping, delivery, packaging, or seller issues — focus ONLY on the course content and instruction.
 
@@ -342,7 +191,14 @@ const buildPanel = (
 
   renderScoreCard(wrapper, scored.score, scored.nps, scored.total);
 
-  buildSearchSection(wrapper, bundle);
+  buildSearchSection({
+    wrapper,
+    reviews: bundle.reviews,
+    fields: cardFields,
+    toText: reviewToText,
+    summaryPrompt: FILTERED_SUMMARY_PROMPT,
+    exampleQuery: 'guard OR mount',
+  });
 
   buildSummarizeWidget({
     wrapper,

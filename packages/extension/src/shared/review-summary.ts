@@ -12,6 +12,10 @@ betterAlternative: only if 2+ reviewers name a specific competing product, give 
 
 conclusion: 2–4 sentences — the overall verdict: what owners consistently say, who it suits best or the main thing to watch out for, and whether it's good value when reviewers mention price. Don't just restate the bullets, and don't mention what reviewers didn't say.`;
 
+// Free-form prompt for summarizing a searched subset of product reviews
+// (the review-search section's "Summarize <query>" pass).
+export const FILTERED_PRODUCT_SUMMARY_PROMPT = `Summarize what these product reviews say about the searched topic. Lead with the bottom line. Ignore shipping, delivery, packaging, or seller issues — focus only on the product itself. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
+
 // The model is told to leave betterAlternative empty when no competitor is named,
 // but it sometimes ignores that and writes a sentence explaining the absence instead
 // ("no distinct competitor is named", "cannot be reliably inferred"). Those aren't

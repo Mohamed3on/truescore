@@ -1,8 +1,12 @@
-import { addCommas, npsColor, npsStats } from '../shared/utils';
+import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
+import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { buildSearchSection } from '../shared/review-search';
 import { setupSpaInjector } from '../shared/spa-injector';
+import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, trendingScore } from '../shared/score-island';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+const CLIENT_ID = 'a1047798-0fc4-446e-9616-0afe3256d0d7';
 
 const getLocale = () => {
   const parts = location.pathname.split('/').filter(Boolean);
@@ -21,7 +25,7 @@ const fetchRating = async (country: string, lang: string, itemNo: string) => {
   if (cached) return cached;
   const res = await fetch(
     `https://web-api.ikea.com/tugc/public/v5/rating/${country}/${lang}/${itemNo}`,
-    { headers: { 'x-client-id': 'a1047798-0fc4-446e-9616-0afe3256d0d7' } }
+    { headers: { 'x-client-id': CLIENT_ID } }
   );
   if (!res.ok) return null;
   const json = await res.json();
@@ -90,9 +94,104 @@ const buildInsightsPanel = (data: any) => {
   return host;
 };
 
+interface IkeaReview { rating: number; title: string; body: string; date: string }
+
+const reviewToText = (r: IkeaReview): string => [r.title, r.body].filter(Boolean).join(': ').trim();
+
+// The newest ~500 reviews (submissionOn desc), each with its 1–5 rating. No
+// country filter: the pool spans all markets and product variants — the same
+// population the rating endpoint's totals (and so our overall score) cover.
+const fetchRecentReviews = async (country: string, lang: string, itemNo: string): Promise<IkeaReview[]> => {
+  const cacheKey = `ikea-reviews-v2-${itemNo}`;
+  const cached = cacheGet(cacheKey, 86400000);
+  if (cached) return cached;
+
+  const res = await fetch(`https://web-api.ikea.com/tugc/public/v5/reviews/${country}/${lang}/${itemNo}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-client-id': CLIENT_ID },
+    body: JSON.stringify({
+      filter: { and: [], not: [] },
+      sort: [{ field: 'submissionOn', direction: 'desc' }],
+      page: { size: 500, number: 1 },
+    }),
+  });
+  if (!res.ok) return [];
+  const json = await res.json();
+  if (!Array.isArray(json)) return [];
+
+  const seen = new Set<string>();
+  const reviews: IkeaReview[] = [];
+  for (const r of json) {
+    const review: IkeaReview = {
+      rating: Number(r.primaryRating?.ratingValue) || 0,
+      title: r.title || '',
+      body: r.text || '',
+      date: String(r.submissionOn || '').slice(0, 10),
+    };
+    const id = String(r.id ?? '') || reviewToText(review);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    reviews.push(review);
+  }
+  if (reviews.length) cacheSet(cacheKey, reviews);
+  return reviews;
+};
+
+const addSummarizeUI = (
+  anchor: Element,
+  country: string,
+  lang: string,
+  itemNo: string,
+  scoreData: { score: number; nps: number } | null
+) => {
+  if (document.querySelector('.ars-wrapper')) return;
+
+  const wrapper = createIslandShell();
+
+  // Recent-positive gauge, filled once the newest reviews land (one cached
+  // fetch shared with the summarizer), plus the trending/analyzed stats row.
+  const gauge = buildRecentGauge();
+  wrapper.appendChild(gauge);
+  const reviewsPromise = fetchRecentReviews(country, lang, itemNo);
+  reviewsPromise
+    .then((reviews) => {
+      const ratio = recentPositiveRatio(reviews.map((r) => r.rating));
+      fillRecentGauge(gauge, ratio);
+      if (ratio == null) return;
+      const stats = el('div', 'ars-stats') as HTMLElement;
+      if (scoreData) appendStat(stats, addCommas(trendingScore(scoreData.score, ratio)), 'trending');
+      appendStat(stats, String(reviews.length), 'analyzed');
+      gauge.after(stats);
+
+      // The search section lands between the stats row and the summarize
+      // widget's question row (buildSearchSection appends; re-anchor it).
+      const section = buildSearchSection({
+        wrapper,
+        reviews,
+        fields: (r) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date }),
+        toText: reviewToText,
+        summaryPrompt: FILTERED_PRODUCT_SUMMARY_PROMPT,
+        exampleQuery: 'quality OR assembly',
+      });
+      stats.after(section);
+    })
+    .catch(() => fillRecentGauge(gauge, null));
+
+  buildSummarizeWidget({
+    wrapper,
+    cacheKey: `ikea-summary-${itemNo}`,
+    summaryPrompt: PRODUCT_SUMMARY_PROMPT,
+    fetchReviews: () =>
+      reviewsPromise.then((reviews) => [...new Set(reviews.map(reviewToText).filter(Boolean))]),
+  });
+
+  anchor.after(wrapper);
+};
+
 const cleanup = () => {
   document.querySelectorAll('.nps-insights').forEach((el) => el.remove());
   document.querySelectorAll('.nps-score-badge').forEach((el) => el.remove());
+  document.querySelectorAll('.ars-wrapper').forEach((el) => el.remove());
 };
 
 setupSpaInjector({
@@ -103,16 +202,20 @@ setupSpaInjector({
     if (!locale || !itemNo) return null;
     const data = await fetchRating(locale.country, locale.lang, itemNo);
     if (!data) return null;
-    return { scoreData: getScore(data), panel: buildInsightsPanel(data) };
+    return { locale, itemNo, scoreData: getScore(data), panel: buildInsightsPanel(data), reviewCount: data.totalReviewCount ?? 0 };
   },
-  inject: ({ scoreData, panel }) => {
+  inject: ({ locale, itemNo, scoreData, panel, reviewCount }) => {
     if (scoreData) {
       const ratingBtn = document.querySelector('button.pipf-rating');
       if (ratingBtn && !ratingBtn.querySelector('.nps-score-badge')) appendScore(ratingBtn, scoreData);
     }
+    const ugc = document.querySelector('.js-ugc-container');
     if (panel && !document.body.contains(panel)) {
-      const ugc = document.querySelector('.js-ugc-container');
       if (ugc) ugc.after(panel);
+    }
+    if (reviewCount >= 5 && !document.querySelector('.ars-wrapper')) {
+      const anchor = document.querySelector('.nps-insights') || ugc;
+      if (anchor) addSummarizeUI(anchor, locale.country, locale.lang, itemNo, scoreData);
     }
   },
   cleanup,

@@ -162,6 +162,7 @@
     {
       "matches": ["*://*.ikea.com/*/p/*"],
       "js": ["sites/ikea-pdp.js"],
+      "css": ["sites/amazon-product.css"],
       "run_at": "document_end"
     },
     {
