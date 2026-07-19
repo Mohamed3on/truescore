@@ -73,7 +73,9 @@ export const orderByCssImportantAppend = (container: Element, scored: Element[],
   });
 };
 
-// For rows that also hold lazy-load placeholders: touch no nodes. A negative
+// For rows that also hold lazy-load placeholders, and for React-owned grids
+// where moving a managed child makes every reconciliation restore its order
+// (eating in-flight clicks and re-shuffling the grid): touch no nodes. A negative
 // `order` band floats the scored cards above everything still at the default 0.
 export const orderByCssBand = (_container: Element, scored: Element[]): void => {
   scored.forEach((child, i) => {
@@ -163,15 +165,23 @@ export const setupScoreGrid = ({
       card.setAttribute('data-nps-done', '1');
       // Idempotent guard. Some hosts (e.g. Uniqlo's React grid) re-render a
       // card's wrapper around a persisted rating node, so a freshly-matched card
-      // can already carry our badge. Never stack a second one — and don't
-      // re-sort for it, or the badge + re-sort mutations feed a re-render↔
-      // re-badge loop that appends the badge forever.
-      if (card.querySelector('.nps-score-badge')) continue;
+      // can already carry our badge. Never stack a second one — but do re-rank,
+      // because the recreated wrapper lost any CSS `order` it carried. Safe from
+      // the re-render↔re-sort loop only because hosts that recreate wrappers
+      // must use a CSS-order strategy, whose resort makes no childList mutations.
+      if (card.querySelector('.nps-score-badge')) {
+        scheduleSort();
+        continue;
+      }
       scoreForCard(card)
         .then((data) => {
           if (!data || isNaN(data.nps) || card.querySelector('.nps-score-badge')) return;
-          card.setAttribute('data-nps', String(data.score));
-          placeBadge(card, renderScoreBadge(data));
+          // The badge, not the card, carries `data-nps`: the badge lives inside
+          // the rating node hosts persist across re-renders, so the rank survives
+          // the card wrapper being recreated around it.
+          const badge = renderScoreBadge(data);
+          badge.setAttribute('data-nps', String(data.score));
+          placeBadge(card, badge);
           scheduleSort();
         })
         .catch(() => {});

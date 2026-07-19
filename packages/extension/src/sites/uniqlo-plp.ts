@@ -1,6 +1,6 @@
 import { npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
-import { setupScoreGrid, containersBySelector } from '../shared/score-grid';
+import { setupScoreGrid, containersBySelector, orderByCssBand } from '../shared/score-grid';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 
@@ -63,4 +63,9 @@ setupScoreGrid({
   discover: containersBySelector(
     '.fr-ec-product-collection--ecrenewal-grid, .fr-ec-product-collection--type-grid'
   ),
+  // The collections are React-managed `display: grid` containers. Moving their
+  // children turns every reconciliation into a full restore-order pass — which
+  // swallows tile clicks mid-flight and re-shuffles the grid on each host
+  // re-render. CSS `order` ranks them without React ever noticing.
+  applyOrder: orderByCssBand,
 });
