@@ -9,7 +9,7 @@ import { appendStat, buildRecentGauge, createIslandShell, recentPositiveRatio, t
 // to the front as actionable buying tips rather than leaving them buried.
 const UNIQLO_SUMMARY_PROMPT = `${PRODUCT_SUMMARY_PROMPT}
 
-This is a clothing item. Treat fit and sizing as first-class: when reviewers agree on how it runs, give the concrete tip (e.g. "Runs small — size up if you're between sizes"). Fold any care or styling tips reviewers mention (shrinkage, sheerness, layering, ironing) into the conclusion.`;
+This is a clothing item. Treat fit and sizing as first-class: when reviewers agree on how it runs, give the concrete tip (e.g. "Runs small — size up if you're between sizes"). Reviews are prefixed with the size the reviewer bought when known — anchor sizing advice to those sizes (e.g. "M felt tight across the chest; L fit true"). Fold any care or styling tips reviewers mention (shrinkage, sheerness, layering, ironing) into the conclusion.`;
 
 const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const MAX_PAGES = 4; // 25 reviews/page — 100 reviews is plenty for the variation breakdown
@@ -227,8 +227,11 @@ const reviewTexts = (reviews: any[]): string[] => {
   const seen = new Set<string>();
   const texts: string[] = [];
   for (const r of reviews) {
+    // Dedupe on the bare text — syndicated copies of a review repeat it verbatim.
     const text = [r.title, r.comment].filter(Boolean).join(': ').trim();
-    if (text && !seen.has(text)) { seen.add(text); texts.push(text); }
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    texts.push(r.purchasedSize ? `[Bought size ${r.purchasedSize}] ${text}` : text);
   }
   return texts;
 };
