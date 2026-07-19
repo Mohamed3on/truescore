@@ -29,7 +29,9 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
   };
 
   // Once load() resolves, inject and re-inject on body mutations — the host SPA
-  // often swaps the anchor out after we first render.
+  // often swaps the anchor out after we first render. Coalesced so chatty hosts
+  // pay per-batch, not per-record; the generation check keeps a trailing timer
+  // from injecting into the next page.
   const startInjecting = (gen: number, data: T) => {
     stopRetry();
     const run = () => {
@@ -37,7 +39,11 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
       inject(data);
     };
     run();
-    activeObs = new MutationObserver(run);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    activeObs = new MutationObserver(() => {
+      if (timer) return;
+      timer = setTimeout(() => { timer = null; run(); }, 100);
+    });
     activeObs.observe(document.body, { childList: true, subtree: true });
   };
 
@@ -99,6 +105,10 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
   } else {
     window.addEventListener('popstate', onUrlChange);
     window.addEventListener('hashchange', onUrlChange);
+    // Neither event fires for the host's own pushState/replaceState calls, and
+    // an isolated-world content script can't wrap the page's history object —
+    // poll the href instead (a string compare; onUrlChange no-ops when equal).
+    setInterval(onUrlChange, 1000);
   }
 
   init();

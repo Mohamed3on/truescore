@@ -638,12 +638,20 @@ const getParentASIN = () => {
   const wrapper = document.querySelector('.ars-wrapper');
   const variations = document.querySelector('.ts-var');
   if (!wrapper) return;
+  // Variant switches replace #acrCustomerReviewLink, so the score written into
+  // the captured node detaches with it — keep the text to re-apply on re-attach.
+  const scoreText = numOfRatingsElement.textContent!;
+  const scoreApplied = scoreText.includes('ratio:');
 
   const observer = new MutationObserver(() => {
     if (!document.contains(wrapper)) {
       const target = document.getElementById('averageCustomerReviews');
       if (target) target.appendChild(wrapper);
-      if (variations) {
+      if (scoreApplied) {
+        const link = document.getElementById('acrCustomerReviewLink');
+        if (link && link.textContent !== scoreText) link.textContent = scoreText;
+      }
+      if (variations && !document.contains(variations)) {
         const buyBox = document.querySelector('#desktop_buybox');
         if (buyBox) buyBox.parentNode!.insertBefore(variations, buyBox);
       }

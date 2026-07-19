@@ -5,7 +5,7 @@
 // reviews, no cookies and no request signing.
 
 import { npsStats } from './utils';
-import { cacheGet, cacheSet } from './cache';
+import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
 
 const ENDPOINT = 'https://feedback.aliexpress.com/pc/searchEvaluation.do';
 
@@ -79,6 +79,7 @@ const evaluate = async (fetcher: Fetcher, id: string, pageSize: number): Promise
   const data = (await res.json())?.data;
   const score = itemScore(data?.productEvaluationStatistic);
   if (score) cacheSet(scoreKey(id), score);
+  else if (data) cacheSetMaybe(scoreKey(id), null); // parsed, genuinely reviewless
 
   const reviews: AliReview[] = (data?.evaViewList ?? []).map((r: any) => ({
     rating: stars(r.buyerEval),
@@ -89,8 +90,8 @@ const evaluate = async (fetcher: Fetcher, id: string, pageSize: number): Promise
 };
 
 export const fetchItemScore = async (fetcher: Fetcher, id: string): Promise<ItemScore | null> => {
-  const cached = cacheGet(scoreKey(id), SCORE_TTL);
-  if (cached) return cached;
+  const cached = cacheGetMaybe(scoreKey(id), SCORE_TTL);
+  if (cached) return cached.value;
   return (await evaluate(fetcher, id, SCORE_ONLY_PAGE_SIZE)).score;
 };
 

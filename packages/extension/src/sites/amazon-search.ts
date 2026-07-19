@@ -3,6 +3,9 @@ import { addCommas } from '../shared/utils';
 
 const CACHE_KEY = 'amz-rating-cache';
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+// Definitive zero-parses are cached too, short-lived, so no-review products
+// don't refetch on every sort pass; transport failures throw and stay uncached.
+const NEG_TTL = 6 * 60 * 60 * 1000;
 
 const sortFunction = (a: [number, Element], b: [number, Element]) => (a[0] === b[0] ? 0 : a[0] < b[0] ? 1 : -1);
 
@@ -17,7 +20,7 @@ const getCache = () => {
     const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
     const now = Date.now();
     for (const key in cache) {
-      if (now - cache[key].ts > CACHE_TTL) delete cache[key];
+      if (now - cache[key].ts > (cache[key].totalReviews > 0 ? CACHE_TTL : NEG_TTL)) delete cache[key];
     }
     return cache;
   } catch { return {}; }
@@ -59,7 +62,7 @@ const getRatingScores = async (productSIN: string, elementToReplace: Element, ca
       const text = await resp.text();
       const parsed = getRatingPercentage(text);
       ratings = { ...parsed, ts: now };
-      if (parsed.totalReviews > 0) cache[productSIN] = ratings;
+      cache[productSIN] = ratings;
     }
     const scorePercentage = ratings.fiveStars - ratings.oneStars;
     const scoreAbsolute = Math.round(ratings.totalReviews * (scorePercentage / 100));
@@ -88,6 +91,9 @@ const sortAmazonResults = async () => {
   const noRatingItems: [number, Element][] = [];
   const cache = getCache();
 
+  // The scan loop is synchronous, so pausing here blinds the observer only to
+  // our own dedup removals — host mutations can't interleave with it.
+  pauseObs();
   for (const item of items) {
     if (item.querySelector('.s-shopping-adviser')) continue;
     const productSIN = item.getAttribute('data-asin');
@@ -125,6 +131,7 @@ const sortAmazonResults = async () => {
       getRatingScores(productSIN, numberOfRatingsElement, cache).then(({ calculatedScore }) => [calculatedScore, item] as [number, Element])
     );
   }
+  resumeObs();
 
   const results = await Promise.allSettled(fetchPromises);
   saveCache(cache);
@@ -138,11 +145,17 @@ const sortAmazonResults = async () => {
 
   const searchResults = document.querySelector('.s-result-list.s-search-results') || document.querySelector('#mainResults .s-result-list');
   if (searchResults && itemsArr.length > 0) {
-    pauseObs();
-    for (const [, item] of itemsArr) item.remove();
-    const refNode = searchResults.firstChild;
-    for (const [, item] of itemsArr) searchResults.insertBefore(item, refNode);
-    resumeObs();
+    // Skip when items already lead the container in sorted order — host
+    // mutations (lazy tiles, ad slots) refire this pass, and a no-op reshuffle
+    // would drag items out from under the cursor.
+    const inPlace = itemsArr.every(([, item], i) => searchResults.children[i] === item);
+    if (!inPlace) {
+      pauseObs();
+      for (const [, item] of itemsArr) item.remove();
+      const refNode = searchResults.firstChild;
+      for (const [, item] of itemsArr) searchResults.insertBefore(item, refNode);
+      resumeObs();
+    }
   }
 };
 
@@ -175,9 +188,11 @@ const sortAmazonResults = async () => {
 
   if (isSearchPage()) { await sortAmazonResults(); watchResults(); }
 
+  let navObs: MutationObserver | null = null;
   const onNavigate = () => {
     if (!isSearchPage()) return;
     debouncedSort();
+    navObs?.disconnect(); // one live slot — pushState bursts must not stack 10s body observers
     const bodyObs = new MutationObserver(() => {
       const container = document.querySelector('.s-result-list.s-search-results, #mainResults .s-result-list');
       if (container && container !== observedContainer) {
@@ -186,6 +201,7 @@ const sortAmazonResults = async () => {
         debouncedSort();
       }
     });
+    navObs = bodyObs;
     bodyObs.observe(document.body, { childList: true, subtree: true });
     setTimeout(() => bodyObs.disconnect(), 10000);
   };

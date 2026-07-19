@@ -66,7 +66,10 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
   const CAPTURE_WAIT_MS = 6000;
   let captureResolve: ((c: MapsCapturedCreds | null) => void) | null = null;
   let captureInFlight: Promise<MapsCapturedCreds | null> | null = null;
+  let captureTimer: ReturnType<typeof setTimeout> | undefined;
   const settleCapture = (c: MapsCapturedCreds | null) => {
+    clearTimeout(captureTimer);
+    captureTimer = undefined;
     const resolve = captureResolve;
     captureResolve = null;
     captureInFlight = null;
@@ -83,6 +86,7 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
   };
   const requestCapture = (): Promise<MapsCapturedCreds | null> => {
     if (captureInFlight) return captureInFlight;
+    const requestedAt = Date.now();
     captureInFlight = new Promise((resolve) => { captureResolve = resolve; });
     // Open the Reviews tab if needed, then scroll — Maps fires the bgkey-bearing
     // batchexecute when the list loads or paginates; a no-op click on an already-
@@ -91,7 +95,13 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
     const scrollOnce = () => findReviewsScroll()?.scrollBy({ top: 1e6 });
     scrollOnce();
     setTimeout(scrollOnce, 1200);
-    setTimeout(() => settleCapture(window.__truescoreMapsCreds ?? null), CAPTURE_WAIT_MS);
+    // On timeout, settle only with creds captured after this request — the
+    // caller asked precisely because anything older is suspect. settleCapture
+    // clears the timer, so it can never fire into a later request.
+    captureTimer = setTimeout(() => {
+      const c = window.__truescoreMapsCreds;
+      settleCapture(c && c.ts >= requestedAt ? c : null);
+    }, CAPTURE_WAIT_MS);
     return captureInFlight;
   };
   window.__truescoreRequestMapsCreds = requestCapture;

@@ -1,5 +1,5 @@
 import { addCommas, el, npsColor, npsStats } from '../shared/utils';
-import { cacheGet, cacheSet } from '../shared/cache';
+import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
@@ -160,8 +160,8 @@ interface DktReview { rating: number; text: string }
 // prose for the summarizer. `v2`: entries were plain texts before ratings rode along.
 const fetchRecentReviews = async (tld: string, locale: string, sku: string, productId: string): Promise<DktReview[]> => {
   const reviewsCacheKey = `dkt-reviews-v2-${productId}`;
-  const cached = cacheGet(reviewsCacheKey, 86400000);
-  if (cached) return cached;
+  const cached = cacheGetMaybe(reviewsCacheKey, 86400000);
+  if (cached) return cached.value ?? [];
 
   const seen = new Set<string>();
   const reviews: DktReview[] = [];
@@ -181,7 +181,11 @@ const fetchRecentReviews = async (tld: string, locale: string, sku: string, prod
       reviews.push({ rating: Number(r.rating?.code) || 0, text });
     }
   }
+  // Tombstone parsed-but-empty results briefly; all-pages-failed stays uncached
+  // so transient errors retry.
+  const anyOk = results.some((r) => r.status === 'fulfilled' && r.value);
   if (reviews.length) cacheSet(reviewsCacheKey, reviews);
+  else if (anyOk) cacheSetMaybe(reviewsCacheKey, null);
   return reviews;
 };
 

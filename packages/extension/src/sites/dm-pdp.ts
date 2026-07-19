@@ -1,5 +1,5 @@
 import { addCommas, npsColor, npsStats } from '../shared/utils';
-import { cacheGet, cacheSet } from '../shared/cache';
+import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, trendingScore } from '../shared/score-island';
@@ -64,23 +64,30 @@ const REVIEW_REQUEST_INIT: RequestInit = {
 
 const fetchStats = async (productId: string) => {
   const cacheKey = `nps_dm_stats_${productId}`;
-  const cached = cacheGet(cacheKey, CACHE_TTL);
-  if (cached) return cached;
+  const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
+  if (cached) return cached.value;
 
   const urls = [buildUrl(productId, true), buildUrl(productId, false)];
+  let definitive = true;
   for (const url of urls) {
     try {
       const res = await fetch(url, REVIEW_REQUEST_INIT);
-      if (!res.ok) continue;
+      if (!res.ok) { definitive = false; continue; }
       const json = await res.json();
       const stats = extractStats(json, productId);
       if (stats) {
         cacheSet(cacheKey, stats);
         return stats;
       }
-    } catch {}
+    } catch {
+      definitive = false;
+    }
   }
 
+  // Both endpoints answered with no stats: this id genuinely has no reviews.
+  // Tombstoned so candidate sweeps stop re-firing the same doomed requests;
+  // transport failures stay uncached and retry.
+  if (definitive) cacheSetMaybe(cacheKey, null);
   return null;
 };
 
@@ -180,7 +187,14 @@ const addCandidateFromValue = (map: Map<string, number>, value: any, priority = 
   if (existing == null || priority < existing) map.set(normalized, priority);
 };
 
+// The candidate set is fixed once the PDP's Product JSON-LD is in the DOM;
+// before that the page is still hydrating and each sweep must re-scan. Memoized
+// per URL so retry sweeps skip re-parsing every JSON-LD block and regex-scanning
+// up to 1.5MB of inline script.
+let candidateMemo: { href: string; ids: string[] } | null = null;
+
 const extractCandidateProductIds = () => {
+  if (candidateMemo?.href === location.href) return candidateMemo.ids;
   const candidates = new Map<string, number>();
 
   // Highest confidence: structured Product JSON-LD usually contains the main PDP sku.
@@ -250,9 +264,14 @@ const extractCandidateProductIds = () => {
     location.pathname.match(/-p(\d{6,})\.html/) || location.pathname.match(/\/p\/[a-z]+\/(\d{6,})\b/);
   if (urlMatch) addCandidateFromValue(candidates, urlMatch[1], 30);
 
-  return [...candidates.entries()]
+  const ids = [...candidates.entries()]
     .sort((a, b) => a[1] - b[1] || a[0].length - b[0].length || a[0].localeCompare(b[0]))
     .map(([id]) => id);
+  // Priorities <= 2 only come from Product JSON-LD — the hydration marker.
+  if ([...candidates.values()].some((priority) => priority <= 2)) {
+    candidateMemo = { href: location.href, ids };
+  }
+  return ids;
 };
 
 const extractExpectedReviewCount = () => {
@@ -413,12 +432,21 @@ const injectUi = (scoreData: any, stats: any, productId: string) => {
   return true;
 };
 
+// Zero-review PDPs never produce stats, so retryUntilLoaded would re-sweep the
+// candidates on every debounced mutation for the life of the page. After this
+// many full empty sweeps load() returns GIVE_UP — non-null, so the injector
+// stops retrying; inject() treats it as a no-op.
+const MAX_EMPTY_SWEEPS = 5;
+const GIVE_UP = { stats: null, scoreData: null, productId: '' };
+let emptySweeps = { href: '', count: 0 };
+
 // dm derives the product id from late-arriving DOM (JSON-LD / data-attrs), so
 // load() returns null until that resolves and setupSpaInjector retries until it
 // does — the DOM-id PDP case ADR 0001 carved out, now served by the shared helper.
 setupSpaInjector<{ stats: any; scoreData: { score: number; nps: number } | null; productId: string }>({
   match: isProductPage,
   load: async () => {
+    if (emptySweeps.href === location.href && emptySweeps.count >= MAX_EMPTY_SWEEPS) return GIVE_UP;
     const candidates = extractCandidateProductIds();
     if (!candidates.length) return null;
     const expectedReviewCount = extractExpectedReviewCount();
@@ -445,11 +473,16 @@ setupSpaInjector<{ stats: any; scoreData: { score: number; nps: number } | null;
     }
 
     const chosen = matched ?? fallback;
-    if (!chosen) return null;
+    if (!chosen) {
+      if (emptySweeps.href !== location.href) emptySweeps = { href: location.href, count: 0 };
+      emptySweeps.count++;
+      return emptySweeps.count >= MAX_EMPTY_SWEEPS ? GIVE_UP : null;
+    }
     return { stats: chosen.stats, scoreData: getScoreFromStats(chosen.stats), productId: chosen.id };
   },
-  inject: ({ stats, scoreData, productId }) => {
-    injectUi(scoreData, stats, productId);
+  inject: (data) => {
+    if (data === GIVE_UP) return;
+    injectUi(data.scoreData, data.stats, data.productId);
   },
   cleanup,
   retryUntilLoaded: true,

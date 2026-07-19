@@ -533,10 +533,15 @@ const renderEmptyPanel = (
 };
 
 function waitForHotelData(callback: (data: HotelData) => void) {
+  let attempts = 0;
   const checkInterval = setInterval(() => {
     const hotelIdInput = document.querySelector('input[name="hotel_id"]') as HTMLInputElement;
     const destIdInput = document.querySelector('input[name="dest_id"]') as HTMLInputElement;
-    if (!hotelIdInput?.value || !destIdInput?.value) return;
+    if (!hotelIdInput?.value || !destIdInput?.value) {
+      // Some layouts never render the hidden inputs — stop polling after 30s.
+      if (++attempts >= 60) clearInterval(checkInterval);
+      return;
+    }
     clearInterval(checkInterval);
     callback({
       hotelId: hotelIdInput.value,

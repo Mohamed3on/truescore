@@ -1,10 +1,12 @@
 import { npsStats } from '../shared/utils';
-import { cacheGet, cacheSet } from '../shared/cache';
+import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
+import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { setupScoreGrid } from '../shared/score-grid';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const API_BASE = 'https://apps.bazaarvoice.com/bfd/v1/clients/dm-de/api-products/cv2/resources/data/reviews.json';
 const BFD_TOKEN = '18357,main_site,de_DE';
+const throttledFetch = createThrottledFetcher(8);
 
 const buildUrl = (productId: string, withMediaFilter: boolean) => {
   const params = new URLSearchParams();
@@ -53,8 +55,8 @@ const extractStats = (payload: any, requestedProductId: string) => {
 
 const fetchStats = async (productId: string) => {
   const cacheKey = `nps_dm_stats_${productId}`;
-  const cached = cacheGet(cacheKey, CACHE_TTL);
-  if (cached) return cached;
+  const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
+  if (cached) return cached.value;
 
   const requestInit: RequestInit = {
     method: 'GET',
@@ -68,19 +70,25 @@ const fetchStats = async (productId: string) => {
   };
 
   const urls = [buildUrl(productId, true), buildUrl(productId, false)];
+  let definitive = true;
   for (const url of urls) {
     try {
-      const res = await fetch(url, requestInit);
-      if (!res.ok) continue;
+      const res = await throttledFetch(url, requestInit);
+      if (!res.ok) { definitive = false; continue; }
       const json = await res.json();
       const stats = extractStats(json, productId);
       if (stats) {
         cacheSet(cacheKey, stats);
         return stats;
       }
-    } catch {}
+    } catch {
+      definitive = false;
+    }
   }
 
+  // Both endpoints answered with no stats: a review-less product. Tombstoned so
+  // recreated cards don't refire the request; transport failures stay uncached.
+  if (definitive) cacheSetMaybe(cacheKey, null);
   return null;
 };
 

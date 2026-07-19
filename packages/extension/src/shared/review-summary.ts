@@ -349,7 +349,8 @@ export const buildSummarizeWidget = ({
       const parsed = await llmSummarize(reviews, withContext(summaryPrompt));
       bumpRateLimit();
       summaryTs = Date.now();
-      localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta }));
+      // Quota-full must not discard a summary the LLM call already paid for.
+      try { localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta })); } catch {}
       renderStructuredSummary(summaryPanel, parsed);
       summaryPanel.style.display = 'block';
       panelMode = 'summary';

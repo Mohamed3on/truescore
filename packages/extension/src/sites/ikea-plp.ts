@@ -1,8 +1,10 @@
 import { npsStats } from '../shared/utils';
-import { cacheGet, cacheSet } from '../shared/cache';
+import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
+import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { setupScoreGrid } from '../shared/score-grid';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+const throttledFetch = createThrottledFetcher(8);
 
 const getLocale = () => {
   const parts = location.pathname.split('/').filter(Boolean);
@@ -28,24 +30,23 @@ const scoreFromDist = (dist: any[]) => {
 
 const fetchScore = async (country: string, lang: string, itemNo: string) => {
   const cacheKey = `nps_ikea_score_${itemNo}`;
-  const cached = cacheGet(cacheKey, CACHE_TTL);
-  if (cached) return cached;
+  const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
+  if (cached) return cached.value;
   const pdpCached = cacheGet(`nps_ikea_${itemNo}`, CACHE_TTL);
   if (pdpCached?.ratingDistribution) {
     const result = scoreFromDist(pdpCached.ratingDistribution);
     if (result) { cacheSet(cacheKey, result); return result; }
   }
 
-  const res = await fetch(
+  const res = await throttledFetch(
     `https://web-api.ikea.com/tugc/public/v5/rating/${country}/${lang}/${itemNo}`,
     { headers: { 'x-client-id': 'a1047798-0fc4-446e-9616-0afe3256d0d7' } }
   );
   if (!res.ok) return null;
   const json = await res.json();
   const dist = json?.[0]?.ratingDistribution;
-  if (!dist?.length) return null;
-  const result = scoreFromDist(dist);
-  if (result) cacheSet(cacheKey, result);
+  const result = dist?.length ? scoreFromDist(dist) : null;
+  cacheSetMaybe(cacheKey, result);
   return result;
 };
 

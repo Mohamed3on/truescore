@@ -5,7 +5,12 @@ import { el } from '../shared/utils';
 
 const CACHE_TTL = 3 * 24 * 60 * 60 * 1000; // 3 days
 const CACHE_PREFIX = 'tmSorter_v5_';
-let isSorting = false;
+
+// Sorts pause the table-discovery observer around their own row mutations (its
+// callback runs after the task, so a sync flag can never guard it).
+let tableObs: MutationObserver | null = null;
+const pauseObs = () => { if (tableObs) tableObs.disconnect(); };
+const resumeObs = () => { if (tableObs) tableObs.observe(document.body, { childList: true, subtree: true }); };
 
 const parseValue = (text: string): any => {
   const cleaned = text.trim();
@@ -381,9 +386,8 @@ const updateSortHeaders = (table: HTMLTableElement, columnIndex: number, ascendi
 };
 
 const sortTableByColumn = (table: HTMLTableElement, columnIndex: number, ascending: boolean) => {
-  isSorting = true;
   const tbody = table.querySelector('tbody');
-  if (!tbody) { isSorting = false; return; }
+  if (!tbody) return;
 
   const hasRanking = table.hasAttribute('data-has-ranking');
   const cellIndex = hasRanking ? columnIndex + 2 : columnIndex + 1;
@@ -396,10 +400,11 @@ const sortTableByColumn = (table: HTMLTableElement, columnIndex: number, ascendi
     return aCol && bCol ? compareValues(getColumnValue(aCol), getColumnValue(bCol), dir) : 0;
   });
 
+  pauseObs();
   tbody.querySelectorAll('tr.even, tr.odd').forEach(row => row.remove());
   rows.forEach(row => tbody.appendChild(row));
+  resumeObs();
   updateSortHeaders(table, columnIndex, ascending);
-  isSorting = false;
 };
 
 const globalSortTableByColumn = async (table: HTMLTableElement, columnIndex: number, ascending: boolean) => {
@@ -427,12 +432,11 @@ const globalSortTableByColumn = async (table: HTMLTableElement, columnIndex: num
 };
 
 const renderGlobalResults = (table: HTMLTableElement, sortedRows: any[]) => {
-  isSorting = true;
-
   const tbody = table.querySelector('tbody');
-  if (!tbody) { isSorting = false; return; }
+  if (!tbody) return;
 
   const hasRanking = table.hasAttribute('data-has-ranking');
+  pauseObs();
   tbody.querySelectorAll('tr.even, tr.odd').forEach(row => row.remove());
 
   sortedRows.forEach((rowData, index) => {
@@ -450,8 +454,7 @@ const renderGlobalResults = (table: HTMLTableElement, sortedRows: any[]) => {
 
     tbody.appendChild(row);
   });
-
-  isSorting = false;
+  resumeObs();
 };
 
 // ============================================================
@@ -500,16 +503,15 @@ const makeTableSortable = (table: HTMLTableElement) => {
 const initializeSortableTables = () => {
   document.querySelectorAll('table').forEach(table => makeTableSortable(table as HTMLTableElement));
 
-  new MutationObserver(mutations => {
-    if (isSorting) return;
-
+  tableObs = new MutationObserver(mutations => {
     for (const { addedNodes } of mutations) {
       addedNodes.forEach(node => {
         if (node.nodeName === 'TABLE') makeTableSortable(node as HTMLTableElement);
         (node as Element).querySelectorAll?.('table').forEach(t => makeTableSortable(t as HTMLTableElement));
       });
     }
-  }).observe(document.body, { childList: true, subtree: true });
+  });
+  tableObs.observe(document.body, { childList: true, subtree: true });
 };
 
 // Initialize

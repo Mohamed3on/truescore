@@ -37,7 +37,14 @@ export const structuralContainers =
       let el: Element = card;
       while (el.parentElement) {
         const parent = el.parentElement;
-        if ([...parent.children].filter(isBearer).length >= 2) return parent;
+        const bearers = [...parent.children].filter(isBearer).length;
+        if (bearers >= 2) {
+          // A page-level ancestor can also reach 2 — via unrelated sections that
+          // each hold a card somewhere. A real row's children are mostly bearers;
+          // reject rather than rank (and reshuffle) whole page sections. A lone
+          // card then simply stays unranked.
+          return bearers * 2 >= parent.children.length ? parent : null;
+        }
         el = parent;
       }
       return null;

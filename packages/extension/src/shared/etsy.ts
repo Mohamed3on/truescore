@@ -5,7 +5,7 @@
 // labels (`listing_async_review_variations`).
 
 import { npsStats } from './utils';
-import { cacheGet, cacheSet } from './cache';
+import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
 
 const DEEP_DIVE = '/api/v3/ajax/bespoke/member/neu/specs/deep_dive_reviews';
 const DEEP_DIVE_SPEC = 'Etsy\\Modules\\ListingPage\\Reviews\\DeepDive\\AsyncApiSpec';
@@ -124,13 +124,14 @@ export const fetchItemScore = async (
   shopId: string
 ): Promise<ItemScore | null> => {
   const key = `nps_etsy_v2_${listingId}`; // v2: entries now also carry topic tags
-  const cached = cacheGet(key, SCORE_TTL);
-  if (cached) return cached;
+  const cached = cacheGetMaybe(key, SCORE_TTL);
+  if (cached) return cached.value;
 
   const js = await deepDive(fetcher, listingId, shopId, HISTOGRAM_ONLY_PAGE, 'Suggested');
-  const counts = js?.ratingCounts;
+  if (!js) return null; // transport/CSRF failure — retry on a later pass
+  const counts = js.ratingCounts;
   const total = counts?.All;
-  if (!total) return null;
+  if (!total) { cacheSetMaybe(key, null); return null; } // genuinely reviewless
 
   const topics: Topic[] = (js?.tagFilters ?? [])
     .map((t: any): Topic => ({

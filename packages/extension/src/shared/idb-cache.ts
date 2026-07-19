@@ -10,12 +10,13 @@ const STORE = 'cache';
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 const openDb = (): Promise<IDBDatabase> =>
-  (dbPromise ??= new Promise((resolve, reject) => {
+  (dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
     req.onupgradeneeded = () => req.result.createObjectStore(STORE);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
-  }));
+    // A transient open failure shouldn't disable IDB for the whole session.
+  }).catch((e) => { dbPromise = null; throw e; }));
 
 const run = <T>(mode: IDBTransactionMode, op: (store: IDBObjectStore) => IDBRequest): Promise<T> =>
   openDb().then(

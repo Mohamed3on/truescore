@@ -88,6 +88,10 @@ let labelSearchSeq = 0;
 // summary re-render.
 const standoutScoreCache = new Map<string, SortStats>();
 const standoutScoreInflight = new Set<string>();
+// Zero-scores minted for failed searches (so the chip drops out instead of
+// pulsing forever) are display-only — a transient blip must not persist as a
+// permanent 0%, so saveScoredCache skips these keys.
+const standoutScoreTransient = new Set<string>();
 // The reviews fetched to score each chip, kept (in-memory) so clicking the chip
 // reuses them instead of re-running the same label search. Not persisted —
 // reviews are heavy; after a reload the first click refetches.
@@ -123,6 +127,7 @@ let lastFeatureId = '';
 let lastUrl = '';
 let chipViewMode: 'reviews' | 'summary' = 'reviews';
 let fullPctObserver: MutationObserver | null = null;
+let fullPctObserverTarget: Element | null = null;
 let staleHistogramKey: string | null = null;
 let lastHistogramKey: string | null = null;
 
@@ -225,6 +230,9 @@ const hydrateCreds = (): Promise<void> =>
 
 const invalidateCreds = () => {
   mapsCreds = null;
+  // Same MAIN world as gmaps-capture — its cache must go too, or the capture
+  // timeout would re-serve the creds being declared dead here.
+  window.__truescoreMapsCreds = undefined;
   bridgeStorage.set(MAPS_CREDS_KEY, null).catch(() => {});
 };
 
@@ -537,9 +545,13 @@ const getPlaceInfo = () => {
 const injectSimpleScore = (placeDetailsElement: HTMLElement) => {
   const counts = readHistogramCounts();
   if (!counts || !histogramTotal(counts)) return;
+  // The histogram DOM lags an SPA nav; resetScores marks the old place's counts
+  // stale so they're never stamped onto the new place.
+  if (counts.join(',') === staleHistogramKey) return;
   const score = overallScoreFromHistogram(counts);
   const pct = overallPctFromHistogram(counts);
   const newElement = el('div', 'truescore-simple-score', `score: ${addCommas(score)} — ${pct}%`);
+  newElement.dataset.featureId = getFeatureId() ?? '';
   placeDetailsElement.appendChild(newElement);
 };
 
@@ -604,10 +616,11 @@ const fetchAllForToken = (featureId: string, token: string, creds: MapsCapturedC
 // Gmail-style ` OR ` splits the query and each term expands to its
 // accent/hyphen/space spellings; collectSearchTerms runs one Google search per
 // term in parallel and merges by reviewId, so the count is the union. Needs the
-// captured bgkey like every other review fetch.
-const fetchAllForSearch = async (featureId: string, query: string): Promise<Review[]> => {
+// captured bgkey like every other review fetch — null means creds are missing,
+// distinct from a genuine empty result: callers must not score/cache it as zero.
+const fetchAllForSearch = async (featureId: string, query: string): Promise<Review[] | null> => {
   const creds = await ensureCreds();
-  if (!creds) return [];
+  if (!creds) return null;
   return collectSearchTerms(expandSearchTerms(query), (term, c) => buildSearchReq(featureId, term, creds, c), tabTransport);
 };
 
@@ -617,7 +630,7 @@ const fetchAllForSearch = async (featureId: string, query: string): Promise<Revi
     const featureId = getFeatureId();
     const trimmed = query.trim();
     if (!featureId || !trimmed) return [];
-    return fetchAllForSearch(featureId, trimmed);
+    return (await fetchAllForSearch(featureId, trimmed)) ?? [];
   },
 };
 
@@ -776,6 +789,9 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
       creds,
       stabilize: false,
       onPage: (_running, { index, nextCursor, pageReviews }) => {
+        // A page whose transport settled just before a place-nav abort must not
+        // seed the next place's store with this place's reviews.
+        if (getFeatureId() !== featureId) return 'stop';
         store.ingest(sortKey, pageReviews);
         state.pageCount = index + 1;
         if (nextCursor) state.cursor = nextCursor;
@@ -797,8 +813,16 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
     if (e.name !== 'AbortError') console.error(`[Reviews] ${sortKey} error:`, e);
   }
   state.isFetching = false;
-  state.done = true;
-  abortControllers[sortKey] = null;
+  // Null only our own slot — after a place nav the next fetch may own it.
+  if (abortControllers[sortKey] === controller) abortControllers[sortKey] = null;
+  // After an SPA nav the live fetchState, cache key, and UI belong to the next
+  // place — nothing below may touch them.
+  if (getFeatureId() !== featureId) return;
+  // done only on real completion: a pause-abort (computeHighlights) must leave
+  // it false so the resume in its finally relaunches this sort, and an aborted
+  // partial merge must never persist as fresh. The reconcile-fresh path sets
+  // done itself, so its stop still reaches the finished block below.
+  if (!controller.signal.aborted) state.done = true;
   updateUI();
   // Highlights compute automatically once both score sorts finish — after, not
   // during, so chip RPCs don't pause the hero metric. Wait for the in-flight
@@ -828,11 +852,16 @@ let kickoffPending = false;
 // The single "should a scoring kickoff start?" predicate — shared by the
 // capture listener, the observer, and the guard below: on a place, with no
 // fetch pending/in-flight/finished for it yet. (kickoffPending covers the async
-// ensureCreds window before isFetching flips.)
-const shouldStartScoring = (): boolean =>
-  !!getFeatureId() && !kickoffPending &&
-  !fetchState.relevant.isFetching && !fetchState.newest.isFetching &&
-  !fetchState.relevant.done && !fetchState.newest.done;
+// ensureCreds window before isFetching flips. A sort paused by computeHighlights
+// has isFetching and done both false but must wait for that run's resume — our
+// own chip RPCs echo MAPS_CREDS_CAPTURED through the capture layer, which would
+// otherwise relaunch the sorts mid-pause.)
+const shouldStartScoring = (): boolean => {
+  const featureId = getFeatureId();
+  return !!featureId && featureId !== highlightsComputingFor && !kickoffPending &&
+    !fetchState.relevant.isFetching && !fetchState.newest.isFetching &&
+    !fetchState.relevant.done && !fetchState.newest.done;
+};
 
 const startFetching = async () => {
   if (!shouldStartScoring()) return;
@@ -1172,6 +1201,10 @@ const runLabelSearch = async () => {
   try {
     const reviews = await fetchAllForSearch(featureId, query);
     if (seq !== labelSearchSeq) return;
+    if (!reviews) {
+      res.textContent = 'Open Reviews to enable search';
+      return;
+    }
     activeLabelSearch = { query, reviews, summary: searchSummaryCache[query.toLowerCase()] };
     if (!reviews.length) {
       res.textContent = `No label-search reviews for "${query}"`;
@@ -1474,6 +1507,12 @@ const updateUI = () => {
       els.pctEl.style.color = color;
       els.pctEl.style.textShadow = `0 0 24px ${color}40`;
       els.diffEl.style.display = 'none';
+      // Maps recreates the rating subtree on tab switches; an observer left on a
+      // detached node never fires again, so re-arm on the live one.
+      if (fullPctObserver && fullPctObserverTarget && !fullPctObserverTarget.isConnected) {
+        fullPctObserver.disconnect();
+        fullPctObserver = null;
+      }
       if (!fullPctObserver) {
         // Throttle to one histogram read per frame: .jANrlb mutates rapidly while
         // the rating panel renders, and each readHistogramCounts is a
@@ -1492,6 +1531,7 @@ const updateUI = () => {
         });
         fullPctObserver = obs;
         const target = document.querySelector('.jANrlb') || document.body;
+        fullPctObserverTarget = target;
         obs.observe(target, { childList: true, subtree: true });
       }
     }
@@ -1604,6 +1644,10 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
     limit(async () => {
       try {
         const reviews = await fetchAllForSearch(featureId, item);
+        // null = creds still missing: leave the chip pending — nothing may
+        // cache or persist a fake zero; the next render or stale-refresh retries.
+        if (!reviews) return;
+        standoutScoreTransient.delete(key);
         standoutScoreCache.set(key, statsForReviews(reviews));
         standoutReviewsCache.set(key, reviews);
         saveScoredCache();
@@ -1611,7 +1655,8 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
       } catch (e) {
         console.error(`[${kind}] score failed for`, item, e);
         // Resolve to zero so the chip drops out (like a no-mention item) instead
-        // of pulsing "…" forever.
+        // of pulsing "…" forever — this session only, never persisted.
+        standoutScoreTransient.add(key);
         standoutScoreCache.set(key, statsForReviews([]));
         if (getFeatureId() === featureId) redrawScored(kind);
       } finally {
@@ -1650,7 +1695,7 @@ const saveScoredCache = () => {
   try {
     const prefix = `${lastFeatureId}|`;
     const scores: Record<string, SortStats> = {};
-    for (const [k, v] of standoutScoreCache) if (k.startsWith(prefix)) scores[k.slice(prefix.length)] = v;
+    for (const [k, v] of standoutScoreCache) if (k.startsWith(prefix) && !standoutScoreTransient.has(k)) scores[k.slice(prefix.length)] = v;
     if (!Object.keys(scores).length) return;
     scoredCacheHeadId = store.newestHeadId() ?? scoredCacheHeadId;
     localStorage.setItem(getScoredCacheKey(), JSON.stringify({ scores, newestHeadId: scoredCacheHeadId }));
@@ -1777,8 +1822,15 @@ const handleDomMutation = () => {
   const url = location.href;
 
   const placeDetails = document.querySelector<HTMLElement>('.dmRWX');
-  if (placeDetails && !placeDetails.querySelector('.truescore-simple-score')) {
-    injectSimpleScore(placeDetails);
+  if (placeDetails) {
+    const existing = placeDetails.querySelector<HTMLElement>('.truescore-simple-score');
+    const fid = getFeatureId() ?? '';
+    // A recycled details panel keeps the previous place's node — drop it on
+    // stamp mismatch. Inject only once the nav handling below has caught up
+    // (lastFeatureId current), so a nav tick can't stamp the old histogram with
+    // the new place's id.
+    if (existing && existing.dataset.featureId !== fid) existing.remove();
+    else if (!existing && fid === lastFeatureId) injectSimpleScore(placeDetails);
   }
 
   if (url === lastUrl) return;

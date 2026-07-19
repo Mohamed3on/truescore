@@ -8,6 +8,22 @@ export const cacheGet = (key: string, ttl: number): any => {
   } catch { return null; }
 };
 
+// Definitive fetcher misses (product genuinely has no reviews) are cached too,
+// as a short-lived tombstone — hosts that recreate processed nodes would
+// otherwise refire the same doomed request on every re-render batch. Transport
+// failures stay uncached so transient errors retry normally.
+const NEG_TTL = 6 * 60 * 60 * 1000;
+
+export const cacheGetMaybe = (key: string, ttl: number): { value: any } | null => {
+  const data = cacheGet(key, ttl);
+  if (data == null) return null;
+  if (data.__none) return cacheGet(key, NEG_TTL) ? { value: null } : null;
+  return { value: data };
+};
+
+export const cacheSetMaybe = (key: string, data: any): void =>
+  cacheSet(key, data ?? { __none: true });
+
 export const cacheSet = (key: string, data: any): void => {
   const raw = JSON.stringify({ data, ts: Date.now() });
   try { localStorage.setItem(key, raw); return; } catch {}

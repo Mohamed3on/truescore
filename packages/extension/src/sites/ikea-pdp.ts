@@ -1,5 +1,5 @@
 import { addCommas, el, npsColor, npsStats } from '../shared/utils';
-import { cacheGet, cacheSet } from '../shared/cache';
+import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
 import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { buildSearchSection } from '../shared/review-search';
 import { setupSpaInjector } from '../shared/spa-injector';
@@ -106,8 +106,8 @@ const reviewToText = (r: IkeaReview): string => [r.title, r.body].filter(Boolean
 // population the rating endpoint's totals (and so our overall score) cover.
 const fetchRecentReviews = async (country: string, lang: string, itemNo: string): Promise<IkeaReview[]> => {
   const cacheKey = `ikea-reviews-v2-${itemNo}`;
-  const cached = cacheGet(cacheKey, REVIEWS_TTL);
-  if (cached) return cached;
+  const cached = cacheGetMaybe(cacheKey, REVIEWS_TTL);
+  if (cached) return cached.value ?? [];
 
   const res = await fetch(`https://web-api.ikea.com/tugc/public/v5/reviews/${country}/${lang}/${itemNo}`, {
     method: 'POST',
@@ -136,7 +136,9 @@ const fetchRecentReviews = async (country: string, lang: string, itemNo: string)
     seen.add(id);
     reviews.push(review);
   }
-  if (reviews.length) cacheSet(cacheKey, reviews);
+  // Empty result sets tombstone briefly too — a host re-render that evicts the
+  // island would otherwise refire this 500-review POST on every rebuild.
+  cacheSetMaybe(cacheKey, reviews.length ? reviews : null);
   return reviews;
 };
 

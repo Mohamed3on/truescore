@@ -1,8 +1,10 @@
 import { npsStats } from '../shared/utils';
-import { cacheGet, cacheSet } from '../shared/cache';
+import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
+import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { setupScoreGrid, containersBySelector } from '../shared/score-grid';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+const throttledFetch = createThrottledFetcher(8);
 
 const getLocale = () => {
   const parts = location.pathname.split('/').filter(Boolean);
@@ -24,8 +26,8 @@ const scoreFromRateCount = (rc: any) => {
 
 const fetchScore = async (country: string, lang: string, productId: string) => {
   const cacheKey = `nps_uniqlo_score_${productId}`;
-  const cached = cacheGet(cacheKey, CACHE_TTL);
-  if (cached) return cached;
+  const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
+  if (cached) return cached.value;
   // reuse PDP cache if available
   const pdpCached = cacheGet(`nps_uniqlo_${productId}`, CACHE_TTL);
   if (pdpCached?.rateCount) {
@@ -33,17 +35,14 @@ const fetchScore = async (country: string, lang: string, productId: string) => {
     if (result) { cacheSet(cacheKey, result); return result; }
   }
 
-  const res = await fetch(
+  const res = await throttledFetch(
     `https://www.uniqlo.com/${country}/api/commerce/v5/${lang}/products/${productId}/reviews?limit=1&offset=0&sort=submission_time&httpFailure=true`,
     { headers: { 'x-fr-clientid': `uq.${country}.web-spa` } }
   );
   if (!res.ok) return null;
   const json = await res.json();
-  const rc = json?.result?.rating?.rateCount;
-  if (!rc) return null;
-
-  const result = scoreFromRateCount(rc);
-  if (result) cacheSet(cacheKey, result);
+  const result = scoreFromRateCount(json?.result?.rating?.rateCount ?? {});
+  cacheSetMaybe(cacheKey, result);
   return result;
 };
 

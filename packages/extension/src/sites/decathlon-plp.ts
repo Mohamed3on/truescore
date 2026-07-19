@@ -1,9 +1,11 @@
 import { npsStats } from '../shared/utils';
-import { cacheGet, cacheSet } from '../shared/cache';
+import { cacheGetMaybe, cacheSetMaybe } from '../shared/cache';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
+import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { setupScoreGrid, containersBySelector } from '../shared/score-grid';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+const throttledFetch = createThrottledFetcher(8);
 const CONTAINERS = 'ul.product-grid, ul.carousel-slides-wrapper';
 const CARD = `:is(${CONTAINERS}) .product-card`;
 const LINK = 'a[href*="/p/"]';
@@ -14,15 +16,14 @@ const { tld, locale } = site;
 
 const fetchScore = async (sku: string, productId: string) => {
   const key = `nps_score_${productId}`;
-  const cached = cacheGet(key, CACHE_TTL);
-  if (cached) return cached;
+  const cached = cacheGetMaybe(key, CACHE_TTL);
+  if (cached) return cached.value;
 
-  const res = await fetch(
+  const res = await throttledFetch(
     `https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${sku}/product?nbItemsPerPage=0&page=0`
   );
   if (!res.ok) return null;
-  const dist = (await res.json())?.stats?.ratingDistribution;
-  if (!dist?.length) return null;
+  const dist = (await res.json())?.stats?.ratingDistribution ?? [];
 
   let total = 0, five = 0, one = 0;
   for (const { code, value } of dist) {
@@ -30,10 +31,8 @@ const fetchScore = async (sku: string, productId: string) => {
     if (code === '5') five = value;
     if (code === '1') one = value;
   }
-  if (!total) return null;
-
-  const result = npsStats(five, one, total);
-  cacheSet(key, result);
+  const result = total ? npsStats(five, one, total) : null;
+  cacheSetMaybe(key, result);
   return result;
 };
 
