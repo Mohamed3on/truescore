@@ -31,7 +31,6 @@ const MAX_RENDERED_RESULTS = 50;
 const SEARCH_DEBOUNCE_MS = 120;
 
 export interface ReviewSearchOpts<T> {
-  wrapper: HTMLElement;
   reviews: T[];
   // Card/haystack projection of a review; searching matches against its
   // title + body + meta, lowercased.
@@ -45,15 +44,13 @@ export interface ReviewSearchOpts<T> {
 // The review-search section shared by panels that hold a full review corpus:
 // an OR-term search box, a matched-count header with a %-positive chip for the
 // subset, a "Summarize <query>" free-form LLM pass over the matches, and the
-// highlighted result cards. Cmd/Ctrl+Shift+F jumps to the box.
-export const buildSearchSection = <T,>({ wrapper, reviews, fields, toText, summaryPrompt, exampleQuery }: ReviewSearchOpts<T>) => {
-  const projected = reviews.map((r) => ({ r, f: fields(r) }));
-  const haystack = ({ f }: { f: SearchReviewFields }) =>
-    [f.title, f.body, f.meta].filter(Boolean).join(' ').toLowerCase();
-  const matchesTerms = (p: { f: SearchReviewFields }, terms: string[]) => {
-    const h = haystack(p);
-    return terms.some((t) => h.includes(t));
-  };
+// highlighted result cards. Cmd/Ctrl+Shift+F jumps to the box. Returns the
+// section for the caller to place in its island.
+export const buildSearchSection = <T,>({ reviews, fields, toText, summaryPrompt, exampleQuery }: ReviewSearchOpts<T>) => {
+  const projected = reviews.map((r) => {
+    const f = fields(r);
+    return { r, f, h: [f.title, f.body, f.meta].filter(Boolean).join(' ').toLowerCase() };
+  });
 
   const section = el('div', 'ars-search-section');
   const input = document.createElement('input');
@@ -100,7 +97,8 @@ export const buildSearchSection = <T,>({ wrapper, reviews, fields, toText, summa
   sumBtn.addEventListener('click', async () => {
     const query = currentQuery;
     if (!query) return;
-    const matches = projected.filter((p) => matchesTerms(p, queryTerms(query)));
+    const terms = queryTerms(query);
+    const matches = projected.filter((p) => terms.some((t) => p.h.includes(t)));
     const texts = matches.map((p) => toText(p.r)).filter(Boolean);
     if (!texts.length) {
       sumPanel.style.display = 'block';
@@ -134,7 +132,7 @@ export const buildSearchSection = <T,>({ wrapper, reviews, fields, toText, summa
       return;
     }
     const terms = queryTerms(raw);
-    const matches = projected.filter((p) => matchesTerms(p, terms));
+    const matches = projected.filter((p) => terms.some((t) => p.h.includes(t)));
 
     header.style.display = '';
     list.style.display = '';
@@ -196,7 +194,6 @@ export const buildSearchSection = <T,>({ wrapper, reviews, fields, toText, summa
   };
   document.addEventListener('keydown', onSearchKey, true);
 
-  wrapper.appendChild(section);
   return section;
 };
 

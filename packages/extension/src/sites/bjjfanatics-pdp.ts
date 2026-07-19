@@ -191,14 +191,13 @@ const buildPanel = (
 
   renderScoreCard(wrapper, scored.score, scored.nps, scored.total);
 
-  buildSearchSection({
-    wrapper,
+  wrapper.appendChild(buildSearchSection({
     reviews: bundle.reviews,
     fields: cardFields,
     toText: reviewToText,
     summaryPrompt: FILTERED_SUMMARY_PROMPT,
     exampleQuery: 'guard OR mount',
-  });
+  }));
 
   buildSummarizeWidget({
     wrapper,

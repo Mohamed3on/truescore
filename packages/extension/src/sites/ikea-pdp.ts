@@ -6,6 +6,7 @@ import { setupSpaInjector } from '../shared/spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, trendingScore } from '../shared/score-island';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+const REVIEWS_TTL = 24 * 60 * 60 * 1000;
 const CLIENT_ID = 'a1047798-0fc4-446e-9616-0afe3256d0d7';
 
 const getLocale = () => {
@@ -103,7 +104,7 @@ const reviewToText = (r: IkeaReview): string => [r.title, r.body].filter(Boolean
 // population the rating endpoint's totals (and so our overall score) cover.
 const fetchRecentReviews = async (country: string, lang: string, itemNo: string): Promise<IkeaReview[]> => {
   const cacheKey = `ikea-reviews-v2-${itemNo}`;
-  const cached = cacheGet(cacheKey, 86400000);
+  const cached = cacheGet(cacheKey, REVIEWS_TTL);
   if (cached) return cached;
 
   const res = await fetch(`https://web-api.ikea.com/tugc/public/v5/reviews/${country}/${lang}/${itemNo}`, {
@@ -158,22 +159,19 @@ const addSummarizeUI = (
       const ratio = recentPositiveRatio(reviews.map((r) => r.rating));
       fillRecentGauge(gauge, ratio);
       if (ratio == null) return;
-      const stats = el('div', 'ars-stats') as HTMLElement;
+      const stats = el('div', 'ars-stats');
       if (scoreData) appendStat(stats, addCommas(trendingScore(scoreData.score, ratio)), 'trending');
       appendStat(stats, String(reviews.length), 'analyzed');
       gauge.after(stats);
 
-      // The search section lands between the stats row and the summarize
-      // widget's question row (buildSearchSection appends; re-anchor it).
-      const section = buildSearchSection({
-        wrapper,
+      // Between the stats row and the summarize widget's question row.
+      stats.after(buildSearchSection({
         reviews,
         fields: (r) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date }),
         toText: reviewToText,
         summaryPrompt: FILTERED_PRODUCT_SUMMARY_PROMPT,
         exampleQuery: 'quality OR assembly',
-      });
-      stats.after(section);
+      }));
     })
     .catch(() => fillRecentGauge(gauge, null));
 
@@ -210,10 +208,8 @@ setupSpaInjector({
       if (ratingBtn && !ratingBtn.querySelector('.nps-score-badge')) appendScore(ratingBtn, scoreData);
     }
     const ugc = document.querySelector('.js-ugc-container');
-    if (panel && !document.body.contains(panel)) {
-      if (ugc) ugc.after(panel);
-    }
-    if (reviewCount >= 5 && !document.querySelector('.ars-wrapper')) {
+    if (panel && !document.body.contains(panel) && ugc) ugc.after(panel);
+    if (reviewCount >= 5) {
       const anchor = document.querySelector('.nps-insights') || ugc;
       if (anchor) addSummarizeUI(anchor, locale.country, locale.lang, itemNo, scoreData);
     }
