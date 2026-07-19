@@ -91,7 +91,9 @@ const appendScore = (ratingEl: Element, { score, nps }: { score: number; nps: nu
   const parent = ratingEl.parentElement;
   if (!parent || parent.querySelector('.nps-score-badge')) return;
   const badge = document.createElement('span');
-  badge.className = 'nps-score-badge';
+  // The pdp marker keeps cleanup() off the PLP grid script's badges, which
+  // share .nps-score-badge on this same page (recommendation carousels).
+  badge.className = 'nps-score-badge nps-pdp-badge';
   badge.style.cssText = `color:${npsColor(nps)};font-weight:600;font-size:14px;margin-left:8px;white-space:nowrap;`;
   badge.textContent = `${addCommas(String(score))} (${Math.round(nps)}%)`;
   parent.appendChild(badge);
@@ -294,7 +296,7 @@ setupSpaInjector({
   },
   cleanup: () => {
     document.querySelectorAll('.nps-insights').forEach(el => el.remove());
-    document.querySelectorAll('.nps-score-badge').forEach(el => el.remove());
+    document.querySelectorAll('.nps-pdp-badge').forEach(el => el.remove());
     document.querySelectorAll('.ars-wrapper').forEach(el => el.remove());
   },
 });

@@ -1,6 +1,6 @@
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { fetchItemScore } from '../shared/aliexpress';
-import { setupScoreGrid, orderByCssBand } from '../shared/score-grid';
+import { setupScoreGrid } from '../shared/score-grid';
 
 const CARD = 'a.search-card-item';
 
@@ -31,7 +31,6 @@ setupScoreGrid({
     if (rating) rating.after(badge);
     else card.append(badge);
   },
-  // The row also holds `lazy-load` placeholders that would fight a node move, so
-  // rank with a negative `order` band that touches nothing else.
-  applyOrder: orderByCssBand,
+  // The row also holds `lazy-load` placeholders that would fight a node move —
+  // the default CSS-band ranking touches nothing else.
 });

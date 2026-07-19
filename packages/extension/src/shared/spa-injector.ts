@@ -82,7 +82,13 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
     if (location.href === lastUrl) return;
     lastUrl = location.href;
     if (match()) init();
-    else fullCleanup();
+    else {
+      // Invalidate any in-flight load() too, or it resolves after this cleanup
+      // and injects the abandoned page's UI into the new page, re-inject
+      // observer and all.
+      generation++;
+      fullCleanup();
+    }
   };
   // Navigation API covers pushState/replaceState/popstate/hash; falls back to
   // popstate+hashchange on browsers without it. Replaces a body-subtree

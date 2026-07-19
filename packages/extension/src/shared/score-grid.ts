@@ -3,8 +3,9 @@ import { addCommas, npsColor } from './utils';
 // The shared PLP behaviour the product-grid scrapers used to each hand-roll:
 // badge every card with its net score, then re-rank each grid container by
 // `data-nps` (scored desc, unscored last), progressively as scores arrive.
-// The module owns the loop, the reentrancy guard, the rAF coalescing, and the
-// debounced MutationObserver; each site injects only what genuinely varies.
+// Ranking is CSS-order-only by default so re-rendering hosts never fight it.
+// The module owns the loop, the rAF coalescing, and the debounced
+// MutationObserver; each site injects only what genuinely varies.
 
 export interface ScoreData {
   score: number;
@@ -57,26 +58,32 @@ export const containersBySelector =
 
 // --- sort application strategies ------------------------------------------
 
-// The default. Reorder by moving nodes; works regardless of the container's
-// display, and is what most grids need.
+// Opt-in only, never the default: reorder by moving nodes. Works on any
+// container display, but moving a framework-managed child turns every
+// reconciliation into a restore-order fight — eaten clicks, re-shuffle loops
+// (the Uniqlo/IKEA bug). Reserve for grids verified to be host-static.
+// No-ops when the order already matches, so a settled grid stops feeding
+// childList records to observers.
 export const orderByAppend = (container: Element, scored: Element[], rest: Element[]): void => {
-  for (const child of scored) container.appendChild(child);
-  for (const child of rest) container.appendChild(child);
+  const desired = [...scored, ...rest];
+  if (desired.every((child, i) => container.children[i] === child)) return;
+  for (const child of desired) container.appendChild(child);
 };
 
 // For flex/grid rows whose children the host pins with `order` utility classes:
-// win them with an `!important` order, and appendChild so tab order matches.
-export const orderByCssImportantAppend = (container: Element, scored: Element[], rest: Element[]): void => {
+// win them with an `!important` order. Style-only — the tab-order drift from
+// not moving nodes is the price of never fighting a host re-render.
+export const orderByCssImportant = (_container: Element, scored: Element[], rest: Element[]): void => {
   [...scored, ...rest].forEach((child, i) => {
     (child as HTMLElement).style.setProperty('order', String(i), 'important');
-    container.appendChild(child);
   });
 };
 
-// For rows that also hold lazy-load placeholders, and for React-owned grids
-// where moving a managed child makes every reconciliation restore its order
-// (eating in-flight clicks and re-shuffling the grid): touch no nodes. A negative
-// `order` band floats the scored cards above everything still at the default 0.
+// The default. Touch no nodes: a negative `order` band floats the scored cards
+// above everything still at the default 0. Grid/flex layout honours it, the
+// host framework never inspects it, and a resort makes zero childList
+// mutations — so re-rendering hosts (React/Vue grids, lazy-load placeholder
+// rows) have nothing to fight and observers nothing to re-fire on.
 export const orderByCssBand = (_container: Element, scored: Element[]): void => {
   scored.forEach((child, i) => {
     (child as HTMLElement).style.order = String(i - scored.length);
@@ -114,7 +121,11 @@ export interface ScoreGridOpts {
   placeBadge: (card: Element, badge: HTMLElement) => void;
   // Container discovery. Defaults to `structuralContainers(cardSelector)`.
   discover?: (cards: Element[]) => Iterable<Element>;
-  // Sort application. Defaults to `orderByAppend`.
+  // Sort application. Defaults to `orderByCssBand` — the only strategy safe on
+  // hosts that re-render or recreate card wrappers, because its resort makes no
+  // childList mutations (the persisted-badge path below re-sorts on every
+  // wrapper recreation, which would feed a node-moving strategy into a
+  // re-render↔re-sort loop).
   applyOrder?: (container: Element, scored: Element[], rest: Element[]) => void;
 }
 
@@ -123,24 +134,17 @@ export const setupScoreGrid = ({
   scoreForCard,
   placeBadge,
   discover,
-  applyOrder = orderByAppend,
+  applyOrder = orderByCssBand,
 }: ScoreGridOpts): void => {
   const discoverContainers = discover ?? structuralContainers(cardSelector);
-
-  let sorting = false;
 
   const resort = () => {
     const cards = [...document.querySelectorAll(cardSelector)];
     const containers = new Set(discoverContainers(cards));
-    sorting = true;
-    try {
-      for (const container of containers) {
-        const { scored, rest } = rankChildren(container);
-        if (scored.length < 2) continue; // nothing to rank against
-        applyOrder(container, scored, rest);
-      }
-    } finally {
-      sorting = false;
+    for (const container of containers) {
+      const { scored, rest } = rankChildren(container);
+      if (scored.length < 2) continue; // nothing to rank against
+      applyOrder(container, scored, rest);
     }
   };
 
@@ -157,18 +161,17 @@ export const setupScoreGrid = ({
   };
 
   const processCards = () => {
-    if (sorting) return; // ignore the mutations our own re-sort triggers
     const cards = [...document.querySelectorAll(`${cardSelector}:not([data-nps-done])`)];
     if (!cards.length) return;
 
     for (const card of cards) {
       card.setAttribute('data-nps-done', '1');
-      // Idempotent guard. Some hosts (e.g. Uniqlo's React grid) re-render a
-      // card's wrapper around a persisted rating node, so a freshly-matched card
-      // can already carry our badge. Never stack a second one — but do re-rank,
-      // because the recreated wrapper lost any CSS `order` it carried. Safe from
-      // the re-render↔re-sort loop only because hosts that recreate wrappers
-      // must use a CSS-order strategy, whose resort makes no childList mutations.
+      // Idempotent guard. Some hosts (e.g. Uniqlo's and IKEA's React grids)
+      // re-render a card's wrapper around a persisted rating node, so a
+      // freshly-matched card can already carry our badge. Never stack a second
+      // one — but do re-rank, because the recreated wrapper lost any CSS
+      // `order` it carried. Loop-safe because the default CSS-band resort
+      // makes no childList mutations for the observer to re-fire on.
       if (card.querySelector('.nps-score-badge')) {
         scheduleSort();
         continue;

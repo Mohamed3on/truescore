@@ -1,6 +1,6 @@
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { fetchItemScore } from '../shared/etsy';
-import { setupScoreGrid, orderByCssImportantAppend } from '../shared/score-grid';
+import { setupScoreGrid, orderByCssImportant } from '../shared/score-grid';
 
 const CARD = '.v2-listing-card[data-listing-id][data-shop-id]';
 
@@ -19,6 +19,7 @@ setupScoreGrid({
     else card.querySelector('.v2-listing-card__info')?.append(badge);
   },
   // Etsy pins each card with `wt-order-*` utility classes that declare `order`
-  // as `!important`, so ranking has to out-`!important` them and appendChild.
-  applyOrder: orderByCssImportantAppend,
+  // as `!important`, so ranking has to out-`!important` them — style-only, no
+  // node moves for a host re-render to fight.
+  applyOrder: orderByCssImportant,
 });

@@ -41,7 +41,9 @@ const appendScore = (productInfo: Element, { score, nps }: { score: number; nps:
   const separator = document.createElement('div');
   separator.className = 'review__vertical-line';
   const badge = document.createElement('span');
-  badge.className = 'vp-body-s nps-score-badge';
+  // The pdp marker keeps cleanup() off the PLP grid script's badges — this
+  // script runs domain-wide, so its cleanup fires on PLP filter navs too.
+  badge.className = 'vp-body-s nps-score-badge nps-pdp-badge';
   badge.style.cssText = `color: ${npsColor(nps)}; font-weight: 600;`;
   badge.textContent = `${addCommas(String(score))} (${Math.round(nps)}%)`;
   reviewDiv.appendChild(separator);
@@ -91,6 +93,7 @@ const replaceSizometer = (stats: any) => {
   const fitTotal = fitDistribution.reduce((s: number, f: any) => s + f.value, 0);
   if (fitTotal === 0) return;
 
+  if (document.querySelector('.nps-fit')) return;
   const sizometer = document.querySelector('[data-cs-override-id="product_productinfo_sizometer"]');
   if (!sizometer) return;
 
@@ -113,6 +116,7 @@ const replaceSizometer = (stats: any) => {
   }
 
   const wrapper = document.createElement('div');
+  wrapper.className = 'nps-fit';
   wrapper.style.cssText = 'margin:4px 0;';
   wrapper.innerHTML = [
     `<button type="button" style="`,
@@ -142,7 +146,11 @@ const replaceSizometer = (stats: any) => {
     chevron.style.transform = open ? 'rotate(-90deg)' : '';
   });
 
-  sizometer.replaceWith(wrapper);
+  // Hide the host's sizometer instead of replacing it — the node is
+  // Vue-managed, and removing it invites the framework to fight or crash on
+  // its next patch of that subtree. Ours sits after it; cleanup un-hides.
+  sizometer.after(wrapper);
+  (sizometer as HTMLElement).style.display = 'none';
 };
 
 interface DktReview { rating: number; text: string }
@@ -240,11 +248,14 @@ setupSpaInjector({
   },
   cleanup: () => {
     document.querySelectorAll('.nps-insights').forEach(el => el.remove());
-    document.querySelectorAll('.nps-score-badge').forEach(el => {
+    document.querySelectorAll('.nps-pdp-badge').forEach(el => {
       const sep = el.previousElementSibling;
       if (sep?.classList.contains('review__vertical-line')) sep.remove();
       el.remove();
     });
+    document.querySelectorAll('.nps-fit').forEach(el => el.remove());
+    document.querySelectorAll<HTMLElement>('[data-cs-override-id="product_productinfo_sizometer"]')
+      .forEach(el => { el.style.display = ''; });
     document.querySelectorAll('.ars-wrapper').forEach(el => el.remove());
   },
 });

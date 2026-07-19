@@ -62,6 +62,9 @@ setupScoreGrid({
   placeBadge: (card, badge) => {
     card.querySelector('.review__fullstars__votes')?.after(badge);
   },
+  // The PLP grid is React-reconciled (fiber keys on its `li`s) and `display:
+  // grid`; the default CSS-band ranking is the only kind it doesn't fight, and
+  // it also can't corrupt the carousel tracks the way node moves could.
   discover: containersBySelector(CONTAINERS),
 });
 
