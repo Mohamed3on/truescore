@@ -19,203 +19,6 @@ const CONFIG = {
 };
 
 // =============================================================================
-// Styles (injected once)
-// =============================================================================
-const STYLES = `
-  .lbx-score {
-    display: block;
-    padding: .15rem 0 .6rem 0;
-    text-align: right;
-    font-size: .8125rem;
-    font-weight: 500;
-    color: #9ab;
-    line-height: 1.3;
-    letter-spacing: .01em;
-  }
-  .lbx-score .lbx-pct {
-    color: #678;
-    margin-left: .25em;
-  }
-  .lbx-trending {
-    margin-top: 1rem;
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: #9ab;
-    letter-spacing: .075em;
-    text-transform: uppercase;
-  }
-  .lbx-similar {
-    margin-top: 1.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid #456;
-  }
-  .lbx-similar-header {
-    font-size: .85rem;
-    font-weight: 600;
-    color: #9ab;
-    letter-spacing: .05em;
-    text-transform: uppercase;
-    margin: 0 0 .75rem 0;
-  }
-  .lbx-similar-source {
-    display: block;
-    color: #678;
-    font-size: .8rem;
-    margin-bottom: .75rem;
-    text-decoration: none;
-  }
-  .lbx-similar-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: .5rem;
-  }
-  .lbx-similar-item {
-    display: flex;
-    align-items: center;
-    gap: .5rem;
-  }
-  .lbx-similar-link {
-    color: #40bcf4;
-    font-weight: 500;
-    text-decoration: none;
-    flex: 1;
-  }
-  .lbx-similar-meta {
-    color: #678;
-    font-size: .85rem;
-    white-space: nowrap;
-  }
-  .lbx-winner {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: .25rem .5rem;
-    color: #00e054;
-    font-weight: 600;
-  }
-  .lbx-winner-source {
-    color: #678;
-    font-weight: 400;
-    font-size: .85em;
-    text-decoration: none;
-  }
-  .lbx-similar-item.lbx-excluded {
-    opacity: .45;
-  }
-  .lbx-similar-item.lbx-excluded .lbx-similar-link {
-    color: #678;
-    text-decoration: line-through;
-  }
-  .lbx-similar-reason {
-    color: #e54;
-    font-size: .75rem;
-    white-space: nowrap;
-  }
-  .lbx-debug-toggle {
-    color: #567;
-    font-size: .75rem;
-    cursor: pointer;
-    margin-top: .75rem;
-    user-select: none;
-  }
-  .lbx-debug-toggle:hover { color: #9ab; }
-  .lbx-debug-content {
-    color: #567;
-    font-size: .75rem;
-    line-height: 1.5;
-    margin-top: .35rem;
-    font-family: monospace;
-  }
-  .lbx-winner-source::before { content: '· '; }
-  .lbx-winner-source:hover { color: #9ab; }
-  .lbx-progress { color: #678; font-size: .9rem; }
-  .lbx-progress-dots { display: flex; gap: .25rem; margin-bottom: .35rem; }
-  .lbx-dot { width: 6px; height: 6px; border-radius: 50%; }
-  .lbx-dot-done { background: #00e054; }
-  .lbx-dot-active { background: #40bcf4; }
-  .lbx-dot-pending { background: #456; }
-  .lbx-summary {
-    margin-top: 1.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid #456;
-  }
-  .lbx-summary-head {
-    display: flex;
-    align-items: center;
-    gap: .5rem;
-    margin: 0 0 .7rem 0;
-  }
-  .lbx-summary-header {
-    font-size: .85rem;
-    font-weight: 600;
-    color: #9ab;
-    letter-spacing: .05em;
-    text-transform: uppercase;
-    margin: 0;
-  }
-  .lbx-summary-header::before {
-    content: '◈';
-    color: #00e054;
-    margin-right: .4em;
-    font-size: .9em;
-  }
-  .lbx-summary-relink {
-    margin-left: auto;
-    color: #567;
-    font-size: .75rem;
-    cursor: pointer;
-    user-select: none;
-    transition: color .15s ease;
-  }
-  .lbx-summary-relink:hover { color: #9ab; }
-  .lbx-summary-btn {
-    background: transparent;
-    border: 1px solid #456;
-    color: #9ab;
-    font: inherit;
-    font-size: .85rem;
-    font-weight: 600;
-    padding: .4rem .85rem;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: border-color .15s ease, color .15s ease;
-  }
-  .lbx-summary-btn:hover:not(:disabled) { border-color: #00e054; color: #00e054; }
-  .lbx-summary-btn:disabled { opacity: .55; cursor: default; }
-  .lbx-summary-body {
-    color: #9ab;
-    font-size: .9rem;
-    line-height: 1.5;
-  }
-  .lbx-summary-sec + .lbx-summary-sec { margin-top: .65rem; }
-  .lbx-summary-label {
-    font-size: .68rem;
-    font-weight: 700;
-    letter-spacing: .07em;
-    text-transform: uppercase;
-    color: #678;
-    margin-bottom: .12rem;
-  }
-  .lbx-summary-text strong { color: #cde; font-weight: 600; }
-  .lbx-summary-text em { color: #bcd; font-style: italic; }
-  .lbx-summary-text a { color: #40bcf4; text-decoration: none; }
-  .lbx-summary-text a:hover { text-decoration: underline; }
-  .lbx-summary-error { color: #e54; font-size: .85rem; }
-  .lbx-summary-progress { color: #678; font-size: .9rem; }
-`;
-
-function injectStyles() {
-  if (document.getElementById('lbx-extension-styles')) return;
-  const style = document.createElement('style');
-  style.id = 'lbx-extension-styles';
-  style.textContent = STYLES;
-  document.head.appendChild(style);
-}
-
-// =============================================================================
 // Utilities
 // =============================================================================
 
@@ -321,16 +124,6 @@ const setCachedRecentRatings = (slug: string, data: any) => idbSet(`lbx_recent_$
 const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v2_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
 const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v2_${slug}`, data);
 
-(function purgeOrphanedCacheKeys() {
-  if (localStorage.getItem('lbx_purged_v2')) return;
-  for (const key of Object.keys(localStorage)) {
-    if ((key.startsWith('lbx_film_') || key.startsWith('lbx_similar_')) && !key.includes('_v2_')) {
-      localStorage.removeItem(key);
-    }
-  }
-  localStorage.setItem('lbx_purged_v2', '1');
-})();
-
 // =============================================================================
 // Fetching
 // =============================================================================
@@ -365,6 +158,10 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries
 }
 
 const throttledFetch = createThrottledFetcher(CONFIG.MAX_CONCURRENCY, fetchWithRetry);
+
+/** Fetches one recent-reviews page (reviews/by/added) as HTML */
+const fetchReviewPage = (slug: string, page: number) =>
+  throttledFetch(`https://letterboxd.com/film/${slug}/reviews/by/added/page/${page}/`, { credentials: 'include' }).then((r) => r.text());
 
 /**
  * Fetches IMDB rating data via CORS proxy
@@ -479,14 +276,11 @@ async function getRecentRatingsSummary(slug: string | null = null) {
   const cached = await getCachedRecentRatings(effectiveSlug);
   if (cached) return cached;
 
-  const baseUrl = `https://letterboxd.com/film/${effectiveSlug}/`;
   const recentRatings = { totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 };
   const parser = new DOMParser();
 
   const pages = await Promise.all(
-    Array.from({ length: 15 }, (_, i) =>
-      throttledFetch(`${baseUrl}reviews/by/added/page/${i + 1}/`, { credentials: 'include' }).then((r) => r.text())
-    )
+    Array.from({ length: 15 }, (_, i) => fetchReviewPage(effectiveSlug, i + 1))
   );
 
   pages.forEach((html) => tallyRatings(parser.parseFromString(html, 'text/html'), recentRatings));
@@ -520,11 +314,7 @@ const SUMMARY_PROMPT = `Summarize these recent Letterboxd reviews for someone de
 async function fetchRecentReviewTexts(slug: string): Promise<string[]> {
   const parser = new DOMParser();
   const pages = await Promise.all(
-    Array.from({ length: CONFIG.RECENT_REVIEW_PAGES }, (_, i) =>
-      throttledFetch(`https://letterboxd.com/film/${slug}/reviews/by/added/page/${i + 1}/`, { credentials: 'include' })
-        .then((r) => r.text())
-        .catch(() => '')
-    )
+    Array.from({ length: CONFIG.RECENT_REVIEW_PAGES }, (_, i) => fetchReviewPage(slug, i + 1).catch(() => ''))
   );
   const texts: string[] = [];
   const seen = new Set<string>();
@@ -851,8 +641,6 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
  * Main entry point - orchestrates score calculation and display
  */
 async function run(ratings: number[]) {
-  injectStyles();
-
   const currentSlug = extractSlugFromUrl(window.location.href);
   const currentRuntime = extractRuntime(document);
   const currentYear = extractYear(document);

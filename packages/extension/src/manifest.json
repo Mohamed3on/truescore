@@ -240,6 +240,7 @@
     {
       "matches": ["*://*.letterboxd.com/film/*/"],
       "js": ["sites/letterboxd.js"],
+      "css": ["sites/letterboxd.css"],
       "run_at": "document_end"
     },
     {
