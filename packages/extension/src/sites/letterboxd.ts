@@ -881,13 +881,10 @@ async function run(ratings: number[]) {
   const histogramContainer = avgRating
     ? avgRating.closest('.rating-histogram')
     : document.querySelector('.ratings-histogram-chart .rating-histogram');
-  if ((!avgRating && !histogramContainer) || !reviewSection) return;
+  const scoreAnchor = histogramContainer ?? avgRating;
+  if (!scoreAnchor || !reviewSection) return;
 
   const scoreClass = histogramContainer ? 'lbx-score -new' : 'lbx-score';
-  const mountScore = (scoreEl: HTMLElement) => {
-    if (histogramContainer) histogramContainer.before(scoreEl);
-    else avgRating!.parentElement!.insertBefore(scoreEl, avgRating!);
-  };
   const renderScore = (scoreEl: HTMLElement, score: number, ratio: number) => {
     const val = addCommas(score);
     const pct = `${Math.round(ratio * 100)}%`;
@@ -906,11 +903,11 @@ async function run(ratings: number[]) {
   if (cachedFilm) {
     const scoreElement = el('span', scoreClass);
     renderScore(scoreElement, cachedFilm.score, cachedFilm.ratio);
-    mountScore(scoreElement);
+    scoreAnchor.before(scoreElement);
     scorePromise = Promise.resolve({ score: cachedFilm.score, ratio: cachedFilm.ratio });
   } else {
     const scoreElement = el('span', scoreClass, 'Calculating...');
-    mountScore(scoreElement);
+    scoreAnchor.before(scoreElement);
     scorePromise = fetchImdbRatings(document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null)
       .then(({ imdbScore, imdbTotal }) => {
         const { score, ratio } = calculateCombinedScore(ratings, imdbScore, imdbTotal);
