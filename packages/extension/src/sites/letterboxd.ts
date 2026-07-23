@@ -23,14 +23,6 @@ const CONFIG = {
 // =============================================================================
 const STYLES = `
   .lbx-score {
-    float: left;
-    font-size: 1.15384615rem;
-    color: #9ab;
-    line-height: 1;
-    padding-top: .3rem;
-  }
-  .lbx-score.-new {
-    float: none;
     display: block;
     padding: .15rem 0 .6rem 0;
     text-align: right;
@@ -40,7 +32,7 @@ const STYLES = `
     line-height: 1.3;
     letter-spacing: .01em;
   }
-  .lbx-score.-new .lbx-pct {
+  .lbx-score .lbx-pct {
     color: #678;
     margin-left: .25em;
   }
@@ -250,18 +242,14 @@ function extractSlugFromUrl(url: string) {
   return match ? match[1] : null;
 }
 
-/** Parses 10 rating-bucket counts from .barcolumn (current title= or legacy data-original-title=) or old .rating-histogram-bar layout */
+/** Parses 10 rating-bucket counts from .barcolumn bars (title= before tooltip init, data-original-title= after) */
 function parseRatings(root: Document | Element): number[] {
   const barcolumns = root.querySelectorAll('.barcolumn[title], .barcolumn[data-original-title]');
-  if (barcolumns.length) {
-    return Array.from(barcolumns).map((el) => {
-      const attr = el.getAttribute('title') || el.getAttribute('data-original-title') || '';
-      const match = attr.match(/([\d,]+)/);
-      return match ? parseInt(match[1].replace(/,/g, ''), 10) : 0;
-    });
-  }
-  const bars = root.querySelectorAll('.rating-histogram-bar');
-  return Array.from(bars).map((el) => parseInt(el.textContent!.replace(/,/g, '').split('&')[0]) || 0);
+  return Array.from(barcolumns).map((el) => {
+    const attr = el.getAttribute('title') || el.getAttribute('data-original-title') || '';
+    const match = attr.match(/([\d,]+)/);
+    return match ? parseInt(match[1].replace(/,/g, ''), 10) : 0;
+  });
 }
 
 function filmMeta(film: any, recentText = '...') {
@@ -874,26 +862,15 @@ async function run(ratings: number[]) {
   const cachedFilm = cachedFilmRaw?.score > 0 ? cachedFilmRaw : null;
   const recentRatingsRaw = getRecentRatingsSummary().catch(() => ({ totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 }));
 
-  const avgRating = document.querySelector('.ratings-histogram-chart .average-rating, .ratings-histogram-chart .averagerating');
   const reviewSection = document.querySelector('.review.body-text');
-  // Films below Letterboxd's own-average threshold render the histogram without
-  // an average element — mount on the histogram container instead.
-  const histogramContainer = avgRating
-    ? avgRating.closest('.rating-histogram')
-    : document.querySelector('.ratings-histogram-chart .rating-histogram');
-  const scoreAnchor = histogramContainer ?? avgRating;
+  // Anchor on the histogram container, not Letterboxd's average — films below
+  // the site's own-average threshold render the histogram without one.
+  const scoreAnchor = document.querySelector('.ratings-histogram-chart .rating-histogram');
   if (!scoreAnchor || !reviewSection) return;
 
-  const scoreClass = histogramContainer ? 'lbx-score -new' : 'lbx-score';
   const renderScore = (scoreEl: HTMLElement, score: number, ratio: number) => {
-    const val = addCommas(score);
-    const pct = `${Math.round(ratio * 100)}%`;
-    if (histogramContainer) {
-      scoreEl.textContent = val;
-      scoreEl.append(el('span', 'lbx-pct', `· ${pct}`));
-    } else {
-      scoreEl.textContent = `${val} (${pct})`;
-    }
+    scoreEl.textContent = addCommas(score);
+    scoreEl.append(el('span', 'lbx-pct', `· ${Math.round(ratio * 100)}%`));
   };
 
   const trendingElement = el('div', 'lbx-trending', 'Calculating...');
@@ -901,12 +878,12 @@ async function run(ratings: number[]) {
 
   let scorePromise: Promise<{ score: number; ratio: number }>;
   if (cachedFilm) {
-    const scoreElement = el('span', scoreClass);
+    const scoreElement = el('span', 'lbx-score');
     renderScore(scoreElement, cachedFilm.score, cachedFilm.ratio);
     scoreAnchor.before(scoreElement);
     scorePromise = Promise.resolve({ score: cachedFilm.score, ratio: cachedFilm.ratio });
   } else {
-    const scoreElement = el('span', scoreClass, 'Calculating...');
+    const scoreElement = el('span', 'lbx-score', 'Calculating...');
     scoreAnchor.before(scoreElement);
     scorePromise = fetchImdbRatings(document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null)
       .then(({ imdbScore, imdbTotal }) => {
