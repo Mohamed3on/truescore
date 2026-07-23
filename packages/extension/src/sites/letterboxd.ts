@@ -876,13 +876,17 @@ async function run(ratings: number[]) {
 
   const avgRating = document.querySelector('.ratings-histogram-chart .average-rating, .ratings-histogram-chart .averagerating');
   const reviewSection = document.querySelector('.review.body-text');
-  if (!avgRating?.parentElement || !reviewSection) return;
+  // Films below Letterboxd's own-average threshold render the histogram without
+  // an average element — mount on the histogram container instead.
+  const histogramContainer = avgRating
+    ? avgRating.closest('.rating-histogram')
+    : document.querySelector('.ratings-histogram-chart .rating-histogram');
+  if ((!avgRating && !histogramContainer) || !reviewSection) return;
 
-  const histogramContainer = avgRating.closest('.rating-histogram');
   const scoreClass = histogramContainer ? 'lbx-score -new' : 'lbx-score';
   const mountScore = (scoreEl: HTMLElement) => {
     if (histogramContainer) histogramContainer.before(scoreEl);
-    else avgRating.parentElement!.insertBefore(scoreEl, avgRating);
+    else avgRating!.parentElement!.insertBefore(scoreEl, avgRating!);
   };
   const renderScore = (scoreEl: HTMLElement, score: number, ratio: number) => {
     const val = addCommas(score);
