@@ -156,7 +156,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   };
   const formatRatings: Record<string, number> = {};
 
-  const scoresCacheKey = `ars-scores-v2-${cacheASIN}`;
+  const scoresCacheKey = `ars-scores-v3-${cacheASIN}`;
   const cachedScores = cacheGet(scoresCacheKey, THREE_DAYS);
   let usedCache = false;
 
@@ -623,13 +623,14 @@ const getParentASIN = () => {
   if (!productSIN) return;
   const numOfRatingsElement = document.getElementById('acrCustomerReviewLink');
   if (!numOfRatingsElement) return;
-  const ratingText = numOfRatingsElement.textContent!
-    .match(/(\d{1,3}(,\d{3})*(\.\d+)?|\d+(\.\d+)?)[K]?/)![0]
-    .replace(',', '');
+  // Grouping separator varies by locale (en "2,370", de "2.370", fr "2 370"),
+  // so strip everything non-digit; only K-abbreviated counts carry a decimal.
+  const countText = numOfRatingsElement.textContent!.match(/\d[\d.,\u00A0\u202F ]*[Kk]?/)?.[0]?.trim();
+  if (!countText) return;
 
-  const numOfRatings = ratingText.endsWith('K')
-    ? Math.round(parseFloat(ratingText.replace('K', '')) * 1000)
-    : ratingText;
+  const numOfRatings = /[Kk]$/.test(countText)
+    ? Math.round(parseFloat(countText.slice(0, -1).replace(',', '.')) * 1000)
+    : parseInt(countText.replace(/\D/g, ''), 10);
 
   const cacheASIN = getParentASIN() || productSIN;
   await getRatingSummary(productSIN, numOfRatingsElement, numOfRatings, cacheASIN);
