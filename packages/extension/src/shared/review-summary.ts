@@ -109,7 +109,10 @@ const PROVIDER_LABEL: Record<string, string> = { gemini: 'Gemini', openai: 'Open
 export const llmSummarize = async (reviewTexts: string[], prompt: string, schema: any = SUMMARY_SCHEMA): Promise<any> => {
   // Reviews arrive in the page's locale (amazon.es, booking.de, …), so without
   // this the model answers in that language. Pin output to English for every site.
-  const fullPrompt = prompt + '\n\nAlways respond in English, even if the reviews are written in another language.\n\nReviews:\n\n' + reviewTexts.join('\n---\n');
+  // toWellFormed: site APIs can truncate text mid-emoji (Decathlon cuts titles at
+  // 30 UTF-16 units), and the resulting lone surrogate survives JSON.stringify as
+  // a bare \ud83d escape that OpenAI rejects with "failed to parse JSON value".
+  const fullPrompt = (prompt + '\n\nAlways respond in English, even if the reviews are written in another language.\n\nReviews:\n\n' + reviewTexts.join('\n---\n')).toWellFormed();
 
   const { provider, key, reasoningEffort } = await getActiveLLM();
   if (!key) throw new Error(`No ${PROVIDER_LABEL[provider]} API key \u2014 set one in the TrueScore popup`);
