@@ -18,9 +18,12 @@
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* body width is the popup width; body background propagates to the canvas, so
+   when popup.html is opened as a tab the column centers on the dark canvas
+   instead of hugging the left edge of a wide empty page. */
 body {
   width: 320px;
-  margin: 0;
+  margin: 0 auto;
   padding: 0 0 18px;
   background: var(--bg);
   color: var(--t-hi);
