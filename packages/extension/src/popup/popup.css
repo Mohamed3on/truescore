@@ -18,12 +18,14 @@
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* body width is the popup width; body background propagates to the canvas, so
-   when popup.html is opened as a tab the column centers on the dark canvas
-   instead of hugging the left edge of a wide empty page. */
+/* Chrome sizes the popup window from the root element's preferred width, so
+   the width must be pinned on html (on body alone the document prefers
+   fill-available and the popup opens at its 800px max). The auto margins
+   center the column when popup.html is opened as a full page; body background
+   still propagates to the whole canvas there. */
+html { width: 320px; margin: 0 auto; }
 body {
-  width: 320px;
-  margin: 0 auto;
+  margin: 0;
   padding: 0 0 18px;
   background: var(--bg);
   color: var(--t-hi);
