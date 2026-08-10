@@ -13,7 +13,7 @@ const storedKey = async (name: string): Promise<string> => {
   }
 };
 
-// gpt-5.4-nano reasoning effort, set in the popup. ReasoningEffort and its
+// gpt-5.6-luna reasoning effort, set in the popup. ReasoningEffort and its
 // validation list are the canonical ones from gmaps-shared/wire.ts (shared with
 // the server), re-exported here so the rest of the extension keeps importing
 // them from config. Default 'low'; only the OpenAI path reads it (Gemini and
@@ -56,7 +56,7 @@ export const GEMINI_MODEL = 'gemini-3-flash-preview';
 export const geminiEndpoint = (apiKey: string) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
-export const OPENAI_MODEL = 'gpt-5.4-nano';
+export const OPENAI_MODEL = 'gpt-5.6-luna';
 
 export const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 

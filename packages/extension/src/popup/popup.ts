@@ -36,7 +36,7 @@ for (const btn of segBtns) {
   });
 }
 
-// Reasoning effort for gpt-5.4-nano (OpenAI path only); defaults to medium.
+// Reasoning effort for gpt-5.6-luna (OpenAI path only); defaults to low.
 const reasoningSeg = document.getElementById('reasoning-seg')!;
 const reasoningBtns = [...reasoningSeg.querySelectorAll<HTMLButtonElement>('button')];
 const markEffort = (effort: string) =>

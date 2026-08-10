@@ -86,7 +86,7 @@ const toStrictSchema = (s: any): any => {
 };
 
 // ── Providers (endpoints/models from packages/extension/src/shared/config.ts).
-const OPENAI_MODEL = 'gpt-5.4-nano';
+const OPENAI_MODEL = 'gpt-5.6-luna';
 const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-v4-flash';
 const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
@@ -157,7 +157,7 @@ const callGemini = async (fullPrompt: string): Promise<Call> => {
 type Contestant = { label: string; provider: Provider; effort?: string };
 const CONTESTANTS: Contestant[] = [
   { label: 'gemini:minimal', provider: 'gemini' },
-  { label: 'nano:low', provider: 'openai', effort: 'low' },
+  { label: 'luna:low', provider: 'openai', effort: 'low' },
   { label: 'deepseek:off', provider: 'deepseek' },
 ];
 
@@ -192,6 +192,9 @@ const FIXTURES = [
   // description as context — the fallback when a product has no chapter list.
   { name: 'open-guard+desc', reviews: 'bjjfanatics-openguard.txt', context: 'bjjfanatics-openguard.context.txt' },
   { name: 'half-guard+contents', reviews: 'bjjfanatics-halfguard.txt', context: 'bjjfanatics-halfguard.context.txt' },
+  // Danaher Pin Escapes: the largest set (842 reviews, ~180K chars) — the heavy
+  // fixture used for the gpt-5.6-luna reasoning-ladder benchmark.
+  { name: 'pin-escapes+contents', reviews: 'bjjfanatics-pinescapes.txt', context: 'bjjfanatics-pinescapes.context.txt' },
 ];
 const fixtureArg = process.argv.find((a) => a.startsWith('--fixture='))?.split('=')[1];
 const load = async (f: (typeof FIXTURES)[number]) => ({

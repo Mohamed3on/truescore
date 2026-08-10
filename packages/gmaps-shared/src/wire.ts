@@ -108,8 +108,8 @@ export type Provider = (typeof LLM_PROVIDERS)[number];
 export const REASONING_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 // Optional per-request overrides on the summarize/ask bodies. Unset leaves the
-// server on its own default (LLM_PROVIDER env, nano:low). reasoningEffort is
-// gpt-5.4-nano only; the server ignores it on Gemini/DeepSeek.
+// server on its own default (LLM_PROVIDER env, luna:low). reasoningEffort is
+// gpt-5.6-luna only; the server ignores it on Gemini/DeepSeek.
 export type LlmOverrides = { reasoningEffort?: ReasoningEffort; provider?: Provider };
 
 // ---- request bodies ----

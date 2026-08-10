@@ -3,7 +3,7 @@
 //   bun evals/latency.ts [runs] [reviews.json] [--judge]   (default 3 runs)
 // Times the heavy *structured* extraction call (the production bottleneck) on
 // a realistic review set, so the spread reflects what users actually wait for.
-// Variants: nano effort ladder (none|low|medium|high), Gemini Flash at the
+// Variants: luna effort ladder (none|low|medium|high|xhigh), Gemini Flash at the
 // production thinkingLevel, and DeepSeek V4 Flash non-thinking + its thinking
 // effort ladder (low|medium|high|xhigh|max). Reasoning/thought tokens explain
 // the latency. --judge adds a blind gpt-5.4 quality score (grounded/specific/
@@ -18,7 +18,7 @@ import { z } from 'zod';
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
 const deepseek = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY });
-const nano = openai('gpt-5.4-nano');
+const luna = openai('gpt-5.6-luna');
 const flash = google('gemini-3-flash-preview');
 const ds = deepseek('deepseek-v4-flash');
 
@@ -96,12 +96,12 @@ const scoreQuality = async (summary: unknown): Promise<Q> => {
 };
 
 type Variant = { label: string; run: () => Promise<any> };
-const NANO_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
+const LUNA_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const;
 const DS_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 const variants: Variant[] = [
-  ...NANO_EFFORTS.map((e) => ({
-    label: `nano:${e}`,
-    run: () => generateObject({ model: nano, providerOptions: { openai: { reasoningEffort: e } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
+  ...LUNA_EFFORTS.map((e) => ({
+    label: `luna:${e}`,
+    run: () => generateObject({ model: luna, providerOptions: { openai: { reasoningEffort: e } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
   })),
   {
     label: 'flash:min',

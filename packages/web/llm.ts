@@ -25,9 +25,13 @@ export const PROVIDERS = {
     providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' as const } } },
   },
   openai: {
-    // Low reasoning effort — about as fast as no reasoning while still thinking
-    // a little; medium/high roughly double nano's latency (see evals/latency.ts).
-    model: openai('gpt-5.4-nano'),
+    // GPT-5.6 Luna (the fast/cheap 5.6 tier), low reasoning effort. 2026-08-10
+    // ladder evals (latency.ts + the bjjfanatics pin-escapes payload): judged
+    // quality is identical from low through xhigh on both summary shapes, but
+    // high/xhigh burn 20-60x the reasoning tokens for 2-8x the latency (82s and
+    // 156s on a 44K-token payload vs 18s at low) — so keep the cheapest
+    // thinking level. Beats nano:low on quality (4.7 vs 4.0) at ~2x its latency.
+    model: openai('gpt-5.6-luna'),
     providerOptions: { openai: { reasoningEffort: 'low' } },
   },
   deepseek: {
@@ -44,7 +48,7 @@ export const PROVIDERS = {
 // Validate untrusted request-body overrides against the canonical wire lists
 // (gmaps-shared/wire.ts): the server only honors a configured provider/effort,
 // never one injected from the body. Unset → active() default. Gemini/DeepSeek
-// ignore reasoningEffort (it's gpt-5.4-nano only).
+// ignore reasoningEffort (it's gpt-5.6-luna only).
 export const parseReasoningEffort = (v: unknown): ReasoningEffort | undefined =>
   typeof v === 'string' && (REASONING_EFFORTS as readonly string[]).includes(v) ? (v as ReasoningEffort) : undefined;
 export const parseProvider = (v: unknown): Provider | undefined =>
