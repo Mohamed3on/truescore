@@ -119,7 +119,7 @@ export const llmSummarize = async (reviewTexts: string[], prompt: string, schema
 
   // OpenAI and DeepSeek both speak the OpenAI Chat Completions API; they differ
   // only in endpoint/model and how thinking + structured output are requested.
-  // nano takes a strict json_schema and the popup's reasoning effort; DeepSeek
+  // Luna takes a strict json_schema and the popup's reasoning effort; DeepSeek
   // has no native schema mode, so we ask for json_object and pin the shape into
   // the prompt, and keep it non-thinking (its thinking ladder was slower for no
   // quality gain \u2014 see web evals/latency.ts).

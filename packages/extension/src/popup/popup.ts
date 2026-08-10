@@ -13,7 +13,7 @@ const segBtns = [...seg.querySelectorAll<HTMLButtonElement>('button')];
 const markActive = (provider: string) =>
   segBtns.forEach((b) => b.classList.toggle('active', b.dataset.provider === provider));
 
-// Reasoning effort only applies to GPT-5.4 nano; hide the field for Gemini /
+// Reasoning effort only applies to GPT-5.6 Luna; hide the field for Gemini /
 // DeepSeek. style.display (not [hidden]) so it beats `.field { display: flex }`.
 const reasoningField = document.getElementById('reasoning-field')!;
 const showReasoning = (provider: string) => { reasoningField.style.display = provider === 'openai' ? '' : 'none'; };
