@@ -113,7 +113,10 @@ const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
 // present, else harvest them. The preview RPC only serves the chips ~15-20% of
 // the time (random per request), but the tokens are stable, so the harvest is
 // single-flight per place and persistent, and records its outcome — a hit caches
-// the stable tokens, a miss stamps the entry topic-less so we stop re-warming it.
+// the stable tokens, a *clean* miss stamps the entry topic-less so we stop
+// re-warming it. A harvest that never got a usable preview response (proxy down,
+// cookie jar expired, Google throttling) is NOT recorded: stamping it would sell
+// a transient outage as "this place has no topics" for the next six hours.
 // Shared by the /api/highlights background warm (fire-and-forget while the client
 // re-polls the 202 `pending`) and the drift recompute, so both dedup and
 // self-cache through one primitive.
@@ -121,9 +124,14 @@ function ensureChips(featureId: string, name: string): Promise<ChipMeta[]> {
   const cached = cache.get(featureId)?.chipMeta;
   if (cached?.length) return Promise.resolve(cached);
   return warmChipsInflight.run(featureId, async () => {
-    const chips = await harvestTokens(mapsUrlFor(featureId));
-    await cache.recordChipWarm(featureId, chips);
-    console.log(`[warm-chips] ${name} (${featureId}): ${chips.length ? `cached ${chips.length} chips` : 'no chips after warm — marked topic-less'}`);
+    const { chips, ok } = await harvestTokens(mapsUrlFor(featureId));
+    if (chips.length || ok) await cache.recordChipWarm(featureId, chips);
+    const outcome = chips.length
+      ? `cached ${chips.length} chips`
+      : ok
+        ? 'no chips after warm — marked topic-less'
+        : 'warm failed (no usable preview response) — not marked, will retry';
+    console.log(`[warm-chips] ${name} (${featureId}): ${outcome}`);
     return chips;
   });
 }
@@ -529,17 +537,21 @@ Bun.serve({
           featureId = body.featureId;
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
-          if (entry.highlights && !body.force) return json({ highlights: entry.highlights, cached: true } satisfies HighlightsResponse);
+          // `.length`, not truthiness: an empty contributed array must fall through
+          // to a harvest, not pin the row blank forever.
+          if (entry.highlights?.length && !body.force) return json({ highlights: entry.highlights, cached: true } satisfies HighlightsResponse);
           const url = mapsUrlFor(featureId);
 
           // Chips already in hand (a prior harvest, or the lookup's preview) — score + stream.
           if (entry.chipMeta?.length) return streamHighlights(entry.name, featureId, url, entry.chipMeta);
-          // A recent background warm came back empty → the place genuinely has no topics.
-          if (cache.chipWarmedEmpty(entry)) return json({ error: "Google didn't return any topic chips for this place" }, 404);
+          // A recent background warm came back empty → the place genuinely has no
+          // topics. `force` (the REFRESH button) re-harvests anyway: it's the only
+          // way out if the stamp was wrong, and it's user-initiated so the cost is theirs.
+          if (cache.chipWarmedEmpty(entry) && !body.force) return json({ error: "Google didn't return any topic chips for this place" }, 404);
 
           // Fast path: one quick harvest round (skip if a background warm is already running).
           if (!warmChipsInflight.peek(featureId)) {
-            const chips = await harvestQuick(url);
+            const { chips } = await harvestQuick(url);
             if (chips.length) {
               await cache.recordChipWarm(featureId, chips);
               return streamHighlights(entry.name, featureId, url, chips);
