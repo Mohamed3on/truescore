@@ -462,8 +462,12 @@ async function runSearch(query: string, force = false) {
 // loadHighlights polls through that: re-request on a bounded schedule until the
 // chips stream or it 404s. `highlightsGen` supersedes an in-flight poll when the
 // place is re-looked-up or refreshed — the fetch/sleep awaits bail on a bump.
+// The poll budget must outlast the server's warm budget (15 rounds of 3 preview
+// shots, spaced 2.5s — roughly 75-100s wall clock). At the old 12 × 3.5s ≈ 42s
+// the client gave up mid-warm, so chips that landed at t=60s were never shown:
+// the row just vanished with no message and no way to ask again.
 let highlightsGen = 0;
-const HIGHLIGHTS_MAX_REPOLLS = 12;
+const HIGHLIGHTS_MAX_REPOLLS = 34;
 const HIGHLIGHTS_REPOLL_MS = 3500;
 
 async function loadHighlights(force = false) {
@@ -490,7 +494,9 @@ async function loadHighlights(force = false) {
       if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
       const data = await resp.json() as HighlightsResponse;
       if (data.pending) {
-        if (attempt >= HIGHLIGHTS_MAX_REPOLLS) { highlightsRow.hidden = true; return; } // gave up waiting
+        // Out of patience, but the place isn't topic-less — the harvest just
+        // hasn't hit a populated response yet. Leave a retry the user can take.
+        if (attempt >= HIGHLIGHTS_MAX_REPOLLS) return giveUpOnHighlights('still looking for topics — refresh to retry');
         showHighlightsLoading('finding topics…');
         await new Promise((r) => setTimeout(r, HIGHLIGHTS_REPOLL_MS));
         if (superseded()) return;
@@ -504,10 +510,19 @@ async function loadHighlights(force = false) {
       else highlightsRow.hidden = true;
       return;
     } catch (e) {
-      if (!superseded()) showHighlightsLoading(`couldn't load highlights — ${e instanceof Error ? e.message : String(e)}`);
+      if (!superseded()) giveUpOnHighlights(`couldn't load highlights — ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
   }
+}
+
+// Dead end with a way out: the row keeps a message instead of disappearing, and
+// REFRESH stays live so a failed harvest is one click from being retried (the
+// server treats a forced request as "re-harvest even if you marked this place
+// topic-less").
+function giveUpOnHighlights(msg: string) {
+  showHighlightsLoading(msg);
+  highlightsRefreshBtn.hidden = false;
 }
 
 function showHighlights(highlights: UiChip[]) {
