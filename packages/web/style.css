@@ -454,6 +454,10 @@ section#result::before {
   text-decoration: none;
   transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
 }
+/* `display: flex` above outranks the UA stylesheet's [hidden] { display: none },
+   so without this the bare "REVIEWS REMOVED" flag renders on every place —
+   including the ones with nothing removed. Same guard as .explainer/.places. */
+.place-removed[hidden] { display: none; }
 .place-removed[href]:hover { background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.55); }
 .place-removed-flag {
   font-family: 'IBM Plex Mono', monospace;
