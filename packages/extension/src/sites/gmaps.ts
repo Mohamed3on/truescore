@@ -317,8 +317,12 @@ const pushContribution = (patch: {
 // instant someone pastes this place's link instead of sitting empty for a whole
 // server-side scrape. Always the 'total' period and always the RAW score — the
 // removal penalty belongs to whoever renders, off their own preview meta.
-// Skipped when the store has no live data (a cache-served or throttled run):
-// re-uploading a restored score adds nothing and a 0 would paint "0 reviews".
+//
+// A cache-served run uploads too, and should: loadCache restores reviewMap from
+// disk, so mergedStats reports the whole cached set rather than the one page the
+// live-head reconcile pulled. The hasLiveData/totalAll guards are there for the
+// genuinely empty case — a throttled scrape with no cache to fall back on, where
+// uploading would publish a 0 for the next visitor to see as "0 reviews".
 const contributeScore = (): void => {
   const featureId = getFeatureId();
   if (!featureId || !store.hasLiveData()) return;
