@@ -18,6 +18,14 @@
 }
 
 * { box-sizing: border-box; }
+
+/* Any authored `display:` beats the UA stylesheet's `[hidden] { display: none }`,
+   because a class selector outranks it. That has already shipped one bug — the
+   removal banner painted its "REVIEWS REMOVED" flag on every place, including
+   the ones with nothing removed — and three more elements here were one
+   `hidden = true` away from the same thing. One rule, so the attribute always
+   wins whatever display a class sets, instead of a guard per class. */
+[hidden] { display: none !important; }
 html, body { margin: 0; padding: 0; background: var(--bg); color: var(--t1); }
 body {
   font-family: 'Sora', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -193,9 +201,6 @@ body[data-state] .hero,
 body[data-state] .hint,
 body[data-state] .explainer,
 body[data-state] .places { display: none; }
-
-.explainer[hidden],
-.places[hidden] { display: none; }
 
 .places {
   margin: 0 0 28px;
@@ -454,10 +459,6 @@ section#result::before {
   text-decoration: none;
   transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
 }
-/* `display: flex` above outranks the UA stylesheet's [hidden] { display: none },
-   so without this the bare "REVIEWS REMOVED" flag renders on every place —
-   including the ones with nothing removed. Same guard as .explainer/.places. */
-.place-removed[hidden] { display: none; }
 .place-removed[href]:hover { background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.55); }
 .place-removed-flag {
   font-family: 'IBM Plex Mono', monospace;
@@ -897,9 +898,6 @@ section#result::before {
 }
 .status.err { color: var(--neg); }
 
-/* Author `display:flex` below would otherwise beat the UA `[hidden]{display:none}`
-   rule, leaving the banner permanently visible — keep it honoring `hidden`. */
-.session-banner[hidden] { display: none; }
 .session-banner {
   margin: 0 0 20px;
   padding: 12px 16px;

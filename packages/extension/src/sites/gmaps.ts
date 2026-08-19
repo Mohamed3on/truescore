@@ -1730,6 +1730,9 @@ const updateUI = () => {
   const headReview = store.newestHeadReview();
   const parts = [
     totalAll > 0 ? `${totalTrusted} trusted of ${totalAll}` : '',
+    // What the removal penalty actually did, next to the number it did it to —
+    // the banner says how many were removed, this says what it cost.
+    removedPenalty && placeTotal ? `from ${toPct(mergedPct)}% · ${addCommas(removedPenalty)} removed of ${addCommas(placeTotal)}` : '',
     headReview?.timestamp ? `newest review ${timeAgo(headReview.timestamp / 1000)}` : '',
   ].filter(Boolean);
   const detailText = parts.join(' · ');

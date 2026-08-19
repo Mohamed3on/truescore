@@ -625,6 +625,16 @@ function paintScore(data: PaintData) {
   const displayScore = data.score
     ? Math.round(scoreWithRemovalPenalty(data.score.scorePct / 100, removedCount, placeTotal) * 100)
     : 0;
+  // Spell the adjustment out beside the number rather than only in the banner's
+  // tooltip: the two figures the penalty is computed from, and the score it came
+  // down from. Without them "ADJUSTED" asks the reader to take it on faith.
+  const removedRow = $('removedRow');
+  const penalised = !!data.score && removedCount > 0 && placeTotal > 0 && displayScore !== data.score.scorePct;
+  if (penalised) {
+    $('removedLabel').textContent =
+      `${removedCount.toLocaleString()} of ${placeTotal.toLocaleString()} · from ${data.score!.scorePct}%`;
+  }
+  removedRow.hidden = !penalised;
   const nameEl = $('name') as HTMLAnchorElement;
   nameEl.textContent = displayName;
   if (data.resolvedUrl) nameEl.href = data.resolvedUrl;
