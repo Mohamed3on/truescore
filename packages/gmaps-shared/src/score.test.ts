@@ -3,6 +3,8 @@ import {
   statsForReviews,
   overallPctFromHistogram,
   overallScoreFromHistogram,
+  removedCountEstimate,
+  scoreWithRemovalPenalty,
   type Review,
 } from './index';
 
@@ -30,6 +32,40 @@ describe('statsForReviews', () => {
   });
   test('all untrusted → scorePct 0 (no division by zero)', () => {
     expect(statsForReviews([rv(5, 1), rv(1, 2)]).scorePct).toBe(0);
+  });
+});
+
+describe('scoreWithRemovalPenalty', () => {
+  test('counts each removed review as a trusted 1-star review', () => {
+    // 80% across 40 trusted reviews = +32 net; 21 assumed 1★ removals => 11 / 61.
+    expect(scoreWithRemovalPenalty(0.8, 40, 21)).toBeCloseTo(11 / 61);
+  });
+
+  test('does not adjust a score without trusted reviews or removals', () => {
+    expect(scoreWithRemovalPenalty(0.8, 0, 21)).toBe(0.8);
+    expect(scoreWithRemovalPenalty(0.8, 40, 0)).toBe(0.8);
+  });
+
+  test('cannot drive the score past the -1..1 net-polarity scale', () => {
+    expect(scoreWithRemovalPenalty(-1, 5, 10_000)).toBe(-1);
+  });
+});
+
+describe('removedCountEstimate', () => {
+  test('penalises on the midpoint of Google\'s bucket, not its floor', () => {
+    expect(removedCountEstimate({ text: '', min: 21, max: 50 })).toBe(36);
+    expect(removedCountEstimate({ text: '', min: 6, max: 10 })).toBe(8);
+  });
+
+  test('an open-ended or single-valued bucket is itself', () => {
+    expect(removedCountEstimate({ text: '', min: 100, max: 100 })).toBe(100);
+    expect(removedCountEstimate({ text: '', min: 7 })).toBe(7);
+  });
+
+  test('no readable numerals means no invented penalty', () => {
+    expect(removedCountEstimate({ text: 'reviews were removed' })).toBe(0);
+    expect(removedCountEstimate(undefined)).toBe(0);
+    expect(removedCountEstimate(null)).toBe(0);
   });
 });
 

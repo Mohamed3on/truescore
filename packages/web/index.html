@@ -89,9 +89,15 @@
         <span class="place-hours-today" id="placeHoursToday"></span>
       </div>
     </div>
+    <!-- Sits above the score on purpose: reviews were legally scrubbed, so the
+         number below is measured on what survived. -->
+    <a class="place-removed" id="placeRemoved" hidden target="_blank" rel="noopener noreferrer">
+      <span class="place-removed-flag">REVIEWS REMOVED</span>
+      <span class="place-removed-text" id="placeRemovedText"></span>
+    </a>
     <div class="score-row">
       <div class="score-block">
-        <span class="micro">SCORE</span>
+        <span class="micro" id="scoreLabel">SCORE</span>
         <span class="score-num" id="scorePct">—</span>
         <span class="overall-delta" id="overallDelta"></span>
       </div>

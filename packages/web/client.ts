@@ -2,7 +2,7 @@ import { renderMarkdown, renderMarkdownInline } from './markdown';
 import { fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, streamNdjson } from './http';
 import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz } from './hours';
 import {
-  chipPolarity, compileMatchRegex, overallScoreFromHistogram, parseOrQuery, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  chipPolarity, compileMatchRegex, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, scoreWithRemovalPenalty, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
@@ -58,6 +58,7 @@ let placesExpanded = false;
 
 let currentFeatureId = '';
 let currentMergedPct = 0;
+let currentDisplayPct = 0;
 // The chip panel shows one subject at a time — a highlight chip or a free-text
 // search result — so model it as one discriminated union rather than two
 // mutually-exclusive nullable globals with a "set one, null the other" invariant.
@@ -616,12 +617,16 @@ type PaintData = {
 function paintScore(data: PaintData) {
   const featureId = data.score?.featureId ?? data.featureId;
   const displayName = data.meta?.canonicalName || data.name || '(unnamed place)';
+  const removedCount = removedCountEstimate(data.meta?.removedReviews);
+  const displayScore = data.score
+    ? Math.round(scoreWithRemovalPenalty(data.score.scorePct / 100, data.score.trustedReviews, removedCount) * 100)
+    : 0;
   const nameEl = $('name') as HTMLAnchorElement;
   nameEl.textContent = displayName;
   if (data.resolvedUrl) nameEl.href = data.resolvedUrl;
   else if (featureId) nameEl.href = `https://www.google.com/maps?q=&ftid=${featureId}`;
   document.title = data.score
-    ? `${displayName} · ${data.score.scorePct}% · TrueScore`
+    ? `${displayName} · ${displayScore}% · TrueScore`
     : `${displayName} · TrueScore`;
   renderPlaceMeta(data.meta ?? undefined);
   if (data.score && 'reviews' in data.score && data.score.reviews) {
@@ -629,8 +634,8 @@ function paintScore(data: PaintData) {
   }
   const pctEl = $('scorePct');
   if (data.score) {
-    pctEl.textContent = `${data.score.scorePct}`;
-    pctEl.className = `score-num ${scoreClass(data.score.scorePct)}`;
+    pctEl.textContent = `${displayScore}`;
+    pctEl.className = `score-num ${scoreClass(displayScore)}`;
     const trustedPct = data.score.totalReviews
       ? Math.round((data.score.trustedReviews / data.score.totalReviews) * 100)
       : 0;
@@ -647,6 +652,7 @@ function paintScore(data: PaintData) {
       deltaEl.className = `delta ${delta > 0 ? 'pos' : delta < 0 ? 'neg' : ''}`;
     }
     currentMergedPct = data.score.scorePct;
+    currentDisplayPct = displayScore;
   } else {
     pctEl.textContent = '—';
     pctEl.className = 'score-num';
@@ -656,7 +662,7 @@ function paintScore(data: PaintData) {
     $('newestDelta').textContent = '';
   }
   renderOverallScore(data.histogram ?? null);
-  renderOverall(data.overallPct ?? null, data.score?.scorePct ?? 0);
+  renderOverall(data.overallPct ?? null, data.score ? displayScore : 0);
 }
 
 // One-time setup for a new lookup: show the result panel, wipe the previous
@@ -725,7 +731,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
         cachedTotal = evt.score.totalReviews;
         renderScore(evt);
         freshnessLabel.classList.add('rechecking');
-        if (evt.overallPct == null) fetchHistogramFor(evt.score.featureId, evt.score.scorePct);
+        if (evt.overallPct == null) fetchHistogramFor(evt.score.featureId, currentDisplayPct);
         if (evt.highlights?.length) showHighlights(evt.highlights);
         else loadHighlights();
         if (evt.summary) {
@@ -859,6 +865,26 @@ function renderPlaceMeta(meta: PlaceMeta | undefined) {
   metaRow.hidden = !(meta?.category || meta?.priceRange || meta?.googleRating != null) && $('placeOverallScore').hidden;
   showTag(addressEl, meta?.address);
   renderHoursToday(meta);
+  renderRemovedReviews(meta);
+}
+
+// Google's own notice that reviews here were taken down after legal complaints.
+// Takedowns are requested by the business, so what got removed skews negative —
+// every score below is computed on the reviews that survived. Rendered above the
+// score so it can't be missed, and linked to Google's explainer when it has one.
+function renderRemovedReviews(meta: PlaceMeta | undefined) {
+  const banner = $('placeRemoved') as HTMLAnchorElement;
+  const removed = meta?.removedReviews;
+  $('scoreLabel').textContent = removed ? 'SCORE · ADJUSTED' : 'SCORE';
+  if (!removed) { banner.hidden = true; return; }
+  $('placeRemovedText').textContent = removed.text;
+  const est = removedCountEstimate(removed);
+  banner.title = est
+    ? `${removed.detail ?? removed.text}\nPenalty: ~${est.toLocaleString()} removals — the midpoint of Google's range — count as 1★ reviews.`
+    : (removed.detail ?? removed.text);
+  if (removed.url) banner.href = removed.url;
+  else banner.removeAttribute('href');
+  banner.hidden = false;
 }
 
 function renderFreshness(reviews: Review[]) {

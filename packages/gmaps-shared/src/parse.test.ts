@@ -5,6 +5,7 @@ import {
   chipsFromPreview,
   histogramFromPreview,
   metaFromPreview,
+  removedReviewsFromPreview,
 } from './index';
 
 const mkWrapper = (id: string, stars: number, count: number, textEntry?: any[]) => {
@@ -158,5 +159,66 @@ describe('metaFromPreview', () => {
     expect(meta.googleRating).toBe(4.6);
     expect(meta.googleReviewCount).toBe(1234);
     expect(meta.category).toBe('Ice cream shop');
+  });
+});
+
+describe('removedReviewsFromPreview', () => {
+  // Live shape: [kind, [detail, title, [[url], linkLabel], short, 1, null, 2, locale], [[slot]]]
+  const notice = (kind: number, detail: string, short: string) => [
+    kind,
+    [detail, 'Reviews have been removed from this place', [['https://support.google.com/x'], 'Learn more'], short, 1, null, 2, 'en'],
+    [[1, 1]],
+  ];
+  const mk = (notices: any[]) => { const d: any = []; d[6] = []; d[6][241] = [notices, 'token']; return d; };
+  const POSTING_OFF = notice(1, 'Our policies do not permit contributions to this type of place.', 'Posting is currently turned off');
+  const DEFAMATION = notice(
+    3,
+    '21 to 50 reviews were removed in the past year due to defamation complaints under German law.',
+    '21 to 50 reviews removed due to defamation complaints.',
+  );
+
+  test('reads the kind-3 notice past unrelated kind-1 ones', () => {
+    expect(removedReviewsFromPreview(mk([POSTING_OFF, POSTING_OFF, DEFAMATION]))).toEqual({
+      text: '21 to 50 reviews removed due to defamation complaints.',
+      detail: '21 to 50 reviews were removed in the past year due to defamation complaints under German law.',
+      min: 21,
+      max: 50,
+      url: 'https://support.google.com/x',
+    });
+  });
+  test('a place with only kind-1 notices, or none at all, is clean', () => {
+    expect(removedReviewsFromPreview(mk([POSTING_OFF]))).toBeUndefined();
+    expect(removedReviewsFromPreview({})).toBeUndefined();
+    expect(removedReviewsFromPreview(null)).toBeUndefined();
+  });
+  test('reads counts Google spelled out — the small buckets are words, not digits', () => {
+    const small = notice(3, 'Six to ten reviews were removed in the past year due to defamation complaints under German law.', 'Six to ten reviews removed due to defamation complaints.');
+    const out = removedReviewsFromPreview(mk([small]))!;
+    expect([out.min, out.max]).toEqual([6, 10]);
+  });
+  test('an open-ended bucket collapses to its one bound', () => {
+    const many = notice(3, 'More than 100 reviews were removed in the past year.', 'More than 100 reviews removed due to defamation complaints.');
+    const out = removedReviewsFromPreview(mk([many]))!;
+    expect([out.min, out.max]).toEqual([100, 100]);
+  });
+  test('a locale whose numerals we cannot read yields no range, never a wrong one', () => {
+    const pl = notice(3, 'Usunięto od sześciu do dziesięciu opinii.', 'Usunięto od sześciu do dziesięciu opinii.');
+    const out = removedReviewsFromPreview(mk([pl]))!;
+    expect(out.min).toBeUndefined();
+    expect(out.text).toBe('Usunięto od sześciu do dziesięciu opinii.');
+  });
+  test('digits come from the short line, so a localised notice still yields a range', () => {
+    // Live de-DE strings: both lines are the bare range, and the window that the
+    // en detail line carries ("in the past year") is exactly what must not be read.
+    const de = notice(3, '11 bis 20 Bewertungen aufgrund von Beschwerden wegen Diffamierung entfernt.', '11 bis 20 Bewertungen aufgrund von Beschwerden wegen Diffamierung entfernt.');
+    const out = removedReviewsFromPreview(mk([de]))!;
+    expect([out.min, out.max]).toEqual([11, 20]);
+    expect(out.detail).toBeUndefined(); // identical to text — no point repeating it
+    const windowed = notice(3, 'In den letzten 12 Monaten wurden Bewertungen entfernt.', '11 bis 20 Bewertungen entfernt.');
+    expect(removedReviewsFromPreview(mk([windowed]))!.min).toBe(11);
+  });
+  test('rides along on metaFromPreview so every consumer gets it for free', () => {
+    expect(metaFromPreview(mk([DEFAMATION])).removedReviews?.min).toBe(21);
+    expect(metaFromPreview(mk([POSTING_OFF])).removedReviews).toBeUndefined();
   });
 });

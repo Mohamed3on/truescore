@@ -115,6 +115,40 @@
 #rc-period:focus { border-color: rgba(255, 255, 255, 0.3); }
 #rc-period option { background: #13151f; color: #ddd; }
 
+/* Review-removal notice — Google deleted reviews here after legal complaints.
+   Sits between the header and the score so it reframes the number below it. */
+.rc-removed {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  border-radius: 7px;
+  background: rgba(248, 113, 113, 0.06);
+  text-decoration: none;
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.rc-removed[href]:hover { background: rgba(248, 113, 113, 0.11); }
+.rc-removed-flag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: #F87171;
+  white-space: nowrap;
+}
+.rc-removed-text {
+  font-size: 9px;
+  font-weight: 300;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rc-removed { transition: none; }
+}
+
 /* Score card */
 .rc-card {
   background: rgba(255, 255, 255, 0.03);

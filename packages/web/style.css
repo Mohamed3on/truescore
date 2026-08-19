@@ -438,6 +438,38 @@ section#result::before {
 .place-hours-status.closed { color: var(--neg); background: rgba(248, 113, 113, 0.1); border: 1px solid rgba(248, 113, 113, 0.25); }
 .place-hours-today { color: var(--t2); }
 
+/* Google admitted it deleted reviews here after legal complaints. Loud, above
+   the score, and clickable through to Google's own explanation. */
+.place-removed {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin: 14px 0 18px;
+  padding: 10px 12px;
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-left: 2px solid var(--neg);
+  border-radius: 3px;
+  background: rgba(248, 113, 113, 0.07);
+  text-decoration: none;
+  transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+.place-removed[href]:hover { background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.55); }
+.place-removed-flag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--neg);
+  white-space: nowrap;
+}
+.place-removed-text {
+  font-size: 12px;
+  font-weight: 300;
+  line-height: 1.45;
+  color: var(--t2);
+}
+
 .score-row {
   display: grid;
   grid-template-columns: auto 1fr;

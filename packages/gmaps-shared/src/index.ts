@@ -30,6 +30,14 @@ export const TRUSTED_MIN_REVIEWS = 3;
 export const isTrusted = (reviewerReviewCount: number) => reviewerReviewCount >= TRUSTED_MIN_REVIEWS;
 export const starScore = (stars: number): number => (stars === 5 ? 1 : stars === 1 ? -1 : 0);
 
+// Penalize the score by treating each removed review as one trusted 1★. The
+// input and output use the app's native -1..1 net-polarity scale.
+export const scoreWithRemovalPenalty = (scorePct: number, trustedReviews: number, removedCount: number): number => {
+  if (trustedReviews <= 0 || removedCount <= 0) return scorePct;
+  const adjusted = (scorePct * trustedReviews - removedCount) / (trustedReviews + removedCount);
+  return Math.max(-1, Math.min(1, adjusted));
+};
+
 // Each entry is prefixed with `[YYYY-MM-DD] ` (or `[undated]` when Google's
 // payload didn't carry a timestamp) so a model reading the block knows when
 // each review was posted and can weight recent ones. Google review
@@ -368,6 +376,24 @@ export const histogramFromPreview = (data: any): Histogram | null => {
 };
 
 export type DayHours = { day: string; label: string; openHour?: number; closeHour?: number };
+
+// Google's own admission that reviews for this place were taken down after
+// legal complaints (Germany's defamation-takedown regime is the common case).
+// Takedowns are asked for by the business and are all but always negative, so
+// every sort we page is already a filtered set — the score is computed on what
+// survived. Nothing in the review data hints at it; only this notice does.
+export type RemovedReviews = {
+  // Google's short line, e.g. "21 to 50 reviews removed due to defamation complaints."
+  text: string;
+  // The fuller sentence — adds the window ("in the past year") and the legal basis.
+  detail?: string;
+  // Bounds of the range Google quotes; equal when it quotes a single number.
+  min?: number;
+  max?: number;
+  // Google's support article on the removal programme.
+  url?: string;
+};
+
 export type PlaceMeta = {
   canonicalName?: string;
   address?: string;
@@ -381,6 +407,7 @@ export type PlaceMeta = {
   photoUrl?: string;
   timezone?: string;
   hoursWeek?: DayHours[];
+  removedReviews?: RemovedReviews;
 };
 
 const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
@@ -419,6 +446,66 @@ const parseHoursDay = (entry: any): DayHours | null => {
   };
 };
 
+// Place-level notices hang off [6][241][0], each shaped
+// [kind, [detail, title, [[url], linkLabel], short, …], …]. Kind 1 is the
+// unrelated "posting is turned off"; kind 3 is the review-removal notice — the
+// one that makes a score suspect. The count exists only as prose, and the notice
+// is localised, so read the numerals out of it (see countsIn). Read them from
+// the SHORT line: it is only ever the range, where the detail line may add a
+// window whose own digits would win ("in the past year" → "in 12 Monaten").
+// Google spells small counts out ("Six to ten reviews removed") and switches to
+// digits above ten ("21 to 50"), so a digits-only read silently loses every
+// small bucket — and with it the penalty that keys off `min`. Words are English
+// only: the notice is localised, and a locale we can't read just yields no
+// range, leaving Google's own sentence to speak for itself.
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40,
+  fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100,
+};
+
+const countsIn = (text: string): number[] => {
+  const out: number[] = [];
+  for (const tok of text.toLowerCase().match(/\d+|[a-z]+/g) ?? []) {
+    if (tok[0]! >= '0' && tok[0]! <= '9') out.push(Number(tok));
+    else if (tok in NUMBER_WORDS) out.push(NUMBER_WORDS[tok]!);
+  }
+  return out;
+};
+
+const REMOVAL_NOTICE_KIND = 3;
+
+export const removedReviewsFromPreview = (data: any): RemovedReviews | undefined => {
+  const notices = data?.[6]?.[241]?.[0];
+  if (!Array.isArray(notices)) return undefined;
+  for (const n of notices) {
+    if (n?.[0] !== REMOVAL_NOTICE_KIND) continue;
+    const body = n[1];
+    const detail = asString(body?.[0]);
+    const text = asString(body?.[3]) ?? detail;
+    if (!text) continue;
+    const nums = countsIn(text);
+    const url = asString(body?.[2]?.[0]?.[0]);
+    return {
+      text,
+      ...(detail && detail !== text ? { detail } : {}),
+      ...(nums.length ? { min: Math.min(...nums), max: Math.max(...nums) } : {}),
+      ...(url ? { url } : {}),
+    };
+  }
+  return undefined;
+};
+
+// Google discloses a bucket ("21 to 50"), never an exact count, so a penalty has
+// to commit to one number. The midpoint is the least wrong one: the floor
+// under-counts every place sitting in the upper half of its bucket, the ceiling
+// over-counts the lower half. An open-ended bucket parses to min === max and so
+// falls out as itself. 0 when Google quoted no numerals we could read — no
+// invented penalty on a notice we only half-understood.
+export const removedCountEstimate = (removed: RemovedReviews | null | undefined): number =>
+  removed?.min == null ? 0 : Math.round((removed.min + (removed.max ?? removed.min)) / 2);
+
 export const metaFromPreview = (data: any): PlaceMeta => {
   const six = data?.[6];
   if (!six) return {};
@@ -441,6 +528,7 @@ export const metaFromPreview = (data: any): PlaceMeta => {
     photoUrl: photo ? resizePhoto(photo, 800, 320) : undefined,
     timezone: asString(six[30]),
     hoursWeek: hoursWeek?.length ? hoursWeek : undefined,
+    removedReviews: removedReviewsFromPreview(data),
   };
 };
 

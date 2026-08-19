@@ -18,7 +18,10 @@ import {
   overallPctFromHistogram,
   overallScoreFromHistogram,
   parseOrQuery,
+  removedCountEstimate,
+  removedReviewsFromPreview,
   reviewAge,
+  scoreWithRemovalPenalty,
   selectScoredChips,
   sortChipsByImpact,
   sortedDisplayReviews,
@@ -27,6 +30,7 @@ import {
   textReviewsFor,
   timeAgo,
   type Locale,
+  type RemovedReviews,
   type Review,
   type SortKey,
   type SortStats,
@@ -55,6 +59,7 @@ type CardEls = {
   highlightsStale?: HTMLElement;
   standoutsSection?: HTMLElement;
   alternativesSection?: HTMLElement;
+  removedNotice?: HTMLElement;
   chipPanel?: HTMLElement;
   chipPanelTitle?: HTMLElement;
   chipPanelBody?: HTMLElement;
@@ -130,6 +135,7 @@ let fullPctObserver: MutationObserver | null = null;
 let fullPctObserverTarget: Element | null = null;
 let staleHistogramKey: string | null = null;
 let lastHistogramKey: string | null = null;
+let activeRemovedReviews: RemovedReviews | null = null;
 
 const abortControllers: Record<SortKey, AbortController | null> = { relevant: null, newest: null };
 // Summaries persist indefinitely — they're invalidated only by an explicit
@@ -388,6 +394,7 @@ const resetScores = () => {
   staleHistogramKey = lastHistogramKey;
   lastHistogramKey = null;
   highlightCandidates = [];
+  activeRemovedReviews = null;
   credsRetried = false;
   store.reset();
   for (const key of SORT_KEYS) {
@@ -592,7 +599,62 @@ const harvestHighlightsFromPreview = async (): Promise<HighlightCandidate[]> => 
   const featureId = getFeatureId();
   if (!featureId) return [];
   const data = (await waitForCapturedPreview(featureId)) ?? (await fetchPlacePreviewActive(location.href));
-  return data ? chipsFromPreview(data) : [];
+  if (!data) return [];
+  // Same payload carries the review-removal notice — take it while it's here
+  // rather than making the banner's own request.
+  applyRemovedNotice(featureId, data);
+  return chipsFromPreview(data);
+};
+
+// Google's admission that reviews here were taken down after legal complaints.
+// The removals are requested by the business, so they skew negative and every
+// sort we page is already missing them — the score is whatever survived. Google
+// buries this at the top of the Reviews tab; we put it above our own number.
+// Reads only the preview Maps already fetched for itself (gmaps-capture stores
+// it), so the banner costs no request of its own.
+const applyRemovedNotice = (featureId: string, data: any): void => {
+  if (getFeatureId() !== featureId) return;
+  const removed = removedReviewsFromPreview(data);
+  const changed = activeRemovedReviews?.text !== removed?.text;
+  activeRemovedReviews = removed ?? null;
+  const banner = cardEls.removedNotice;
+  if (!banner) {
+    if (changed) updateUI();
+    return;
+  }
+  if (!removed) {
+    banner.style.display = 'none';
+    if (changed) updateUI();
+    return;
+  }
+  banner.textContent = '';
+  const range = removed.min
+    ? (removed.max && removed.max !== removed.min
+      ? `${addCommas(removed.min)}–${addCommas(removed.max)}`
+      : addCommas(removed.min))
+    : '';
+  banner.appendChild(el('span', 'rc-removed-flag', range ? `${range} REMOVED` : 'REVIEWS REMOVED'));
+  const est = removedCountEstimate(removed);
+  banner.appendChild(el('span', 'rc-removed-text', est
+    ? `defamation · ~${addCommas(est)} as 1★`
+    : 'defamation complaints'));
+  banner.title = est
+    ? `${removed.detail ?? removed.text}\nPenalty: ~${addCommas(est)} removals — the midpoint of Google's range — count as 1★ reviews in Total.`
+    : (removed.detail ?? removed.text);
+  if (removed.url) {
+    (banner as HTMLAnchorElement).href = removed.url;
+    banner.setAttribute('target', '_blank');
+    banner.setAttribute('rel', 'noopener noreferrer');
+  } else banner.removeAttribute('href');
+  banner.style.display = 'flex';
+  if (changed) updateUI();
+};
+
+// Render from whatever gmaps-capture already holds, or the next preview to land.
+// Never fetches: a place with no captured preview simply shows no banner until
+// the highlights path happens to pull one.
+const showRemovedNoticeWhenKnown = (featureId: string): void => {
+  waitForCapturedPreview(featureId).then((data) => { if (data) applyRemovedNotice(featureId, data); }).catch(() => {});
 };
 
 const fetchPlacePreviewActive = async (placeUrl: string): Promise<any | null> => {
@@ -1297,6 +1359,15 @@ const createUIElements = () => {
   header.appendChild(headerRight);
   c.appendChild(header);
 
+  // Above the score, deliberately: it reframes the number that follows.
+  const removed = document.createElement('a');
+  removed.className = 'rc-removed';
+  removed.style.display = 'none';
+  c.appendChild(removed);
+  cardEls.removedNotice = removed;
+  const fid = getFeatureId();
+  if (fid) showRemovedNoticeWhenKnown(fid);
+
   const card = el('div', 'rc-card');
   const head = el('div', 'rc-card-head');
   head.appendChild(el('span', 'rc-card-label', 'Review Score'));
@@ -1477,6 +1548,8 @@ const updateUI = () => {
 
   const fullPct = calculateFullPercentage();
   const noData = totalAll === 0 && currentOption !== 'total';
+  const removedPenalty = currentOption === 'total' ? removedCountEstimate(activeRemovedReviews) : 0;
+  const displayPct = scoreWithRemovalPenalty(mergedPct, totalTrusted, removedPenalty);
 
   if (noData) {
     els.pctEl.childNodes[0].textContent = '—';
@@ -1486,12 +1559,14 @@ const updateUI = () => {
     els.barFill.style.width = '0%';
     els.diffEl.style.display = 'none';
   } else {
-    const mergedRound = toPct(mergedPct);
+    const mergedRound = toPct(displayPct);
     els.pctEl.childNodes[0].textContent = `${mergedRound}%`;
     const sortTotal = (k: SortKey) => store.sortTotal(k, currentOption);
     const relLabel = sortTotal('relevant') ? `${toPct(store.scorePct('relevant', currentOption))}%` : '—';
     const newLabel = sortTotal('newest') ? `${toPct(store.scorePct('newest', currentOption))}%` : '—';
-    els.tooltip.textContent = `Relevant: ${relLabel} · Newest: ${newLabel}`;
+    els.tooltip.textContent = removedPenalty
+      ? `Raw: ${toPct(mergedPct)}% · Relevant: ${relLabel} · Newest: ${newLabel}`
+      : `Relevant: ${relLabel} · Newest: ${newLabel}`;
 
     if (fullPct !== null) {
       const diff = mergedRound - fullPct;
@@ -1503,7 +1578,7 @@ const updateUI = () => {
       els.diffEl.style.color = color;
       els.diffEl.style.display = '';
     } else {
-      const color = getAbsoluteScoreColor(mergedPct);
+      const color = getAbsoluteScoreColor(displayPct);
       els.pctEl.style.color = color;
       els.pctEl.style.textShadow = `0 0 24px ${color}40`;
       els.diffEl.style.display = 'none';
@@ -1536,7 +1611,7 @@ const updateUI = () => {
       }
     }
 
-    els.barFill.style.width = `${Math.max(2, Math.min(100, (mergedPct + 1) / 2 * 100))}%`;
+    els.barFill.style.width = `${Math.max(2, Math.min(100, (displayPct + 1) / 2 * 100))}%`;
   }
 
   els.countEl.textContent = String(totalCount);
