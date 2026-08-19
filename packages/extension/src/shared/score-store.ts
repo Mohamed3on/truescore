@@ -157,6 +157,10 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
       return reviewData[sort].totalReviews[period] || cached?.[sort].totalReviews[period] || 0;
     },
 
+    sortTrusted(sort: SortKey, period: Period): number {
+      return reviewData[sort].trustedReviews[period] || cached?.[sort].trustedReviews[period] || 0;
+    },
+
     mergedStats(period: Period): MergedStats {
       const merged = merge();
       const liveCount = Object.keys(merged).length;

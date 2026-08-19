@@ -64,6 +64,11 @@ export type LookupEvent =
   | { type: 'refreshed'; name: string; score: Score; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string }
   | { type: 'highlights-refreshed'; highlights: Chip[] }
   | { type: 'place'; name: string; featureId: string; resolvedUrl: string }
+  // A score the extension already computed for this place and contributed, sent
+  // before our own scrape starts so the panel paints immediately instead of
+  // sitting empty for the whole pagination. The scrape still runs and the final
+  // `score` event replaces it — this is a rehydrate, not a cache hit.
+  | { type: 'provisional'; score: PartialScore; contributedAt: number }
   | { type: 'preview'; histogram: number[] | null; overallPct: number | null; meta?: PlaceMeta }
   | { type: 'score-progress'; score: PartialScore }
   | { type: 'score'; score: Score; fetchMs: number }
@@ -120,4 +125,8 @@ export type HighlightsRequest = { featureId: string; force?: boolean };
 export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean };
 export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean };
 export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string } & LlmOverrides;
-export type ContributeRequest = { featureId: string; name: string; summary?: Summary; highlights?: Chip[]; highlightSummaries?: Record<string, Summary> };
+// `score` omits the per-review array — the web only needs the numbers to paint,
+// and a place's reviews run to megabytes. It is the extension's RAW score: the
+// removal penalty is applied by whoever renders, off their own preview meta, so
+// the penalty has exactly one implementation.
+export type ContributeRequest = { featureId: string; name: string; summary?: Summary; highlights?: Chip[]; highlightSummaries?: Record<string, Summary>; score?: PartialScore };

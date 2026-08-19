@@ -1,7 +1,7 @@
 import { db, DB_PATH, LEGACY_JSON_PATH } from './db';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './llm';
-import type { Chip, ChipMeta, PlaceMeta } from '@truescore/gmaps-shared';
+import type { Chip, ChipMeta, PartialScore, PlaceMeta } from '@truescore/gmaps-shared';
 
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
 // How long a background chip-warm that came back empty is trusted as "this place
@@ -32,6 +32,13 @@ export type CacheEntry = {
   histogram?: number[];
   histogramTs?: number;
   meta?: PlaceMeta;
+  // A score the extension computed and contributed. Deliberately NOT `score` +
+  // `scoreTs`: those mean "the server scraped this", and conflating them would
+  // let a contribution suppress the scrape and be served as authoritative
+  // forever. This one only ever paints a provisional number while our own
+  // scrape runs.
+  contributedScore?: PartialScore;
+  contributedScoreTs?: number;
   lastAccessTs?: number;
   accessCount?: number;
 };
@@ -184,6 +191,7 @@ export const cache = {
     summary?: Summary;
     highlights?: Chip[];
     highlightSummaries?: Record<string, Summary>;
+    score?: PartialScore;
   }) {
     ensureEntry(featureId, name);
     if (patch.summary) await this.putSummary(featureId, patch.summary);
@@ -193,6 +201,14 @@ export const cache = {
         await this.putHighlightSummary(featureId, token, summary);
       }
     }
+    if (patch.score) await this.putContributedScore(featureId, patch.score);
+  },
+  // A 0-review contribution is the extension's own throttle/empty state, never
+  // worth painting — drop it rather than flashing "0 reviews" at the next visitor.
+  async putContributedScore(featureId: string, score: PartialScore) {
+    const existing = store.get(featureId);
+    if (!existing || score.totalReviews <= 0) return;
+    persist(featureId, { ...existing, contributedScore: score, contributedScoreTs: Date.now() });
   },
   // Record a background chip-warm outcome: cache the harvested set (stable
   // tokens) and stamp the attempt time. An empty result stamps the time only,

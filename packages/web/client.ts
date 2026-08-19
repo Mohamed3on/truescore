@@ -723,6 +723,11 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
   let cachedTotal = 0;
   let refreshed = false;
   let summaryKicked = false;
+  // A provisional score is already on screen, so per-page scrape progress must
+  // not repaint over it — a settled 412-review number would be replaced by
+  // page 1's 20-review guess and jitter back. Progress shows in the status
+  // line instead, and the final `score` event does the repaint.
+  let provisional = false;
 
   try {
     for await (const evt of readNdjson<LookupEvent>(body)) {
@@ -774,6 +779,15 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
         acc.resolvedUrl = evt.resolvedUrl;
         paintScore(acc);
         setStatus('Reading reviews…');
+      } else if (evt.type === 'provisional') {
+        // Contributed by an extension that already scored this place. Painted
+        // like a cached result — number up front, `rechecking` on the freshness
+        // label — while our own scrape runs underneath.
+        provisional = true;
+        acc.score = evt.score;
+        paintScore(acc);
+        freshnessLabel.classList.add('rechecking');
+        setStatus('Extension score · rechecking…');
       } else if (evt.type === 'preview') {
         // Histogram + meta arrive together off a single preview RPC, usually
         // well before scorePlace finishes. Paint them in place.
@@ -784,13 +798,34 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
       } else if (evt.type === 'score-progress') {
         // Every page of either sort. The number visibly settles as both
         // sorts converge — same UX as the extension's per-page repaint.
-        acc.score = evt.score;
-        paintScore(acc);
-        setStatus(`Scoring · ${evt.score.totalReviews} reviews so far…`);
+        if (provisional) {
+          setStatus(`Rechecking · ${evt.score.totalReviews} reviews so far…`);
+        } else {
+          acc.score = evt.score;
+          paintScore(acc);
+          setStatus(`Scoring · ${evt.score.totalReviews} reviews so far…`);
+        }
       } else if (evt.type === 'score') {
-        acc.score = evt.score;
-        paintScore(acc);
-        renderFreshness(evt.score.reviews);
+        // A 0-review scrape is Google throttling us, not a review-less place
+        // (the server refuses to cache it for the same reason). With a
+        // provisional score on screen, repainting would replace a real number
+        // with a fake zero — so keep what we have and say the recheck failed.
+        // Summary + highlights still kick off below.
+        const throttled = provisional && evt.score.totalReviews === 0;
+        if (!throttled) {
+          acc.score = evt.score;
+          const prevScore = $('scorePct').textContent ?? '';
+          const prevReviews = $('reviewsLabel').textContent ?? '';
+          paintScore(acc);
+          renderFreshness(evt.score.reviews);
+          // Flash only what the rescrape actually moved, so a provisional score
+          // the scrape agreed with settles silently.
+          if (provisional) {
+            flashIfChanged($('scorePct'), prevScore);
+            flashIfChanged($('reviewsLabel'), prevReviews);
+          }
+        }
+        if (provisional) freshnessLabel.classList.remove('rechecking');
         const featureId = evt.score.featureId;
         // Kick off summary + highlights now that we know the place is real
         // and the score has settled. Idempotent (summaryKicked guards reruns
@@ -798,8 +833,10 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
         if (!summaryKicked) {
           summaryKicked = true;
           loadHighlights();
-          setStatus(`Score in ${(evt.fetchMs / 1000).toFixed(1)}s · summarizing…`);
+          if (throttled) setStatus('Recheck came back empty — showing the extension score', true);
+          else setStatus(`Score in ${(evt.fetchMs / 1000).toFixed(1)}s · summarizing…`);
           fetchSummaryFor(featureId).then((sum) => {
+            if (throttled) return;
             setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
           });
         }

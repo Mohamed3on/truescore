@@ -15,6 +15,7 @@ import {
   compileMatchRegex,
   expandSearchTerms,
   histogramTotal,
+  metaFromPreview,
   overallPctFromHistogram,
   overallScoreFromHistogram,
   parseOrQuery,
@@ -30,6 +31,7 @@ import {
   textReviewsFor,
   timeAgo,
   type Locale,
+  type PartialScore,
   type RemovedReviews,
   type Review,
   type SortKey,
@@ -299,6 +301,7 @@ const pushContribution = (patch: {
   summary?: SummaryResult;
   highlights?: Highlight[];
   highlightSummaries?: Record<string, SummaryResult>;
+  score?: PartialScore;
 }): void => {
   const featureId = getFeatureId();
   const { name } = getPlaceInfo();
@@ -308,6 +311,34 @@ const pushContribution = (patch: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ featureId, name, ...patch }),
   }).catch((e) => console.warn('[gmaps] contribute failed', e));
+};
+
+// Upload the score both sorts just settled on, so the web can paint it the
+// instant someone pastes this place's link instead of sitting empty for a whole
+// server-side scrape. Always the 'total' period and always the RAW score — the
+// removal penalty belongs to whoever renders, off their own preview meta.
+// Skipped when the store has no live data (a cache-served or throttled run):
+// re-uploading a restored score adds nothing and a 0 would paint "0 reviews".
+const contributeScore = (): void => {
+  const featureId = getFeatureId();
+  if (!featureId || !store.hasLiveData()) return;
+  const { totalAll, totalTrusted, mergedPct } = store.mergedStats('total');
+  if (!totalAll) return;
+  const statsFor = (sort: SortKey): SortStats => ({
+    totalReviews: store.sortTotal(sort, 'total'),
+    trustedReviews: store.sortTrusted(sort, 'total'),
+    scorePct: toPct(store.scorePct(sort, 'total')),
+  });
+  pushContribution({
+    score: {
+      featureId,
+      totalReviews: totalAll,
+      trustedReviews: totalTrusted,
+      scorePct: toPct(mergedPct),
+      relevant: statsFor('relevant'),
+      newest: statsFor('newest'),
+    },
+  });
 };
 
 // Resolves when the in-flight cloud hydrate settles. The auto-highlights
@@ -543,8 +574,22 @@ const calculateFullPercentage = () => {
   return toPct((counts[0] - counts[4]) / allReviews);
 };
 
+// Google's obfuscated class for the place heading is not stable across layouts:
+// the split search+place view this URL shape renders has no h1.DUwDvf at all, so
+// the name came back empty and pushContribution — which drops a patch without one
+// — silently discarded every summary and highlight set computed from a search
+// result. The captured preview carries the canonical name as structured data at a
+// path we already parse, so read that first and keep the DOM as the fallback;
+// document.title backstops both when no preview has landed yet.
+const placeNameFromTitle = (): string => document.title.replace(/\s[-–—]\s[^-–—]*$/, '').trim();
+
 const getPlaceInfo = () => {
-  const name = document.querySelector('h1.DUwDvf')?.textContent?.trim() || '';
+  const featureId = getFeatureId();
+  const preview = featureId ? window.__truescorePreviews?.[featureId]?.json : null;
+  const name = (preview ? metaFromPreview(preview).canonicalName : undefined)
+    || document.querySelector('h1.DUwDvf')?.textContent?.trim()
+    || placeNameFromTitle()
+    || '';
   const category = (document.querySelector('button.DkEaL') as HTMLElement)?.textContent?.trim() || '';
   return { name, category };
 };
@@ -903,6 +948,7 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
     }
     const fid = getFeatureId();
     if (fid) store.persistIfReady(`${SCORE_CACHE_PREFIX}${fid}`).catch((e) => console.warn('[gmaps] persist score cache failed', e));
+    contributeScore();
     cloudHydratePromise.then(() => computeHighlights());
   }
 };

@@ -300,9 +300,15 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
 // (histogram + meta — usually well before the score scrape), `score-progress`
 // after each scorePlace page (relevant/newest paginating in parallel), and
 // `score` once both sorts settle. The client renders each chunk in place.
-function streamFreshLookup(featureId: string, name: string, resolvedUrl: string): Response {
+function streamFreshLookup(featureId: string, name: string, resolvedUrl: string, cached?: CacheEntry): Response {
   return ndjsonStream<LookupEvent>(async (write) => {
     write({ type: 'place', name, featureId, resolvedUrl });
+    // Rehydrate: an extension already scored this place and contributed the
+    // numbers, so paint them now rather than leaving the panel empty for the
+    // length of a full scrape. The scrape below still runs and overwrites.
+    if (cached?.contributedScore) {
+      write({ type: 'provisional', score: cached.contributedScore, contributedAt: cached.contributedScoreTs ?? 0 });
+    }
     const t0 = Date.now();
 
     // Run preview in parallel with the score scrape, but emit each as soon as
@@ -375,7 +381,7 @@ Bun.serve({
           // the fresh path so the score scrapes first (the contributed summary +
           // highlights still load from cache right after the score settles).
           if (cached?.scoreTs) return streamCachedLookup(featureId, name, resolvedUrl, cached);
-          return streamFreshLookup(featureId, name, resolvedUrl);
+          return streamFreshLookup(featureId, name, resolvedUrl, cached);
         } catch (e) {
           console.error(`[lookup] ${e instanceof Error ? e.message : e}`);
           return json(errBody(e), 400);
@@ -448,10 +454,10 @@ Bun.serve({
     '/api/contribute': {
       POST: async (req) => {
         try {
-          const { featureId, name, summary, highlights, highlightSummaries } = await req.json() as ContributeRequest;
+          const { featureId, name, summary, highlights, highlightSummaries, score } = await req.json() as ContributeRequest;
           if (!featureId || !name) return corsJson({ error: 'missing featureId or name' }, 400);
-          if (!summary && !highlights && !highlightSummaries) return corsJson({ error: 'nothing to contribute' }, 400);
-          await cache.putContribution(featureId, name, { summary, highlights, highlightSummaries });
+          if (!summary && !highlights && !highlightSummaries && !score) return corsJson({ error: 'nothing to contribute' }, 400);
+          await cache.putContribution(featureId, name, { summary, highlights, highlightSummaries, score });
           return corsJson({ ok: true } satisfies ContributeResponse);
         } catch (e) {
           console.error('[contribute]', e);
