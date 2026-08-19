@@ -30,12 +30,22 @@ export const TRUSTED_MIN_REVIEWS = 3;
 export const isTrusted = (reviewerReviewCount: number) => reviewerReviewCount >= TRUSTED_MIN_REVIEWS;
 export const starScore = (stars: number): number => (stars === 5 ? 1 : stars === 1 ? -1 : 0);
 
-// Penalize the score by treating each removed review as one trusted 1★. The
-// input and output use the app's native -1..1 net-polarity scale.
-export const scoreWithRemovalPenalty = (scorePct: number, trustedReviews: number, removedCount: number): number => {
-  if (trustedReviews <= 0 || removedCount <= 0) return scorePct;
-  const adjusted = (scorePct * trustedReviews - removedCount) / (trustedReviews + removedCount);
-  return Math.max(-1, Math.min(1, adjusted));
+// Fold removed reviews into the score by treating them as 1★ reviews the place
+// should have had to carry. Input and output are the app's native -1..1
+// net-polarity scale.
+//
+// Weighed as a RATE against the place's own review count, not as a raw count
+// against our trusted sample. The sample is however many reviews pagination
+// happened to collect before the score stabilised, so counting removals against
+// it made the penalty depend on scrape depth: the same place at t=45 scored 55%
+// and at t=90 scored 72%, purely from where we stopped. Dividing by the
+// population instead cancels the sample size out entirely — the trusted count
+// disappears from the algebra — and says the honest thing: 11 removals out of 88
+// reviews is damning, 11 out of 1102 is noise.
+export const scoreWithRemovalPenalty = (scorePct: number, removedCount: number, totalReviews: number): number => {
+  if (removedCount <= 0 || totalReviews <= 0) return scorePct;
+  const rate = removedCount / totalReviews;
+  return Math.max(-1, Math.min(1, (scorePct - rate) / (1 + rate)));
 };
 
 // Each entry is prefixed with `[YYYY-MM-DD] ` (or `[undated]` when Google's
@@ -498,13 +508,14 @@ export const removedReviewsFromPreview = (data: any): RemovedReviews | undefined
 };
 
 // Google discloses a bucket ("21 to 50"), never an exact count, so a penalty has
-// to commit to one number. Take the floor: it is the only count the notice
-// actually guarantees, so the penalty is never larger than the evidence for it.
-// A place in the upper half of its bucket is under-penalised — deliberately, as
-// the error that costs a real business least. 0 when Google quoted no numerals
-// we could read, so a half-understood notice invents no penalty at all.
+// to commit to one number. Take the midpoint: the floor is the more cautious
+// read, but scoreWithRemovalPenalty now dilutes removals across the place's
+// whole review count, and the two conservatisms stacked leave nothing of the
+// penalty at all. An open-ended bucket parses to min === max and falls out as
+// itself. 0 when Google quoted no numerals we could read, so a half-understood
+// notice invents no penalty.
 export const removedCountEstimate = (removed: RemovedReviews | null | undefined): number =>
-  removed?.min ?? 0;
+  removed?.min == null ? 0 : Math.round((removed.min + (removed.max ?? removed.min)) / 2);
 
 export const metaFromPreview = (data: any): PlaceMeta => {
   const six = data?.[6];

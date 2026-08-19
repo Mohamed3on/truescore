@@ -693,10 +693,10 @@ const renderRemovedNotice = (): void => {
   banner.appendChild(el('span', 'rc-removed-flag', range ? `${range} REMOVED` : 'REVIEWS REMOVED'));
   const est = removedCountEstimate(removed);
   banner.appendChild(el('span', 'rc-removed-text', est
-    ? `defamation · min ${addCommas(est)} as 1★`
+    ? `defamation · ~${addCommas(est)} as 1★`
     : 'defamation complaints'));
   banner.title = est
-    ? `${removed.detail ?? removed.text}\nPenalty: the minimum ${addCommas(est)} removals count as 1★ reviews in Total.`
+    ? `${removed.detail ?? removed.text}\nPenalty: ~${addCommas(est)} removals — the middle of Google's range — counted as 1★ reviews against this place's own review count.`
     : (removed.detail ?? removed.text);
   if (removed.url) {
     (banner as HTMLAnchorElement).href = removed.url;
@@ -1656,8 +1656,12 @@ const updateUI = () => {
   // totalAll can now be 0 on 'total' too — a notice-only panel opens before any
   // review lands, and 0/0 would otherwise render as a confident 0%.
   const noData = totalAll === 0;
+  // Removals are weighed against the place's own review count (Google's own
+  // histogram), not our trusted sample, so the penalty can't drift with how far
+  // pagination got. No readable histogram → no penalty rather than a guessed one.
   const removedPenalty = currentOption === 'total' ? removedCountEstimate(activeRemovedReviews) : 0;
-  const displayPct = scoreWithRemovalPenalty(mergedPct, totalTrusted, removedPenalty);
+  const placeTotal = removedPenalty ? histogramTotal(readHistogramCounts() ?? []) : 0;
+  const displayPct = scoreWithRemovalPenalty(mergedPct, removedPenalty, placeTotal);
 
   if (noData) {
     els.pctEl.childNodes[0].textContent = '—';

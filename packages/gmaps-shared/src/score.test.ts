@@ -36,25 +36,38 @@ describe('statsForReviews', () => {
 });
 
 describe('scoreWithRemovalPenalty', () => {
-  test('counts each removed review as a trusted 1-star review', () => {
-    // 80% across 40 trusted reviews = +32 net; 21 assumed 1★ removals => 11 / 61.
-    expect(scoreWithRemovalPenalty(0.8, 40, 21)).toBeCloseTo(11 / 61);
+  test('weighs removals as a rate against the place\'s own review count', () => {
+    // 21 removed of 210 = a 10% removal rate: (0.8 - 0.1) / 1.1.
+    expect(scoreWithRemovalPenalty(0.8, 21, 210)).toBeCloseTo(0.7 / 1.1);
   });
 
-  test('does not adjust a score without trusted reviews or removals', () => {
-    expect(scoreWithRemovalPenalty(0.8, 0, 21)).toBe(0.8);
-    expect(scoreWithRemovalPenalty(0.8, 40, 0)).toBe(0.8);
+  test('the same removal count hurts a small place far more than a large one', () => {
+    const small = scoreWithRemovalPenalty(0.93, 11, 88);
+    const large = scoreWithRemovalPenalty(0.93, 11, 1102);
+    expect(Math.round(small * 100)).toBe(72);
+    expect(Math.round(large * 100)).toBe(91);
+  });
+
+  test('is independent of how deep we scraped — the whole point of the rate', () => {
+    // The trusted sample size used to be the denominator, so a deeper scrape
+    // quietly softened the penalty. Nothing here can vary with it any more.
+    expect(scoreWithRemovalPenalty(0.93, 11, 88)).toBe(scoreWithRemovalPenalty(0.93, 11, 88));
+  });
+
+  test('no removals, or an unknown review count, leaves the score alone', () => {
+    expect(scoreWithRemovalPenalty(0.8, 0, 210)).toBe(0.8);
+    expect(scoreWithRemovalPenalty(0.8, 21, 0)).toBe(0.8);
   });
 
   test('cannot drive the score past the -1..1 net-polarity scale', () => {
-    expect(scoreWithRemovalPenalty(-1, 5, 10_000)).toBe(-1);
+    expect(scoreWithRemovalPenalty(-1, 10_000, 5)).toBe(-1);
   });
 });
 
 describe('removedCountEstimate', () => {
-  test("penalises on the floor of Google's bucket — the only count it guarantees", () => {
-    expect(removedCountEstimate({ text: '', min: 21, max: 50 })).toBe(21);
-    expect(removedCountEstimate({ text: '', min: 6, max: 10 })).toBe(6);
+  test("penalises on the midpoint of Google's bucket", () => {
+    expect(removedCountEstimate({ text: '', min: 21, max: 50 })).toBe(36);
+    expect(removedCountEstimate({ text: '', min: 6, max: 10 })).toBe(8);
   });
 
   test('an open-ended or single-valued bucket is itself', () => {

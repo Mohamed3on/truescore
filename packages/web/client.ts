@@ -2,7 +2,7 @@ import { renderMarkdown, renderMarkdownInline } from './markdown';
 import { fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, streamNdjson } from './http';
 import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz } from './hours';
 import {
-  chipPolarity, compileMatchRegex, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, scoreWithRemovalPenalty, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  chipPolarity, compileMatchRegex, histogramTotal, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, scoreWithRemovalPenalty, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
@@ -617,9 +617,13 @@ type PaintData = {
 function paintScore(data: PaintData) {
   const featureId = data.score?.featureId ?? data.featureId;
   const displayName = data.meta?.canonicalName || data.name || '(unnamed place)';
+  // Removals are weighed against the place's own review count, so the penalty
+  // holds still whatever our scrape depth. The histogram is the same total
+  // Google shows; googleReviewCount backs it up until the preview lands.
   const removedCount = removedCountEstimate(data.meta?.removedReviews);
+  const placeTotal = (data.histogram ? histogramTotal(data.histogram) : 0) || data.meta?.googleReviewCount || 0;
   const displayScore = data.score
-    ? Math.round(scoreWithRemovalPenalty(data.score.scorePct / 100, data.score.trustedReviews, removedCount) * 100)
+    ? Math.round(scoreWithRemovalPenalty(data.score.scorePct / 100, removedCount, placeTotal) * 100)
     : 0;
   const nameEl = $('name') as HTMLAnchorElement;
   nameEl.textContent = displayName;
@@ -917,7 +921,7 @@ function renderRemovedReviews(meta: PlaceMeta | undefined) {
   $('placeRemovedText').textContent = removed.text;
   const est = removedCountEstimate(removed);
   banner.title = est
-    ? `${removed.detail ?? removed.text}\nPenalty: the minimum ${est.toLocaleString()} removals count as 1★ reviews.`
+    ? `${removed.detail ?? removed.text}\nPenalty: ~${est.toLocaleString()} removals — the middle of Google's range — counted as 1★ reviews against this place's own review count.`
     : (removed.detail ?? removed.text);
   if (removed.url) banner.href = removed.url;
   else banner.removeAttribute('href');
