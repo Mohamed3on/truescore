@@ -138,6 +138,10 @@ let fullPctObserverTarget: Element | null = null;
 let staleHistogramKey: string | null = null;
 let lastHistogramKey: string | null = null;
 let activeRemovedReviews: RemovedReviews | null = null;
+// Which place's captured preview we've already read the notice out of.
+let removedNoticeCheckedFor: string | null = null;
+// Which place we've already spent the one app-state walk on.
+let appStateTriedFor: string | null = null;
 
 const abortControllers: Record<SortKey, AbortController | null> = { relevant: null, newest: null };
 // Summaries persist indefinitely — they're invalidated only by an explicit
@@ -430,6 +434,8 @@ const resetScores = () => {
   lastHistogramKey = null;
   highlightCandidates = [];
   activeRemovedReviews = null;
+  removedNoticeCheckedFor = null;
+  appStateTriedFor = null;
   credsRetried = false;
   store.reset();
   for (const key of SORT_KEYS) {
@@ -663,19 +669,21 @@ const harvestHighlightsFromPreview = async (): Promise<HighlightCandidate[]> => 
 // it), so the banner costs no request of its own.
 const applyRemovedNotice = (featureId: string, data: any): void => {
   if (getFeatureId() !== featureId) return;
+  removedNoticeCheckedFor = featureId;
   const removed = removedReviewsFromPreview(data);
   const changed = activeRemovedReviews?.text !== removed?.text;
   activeRemovedReviews = removed ?? null;
+  renderRemovedNotice();
+  // A notice arriving before any review has landed is exactly the case the
+  // panel gate below now opens for, so nudge updateUI to build the panel.
+  if (changed) updateUI();
+};
+
+const renderRemovedNotice = (): void => {
   const banner = cardEls.removedNotice;
-  if (!banner) {
-    if (changed) updateUI();
-    return;
-  }
-  if (!removed) {
-    banner.style.display = 'none';
-    if (changed) updateUI();
-    return;
-  }
+  const removed = activeRemovedReviews;
+  if (!banner) return;
+  if (!removed) { banner.style.display = 'none'; return; }
   banner.textContent = '';
   const range = removed.min
     ? (removed.max && removed.max !== removed.min
@@ -685,10 +693,10 @@ const applyRemovedNotice = (featureId: string, data: any): void => {
   banner.appendChild(el('span', 'rc-removed-flag', range ? `${range} REMOVED` : 'REVIEWS REMOVED'));
   const est = removedCountEstimate(removed);
   banner.appendChild(el('span', 'rc-removed-text', est
-    ? `defamation · ~${addCommas(est)} as 1★`
+    ? `defamation · min ${addCommas(est)} as 1★`
     : 'defamation complaints'));
   banner.title = est
-    ? `${removed.detail ?? removed.text}\nPenalty: ~${addCommas(est)} removals — the midpoint of Google's range — count as 1★ reviews in Total.`
+    ? `${removed.detail ?? removed.text}\nPenalty: the minimum ${addCommas(est)} removals count as 1★ reviews in Total.`
     : (removed.detail ?? removed.text);
   if (removed.url) {
     (banner as HTMLAnchorElement).href = removed.url;
@@ -696,14 +704,57 @@ const applyRemovedNotice = (featureId: string, data: any): void => {
     banner.setAttribute('rel', 'noopener noreferrer');
   } else banner.removeAttribute('href');
   banner.style.display = 'flex';
-  if (changed) updateUI();
 };
 
-// Render from whatever gmaps-capture already holds, or the next preview to land.
-// Never fetches: a place with no captured preview simply shows no banner until
-// the highlights path happens to pull one.
-const showRemovedNoticeWhenKnown = (featureId: string): void => {
-  waitForCapturedPreview(featureId).then((data) => { if (data) applyRemovedNotice(featureId, data); }).catch(() => {});
+// A cold page load never issues the /maps/preview/place XHR gmaps-capture
+// listens for — Maps inlines the very same payload in APP_INITIALIZATION_STATE
+// instead, and only an SPA navigation between places produces the XHR. That is
+// the whole reason the notice used to surface late: with nothing captured, it
+// had to wait for whatever later forced a preview fetch, in practice the
+// highlights harvest long after scoring finished.
+//
+// The inlined copy is found by shape, not by path: it sits behind an obfuscated
+// key (APP_INITIALIZATION_STATE[3].tg[6] today) that Google is free to rename,
+// so scan for the `)]}'`-prefixed blob whose [6][10] is this place's featureId.
+// That id check is also what keeps an SPA nav honest — the inlined state keeps
+// describing the page that first loaded, and must never paint its notice onto
+// the place the user has since clicked through to.
+const previewFromAppState = (featureId: string): any | null => {
+  let found: any = null;
+  const walk = (v: any, depth: number): void => {
+    if (found || depth > 6) return;
+    if (typeof v === 'string') {
+      if (v.length < 5000 || !v.startsWith(")]}'")) return;
+      try {
+        const d = JSON.parse(v.replace(/^\)\]\}'\s*/, ''));
+        if (d?.[6]?.[10] === featureId) found = d;
+      } catch {}
+      return;
+    }
+    if (Array.isArray(v)) { for (const c of v) walk(c, depth + 1); return; }
+    if (v && typeof v === 'object') { for (const k in v) walk(v[k], depth + 1); }
+  };
+  walk((window as any).APP_INITIALIZATION_STATE, 0);
+  return found;
+};
+
+// Read the notice out of data the page already has. Never fetches. Driven from
+// the mutation tick rather than awaiting waitForCapturedPreview, which gives up
+// after 3s and would leave a place's notice hidden for the whole visit if the
+// capture landed later; re-reading each tick self-heals whenever it does.
+const tryRemovedNoticeFromCapture = (): void => {
+  const featureId = getFeatureId();
+  if (!featureId || removedNoticeCheckedFor === featureId) return;
+  const captured = window.__truescorePreviews?.[featureId]?.json;
+  if (captured) { applyRemovedNotice(featureId, captured); return; }
+  // The app-state walk parses a ~200KB blob, far too costly to repeat every
+  // tick — and since that state only ever describes the first-loaded place, one
+  // attempt per place is all it could ever be worth. Wait for it to exist
+  // before spending the attempt, so a tick that fires early isn't the one shot.
+  if (!(window as any).APP_INITIALIZATION_STATE || appStateTriedFor === featureId) return;
+  appStateTriedFor = featureId;
+  const inlined = previewFromAppState(featureId);
+  if (inlined) applyRemovedNotice(featureId, inlined);
 };
 
 const fetchPlacePreviewActive = async (placeUrl: string): Promise<any | null> => {
@@ -1415,8 +1466,7 @@ const createUIElements = () => {
   removed.style.display = 'none';
   c.appendChild(removed);
   cardEls.removedNotice = removed;
-  const fid = getFeatureId();
-  if (fid) showRemovedNoticeWhenKnown(fid);
+  renderRemovedNotice(); // already parsed by the mutation tick — paint it now
 
   const card = el('div', 'rc-card');
   const head = el('div', 'rc-card-head');
@@ -1590,14 +1640,22 @@ const updateUI = () => {
     if (fetchState[k].isFetching) anyFetching = true;
     if (!fetchState[k].done) allDone = false;
   }
-  if (!totalCount || !document.querySelector('.jANrlb')) return;
+  // The removal notice rides on the preview Maps fetches for itself, so it is
+  // known at page load — long before creds are captured and the first review
+  // page lands. Gating the whole panel on a score therefore sat on the one
+  // warning that never needed one. Build the panel for a notice alone; the
+  // score below renders as '—' until it settles, the same as any other page.
+  if (!document.querySelector('.jANrlb')) return;
+  if (!totalCount && !activeRemovedReviews) return;
   if (!document.querySelector('#reviews-container')) createUIElements();
 
   const els = cardEls.merged;
   if (!els) return;
 
   const fullPct = calculateFullPercentage();
-  const noData = totalAll === 0 && currentOption !== 'total';
+  // totalAll can now be 0 on 'total' too — a notice-only panel opens before any
+  // review lands, and 0/0 would otherwise render as a confident 0%.
+  const noData = totalAll === 0;
   const removedPenalty = currentOption === 'total' ? removedCountEstimate(activeRemovedReviews) : 0;
   const displayPct = scoreWithRemovalPenalty(mergedPct, totalTrusted, removedPenalty);
 
@@ -1605,7 +1663,7 @@ const updateUI = () => {
     els.pctEl.childNodes[0].textContent = '—';
     els.pctEl.style.color = '#888';
     els.pctEl.style.textShadow = 'none';
-    els.tooltip.textContent = 'No reviews in this period';
+    els.tooltip.textContent = totalCount === 0 ? 'Scoring…' : 'No reviews in this period';
     els.barFill.style.width = '0%';
     els.diffEl.style.display = 'none';
   } else {
@@ -1957,6 +2015,15 @@ const handleDomMutation = () => {
     if (existing && existing.dataset.featureId !== fid) existing.remove();
     else if (!existing && fid === lastFeatureId) injectSimpleScore(placeDetails);
   }
+
+  // Runs on every mutation, like the simple-score inject above and unlike the
+  // nav block below. The notice is usually parsed before Maps has rendered the
+  // rating block updateUI gates on, so that first updateUI bails and — on a
+  // stable URL — nothing would ever call it again until a review page landed.
+  // This retries the build until the panel exists; updateUI is a cheap no-op
+  // until the DOM is ready for it.
+  tryRemovedNoticeFromCapture();
+  if (activeRemovedReviews && !document.querySelector('#reviews-container')) updateUI();
 
   if (url === lastUrl) return;
   lastUrl = url;

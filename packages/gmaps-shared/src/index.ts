@@ -498,13 +498,13 @@ export const removedReviewsFromPreview = (data: any): RemovedReviews | undefined
 };
 
 // Google discloses a bucket ("21 to 50"), never an exact count, so a penalty has
-// to commit to one number. The midpoint is the least wrong one: the floor
-// under-counts every place sitting in the upper half of its bucket, the ceiling
-// over-counts the lower half. An open-ended bucket parses to min === max and so
-// falls out as itself. 0 when Google quoted no numerals we could read — no
-// invented penalty on a notice we only half-understood.
+// to commit to one number. Take the floor: it is the only count the notice
+// actually guarantees, so the penalty is never larger than the evidence for it.
+// A place in the upper half of its bucket is under-penalised — deliberately, as
+// the error that costs a real business least. 0 when Google quoted no numerals
+// we could read, so a half-understood notice invents no penalty at all.
 export const removedCountEstimate = (removed: RemovedReviews | null | undefined): number =>
-  removed?.min == null ? 0 : Math.round((removed.min + (removed.max ?? removed.min)) / 2);
+  removed?.min ?? 0;
 
 export const metaFromPreview = (data: any): PlaceMeta => {
   const six = data?.[6];

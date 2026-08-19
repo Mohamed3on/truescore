@@ -917,7 +917,7 @@ function renderRemovedReviews(meta: PlaceMeta | undefined) {
   $('placeRemovedText').textContent = removed.text;
   const est = removedCountEstimate(removed);
   banner.title = est
-    ? `${removed.detail ?? removed.text}\nPenalty: ~${est.toLocaleString()} removals — the midpoint of Google's range — count as 1★ reviews.`
+    ? `${removed.detail ?? removed.text}\nPenalty: the minimum ${est.toLocaleString()} removals count as 1★ reviews.`
     : (removed.detail ?? removed.text);
   if (removed.url) banner.href = removed.url;
   else banner.removeAttribute('href');

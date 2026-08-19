@@ -52,9 +52,9 @@ describe('scoreWithRemovalPenalty', () => {
 });
 
 describe('removedCountEstimate', () => {
-  test('penalises on the midpoint of Google\'s bucket, not its floor', () => {
-    expect(removedCountEstimate({ text: '', min: 21, max: 50 })).toBe(36);
-    expect(removedCountEstimate({ text: '', min: 6, max: 10 })).toBe(8);
+  test("penalises on the floor of Google's bucket — the only count it guarantees", () => {
+    expect(removedCountEstimate({ text: '', min: 21, max: 50 })).toBe(21);
+    expect(removedCountEstimate({ text: '', min: 6, max: 10 })).toBe(6);
   });
 
   test('an open-ended or single-valued bucket is itself', () => {
