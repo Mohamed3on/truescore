@@ -175,119 +175,16 @@ const getScoreFromStats = (stats: any) => {
 
 // --- PDP-specific code ---
 
-// dm uses two PDP URL formats: legacy `...-p1298306.html` and the newer `/p/d/1298306/<slug>`.
-const isProductPage = () =>
-  /-p\d{6,}\.html/.test(location.pathname) || /\/p\/[a-z]+\/\d{6,}\b/.test(location.pathname);
-
-const addCandidateFromValue = (map: Map<string, number>, value: any, priority = 50) => {
-  if (!value) return;
-  const normalized = String(value).trim();
-  if (!/^\d{5,}$/.test(normalized)) return;
-  const existing = map.get(normalized);
-  if (existing == null || priority < existing) map.set(normalized, priority);
-};
-
-// The candidate set is fixed once the PDP's Product JSON-LD is in the DOM;
-// before that the page is still hydrating and each sweep must re-scan. Memoized
-// per URL so retry sweeps skip re-parsing every JSON-LD block and regex-scanning
-// up to 1.5MB of inline script.
-let candidateMemo: { href: string; ids: string[] } | null = null;
-
-const extractCandidateProductIds = () => {
-  if (candidateMemo?.href === location.href) return candidateMemo.ids;
-  const candidates = new Map<string, number>();
-
-  // Highest confidence: structured Product JSON-LD usually contains the main PDP sku.
-  document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => {
-    const text = script.textContent?.trim();
-    if (!text || text.length > 500_000) return;
-
-    let data: any;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      return;
-    }
-
-    const stack = [data];
-    while (stack.length) {
-      const node = stack.pop();
-      if (!node) continue;
-      if (Array.isArray(node)) {
-        for (const item of node) stack.push(item);
-        continue;
-      }
-      if (typeof node !== 'object') continue;
-
-      const type = node['@type'];
-      const isProduct = Array.isArray(type) ? type.includes('Product') : type === 'Product';
-      if (isProduct) {
-        addCandidateFromValue(candidates, node.sku, 0);
-        addCandidateFromValue(candidates, node.productID, 1);
-        addCandidateFromValue(candidates, node.mpn, 2);
-      }
-
-      for (const value of Object.values(node)) {
-        if (value && typeof value === 'object') stack.push(value);
-      }
-    }
-  });
-
-  document.querySelectorAll('[data-product-id]').forEach((el) => addCandidateFromValue(candidates, el.getAttribute('data-product-id'), 10));
-  document.querySelectorAll('[data-productid]').forEach((el) => addCandidateFromValue(candidates, el.getAttribute('data-productid'), 11));
-  document.querySelectorAll('[data-bv-product-id]').forEach((el) => addCandidateFromValue(candidates, el.getAttribute('data-bv-product-id'), 12));
-  document.querySelectorAll('meta[itemprop="sku"]').forEach((el) => addCandidateFromValue(candidates, el.getAttribute('content'), 13));
-  document.querySelectorAll('input[name="productId"], input[name="dan"], input[name="productid"], input[name="sku"]').forEach((el) => addCandidateFromValue(candidates, (el as HTMLInputElement).value, 14));
-  document.querySelectorAll('[data-dan]').forEach((el) => addCandidateFromValue(candidates, el.getAttribute('data-dan'), 40));
-
-  const scripts = document.querySelectorAll(
-    'script[type="application/ld+json"], script#__NEXT_DATA__, script[id*="__NEXT_DATA__"], script:not([src])'
-  );
-  const patterns = [
-    { regex: /"sku"\s*:\s*"(\d{5,})"/g, priority: 3 },
-    { regex: /"dan"\s*:\s*"(\d{5,})"/g, priority: 5 },
-    { regex: /"product(?:I|i)d"\s*:\s*"(\d{5,})"/g, priority: 5 },
-    { regex: /"productID"\s*:\s*"(\d{5,})"/g, priority: 5 },
-  ];
-
-  for (const script of scripts) {
-    const text = script.textContent;
-    if (!text || text.length > 1_500_000) continue;
-    for (const pattern of patterns) {
-      for (const match of text.matchAll(pattern.regex)) {
-        addCandidateFromValue(candidates, match[1], pattern.priority);
-      }
-    }
-  }
-
-  const urlMatch =
+// dm uses two PDP URL formats: legacy `...-p1298306.html` and the newer
+// `/p/d/1298306/<slug>`. The id in the path is dm's routing key and doubles as
+// the BazaarVoice product id, so it is the whole resolution — the slug is
+// decorative (`/p/d/3087729/x` resolves fine).
+const productIdFromUrl = () => {
+  const match =
     location.pathname.match(/-p(\d{6,})\.html/) || location.pathname.match(/\/p\/[a-z]+\/(\d{6,})\b/);
-  if (urlMatch) addCandidateFromValue(candidates, urlMatch[1], 30);
-
-  const ids = [...candidates.entries()]
-    .sort((a, b) => a[1] - b[1] || a[0].length - b[0].length || a[0].localeCompare(b[0]))
-    .map(([id]) => id);
-  // Priorities <= 2 only come from Product JSON-LD — the hydration marker.
-  if ([...candidates.values()].some((priority) => priority <= 2)) {
-    candidateMemo = { href: location.href, ids };
-  }
-  return ids;
+  return match?.[1] ?? null;
 };
 
-const extractExpectedReviewCount = () => {
-  const script = document.querySelector('script[data-dmid="review-ui-seo-information"]');
-  if (!script?.textContent) return null;
-  try {
-    const json = JSON.parse(script.textContent);
-    const count = Number(json?.aggregateRating?.ratingCount);
-    return Number.isFinite(count) && count > 0 ? count : null;
-  } catch {
-    return null;
-  }
-};
-
-// Recommend rate (its own line) + key stats + any secondary ratings. The big
-// gauge above this is the recent-positive score, built in buildCard.
 const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: number; nps: number } | null) => {
   const recommended = Number(stats.RecommendedCount) || 0;
   const recommendTotal = recommended + (Number(stats.NotRecommendedCount) || 0);
@@ -432,63 +329,18 @@ const injectUi = (scoreData: any, stats: any, productId: string) => {
   return true;
 };
 
-// Zero-review PDPs never produce stats, so retryUntilLoaded would re-sweep the
-// candidates on every debounced mutation for the life of the page. After this
-// many full empty sweeps load() returns GIVE_UP — non-null, so the injector
-// stops retrying; inject() treats it as a no-op.
-const MAX_EMPTY_SWEEPS = 5;
-const GIVE_UP = { stats: null, scoreData: null, productId: '' };
-let emptySweeps = { href: '', count: 0 };
-
-// dm derives the product id from late-arriving DOM (JSON-LD / data-attrs), so
-// load() returns null until that resolves and setupSpaInjector retries until it
-// does — the DOM-id PDP case ADR 0001 carved out, now served by the shared helper.
+// The id is in the URL, so load() needs no page DOM — the URL-id single-entity
+// PDP shape ADR 0001 describes, same as ikea-pdp/decathlon-pdp. inject() re-runs
+// on body mutations until dm has rendered an anchor to attach to.
 setupSpaInjector<{ stats: any; scoreData: { score: number; nps: number } | null; productId: string }>({
-  match: isProductPage,
+  match: () => !!productIdFromUrl(),
   load: async () => {
-    if (emptySweeps.href === location.href && emptySweeps.count >= MAX_EMPTY_SWEEPS) return GIVE_UP;
-    const candidates = extractCandidateProductIds();
-    if (!candidates.length) return null;
-    const expectedReviewCount = extractExpectedReviewCount();
-
-    let matched: { id: string; stats: any } | null = null;
-    let fallback: { id: string; stats: any } | null = null;
-    for (const productId of candidates) {
-      const candidateStats = await fetchStats(productId);
-      if (!candidateStats) continue;
-
-      // `candidates` is ordered by confidence — the Product JSON-LD sku first,
-      // the recommendation carousel's data-dan ids last — so the first id that
-      // has stats at all is the best guess. Never the most-reviewed one: the
-      // carousel reliably out-reviews the PDP's own product, so that tiebreak
-      // rendered a neighbouring bestseller's score and summary whenever the
-      // count check below missed (a cached total drifting by one review is
-      // enough), which is exactly what it did.
-      fallback ??= { id: productId, stats: candidateStats };
-      const candidateTotal = Number(candidateStats.TotalReviewCount) || 0;
-
-      const isMatch =
-        expectedReviewCount != null
-          ? candidateTotal === expectedReviewCount
-          : !!(candidateStats.RatingDistribution?.length || candidateTotal > 0);
-      if (isMatch) {
-        matched = { id: productId, stats: candidateStats };
-        break;
-      }
-    }
-
-    const chosen = matched ?? fallback;
-    if (!chosen) {
-      if (emptySweeps.href !== location.href) emptySweeps = { href: location.href, count: 0 };
-      emptySweeps.count++;
-      return emptySweeps.count >= MAX_EMPTY_SWEEPS ? GIVE_UP : null;
-    }
-    return { stats: chosen.stats, scoreData: getScoreFromStats(chosen.stats), productId: chosen.id };
+    const productId = productIdFromUrl();
+    if (!productId) return null;
+    const stats = await fetchStats(productId);
+    if (!stats) return null;
+    return { stats, scoreData: getScoreFromStats(stats), productId };
   },
-  inject: (data) => {
-    if (data === GIVE_UP) return;
-    injectUi(data.scoreData, data.stats, data.productId);
-  },
+  inject: ({ stats, scoreData, productId }) => injectUi(scoreData, stats, productId),
   cleanup,
-  retryUntilLoaded: true,
 });
