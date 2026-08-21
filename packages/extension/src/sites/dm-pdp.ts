@@ -1,6 +1,7 @@
 import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
-import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { buildSearchSection } from '../shared/review-search';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, trendingScore } from '../shared/score-island';
 
@@ -117,14 +118,18 @@ const buildReviewsUrl = (productId: string, offset: number) => {
 
 interface DmReview {
   rating: number;
-  text: string;
+  title: string;
+  body: string;
+  date: string;
 }
+
+const reviewToText = (r: DmReview) => [r.title, r.body].filter(Boolean).join(': ').trim();
 
 // Most-recent reviews (BazaarVoice sorts by submissiontime:desc). All pages fire
 // in parallel, so the wall-clock cost is a single round-trip no matter how many
 // pages we pull. Feeds both the "recent positive" gauge and LLM summarization.
 const fetchReviews = async (productId: string, totalCount = REVIEWS_PAGE * REVIEWS_MAX_PAGES): Promise<DmReview[]> => {
-  const cacheKey = `dm_reviews_v2_${productId}`;
+  const cacheKey = `dm_reviews_v3_${productId}`;
   const cached = cacheGet(cacheKey, REVIEWS_TTL);
   if (cached) return cached;
 
@@ -142,10 +147,16 @@ const fetchReviews = async (productId: string, totalCount = REVIEWS_PAGE * REVIE
     const results = page.value?.response?.Results;
     if (!Array.isArray(results)) continue;
     for (const r of results) {
-      const text = [r.Title, r.ReviewText].filter(Boolean).join(': ').trim();
+      const review: DmReview = {
+        rating: Number(r.Rating) || 0,
+        title: r.Title || '',
+        body: r.ReviewText || '',
+        date: String(r.SubmissionTime || '').slice(0, 10),
+      };
+      const text = reviewToText(review);
       if (text && !seen.has(text)) {
         seen.add(text);
-        reviews.push({ rating: Number(r.Rating) || 0, text });
+        reviews.push(review);
       }
     }
   }
@@ -153,7 +164,7 @@ const fetchReviews = async (productId: string, totalCount = REVIEWS_PAGE * REVIE
   return reviews;
 };
 
-const reviewTexts = (reviews: DmReview[]) => reviews.map((r) => r.text);
+const reviewTexts = (reviews: DmReview[]) => reviews.map(reviewToText).filter(Boolean);
 
 const getScoreFromStats = (stats: any) => {
   const dist = stats?.RatingDistribution;
@@ -281,6 +292,11 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
 
   appendInsights(wrapper, stats, scoreData);
 
+  // Filled with the review-search section once the corpus lands; sits above the
+  // summarize widget the same way it does on the other PDP islands.
+  const searchSlot = document.createElement('div');
+  wrapper.appendChild(searchSlot);
+
   if (total >= 5 && productId) {
     buildSummarizeWidget({
       wrapper,
@@ -301,6 +317,15 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
         if (ratio != null && scoreData) {
           const row = wrapper.querySelector<HTMLElement>('.ars-stats');
           if (row) appendStat(row, addCommas(trendingScore(scoreData.score, ratio)), 'trending');
+        }
+        if (reviews.length >= 5) {
+          searchSlot.appendChild(buildSearchSection({
+            reviews,
+            fields: (r) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date }),
+            toText: reviewToText,
+            summaryPrompt: FILTERED_PRODUCT_SUMMARY_PROMPT,
+            exampleQuery: 'Duft OR Haut',
+          }));
         }
       })
       .catch(() => fillRecentGauge(gauge, null));
