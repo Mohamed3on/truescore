@@ -457,10 +457,15 @@ setupSpaInjector<{ stats: any; scoreData: { score: number; nps: number } | null;
       const candidateStats = await fetchStats(productId);
       if (!candidateStats) continue;
 
+      // `candidates` is ordered by confidence — the Product JSON-LD sku first,
+      // the recommendation carousel's data-dan ids last — so the first id that
+      // has stats at all is the best guess. Never the most-reviewed one: the
+      // carousel reliably out-reviews the PDP's own product, so that tiebreak
+      // rendered a neighbouring bestseller's score and summary whenever the
+      // count check below missed (a cached total drifting by one review is
+      // enough), which is exactly what it did.
+      fallback ??= { id: productId, stats: candidateStats };
       const candidateTotal = Number(candidateStats.TotalReviewCount) || 0;
-      if (!fallback || candidateTotal > (Number(fallback.stats.TotalReviewCount) || 0)) {
-        fallback = { id: productId, stats: candidateStats };
-      }
 
       const isMatch =
         expectedReviewCount != null
