@@ -56,17 +56,68 @@ export type SearchResult = {
 db.run('CREATE TABLE IF NOT EXISTS entries (featureId TEXT PRIMARY KEY, data TEXT NOT NULL)');
 
 const upsertStmt = db.prepare<void, [string, string]>('INSERT OR REPLACE INTO entries (featureId, data) VALUES (?, ?)');
-const selectAllStmt = db.prepare<{ featureId: string; data: string }, []>('SELECT featureId, data FROM entries');
+const selectOneStmt = db.prepare<{ data: string }, [string]>('SELECT data FROM entries WHERE featureId = ?');
+// Only the /api/places listing fields, projected in sqlite — so building the
+// listing never materialises the full entries (see IndexRow below).
+const selectIndexStmt = db.prepare<{ featureId: string } & IndexRow, []>(`
+  SELECT featureId,
+         json_extract(data, '$.name') AS name,
+         COALESCE(json_extract(data, '$.score.scorePct'), 0) AS scorePct,
+         json_extract(data, '$.resolvedUrl') AS resolvedUrl,
+         COALESCE(json_extract(data, '$.lastAccessTs'), json_extract(data, '$.scoreTs'), 0) AS lastAccessTs
+  FROM entries`);
 
+// sqlite is the store; `store` is a bounded LRU window over it. Entries carry full
+// review text and average ~360KB, so holding every one resident cost ~1.5GB RSS and
+// grew unbounded with each new place looked up. Cap the resident set and read
+// through to sqlite on a miss instead. TRUESCORE_CACHE_RESIDENT overrides.
+const MAX_RESIDENT = Number(process.env.TRUESCORE_CACHE_RESIDENT ?? 200);
 const store = new Map<string, CacheEntry>();
-for (const row of selectAllStmt.all()) {
-  try { store.set(row.featureId, JSON.parse(row.data)); }
-  catch (e) { console.error(`[cache] skip corrupt row ${row.featureId}:`, e); }
-}
+
+// Every place's listing fields, always resident — ~100 bytes each, so /api/places
+// stays an in-memory read rather than a full-table json scan on every request.
+type IndexRow = { name: string; scorePct: number; resolvedUrl: string | null; lastAccessTs: number };
+const index = new Map<string, IndexRow>();
+for (const { featureId, ...fields } of selectIndexStmt.all()) index.set(featureId, fields);
+
+// Map iterates in insertion order, so delete-then-set moves a key to the newest end
+// and the first key is always the least-recently-used one to drop.
+const remember = (featureId: string, entry: CacheEntry): void => {
+  if (MAX_RESIDENT <= 0) return;
+  store.delete(featureId);
+  store.set(featureId, entry);
+  if (store.size > MAX_RESIDENT) store.delete(store.keys().next().value!);
+};
+
+const indexEntry = (featureId: string, entry: CacheEntry): void => {
+  index.set(featureId, {
+    name: entry.name,
+    scorePct: entry.score.scorePct,
+    resolvedUrl: entry.resolvedUrl ?? null,
+    lastAccessTs: entry.lastAccessTs ?? entry.scoreTs,
+  });
+};
+
+// Read through the resident window to sqlite. A corrupt row is dropped rather than
+// thrown, so one bad entry can't fail every lookup (as the old boot loop guarded).
+const read = (featureId: string): CacheEntry | undefined => {
+  const hit = store.get(featureId);
+  if (hit) { remember(featureId, hit); return hit; }
+  const row = selectOneStmt.get(featureId);
+  if (!row) return undefined;
+  try {
+    const entry = JSON.parse(row.data) as CacheEntry;
+    remember(featureId, entry);
+    return entry;
+  } catch (e) {
+    console.error(`[cache] skip corrupt row ${featureId}:`, e);
+    return undefined;
+  }
+};
 
 // One-shot migration: legacy JSON file → sqlite. Runs only on a fresh DB so a
 // stale JSON sitting next to the live DB can't clobber newer entries.
-if (store.size === 0) {
+if (index.size === 0) {
   try {
     const f = Bun.file(LEGACY_JSON_PATH);
     if (await f.exists()) {
@@ -76,7 +127,7 @@ if (store.size === 0) {
       });
       const list = Object.entries(json);
       tx(list);
-      for (const [id, entry] of list) store.set(id, entry);
+      for (const [id, entry] of list) indexEntry(id, entry);
       console.log(`[cache] migrated ${list.length} entries from ${LEGACY_JSON_PATH} → ${DB_PATH}`);
     }
   } catch (e) {
@@ -85,7 +136,8 @@ if (store.size === 0) {
 }
 
 const persist = (featureId: string, entry: CacheEntry) => {
-  store.set(featureId, entry);
+  remember(featureId, entry);
+  indexEntry(featureId, entry);
   upsertStmt.run(featureId, JSON.stringify(entry));
 };
 
@@ -100,7 +152,7 @@ const emptyScore = (featureId: string): ScoreResult => ({
 // patches without needing an upsert variant. Revalidate replaces the
 // zero-score with real data on the next /api/lookup.
 const ensureEntry = (featureId: string, name: string): void => {
-  if (store.get(featureId)) return;
+  if (index.has(featureId)) return;
   persist(featureId, { name, score: emptyScore(featureId), scoreTs: 0 });
 };
 
@@ -116,7 +168,7 @@ const isThrottledScrape = (totalReviews: number, liveTotal: number | null | unde
 
 export const cache = {
   get(featureId: string): CacheEntry | undefined {
-    return store.get(featureId);
+    return read(featureId);
   },
   // Cached entry is fresh iff the place's total review count is unchanged
   // since we last computed. If we don't know the live total (histogram fetch
@@ -139,7 +191,7 @@ export const cache = {
   // reviews = throttle, or histogram unknown = preview failed / dead featureId):
   // nothing is persisted, so the prior entry stands and the next lookup retries.
   async putScore(featureId: string, name: string, score: ScoreResult, totalReviewsAtCache: number | null, resolvedUrl?: string): Promise<boolean> {
-    const existing = store.get(featureId);
+    const existing = read(featureId);
     if (isThrottledScrape(score.totalReviews, totalReviewsAtCache)) return false;
     persist(featureId, {
       ...existing,
@@ -154,7 +206,7 @@ export const cache = {
     return true;
   },
   async touch(featureId: string) {
-    const existing = store.get(featureId);
+    const existing = read(featureId);
     if (!existing) return;
     persist(featureId, {
       ...existing,
@@ -162,27 +214,27 @@ export const cache = {
       accessCount: (existing.accessCount ?? 1) + 1,
     });
   },
-  all(): Array<{ featureId: string } & CacheEntry> {
-    return Array.from(store, ([featureId, entry]) => ({ featureId, ...entry }));
+  all(): Array<{ featureId: string } & IndexRow> {
+    return Array.from(index, ([featureId, row]) => ({ featureId, ...row }));
   },
   async putSummary(featureId: string, summary: Summary) {
-    const existing = store.get(featureId);
+    const existing = read(featureId);
     if (!existing) return;
     persist(featureId, { ...existing, summary, summaryTs: Date.now() });
   },
   async putHighlights(featureId: string, highlights: Chip[]) {
-    const existing = store.get(featureId);
+    const existing = read(featureId);
     if (!existing) return;
     persist(featureId, { ...existing, highlights, highlightsTs: Date.now() });
   },
   async putHighlightSummary(featureId: string, token: string, summary: Summary) {
-    const existing = store.get(featureId);
+    const existing = read(featureId);
     if (!existing) return;
     const highlightSummaries = { ...(existing.highlightSummaries ?? {}), [token]: summary };
     persist(featureId, { ...existing, highlightSummaries });
   },
   async putSearch(featureId: string, query: string, result: SearchResult) {
-    const existing = store.get(featureId);
+    const existing = read(featureId);
     if (!existing) return;
     const searches = { ...(existing.searches ?? {}), [query.toLowerCase()]: result };
     persist(featureId, { ...existing, searches });
@@ -206,7 +258,7 @@ export const cache = {
   // A 0-review contribution is the extension's own throttle/empty state, never
   // worth painting — drop it rather than flashing "0 reviews" at the next visitor.
   async putContributedScore(featureId: string, score: PartialScore) {
-    const existing = store.get(featureId);
+    const existing = read(featureId);
     if (!existing || score.totalReviews <= 0) return;
     persist(featureId, { ...existing, contributedScore: score, contributedScoreTs: Date.now() });
   },
@@ -214,7 +266,7 @@ export const cache = {
   // tokens) and stamp the attempt time. An empty result stamps the time only,
   // so chipWarmedEmpty can suppress re-harvesting a topic-less place for a while.
   async recordChipWarm(featureId: string, chips: ChipMeta[]) {
-    const existing = store.get(featureId);
+    const existing = read(featureId);
     if (!existing) return;
     const next: CacheEntry = { ...existing, chipWarmTs: Date.now() };
     if (chips.length) next.chipMeta = chips;
@@ -227,7 +279,7 @@ export const cache = {
     return !entry.chipMeta?.length && entry.chipWarmTs != null && Date.now() - entry.chipWarmTs < CHIP_WARM_TTL_MS;
   },
   async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta; chips?: ChipMeta[] }) {
-    const existing = store.get(featureId);
+    const existing = read(featureId);
     if (!existing) return;
     const next: CacheEntry = { ...existing, meta: bundle.meta };
     // Keep the last non-empty chip set: a later empty A-B bucket mustn't wipe good chips.

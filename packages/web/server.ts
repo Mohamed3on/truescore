@@ -472,9 +472,9 @@ Bun.serve({
           .map((e) => ({
             featureId: e.featureId,
             name: e.name,
-            scorePct: e.score.scorePct,
+            scorePct: e.scorePct,
             resolvedUrl: e.resolvedUrl ?? mapsUrlFor(e.featureId),
-            lastAccessTs: e.lastAccessTs ?? e.scoreTs,
+            lastAccessTs: e.lastAccessTs,
           }))
           .sort((a, b) => b.lastAccessTs - a.lastAccessTs);
         return json({ places } satisfies PlacesResponse);
