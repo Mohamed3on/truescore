@@ -101,7 +101,8 @@ function debugDetails(stats: any) {
 }
 
 function winnerBanner(message: string, listName?: string | null, listLink?: string | null) {
-  const winner = el('div', 'lbx-winner', message);
+  const winner = el('div', 'lbx-winner');
+  winner.append(el('span', 'lbx-winner-text', message));
   if (listName && listLink) {
     const src = el('a', 'lbx-winner-source', listName) as HTMLAnchorElement;
     src.href = listLink;
@@ -123,6 +124,21 @@ const getCachedRecentRatings = (slug: string) => idbGet(`lbx_recent_${slug}`, CO
 const setCachedRecentRatings = (slug: string, data: any) => idbSet(`lbx_recent_${slug}`, data);
 const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v2_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
 const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v2_${slug}`, data);
+
+// Films the user has muted from Similar Picks. Deliberately not a cache — it's
+// user intent, so it lives in chrome.storage.local: no TTL, survives clearing
+// letterboxd site data, and untouched by the background rc_score_* sweep.
+const IGNORED_KEY = 'lbx_ignored';
+
+const loadIgnored = async (): Promise<Set<string>> => {
+  try {
+    const stored = (await chrome.storage.local.get(IGNORED_KEY))[IGNORED_KEY];
+    return new Set<string>(Array.isArray(stored) ? stored : []);
+  } catch { return new Set<string>(); }
+};
+
+const saveIgnored = (ignored: Set<string>) =>
+  chrome.storage.local.set({ [IGNORED_KEY]: [...ignored] }).catch(() => {});
 
 // =============================================================================
 // Fetching
@@ -548,15 +564,33 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
 // UI Display
 // =============================================================================
 
+/** Appends `element` to `target`, fading it in only when it actually changed lists. */
+function moveTo(element: HTMLElement, target: HTMLElement) {
+  const moved = element.parentElement !== target;
+  // Re-inserting a node blurs whatever inside it had focus — hand it back so the
+  // ignore/restore button stays keyboard-reachable after it flips.
+  const focused = moved && element.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
+  target.append(element);
+  focused?.focus();
+  if (!moved) return;
+  element.classList.add('lbx-moved');
+  element.addEventListener('animationend', () => element.classList.remove('lbx-moved'), { once: true });
+}
+
 /**
- * Displays similar picks section, lazily fetching and filtering by recent %
+ * Displays similar picks section, lazily fetching and filtering by recent %.
+ * Films the user has ignored move to a collapsed drawer and stop counting
+ * towards the winner check; restoring one from the drawer undoes that.
  */
 async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ score: number; ratio: number }>, currentRuntime: number, trendingElement: HTMLElement, currentRecentPromise: Promise<any>) {
   const similarSection = el('section', 'lbx-similar');
   similarSection.append(el('span', 'lbx-progress', 'Finding similar picks...'));
   trendingElement.after(similarSection);
 
-  const result = await findSimilarPicks(currentSlug, scorePromise, currentRuntime, similarSection);
+  const [result, ignored] = await Promise.all([
+    findSimilarPicks(currentSlug, scorePromise, currentRuntime, similarSection),
+    loadIgnored(),
+  ]);
 
   similarSection.textContent = '';
 
@@ -571,25 +605,79 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
     return;
   }
 
-  similarSection.append(el('h3', 'lbx-similar-header', 'Similar Picks'));
-
+  const banner = winnerBanner('', result.listName, result.listLink);
+  const bannerText = banner.querySelector('.lbx-winner-text') as HTMLElement;
+  banner.hidden = true;
+  const header = el('h3', 'lbx-similar-header', 'Similar Picks');
   const sourceLink = el('a', 'lbx-similar-source', `From: ${result.listName}`) as HTMLAnchorElement;
   sourceLink.href = result.listLink;
-  similarSection.append(sourceLink);
-
   const list = el('ul', 'lbx-similar-list');
-  const items = new Map<string, { element: HTMLElement; meta: HTMLElement; film: any }>();
+  const drawerToggle = el('div', 'lbx-ignored-toggle');
+  const drawer = el('ul', 'lbx-similar-list lbx-ignored-list');
+  similarSection.append(banner, header, sourceLink, list, drawerToggle, drawer);
+
+  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean };
+  const items = new Map<string, Entry>();
+  let drawerOpen = false;
+  let drawerRevealed = false;
+  let recentsSettled = false;
+
+  /** Re-entrant render — the ignore set is the only mutable input. */
+  const paint = () => {
+    let passCount = 0;
+    let ignoredCount = 0;
+    for (const entry of items.values()) {
+      const isIgnored = ignored.has(entry.film.slug);
+      if (isIgnored) ignoredCount++;
+      else if (entry.passes) passCount++;
+      entry.button.textContent = isIgnored ? '↺' : '×';
+      const label = isIgnored ? 'Restore — count this as a better pick again' : 'Ignore — don’t count this as a better pick';
+      entry.button.title = label;
+      entry.button.setAttribute('aria-label', `${label}: ${entry.film.name}`);
+      moveTo(entry.element, isIgnored ? drawer : list);
+    }
+
+    drawerToggle.hidden = ignoredCount === 0;
+    drawerToggle.textContent = `${drawerOpen ? '▼' : '▶'} ${ignoredCount} ignored`;
+    drawer.hidden = !drawerOpen || ignoredCount === 0;
+
+    const isWinner = recentsSettled && passCount === 0;
+    banner.hidden = !isWinner;
+    header.hidden = isWinner;
+    sourceLink.hidden = isWinner;
+    if (isWinner) {
+      bannerText.textContent = ignoredCount === items.size
+        ? '★ Winner! Every similar film is ignored.'
+        : '★ Winner! No similar film matches score and recent reviews.';
+    }
+  };
+
+  drawerToggle.addEventListener('click', () => { drawerOpen = !drawerOpen; paint(); });
+
+  const toggleIgnored = (slug: string) => {
+    if (ignored.has(slug)) {
+      ignored.delete(slug);
+    } else {
+      ignored.add(slug);
+      // First ignore of the visit springs the drawer open once, so undo is discoverable.
+      if (!drawerRevealed) { drawerRevealed = true; drawerOpen = true; }
+    }
+    saveIgnored(ignored);
+    paint();
+  };
 
   result.films.forEach((film: any) => {
     const item = el('li', 'lbx-similar-item');
     const link = el('a', 'lbx-similar-link', film.name) as HTMLAnchorElement;
     link.href = film.link;
     const meta = el('span', 'lbx-similar-meta', filmMeta(film));
-    item.append(link, meta);
-    list.append(item);
-    items.set(film.slug, { element: item, meta, film });
+    const button = el('button', 'lbx-ignore') as HTMLButtonElement;
+    button.type = 'button';
+    button.addEventListener('click', () => toggleIgnored(film.slug));
+    item.append(link, meta, button);
+    items.set(film.slug, { element: item, meta, button, film, passes: false });
   });
-  similarSection.append(list);
+  paint();
 
   const recentPromises = result.films.map((film: any) =>
     getRecentRatingsSummary(film.slug)
@@ -600,36 +688,24 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
   const currentRecent = await currentRecentPromise;
   const threshold = currentRecent.scorePercentage;
 
-  let passCount = 0;
   await Promise.all(
     recentPromises.map((p: any) =>
       p.then(({ slug, recent }: { slug: string; recent: any }) => {
         const entry = items.get(slug);
         if (!entry) return;
         const { film } = entry;
-        if (film.fetchFailed || (recent && recent.scorePercentage >= threshold)) {
-          entry.meta.textContent = filmMeta(film, recent ? `${recent.scorePercentage}%` : '?');
-          passCount++;
-        } else {
+        entry.meta.textContent = filmMeta(film, recent ? `${recent.scorePercentage}%` : '?');
+        entry.passes = !!(film.fetchFailed || (recent && recent.scorePercentage >= threshold));
+        if (!entry.passes) {
           entry.element.classList.add('lbx-excluded');
-          entry.meta.textContent = filmMeta(film, recent ? `${recent.scorePercentage}%` : '?');
-          const reason = el('span', 'lbx-similar-reason', `need ≥${threshold}%`);
-          entry.element.append(reason);
+          entry.button.before(el('span', 'lbx-similar-reason', `need ≥${threshold}%`));
         }
       })
     )
   );
+  recentsSettled = true;
+  paint();
 
-  if (passCount === 0) {
-    similarSection.textContent = '';
-    similarSection.append(winnerBanner('★ Winner! No similar film matches score and recent reviews.', result.listName, result.listLink));
-    const excludedList = el('ul', 'lbx-similar-list');
-    for (const [, entry] of items) {
-      entry.element.classList.add('lbx-excluded');
-      excludedList.append(entry.element);
-    }
-    similarSection.append(excludedList);
-  }
   if (result.stats) similarSection.append(debugDetails({ ...result.stats, recentThreshold: threshold }));
 }
 

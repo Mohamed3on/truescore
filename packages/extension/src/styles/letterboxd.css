@@ -181,3 +181,41 @@
 .lbx-summary-text a:hover { text-decoration: underline; }
 .lbx-summary-error { color: #e54; font-size: .85rem; }
 .lbx-summary-progress { color: #678; font-size: .9rem; }
+
+/* Ignore controls: an × per pick that mutes it from the winner check, plus a
+   collapsed drawer holding what's been muted so any of it can be restored. */
+.lbx-similar [hidden] { display: none; }
+.lbx-ignore {
+  flex: none;
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0 .1rem;
+  color: #567;
+  font: inherit;
+  font-size: .95rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease, color .15s ease;
+}
+.lbx-similar-item:hover .lbx-ignore,
+.lbx-ignore:focus-visible { opacity: 1; }
+.lbx-ignore:hover { color: #e54; }
+.lbx-ignored-toggle {
+  margin-top: .75rem;
+  color: #567;
+  font-size: .78rem;
+  cursor: pointer;
+  user-select: none;
+  transition: color .15s ease;
+}
+.lbx-ignored-toggle:hover { color: #9ab; }
+.lbx-ignored-list { margin-top: .5rem; }
+.lbx-ignored-list .lbx-similar-item { opacity: .45; }
+.lbx-ignored-list .lbx-similar-link { text-decoration: line-through; }
+.lbx-ignored-list .lbx-similar-reason { display: none; }
+.lbx-ignored-list .lbx-ignore { opacity: .55; }
+.lbx-ignored-list .lbx-ignore:hover { opacity: 1; color: #00e054; }
+.lbx-similar-item.lbx-moved { animation: lbx-slide-in .28s cubic-bezier(0.16, 1, 0.3, 1); }
+@keyframes lbx-slide-in { from { opacity: 0; transform: translateY(-3px); } }
