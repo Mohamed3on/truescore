@@ -20,6 +20,9 @@ export interface VarDim {
 export interface VariationCardOpts {
   title?: string; // default 'Best by variation'
   animate?: boolean; // staggered row + card entrance
+  // Dimensions every row shares, as [name, value]. They can't be ranked, so
+  // they're stated once under the title instead of being silently dropped.
+  constants?: [string, string][];
 }
 
 // Fold a product's reviews into ranked dimensions: one VarDim per variation axis
@@ -75,7 +78,10 @@ const ensureStyles = () => {
 .ts-var.is-animated{animation:ts-var-enter .4s cubic-bezier(.25,1,.5,1)}
 .ts-var-head{padding:10px 12px 0}
 .ts-var-title{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#A8A29E}
+.ts-var-note{display:block;margin-top:4px;font-size:11px;line-height:1.4;color:#78716C}
+.ts-var-note b{font-weight:600;color:#44403C}
 .ts-var-tabs{display:flex;gap:2px;margin-top:8px;border-bottom:1px solid #E7E5E4;overflow-x:auto;scrollbar-width:none}
+.ts-var-note+.ts-var-tabs{margin-top:10px}
 .ts-var-tabs::-webkit-scrollbar{display:none}
 .ts-var-tab{appearance:none;background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;padding:6px 10px;font-family:inherit;font-size:12px;font-weight:600;color:#A8A29E;white-space:nowrap;cursor:pointer;transition:color .15s,border-color .15s}
 .ts-var-tab:hover{color:#57534E}
@@ -88,7 +94,7 @@ const ensureStyles = () => {
 .ts-var-val{font-size:12.5px;color:#44403C;overflow-wrap:anywhere}
 .ts-var-best .ts-var-val{font-weight:700;color:#1C1917}
 .ts-var-best .ts-var-val::before{content:"\\25C6";color:#0F766E;font-size:9px;margin-right:5px;vertical-align:1px}
-.ts-var-fit{font-size:10px;color:#A8A29E;letter-spacing:.01em}
+.ts-var-fit{font-size:10px;color:#78716C;letter-spacing:.01em}
 .ts-var-track{height:5px;background:#EFEDEC;border-radius:3px;overflow:hidden}
 .ts-var-fill{display:block;height:100%;border-radius:3px}
 .ts-var-fill.is-pos{background:#16A34A}
@@ -102,7 +108,7 @@ const ensureStyles = () => {
 
 export const renderVariationCard = (dims: VarDim[], opts: VariationCardOpts = {}): HTMLElement => {
   ensureStyles();
-  const { title = 'Best by variation', animate = false } = opts;
+  const { title = 'Best by variation', animate = false, constants = [] } = opts;
 
   const box = document.createElement('div');
   box.className = 'ts-var' + (animate ? ' is-animated' : '');
@@ -113,6 +119,23 @@ export const renderVariationCard = (dims: VarDim[], opts: VariationCardOpts = {}
   titleEl.className = 'ts-var-title';
   titleEl.textContent = title;
   head.appendChild(titleEl);
+
+  // Held constant across every row: named once, above the tabs, so it stays true
+  // whichever tab is open — and so the rows below carry only what differs.
+  if (constants.length) {
+    const note = document.createElement('span');
+    note.className = 'ts-var-note';
+    note.append('Every variation: ');
+    constants.forEach(([dim, value], i) => {
+      if (i) note.append(' \u00B7 ');
+      note.append(`${dim} `);
+      const strong = document.createElement('b');
+      strong.textContent = value;
+      note.appendChild(strong);
+    });
+    head.appendChild(note);
+  }
+
   box.appendChild(head);
 
   const panel = document.createElement('div');

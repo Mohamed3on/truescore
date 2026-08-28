@@ -65,24 +65,36 @@ const parseVariation = (text: string): [string, string][] => {
 };
 
 const injectBestFormats = (formatRatings: Record<string, number>) => {
-  const combos = Object.entries(formatRatings);
+  const combos = Object.entries(formatRatings).map(([raw, score]) => ({
+    pairs: parseVariation(raw),
+    label: raw.replaceAll(VAR_SEP, ' | '),
+    score,
+  }));
   if (!combos.length) return;
 
   // Re-aggregate the full-combination scores into per-dimension tallies so we can
   // surface the best-performing color, size, etc. on their own — not just the best
   // exact combination. Net sentiment per dimension value = sum over every combo it appears in.
   const dims = new Map<string, Map<string, number>>();
+  const seenIn = new Map<string, number>();
   let multiDim = false;
-  const specificRows: [string, number][] = combos.map(([raw, score]) => {
-    const pairs = parseVariation(raw);
+  for (const { pairs, score } of combos) {
     if (pairs.length > 1) multiDim = true;
     for (const [dim, val] of pairs) {
       let m = dims.get(dim);
       if (!m) dims.set(dim, (m = new Map()));
       m.set(val, (m.get(val) ?? 0) + score);
     }
-    return [raw.replaceAll(VAR_SEP, ' | '), score];
-  });
+    for (const dim of new Set(pairs.map(([d]) => d))) seenIn.set(dim, (seenIn.get(dim) ?? 0) + 1);
+  }
+
+  // A dimension every combination shares has nothing to rank — it's the fixed
+  // context the whole card sits in. The card names it once above the tabs, and we
+  // strip it from the row labels so each row reads as only what actually differs.
+  // (When nothing varies, the lone row already says it: leave it whole.)
+  const constant = [...dims.entries()].filter(([dim, vals]) => vals.size === 1 && seenIn.get(dim) === combos.length);
+  const fixed = constant.length < dims.size ? constant : [];
+  const fixedDims = new Set(fixed.map(([dim]) => dim));
 
   // A dimension is worth its own tab only if it has ≥2 values to compare.
   const compareDims = [...dims.entries()]
@@ -93,7 +105,21 @@ const injectBestFormats = (formatRatings: Record<string, number>) => {
 
   const byScore = (a: [string, number], b: [string, number]) => b[1] - a[1];
   const toRows = (entries: [string, number][]) => entries.map(([label, score]) => ({ label, score }));
-  const specific = toRows(specificRows.sort(byScore));
+
+  // Amazon's buy-box column is ~240px, where a spelled-out combination wraps to
+  // three lines. The dimension you actually choose from — the one with the most
+  // values, already first in compareDims — leads the row under its own tab name;
+  // the rest drop to the sub-line, where they read as qualifiers instead of noise.
+  const lead = showTabs ? compareDims[0]?.[0] : undefined;
+  const specific = combos
+    .map(({ pairs, label, score }) => {
+      const varying = pairs.filter(([dim]) => !fixedDims.has(dim));
+      const head = lead && varying.find(([dim]) => dim === lead);
+      if (!head) return { label: varying.length ? varying.map(([d, v]) => `${d}: ${v}`).join(' | ') : label, score };
+      const rest = varying.filter(([dim]) => dim !== lead);
+      return { label: head[1], score, meta: rest.map(([d, v]) => `${d} ${v}`).join(' \u00B7 ') || undefined };
+    })
+    .sort((a, b) => b.score - a.score);
 
   // Specific (exact combination) leads; per-dimension breakdowns follow as extra tabs.
   const varDims: VarDim[] = showTabs
@@ -103,7 +129,10 @@ const injectBestFormats = (formatRatings: Record<string, number>) => {
       ]
     : [{ label: '', rows: specific }];
 
-  const box = renderVariationCard(varDims, { animate: true });
+  const box = renderVariationCard(varDims, {
+    animate: true,
+    constants: fixed.map(([dim, vals]): [string, string] => [dim, [...vals.keys()][0]]),
+  });
   const buyBox = document.querySelector('#desktop_buybox');
   if (buyBox) buyBox.parentNode!.insertBefore(box, buyBox);
 };
