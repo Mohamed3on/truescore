@@ -13,6 +13,7 @@ const CONFIG = {
   SUMMARY_CACHE_MS: 7 * 24 * 60 * 60 * 1000, // 1 week
   RUNTIME_TOLERANCE: 10, // ±10 minutes
   MAX_SIMILAR_PAGES: 3,
+  RECENT_RATING_PAGES: 15, // reviews/by/added pages tallied for the recent %
   RECENT_REVIEW_PAGES: 8, // reviews/by/added pages scanned for AI summary text
   MAX_CONCURRENCY: 10,
   DEBUG: false,
@@ -55,8 +56,11 @@ function parseRatings(root: Document | Element): number[] {
   });
 }
 
-/** Trending score: the combined score damped by the share of recent ratings that are positive. */
-const trendingOf = (score: number, recentPct: number) => Math.round((score * recentPct) / 100);
+/** Recent %: net loved-minus-hated ratings over all rated recent reviews. */
+const recentPct = (net: number, total: number) => (total > 0 ? Math.round((net / total) * 100) : 0);
+
+/** Trending score: the combined score damped by the recent %. */
+const trendingOf = (score: number, pct: number) => Math.round((score * pct) / 100);
 
 function filmMeta(film: any, recentText = '...') {
   const scoreText = film.fetchFailed ? '?' : addCommas(film.score);
@@ -81,12 +85,12 @@ function debugDetails(stats: any) {
   if (stats.currentTrending != null) lines.push(`Trending threshold: ${addCommas(stats.currentTrending)}`);
   if (stats.allScored?.length) {
     lines.push('');
-    lines.push('All runtime-matched films:');
+    lines.push('All runtime-matched films (✓ = score reaches the threshold, so recent reviews were checked):');
     for (const f of stats.allScored) {
       let status: string;
       if (f.fetchFailed) status = '(fetch failed)';
       else if (f.parseEmpty) status = '⚠ parse empty';
-      else status = f.score >= stats.currentScore ? '✓' : '✗';
+      else status = f.score >= stats.currentTrending ? '✓' : '✗';
       lines.push(`  ${status} ${f.name} — ${f.runtime}m — ${f.fetchFailed ? '?' : addCommas(f.score)}`);
     }
   }
@@ -125,8 +129,14 @@ const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v2_${slug}`, CONFIG
 const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v2_${slug}`, data);
 const getCachedRecentRatings = (slug: string) => idbGet(`lbx_recent_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
 const setCachedRecentRatings = (slug: string, data: any) => idbSet(`lbx_recent_${slug}`, data);
-const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v2_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
-const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v2_${slug}`, data);
+// A tally abandoned early by getCandidateRecentRatings — kept apart from the full
+// one so the film's own page never mistakes a ceiling for its real recent %.
+const getCachedRecentPartial = (slug: string) => idbGet(`lbx_recent_part_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
+const setCachedRecentPartial = (slug: string, data: any) => idbSet(`lbx_recent_part_${slug}`, data);
+// v3: holds every scored runtime match; the comparison against the current film
+// happens at display time, so the cache no longer bakes in a threshold.
+const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v3_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
+const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v3_${slug}`, data);
 
 // Films the user has muted from Similar Picks. Deliberately not a cache — it's
 // user intent, so it lives in chrome.storage.local: no TTL, survives clearing
@@ -299,17 +309,58 @@ async function getRecentRatingsSummary(slug: string | null = null) {
   const parser = new DOMParser();
 
   const pages = await Promise.all(
-    Array.from({ length: 15 }, (_, i) => fetchReviewPage(effectiveSlug, i + 1))
+    Array.from({ length: CONFIG.RECENT_RATING_PAGES }, (_, i) => fetchReviewPage(effectiveSlug, i + 1))
   );
 
   pages.forEach((html) => tallyRatings(parser.parseFromString(html, 'text/html'), recentRatings));
 
-  recentRatings.scorePercentage = recentRatings.totalNumberOfRatings > 0
-    ? Math.round((recentRatings.scoreAbsolute / recentRatings.totalNumberOfRatings) * 100)
-    : 0;
+  recentRatings.scorePercentage = recentPct(recentRatings.scoreAbsolute, recentRatings.totalNumberOfRatings);
 
   setCachedRecentRatings(effectiveSlug, recentRatings);
   return recentRatings;
+}
+
+/**
+ * Recent ratings for a similar-pick candidate, fetched a page at a time and
+ * abandoned once even a perfect run of 5★s on the unfetched pages couldn't lift
+ * `score` × recent % to `threshold`. Verdicts match a full fetch exactly; a
+ * hopeless film just reports a ceiling instead of its number. Only complete
+ * tallies enter the shared recent cache; an abandoned one is kept apart so a
+ * revisit can re-check it against the threshold without refetching.
+ */
+async function getCandidateRecentRatings(slug: string, score: number, threshold: number): Promise<{ pct: number; ceiling: boolean }> {
+  const full = await getCachedRecentRatings(slug);
+  if (full) return { pct: full.scorePercentage, ceiling: false };
+
+  // `room` = the most ratings the unfetched pages could still add, all of them 5★.
+  const hopeless = (tally: { scoreAbsolute: number; totalNumberOfRatings: number }, room: number) => {
+    const ceiling = recentPct(tally.scoreAbsolute + room, tally.totalNumberOfRatings + room);
+    return trendingOf(score, ceiling) < threshold ? { pct: ceiling, ceiling: true } : null;
+  };
+  const partial = await getCachedRecentPartial(slug);
+  const known = partial && hopeless(partial, partial.room);
+  if (known) return known;
+
+  const parser = new DOMParser();
+  const tally = { totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 };
+  let perPage = 0;
+  for (let page = 1; page <= CONFIG.RECENT_RATING_PAGES; page++) {
+    const doc = parser.parseFromString(await fetchReviewPage(slug, page), 'text/html');
+    tallyRatings(doc, tally);
+    const entries = doc.querySelectorAll('.js-review-body').length;
+    if (page === 1) perPage = entries;
+    if (!perPage) continue; // unrecognised markup: no bound, fetch every page as before
+    if (entries < perPage) break; // a short page is the last one, so the tally is already exact
+    const room = perPage * (CONFIG.RECENT_RATING_PAGES - page);
+    const verdict = room && hopeless(tally, room);
+    if (verdict) {
+      setCachedRecentPartial(slug, { ...tally, room });
+      return verdict;
+    }
+  }
+  tally.scorePercentage = recentPct(tally.scoreAbsolute, tally.totalNumberOfRatings);
+  setCachedRecentRatings(slug, tally);
+  return { pct: tally.scorePercentage, ceiling: false };
 }
 
 // =============================================================================
@@ -369,9 +420,11 @@ function updateProgress(element: HTMLElement, step: number, detail = '') {
 }
 
 /**
- * Finds similar films from popular lists with matching runtime and score
+ * Finds candidate films from the most popular list containing this film: same or
+ * shorter runtime, each with its combined score. Comparing them against the
+ * current film is the display layer's job.
  */
-async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ score: number }>, currentRuntime: number, statusElement: HTMLElement) {
+async function findSimilarPicks(currentSlug: string, currentRuntime: number, statusElement: HTMLElement) {
   // Set filmFilter cookie based on whether current film is watched
   const productionUid = document.querySelector('#backdrop[data-production-uid]')?.getAttribute('data-production-uid');
   const isWatched = await (async () => {
@@ -480,7 +533,7 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       if (foundCurrentFilm) break;
     }
 
-    if (!allFilmSlugs.length) return { films: [], listName, listLink, stats: { totalInList: 0, runtimeMatched: 0, scored: 0, currentScore: (await scorePromise).score, currentRuntime, foundOnPage, pagesSearched, lastPageItemCount, allScored: [] } };
+    if (!allFilmSlugs.length) return { films: [], listName, listLink, stats: { totalInList: 0, runtimeMatched: 0, scored: 0, currentRuntime, foundOnPage, pagesSearched, lastPageItemCount, allScored: [] } };
 
     debug(`Total films across pages: ${allFilmSlugs.length}`);
     updateProgress(statusElement, 2, `Fetching ${allFilmSlugs.length} films...`);
@@ -511,7 +564,7 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
     );
 
     debug(`Runtime matches (≤${currentRuntime + CONFIG.RUNTIME_TOLERANCE}m): ${runtimeMatches.length}`);
-    if (!runtimeMatches.length) return { films: [], listName, listLink, stats: { totalInList: allFilmSlugs.length, runtimeMatched: 0, scored: 0, currentScore: (await scorePromise).score, currentRuntime, foundOnPage, pagesSearched, allScored: [] } };
+    if (!runtimeMatches.length) return { films: [], listName, listLink, stats: { totalInList: allFilmSlugs.length, runtimeMatched: 0, scored: 0, currentRuntime, foundOnPage, pagesSearched, allScored: [] } };
 
     const uncached = runtimeMatches.filter((f: any) => !f.fromCache).length;
     updateProgress(statusElement, 3, `Scoring ${runtimeMatches.length} matches${uncached ? ` (${uncached} new)` : ''}...`);
@@ -529,17 +582,14 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
       })
     );
 
-    const currentScore = (await scorePromise).score;
     scoredFilms.sort((a: any, b: any) => b.score - a.score);
-    const qualifying: any[] = [];
+    const candidates: any[] = [];
     const allScored: any[] = [];
     let freshlyFetched = 0;
     let parseEmptyCount = 0;
     for (const f of scoredFilms) {
       allScored.push({ name: f.filmName, score: f.score, runtime: f.runtime, fetchFailed: f.fetchFailed, parseEmpty: f.parseEmpty });
-      if (f.fetchFailed || f.score >= currentScore) {
-        qualifying.push({ slug: f.slug, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year, fetchFailed: f.fetchFailed });
-      }
+      candidates.push({ slug: f.slug, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year, fetchFailed: f.fetchFailed });
       if (!f.fromCache && !f.fetchFailed) {
         freshlyFetched++;
         if (f.parseEmpty) parseEmptyCount++;
@@ -548,11 +598,11 @@ async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ sco
     if (freshlyFetched >= 5 && parseEmptyCount / freshlyFetched >= 0.5) {
       console.warn(`[LBX] Histogram parser returned empty for ${parseEmptyCount}/${freshlyFetched} freshly-fetched films — Letterboxd CSI markup may have changed. Inspect /csi/film/<slug>/rating-histogram/ and update parseRatings().`);
     }
-    const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentScore, currentRuntime, foundOnPage, pagesSearched, allScored, parseEmptyCount, freshlyFetched };
+    const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentRuntime, foundOnPage, pagesSearched, allScored, parseEmptyCount, freshlyFetched };
 
-    debug(`Qualifying films: ${qualifying.length}`);
-    const result = { films: qualifying, stats, listName, listLink };
-    const cacheable = qualifying.filter((f: any) => !f.fetchFailed);
+    debug(`Candidate films: ${candidates.length}`);
+    const result = { films: candidates, stats, listName, listLink };
+    const cacheable = candidates.filter((f: any) => !f.fetchFailed);
     if (cacheable.length) {
       setCachedSimilarPicks(currentSlug, { films: cacheable, listName, listLink, stats });
     }
@@ -581,9 +631,10 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
 }
 
 /**
- * Displays similar picks section. Films that beat the current score (gate 1,
- * decided in findSimilarPicks) lazily fetch their recent ratings and must then
- * also beat its trending score (gate 2) — so trending costs no extra requests.
+ * Displays similar picks section: a candidate beats the current film when its
+ * trending score (score × recent %) is equal or higher. Recent ratings are
+ * fetched lazily, only for candidates whose score could reach the threshold,
+ * and only as far as needed to settle each one.
  * Films the user has ignored move to a collapsed drawer and stop counting
  * towards the winner check; restoring one from the drawer undoes that.
  */
@@ -593,24 +644,28 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   anchor.after(similarSection);
 
   const [result, ignored, current] = await Promise.all([
-    findSimilarPicks(currentSlug, currentPromise, currentRuntime, similarSection),
+    findSimilarPicks(currentSlug, currentRuntime, similarSection),
     loadIgnored(),
     currentPromise,
   ]);
 
   similarSection.textContent = '';
-
-  if (result.films.length === 0) {
-    if (result.error) {
-      similarSection.remove();
-      return;
-    }
-    similarSection.append(winnerBanner('★ Winner! No similar film with equal or higher score found.', result.listName, result.listLink));
-    if (result.stats) similarSection.append(debugDetails(result.stats));
+  if (result.error) {
+    similarSection.remove();
     return;
   }
 
   const threshold = current.trending;
+  const stats = result.stats && { ...result.stats, currentScore: current.score, currentTrending: threshold };
+  // Trending never exceeds the score, so a film scoring below the threshold can't
+  // qualify — skip its review fetch instead of proving it.
+  const films = result.films.filter((f: any) => f.fetchFailed || f.score >= threshold);
+
+  if (films.length === 0) {
+    similarSection.append(winnerBanner('★ Winner! No similar film with an equal or higher trending score.', result.listName, result.listLink));
+    if (stats) similarSection.append(debugDetails(stats));
+    return;
+  }
 
   const banner = winnerBanner('', result.listName, result.listLink);
   const bannerText = banner.querySelector('.lbx-winner-text') as HTMLElement;
@@ -658,7 +713,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     if (isWinner) {
       bannerText.textContent = ignoredCount === items.size
         ? '★ Winner! Every similar film is ignored.'
-        : '★ Winner! No similar film matches score and trending.';
+        : '★ Winner! No similar film with an equal or higher trending score.';
     }
   };
 
@@ -676,7 +731,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     paint();
   };
 
-  result.films.forEach((film: any) => {
+  films.forEach((film: any) => {
     const item = el('li', 'lbx-similar-item');
     const link = el('a', 'lbx-similar-link', film.name) as HTMLAnchorElement;
     link.href = film.link;
@@ -690,11 +745,13 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   paint();
 
   await Promise.all(
-    result.films.map((film: any) =>
-      getRecentRatingsSummary(film.slug).catch(() => null).then((recent: any) => {
+    films.map((film: any) =>
+      // A film whose fetch failed keeps the benefit of the doubt, so it always gets the full tally.
+      getCandidateRecentRatings(film.slug, film.score, film.fetchFailed ? 0 : threshold).catch(() => null).then((recent) => {
         const entry = items.get(film.slug)!;
-        entry.trending = recent ? trendingOf(film.score, recent.scorePercentage) : 0;
-        const trendText = !recent ? '?' : film.fetchFailed ? `${recent.scorePercentage}%` : `${recent.scorePercentage}% → ${addCommas(entry.trending)}`;
+        entry.trending = recent ? trendingOf(film.score, recent.pct) : 0;
+        const cap = recent?.ceiling ? '≤' : '';
+        const trendText = !recent ? '?' : film.fetchFailed ? `${recent.pct}%` : `${cap}${recent.pct}% → ${cap}${addCommas(entry.trending)}`;
         entry.meta.textContent = filmMeta(film, trendText);
         entry.passes = !!(film.fetchFailed || (recent && entry.trending >= threshold));
         if (!entry.passes) {
@@ -707,7 +764,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   recentsSettled = true;
   paint();
 
-  if (result.stats) similarSection.append(debugDetails({ ...result.stats, currentTrending: threshold }));
+  if (stats) similarSection.append(debugDetails(stats));
 }
 
 // =============================================================================
