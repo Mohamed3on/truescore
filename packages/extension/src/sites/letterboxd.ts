@@ -55,6 +55,9 @@ function parseRatings(root: Document | Element): number[] {
   });
 }
 
+/** Trending score: the combined score damped by the share of recent ratings that are positive. */
+const trendingOf = (score: number, recentPct: number) => Math.round((score * recentPct) / 100);
+
 function filmMeta(film: any, recentText = '...') {
   const scoreText = film.fetchFailed ? '?' : addCommas(film.score);
   const base = `${film.year ? film.year + ' · ' : ''}${film.runtime}m · ${scoreText}`;
@@ -75,7 +78,7 @@ function debugDetails(stats: any) {
   ];
   if (selectorMismatch) lines.push('⚠ Selector mismatch — Letterboxd markup may have changed');
   if (stats.parseEmptyCount > 0) lines.push(`⚠ Histogram parse empty: ${stats.parseEmptyCount}/${stats.freshlyFetched} freshly fetched (CSI markup likely changed)`);
-  if (stats.recentThreshold != null) lines.push(`Recent % threshold: ${stats.recentThreshold}%`);
+  if (stats.currentTrending != null) lines.push(`Trending threshold: ${addCommas(stats.currentTrending)}`);
   if (stats.allScored?.length) {
     lines.push('');
     lines.push('All runtime-matched films:');
@@ -368,7 +371,7 @@ function updateProgress(element: HTMLElement, step: number, detail = '') {
 /**
  * Finds similar films from popular lists with matching runtime and score
  */
-async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ score: number; ratio: number }>, currentRuntime: number, statusElement: HTMLElement) {
+async function findSimilarPicks(currentSlug: string, scorePromise: Promise<{ score: number }>, currentRuntime: number, statusElement: HTMLElement) {
   // Set filmFilter cookie based on whether current film is watched
   const productionUid = document.querySelector('#backdrop[data-production-uid]')?.getAttribute('data-production-uid');
   const isWatched = await (async () => {
@@ -578,18 +581,21 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
 }
 
 /**
- * Displays similar picks section, lazily fetching and filtering by recent %.
+ * Displays similar picks section. Films that beat the current score (gate 1,
+ * decided in findSimilarPicks) lazily fetch their recent ratings and must then
+ * also beat its trending score (gate 2) — so trending costs no extra requests.
  * Films the user has ignored move to a collapsed drawer and stop counting
  * towards the winner check; restoring one from the drawer undoes that.
  */
-async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ score: number; ratio: number }>, currentRuntime: number, trendingElement: HTMLElement, currentRecentPromise: Promise<any>) {
+async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<{ score: number; trending: number }>, currentRuntime: number, anchor: HTMLElement) {
   const similarSection = el('section', 'lbx-similar');
   similarSection.append(el('span', 'lbx-progress', 'Finding similar picks...'));
-  trendingElement.after(similarSection);
+  anchor.after(similarSection);
 
-  const [result, ignored] = await Promise.all([
-    findSimilarPicks(currentSlug, scorePromise, currentRuntime, similarSection),
+  const [result, ignored, current] = await Promise.all([
+    findSimilarPicks(currentSlug, currentPromise, currentRuntime, similarSection),
     loadIgnored(),
+    currentPromise,
   ]);
 
   similarSection.textContent = '';
@@ -599,11 +605,12 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
       similarSection.remove();
       return;
     }
-    await currentRecentPromise;
     similarSection.append(winnerBanner('★ Winner! No similar film with equal or higher score found.', result.listName, result.listLink));
     if (result.stats) similarSection.append(debugDetails(result.stats));
     return;
   }
+
+  const threshold = current.trending;
 
   const banner = winnerBanner('', result.listName, result.listLink);
   const bannerText = banner.querySelector('.lbx-winner-text') as HTMLElement;
@@ -616,7 +623,7 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
   const drawer = el('ul', 'lbx-similar-list lbx-ignored-list');
   similarSection.append(banner, header, sourceLink, list, drawerToggle, drawer);
 
-  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean };
+  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; trending: number };
   const items = new Map<string, Entry>();
   let drawerOpen = false;
   let drawerRevealed = false;
@@ -626,7 +633,10 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
   const paint = () => {
     let passCount = 0;
     let ignoredCount = 0;
-    for (const entry of items.values()) {
+    // Appending in trending order re-sorts both lists; until recents settle every
+    // entry still carries its score, so this keeps the initial score order.
+    const ordered = [...items.values()].sort((a, b) => b.trending - a.trending);
+    for (const entry of ordered) {
       const isIgnored = ignored.has(entry.film.slug);
       if (isIgnored) ignoredCount++;
       else if (entry.passes) passCount++;
@@ -648,7 +658,7 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
     if (isWinner) {
       bannerText.textContent = ignoredCount === items.size
         ? '★ Winner! Every similar film is ignored.'
-        : '★ Winner! No similar film matches score and recent reviews.';
+        : '★ Winner! No similar film matches score and trending.';
     }
   };
 
@@ -675,30 +685,21 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
     button.type = 'button';
     button.addEventListener('click', () => toggleIgnored(film.slug));
     item.append(link, meta, button);
-    items.set(film.slug, { element: item, meta, button, film, passes: false });
+    items.set(film.slug, { element: item, meta, button, film, passes: false, trending: film.score });
   });
   paint();
 
-  const recentPromises = result.films.map((film: any) =>
-    getRecentRatingsSummary(film.slug)
-      .then((recent: any) => ({ slug: film.slug, recent }))
-      .catch(() => ({ slug: film.slug, recent: null }))
-  );
-
-  const currentRecent = await currentRecentPromise;
-  const threshold = currentRecent.scorePercentage;
-
   await Promise.all(
-    recentPromises.map((p: any) =>
-      p.then(({ slug, recent }: { slug: string; recent: any }) => {
-        const entry = items.get(slug);
-        if (!entry) return;
-        const { film } = entry;
-        entry.meta.textContent = filmMeta(film, recent ? `${recent.scorePercentage}%` : '?');
-        entry.passes = !!(film.fetchFailed || (recent && recent.scorePercentage >= threshold));
+    result.films.map((film: any) =>
+      getRecentRatingsSummary(film.slug).catch(() => null).then((recent: any) => {
+        const entry = items.get(film.slug)!;
+        entry.trending = recent ? trendingOf(film.score, recent.scorePercentage) : 0;
+        const trendText = !recent ? '?' : film.fetchFailed ? `${recent.scorePercentage}%` : `${recent.scorePercentage}% → ${addCommas(entry.trending)}`;
+        entry.meta.textContent = filmMeta(film, trendText);
+        entry.passes = !!(film.fetchFailed || (recent && entry.trending >= threshold));
         if (!entry.passes) {
           entry.element.classList.add('lbx-excluded');
-          entry.button.before(el('span', 'lbx-similar-reason', `need ≥${threshold}%`));
+          entry.button.before(el('span', 'lbx-similar-reason', `need ≥${addCommas(threshold)}`));
         }
       })
     )
@@ -706,7 +707,7 @@ async function displaySimilarPicks(currentSlug: string, scorePromise: Promise<{ 
   recentsSettled = true;
   paint();
 
-  if (result.stats) similarSection.append(debugDetails({ ...result.stats, recentThreshold: threshold }));
+  if (result.stats) similarSection.append(debugDetails({ ...result.stats, currentTrending: threshold }));
 }
 
 // =============================================================================
@@ -760,10 +761,10 @@ async function run(ratings: number[]) {
       });
   }
 
-  const recentRatingsPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score }, recentRatings]) => {
-    const trendingScore = Math.round((score * recentRatings.scorePercentage) / 100);
-    trendingElement.textContent = `Trending: ${addCommas(trendingScore)} · Recent: ${recentRatings.scorePercentage}%`;
-    return recentRatings;
+  const currentPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score }, recentRatings]) => {
+    const trending = trendingOf(score, recentRatings.scorePercentage);
+    trendingElement.textContent = `Trending: ${addCommas(trending)} · Recent: ${recentRatings.scorePercentage}%`;
+    return { score, trending };
   });
 
   // AI summary of recent reviews sits between the trending line and Similar Picks.
@@ -783,10 +784,10 @@ async function run(ratings: number[]) {
     : trendingElement;
 
   const similarPicksPromise = currentSlug && currentRuntime
-    ? displaySimilarPicks(currentSlug, scorePromise, currentRuntime, summaryAnchor, recentRatingsPromise)
+    ? displaySimilarPicks(currentSlug, currentPromise, currentRuntime, summaryAnchor)
     : Promise.resolve();
 
-  await Promise.all([recentRatingsPromise, similarPicksPromise]);
+  await Promise.all([currentPromise, similarPicksPromise]);
 }
 
 // =============================================================================
