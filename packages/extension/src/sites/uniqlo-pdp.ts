@@ -3,7 +3,7 @@ import { cacheGet, cacheSet } from '../shared/cache';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
-import { appendStat, buildRecentGauge, createIslandShell, recentPositiveRatio, trendingScore } from '../shared/score-island';
+import { appendStat, buildRecentGauge, createIslandShell, recentPositiveRatio, recentAdjustedScore } from '../shared/score-island';
 
 // Uniqlo reviews are overwhelmingly about fit, fabric, and sizing, so nudge those
 // to the front as actionable buying tips rather than leaving them buried.
@@ -248,12 +248,12 @@ const addSummarizeUI = (
   const wrapper = createIslandShell();
 
   // The reviews arrive newest-first (sort=submission_time), so they carry the
-  // Amazon-style recent-positive gauge and the trending score it damps.
+  // Amazon-style recent-positive gauge and the recent-adjusted score it damps.
   const ratio = recentPositiveRatio(reviews.map((r) => r.rate));
   if (ratio != null) {
     wrapper.appendChild(buildRecentGauge(ratio));
     const stats = el('div', 'ars-stats') as HTMLElement;
-    if (scoreData) appendStat(stats, addCommas(trendingScore(scoreData.score, ratio)), 'trending');
+    if (scoreData) appendStat(stats, addCommas(recentAdjustedScore(scoreData.score, ratio)), 'recent-adjusted');
     appendStat(stats, String(reviews.length), 'analyzed');
     wrapper.appendChild(stats);
   }

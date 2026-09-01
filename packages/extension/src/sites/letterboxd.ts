@@ -59,8 +59,8 @@ function parseRatings(root: Document | Element): number[] {
 /** Recent %: net loved-minus-hated ratings over all rated recent reviews. */
 const recentPct = (net: number, total: number) => (total > 0 ? Math.round((net / total) * 100) : 0);
 
-/** Trending score: the combined score damped by the recent %. */
-const trendingOf = (score: number, pct: number) => Math.round((score * pct) / 100);
+/** Recent-adjusted score: the combined score damped by the recent %. */
+const recentAdjusted = (score: number, pct: number) => Math.round((score * pct) / 100);
 
 function filmMeta(film: any, recentText = '...') {
   const scoreText = film.fetchFailed ? '?' : addCommas(film.score);
@@ -82,7 +82,7 @@ function debugDetails(stats: any) {
   ];
   if (selectorMismatch) lines.push('⚠ Selector mismatch — Letterboxd markup may have changed');
   if (stats.parseEmptyCount > 0) lines.push(`⚠ Histogram parse empty: ${stats.parseEmptyCount}/${stats.freshlyFetched} freshly fetched (CSI markup likely changed)`);
-  if (stats.currentTrending != null) lines.push(`Trending threshold: ${addCommas(stats.currentTrending)}`);
+  if (stats.currentAdjusted != null) lines.push(`Recent-adjusted threshold: ${addCommas(stats.currentAdjusted)}`);
   if (stats.allScored?.length) {
     lines.push('');
     lines.push('All runtime-matched films (✓ = score reaches the threshold, so recent reviews were checked):');
@@ -90,7 +90,7 @@ function debugDetails(stats: any) {
       let status: string;
       if (f.fetchFailed) status = '(fetch failed)';
       else if (f.parseEmpty) status = '⚠ parse empty';
-      else status = f.score >= stats.currentTrending ? '✓' : '✗';
+      else status = f.score >= stats.currentAdjusted ? '✓' : '✗';
       lines.push(`  ${status} ${f.name} — ${f.runtime}m — ${f.fetchFailed ? '?' : addCommas(f.score)}`);
     }
   }
@@ -335,7 +335,7 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
   // `room` = the most ratings the unfetched pages could still add, all of them 5★.
   const hopeless = (tally: { scoreAbsolute: number; totalNumberOfRatings: number }, room: number) => {
     const ceiling = recentPct(tally.scoreAbsolute + room, tally.totalNumberOfRatings + room);
-    return trendingOf(score, ceiling) < threshold ? { pct: ceiling, ceiling: true } : null;
+    return recentAdjusted(score, ceiling) < threshold ? { pct: ceiling, ceiling: true } : null;
   };
   const partial = await getCachedRecentPartial(slug);
   const known = partial && hopeless(partial, partial.room);
@@ -632,13 +632,13 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
 
 /**
  * Displays similar picks section: a candidate beats the current film when its
- * trending score (score × recent %) is equal or higher. Recent ratings are
+ * recent-adjusted score (score × recent %) is equal or higher. Recent ratings are
  * fetched lazily, only for candidates whose score could reach the threshold,
  * and only as far as needed to settle each one.
  * Films the user has ignored move to a collapsed drawer and stop counting
  * towards the winner check; restoring one from the drawer undoes that.
  */
-async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<{ score: number; trending: number }>, currentRuntime: number, anchor: HTMLElement) {
+async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<{ score: number; adjusted: number }>, currentRuntime: number, anchor: HTMLElement) {
   const similarSection = el('section', 'lbx-similar');
   similarSection.append(el('span', 'lbx-progress', 'Finding similar picks...'));
   anchor.after(similarSection);
@@ -655,14 +655,14 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     return;
   }
 
-  const threshold = current.trending;
-  const stats = result.stats && { ...result.stats, currentScore: current.score, currentTrending: threshold };
-  // Trending never exceeds the score, so a film scoring below the threshold can't
+  const threshold = current.adjusted;
+  const stats = result.stats && { ...result.stats, currentScore: current.score, currentAdjusted: threshold };
+  // The recent-adjusted score never exceeds the score, so a film scoring below the threshold can't
   // qualify — skip its review fetch instead of proving it.
   const films = result.films.filter((f: any) => f.fetchFailed || f.score >= threshold);
 
   if (films.length === 0) {
-    similarSection.append(winnerBanner('★ Winner! No similar film with an equal or higher trending score.', result.listName, result.listLink));
+    similarSection.append(winnerBanner('★ Winner! No similar film with an equal or higher recent-adjusted score.', result.listName, result.listLink));
     if (stats) similarSection.append(debugDetails(stats));
     return;
   }
@@ -678,7 +678,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   const drawer = el('ul', 'lbx-similar-list lbx-ignored-list');
   similarSection.append(banner, header, sourceLink, list, drawerToggle, drawer);
 
-  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; trending: number };
+  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; adjusted: number };
   const items = new Map<string, Entry>();
   let drawerOpen = false;
   let drawerRevealed = false;
@@ -688,9 +688,9 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   const paint = () => {
     let passCount = 0;
     let ignoredCount = 0;
-    // Appending in trending order re-sorts both lists; until recents settle every
+    // Appending in recent-adjusted order re-sorts both lists; until recents settle every
     // entry still carries its score, so this keeps the initial score order.
-    const ordered = [...items.values()].sort((a, b) => b.trending - a.trending);
+    const ordered = [...items.values()].sort((a, b) => b.adjusted - a.adjusted);
     for (const entry of ordered) {
       const isIgnored = ignored.has(entry.film.slug);
       if (isIgnored) ignoredCount++;
@@ -713,7 +713,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     if (isWinner) {
       bannerText.textContent = ignoredCount === items.size
         ? '★ Winner! Every similar film is ignored.'
-        : '★ Winner! No similar film with an equal or higher trending score.';
+        : '★ Winner! No similar film with an equal or higher recent-adjusted score.';
     }
   };
 
@@ -740,7 +740,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     button.type = 'button';
     button.addEventListener('click', () => toggleIgnored(film.slug));
     item.append(link, meta, button);
-    items.set(film.slug, { element: item, meta, button, film, passes: false, trending: film.score });
+    items.set(film.slug, { element: item, meta, button, film, passes: false, adjusted: film.score });
   });
   paint();
 
@@ -749,11 +749,11 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
       // A film whose fetch failed keeps the benefit of the doubt, so it always gets the full tally.
       getCandidateRecentRatings(film.slug, film.score, film.fetchFailed ? 0 : threshold).catch(() => null).then((recent) => {
         const entry = items.get(film.slug)!;
-        entry.trending = recent ? trendingOf(film.score, recent.pct) : 0;
+        entry.adjusted = recent ? recentAdjusted(film.score, recent.pct) : 0;
         const cap = recent?.ceiling ? '≤' : '';
-        const trendText = !recent ? '?' : film.fetchFailed ? `${recent.pct}%` : `${cap}${recent.pct}% → ${cap}${addCommas(entry.trending)}`;
-        entry.meta.textContent = filmMeta(film, trendText);
-        entry.passes = !!(film.fetchFailed || (recent && entry.trending >= threshold));
+        const adjustedText = !recent ? '?' : film.fetchFailed ? `${recent.pct}%` : `${cap}${recent.pct}% → ${cap}${addCommas(entry.adjusted)}`;
+        entry.meta.textContent = filmMeta(film, adjustedText);
+        entry.passes = !!(film.fetchFailed || (recent && entry.adjusted >= threshold));
         if (!entry.passes) {
           entry.element.classList.add('lbx-excluded');
           entry.button.before(el('span', 'lbx-similar-reason', `need ≥${addCommas(threshold)}`));
@@ -795,8 +795,8 @@ async function run(ratings: number[]) {
     scoreEl.append(el('span', 'lbx-pct', `· ${Math.round(ratio * 100)}%`));
   };
 
-  const trendingElement = el('div', 'lbx-trending', 'Calculating...');
-  reviewSection.after(trendingElement);
+  const adjustedElement = el('div', 'lbx-adjusted', 'Calculating...');
+  reviewSection.after(adjustedElement);
 
   let scorePromise: Promise<{ score: number; ratio: number }>;
   if (cachedFilm) {
@@ -819,15 +819,15 @@ async function run(ratings: number[]) {
   }
 
   const currentPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score }, recentRatings]) => {
-    const trending = trendingOf(score, recentRatings.scorePercentage);
-    trendingElement.textContent = `Trending: ${addCommas(trending)} · Recent: ${recentRatings.scorePercentage}%`;
-    return { score, trending };
+    const adjusted = recentAdjusted(score, recentRatings.scorePercentage);
+    adjustedElement.textContent = `Recent-adjusted: ${addCommas(adjusted)} · Recent: ${recentRatings.scorePercentage}%`;
+    return { score, adjusted };
   });
 
-  // AI summary of recent reviews sits between the trending line and Similar Picks.
+  // AI summary of recent reviews sits between the recent-adjusted line and Similar Picks.
   const summaryAnchor = currentSlug
     ? buildMediaSummary({
-        anchor: trendingElement,
+        anchor: adjustedElement,
         classPrefix: 'lbx-summary',
         heading: 'Recent Reviews',
         summaryPrompt: SUMMARY_PROMPT,
@@ -838,7 +838,7 @@ async function run(ratings: number[]) {
         initialButtonLabel: '✦ Summarize recent reviews',
         fetchReviews: () => fetchRecentReviewTexts(currentSlug),
       })
-    : trendingElement;
+    : adjustedElement;
 
   const similarPicksPromise = currentSlug && currentRuntime
     ? displaySimilarPicks(currentSlug, currentPromise, currentRuntime, summaryAnchor)

@@ -67,9 +67,9 @@ export const recentPositiveRatio = (ratings: number[]): number | null => {
   return net / ratings.length;
 };
 
-// Amazon's "trending" figure: the item's overall score damped by how positive
+// The recent-adjusted score: the item's overall score damped by how positive
 // its newest reviews run.
-export const trendingScore = (score: number, ratio: number): number => Math.round(score * ratio);
+export const recentAdjustedScore = (score: number, ratio: number): number => Math.round(score * ratio);
 
 // The "% recent positive" bar. With a ratio it renders complete; without one it
 // renders a scanning placeholder for fillRecentGauge to finish — or remove —

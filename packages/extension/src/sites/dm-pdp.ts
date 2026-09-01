@@ -3,7 +3,7 @@ import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cach
 import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { buildSearchSection } from '../shared/review-search';
 import { setupSpaInjector } from '../shared/spa-injector';
-import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, trendingScore } from '../shared/score-island';
+import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, recentAdjustedScore } from '../shared/score-island';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const API_BASE = 'https://apps.bazaarvoice.com/bfd/v1/clients/dm-de/api-products/cv2/resources/data/reviews.json';
@@ -308,7 +308,7 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
 
   // Fill the recent-positive gauge from the most-recent reviews (shares the cache
   // with summarize, so it's one fetch per product). Drop the gauge if none load;
-  // land the trending stat (score damped by the recent ratio) beside the others.
+  // land the recent-adjusted stat (score damped by the recent ratio) beside the others.
   if (total > 0 && productId) {
     fetchReviews(productId, total)
       .then((reviews) => {
@@ -316,7 +316,7 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
         fillRecentGauge(gauge, ratio);
         if (ratio != null && scoreData) {
           const row = wrapper.querySelector<HTMLElement>('.ars-stats');
-          if (row) appendStat(row, addCommas(trendingScore(scoreData.score, ratio)), 'trending');
+          if (row) appendStat(row, addCommas(recentAdjustedScore(scoreData.score, ratio)), 'recent-adjusted');
         }
         if (reviews.length >= 5) {
           searchSlot.appendChild(buildSearchSection({

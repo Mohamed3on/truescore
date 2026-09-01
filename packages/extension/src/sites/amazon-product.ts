@@ -338,7 +338,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     const stats = document.createElement('div');
     stats.className = 'ars-stats';
     stats.innerHTML = `
-      <div class="ars-stat"><span class="ars-stat-val" data-ars="trending">\u2014</span><span class="ars-stat-lbl">trending</span></div>
+      <div class="ars-stat"><span class="ars-stat-val" data-ars="adjusted">\u2014</span><span class="ars-stat-lbl">recent-adjusted</span></div>
       <div class="ars-stat-div"></div>
       <div class="ars-stat"><span class="ars-stat-val" data-ars="analyzed">0</span><span class="ars-stat-lbl">analyzed<span class="ars-scan-spinner" data-ars="scanning"></span></span></div>
     `;  // safe: no user content in template
@@ -348,7 +348,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
     const pctEl = gauge.querySelector('.ars-gauge-pct') as HTMLElement;
     const fillEl = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
-    const trendEl = wrapper.querySelector('[data-ars="trending"]') as HTMLElement;
+    const adjustedEl = wrapper.querySelector('[data-ars="adjusted"]') as HTMLElement;
     const analyzedEl = wrapper.querySelector('[data-ars="analyzed"]') as HTMLElement;
 
     const bumpEl = (el: Element) => {
@@ -361,15 +361,15 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       const pctRaw = scores.recent.absolute / numberOfParsedReviews;
       const pct = Math.round(pctRaw * 100);
       const { backgroundColor } = getColorForPercentage(pctRaw);
-      const trendingScore = Math.round(scores.total.calculated * pctRaw);
+      const recentAdjustedScore = Math.round(scores.total.calculated * pctRaw);
 
       pctEl.textContent = `${pct}%`;
       pctEl.style.color = backgroundColor;
       fillEl.style.transform = `scaleX(${pctRaw})`;
       fillEl.style.background = backgroundColor;
 
-      trendEl.textContent = addCommas(trendingScore);
-      bumpEl(trendEl);
+      adjustedEl.textContent = addCommas(recentAdjustedScore);
+      bumpEl(adjustedEl);
 
       analyzedEl.textContent = String(numberOfParsedReviews);
       bumpEl(analyzedEl);
@@ -462,7 +462,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       const pctRaw = parseFloat(scores.recent.percentage);
       const pct = Math.round(pctRaw * 100);
       const { backgroundColor } = getColorForPercentage(pctRaw);
-      const trendingScore = Math.round(scores.total.calculated * pctRaw);
+      const recentAdjustedScore = Math.round(scores.total.calculated * pctRaw);
 
       const gauge = document.createElement('a');
       gauge.className = 'ars-gauge';
@@ -476,7 +476,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       const stats = document.createElement('div');
       stats.className = 'ars-stats';
       stats.innerHTML = `
-        <div class="ars-stat"><span class="ars-stat-val">${addCommas(trendingScore)}</span><span class="ars-stat-lbl">trending</span></div>
+        <div class="ars-stat"><span class="ars-stat-val">${addCommas(recentAdjustedScore)}</span><span class="ars-stat-lbl">recent-adjusted</span></div>
         <div class="ars-stat-div"></div>
         <div class="ars-stat"><span class="ars-stat-val">${numberOfParsedReviews}</span><span class="ars-stat-lbl">analyzed</span></div>
       `;
