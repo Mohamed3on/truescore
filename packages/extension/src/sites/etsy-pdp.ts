@@ -2,7 +2,7 @@ import { addCommas, el, npsColor } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { renderVariationCard, tallyVariationDims } from '../shared/variation-table';
-import { appendStat, buildGauge, buildRecentGauge, createIslandShell, recentPositiveRatio, recentAdjustedScore } from '../shared/score-island';
+import { appendStat, buildGauge, buildRecentGauge, createIslandShell, recentPositiveRatio, adjustedScore } from '../shared/score-island';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { buildReviewCard } from '../shared/review-search';
@@ -287,7 +287,7 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
   // is already answering, and the row exists even when there is no score.
   let stats = wrapper.querySelector<HTMLElement>('.ars-stats');
   if (!stats) wrapper.appendChild((stats = el('div', 'ars-stats') as HTMLElement));
-  if (ratio != null && score) appendStat(stats, addCommas(recentAdjustedScore(score.score, ratio)), 'recent-adjusted');
+  if (ratio != null && score) appendStat(stats, addCommas(adjustedScore(score.score, ratio)), 'adjusted');
   attachPostage(stats);
 
   // Aspect breakdown sits under the headline number: score first, then what

@@ -13,12 +13,12 @@
   margin-left: .25em;
 }
 .lbx-adjusted {
-  margin-top: 1rem;
-  font-size: 1.1rem;
-  font-weight: 600;
+  margin-top: .75rem;
+  font-size: .8125rem;
+  font-weight: 500;
   color: #9ab;
-  letter-spacing: .075em;
-  text-transform: uppercase;
+  letter-spacing: .01em;
+  font-variant-numeric: tabular-nums;
 }
 .lbx-similar {
   margin-top: 1.5rem;

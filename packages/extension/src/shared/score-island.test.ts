@@ -6,7 +6,7 @@ import {
   createIslandShell,
   fillRecentGauge,
   recentPositiveRatio,
-  recentAdjustedScore,
+  adjustedScore,
 } from './score-island';
 
 describe('createIslandShell', () => {
@@ -59,9 +59,9 @@ describe('recentPositiveRatio', () => {
   });
 });
 
-describe('recentAdjustedScore', () => {
+describe('adjustedScore', () => {
   test('damps the overall score by the recent ratio, rounded', () => {
-    expect(recentAdjustedScore(1234, 0.62)).toBe(765);
+    expect(adjustedScore(1234, 0.62)).toBe(765);
   });
 });
 
@@ -97,11 +97,11 @@ describe('buildRecentGauge', () => {
 describe('appendStat', () => {
   test('first cell lands without a divider, later cells bring one', () => {
     const row = document.createElement('div');
-    appendStat(row, '765', 'recent-adjusted');
+    appendStat(row, '765', 'adjusted');
     expect(row.querySelectorAll('.ars-stat-div').length).toBe(0);
     appendStat(row, '104', 'analyzed');
     expect(row.querySelectorAll('.ars-stat-div').length).toBe(1);
     const labels = [...row.querySelectorAll('.ars-stat-lbl')].map((n) => n.textContent);
-    expect(labels).toEqual(['recent-adjusted', 'analyzed']);
+    expect(labels).toEqual(['adjusted', 'analyzed']);
   });
 });

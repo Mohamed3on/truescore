@@ -25,13 +25,13 @@ Each site adapts this formula to what data is available (star histograms, like/d
 ## What it does on each site
 
 **Shopping**
-- **Amazon** — Sorts search results by score. On product pages: a recent-adjusted score (the score scaled by how positive the newest reviews are), AI-powered review summary (via Gemini or OpenAI — keys set in the popup), and sentiment breakdown by product variation (color, size, etc).
+- **Amazon** — Sorts search results by score. On product pages: an adjusted score (the score scaled by how positive the newest reviews are), AI-powered review summary (via Gemini or OpenAI — keys set in the popup), and sentiment breakdown by product variation (color, size, etc).
 - **Booking.com** — Sorts hotel results by score. On hotel pages: analyzes the last 100 reviews with filters by guest type and room type.
 - **Decathlon / Uniqlo / IKEA / dm.de** — NPS-style score on product pages with attribute breakdowns (quality, fit, durability, etc). Product list pages auto-sort by score.
 
 **Entertainment**
 - **IMDB** — Score from the full 1-10 rating histogram, weighting 9-10 stars against 1-2 stars.
-- **Letterboxd** — Merges Letterboxd and IMDB ratings into one score. Shows a recent-adjusted score from the past week's reviews, and finds similar-length films from popular lists that score higher.
+- **Letterboxd** — Merges Letterboxd and IMDB ratings into one score. Shows an adjusted score from the past week's reviews, and finds similar-length films from popular lists that score higher.
 - **Goodreads** — Score from the rating distribution + a recent-positive % from the past year's reviews.
 
 **Places & Travel**

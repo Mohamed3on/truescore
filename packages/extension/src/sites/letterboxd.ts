@@ -59,8 +59,8 @@ function parseRatings(root: Document | Element): number[] {
 /** Recent %: net loved-minus-hated ratings over all rated recent reviews. */
 const recentPct = (net: number, total: number) => (total > 0 ? Math.round((net / total) * 100) : 0);
 
-/** Recent-adjusted score: the combined score damped by the recent %. */
-const recentAdjusted = (score: number, pct: number) => Math.round((score * pct) / 100);
+/** Adjusted score: the combined score damped by the recent %. */
+const adjustedScore = (score: number, pct: number) => Math.round((score * pct) / 100);
 
 function filmMeta(film: any, recentText = '...') {
   const scoreText = film.fetchFailed ? '?' : addCommas(film.score);
@@ -82,7 +82,7 @@ function debugDetails(stats: any) {
   ];
   if (selectorMismatch) lines.push('⚠ Selector mismatch — Letterboxd markup may have changed');
   if (stats.parseEmptyCount > 0) lines.push(`⚠ Histogram parse empty: ${stats.parseEmptyCount}/${stats.freshlyFetched} freshly fetched (CSI markup likely changed)`);
-  if (stats.currentAdjusted != null) lines.push(`Recent-adjusted threshold: ${addCommas(stats.currentAdjusted)}`);
+  if (stats.currentAdjusted != null) lines.push(`Adjusted threshold: ${addCommas(stats.currentAdjusted)}`);
   if (stats.allScored?.length) {
     lines.push('');
     lines.push('All runtime-matched films (✓ = score reaches the threshold, so recent reviews were checked):');
@@ -335,7 +335,7 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
   // `room` = the most ratings the unfetched pages could still add, all of them 5★.
   const hopeless = (tally: { scoreAbsolute: number; totalNumberOfRatings: number }, room: number) => {
     const ceiling = recentPct(tally.scoreAbsolute + room, tally.totalNumberOfRatings + room);
-    return recentAdjusted(score, ceiling) < threshold ? { pct: ceiling, ceiling: true } : null;
+    return adjustedScore(score, ceiling) < threshold ? { pct: ceiling, ceiling: true } : null;
   };
   const partial = await getCachedRecentPartial(slug);
   const known = partial && hopeless(partial, partial.room);
@@ -632,7 +632,7 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
 
 /**
  * Displays similar picks section: a candidate beats the current film when its
- * recent-adjusted score (score × recent %) is equal or higher. Recent ratings are
+ * adjusted score (score × recent %) is equal or higher. Recent ratings are
  * fetched lazily, only for candidates whose score could reach the threshold,
  * and only as far as needed to settle each one.
  * Films the user has ignored move to a collapsed drawer and stop counting
@@ -657,12 +657,12 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
 
   const threshold = current.adjusted;
   const stats = result.stats && { ...result.stats, currentScore: current.score, currentAdjusted: threshold };
-  // The recent-adjusted score never exceeds the score, so a film scoring below the threshold can't
+  // The adjusted score never exceeds the score, so a film scoring below the threshold can't
   // qualify — skip its review fetch instead of proving it.
   const films = result.films.filter((f: any) => f.fetchFailed || f.score >= threshold);
 
   if (films.length === 0) {
-    similarSection.append(winnerBanner('★ Winner! No similar film with an equal or higher recent-adjusted score.', result.listName, result.listLink));
+    similarSection.append(winnerBanner('★ Winner! No similar film with an equal or higher adjusted score.', result.listName, result.listLink));
     if (stats) similarSection.append(debugDetails(stats));
     return;
   }
@@ -688,7 +688,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   const paint = () => {
     let passCount = 0;
     let ignoredCount = 0;
-    // Appending in recent-adjusted order re-sorts both lists; until recents settle every
+    // Appending in adjusted order re-sorts both lists; until recents settle every
     // entry still carries its score, so this keeps the initial score order.
     const ordered = [...items.values()].sort((a, b) => b.adjusted - a.adjusted);
     for (const entry of ordered) {
@@ -713,7 +713,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     if (isWinner) {
       bannerText.textContent = ignoredCount === items.size
         ? '★ Winner! Every similar film is ignored.'
-        : '★ Winner! No similar film with an equal or higher recent-adjusted score.';
+        : '★ Winner! No similar film with an equal or higher adjusted score.';
     }
   };
 
@@ -749,7 +749,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
       // A film whose fetch failed keeps the benefit of the doubt, so it always gets the full tally.
       getCandidateRecentRatings(film.slug, film.score, film.fetchFailed ? 0 : threshold).catch(() => null).then((recent) => {
         const entry = items.get(film.slug)!;
-        entry.adjusted = recent ? recentAdjusted(film.score, recent.pct) : 0;
+        entry.adjusted = recent ? adjustedScore(film.score, recent.pct) : 0;
         const cap = recent?.ceiling ? '≤' : '';
         const adjustedText = !recent ? '?' : film.fetchFailed ? `${recent.pct}%` : `${cap}${recent.pct}% → ${cap}${addCommas(entry.adjusted)}`;
         entry.meta.textContent = filmMeta(film, adjustedText);
@@ -819,12 +819,12 @@ async function run(ratings: number[]) {
   }
 
   const currentPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score }, recentRatings]) => {
-    const adjusted = recentAdjusted(score, recentRatings.scorePercentage);
-    adjustedElement.textContent = `Recent-adjusted: ${addCommas(adjusted)} · Recent: ${recentRatings.scorePercentage}%`;
+    const adjusted = adjustedScore(score, recentRatings.scorePercentage);
+    adjustedElement.textContent = `Adjusted: ${addCommas(adjusted)} · Recent: ${recentRatings.scorePercentage}%`;
     return { score, adjusted };
   });
 
-  // AI summary of recent reviews sits between the recent-adjusted line and Similar Picks.
+  // AI summary of recent reviews sits between the adjusted line and Similar Picks.
   const summaryAnchor = currentSlug
     ? buildMediaSummary({
         anchor: adjustedElement,

@@ -3,7 +3,7 @@ import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cach
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
-import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, recentAdjustedScore } from '../shared/score-island';
+import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, adjustedScore } from '../shared/score-island';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -202,7 +202,7 @@ const addSummarizeUI = (
   const wrapper = createIslandShell();
 
   // Recent-positive gauge, filled once the newest reviews land (one cached
-  // fetch shared with the summarizer), plus the recent-adjusted/analyzed stats row.
+  // fetch shared with the summarizer), plus the adjusted/analyzed stats row.
   const gauge = buildRecentGauge();
   wrapper.appendChild(gauge);
   const reviewsPromise = fetchRecentReviews(tld, locale, sku, productId);
@@ -212,7 +212,7 @@ const addSummarizeUI = (
       fillRecentGauge(gauge, ratio);
       if (ratio == null) return;
       const stats = el('div', 'ars-stats') as HTMLElement;
-      if (scoreData) appendStat(stats, addCommas(recentAdjustedScore(scoreData.score, ratio)), 'recent-adjusted');
+      if (scoreData) appendStat(stats, addCommas(adjustedScore(scoreData.score, ratio)), 'adjusted');
       appendStat(stats, String(reviews.length), 'analyzed');
       gauge.after(stats);
     })
