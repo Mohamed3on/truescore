@@ -62,10 +62,19 @@ const recentPct = (net: number, total: number) => (total > 0 ? Math.round((net /
 /** Adjusted score: the combined score damped by the recent %. */
 const adjustedScore = (score: number, pct: number) => Math.round((score * pct) / 100);
 
-function filmMeta(film: any, recentText = '...') {
-  const scoreText = film.fetchFailed ? '?' : addCommas(film.score);
-  const base = `${film.year ? film.year + ' · ' : ''}${film.runtime}m · ${scoreText}`;
-  return recentText ? `${base} · ${recentText}` : base;
+/**
+ * Row meta: the year to tell films apart, and the adjusted score — the only
+ * number the comparison turns on. Everything that fed into it (runtime, raw
+ * score, recent %) lives in the row's tooltip instead of on screen.
+ */
+function filmMeta(film: any, adjustedText = '…') {
+  return film.year ? `${film.year} · ${adjustedText}` : adjustedText;
+}
+
+function filmTooltip(film: any, recent?: { pct: number; ceiling?: boolean } | null) {
+  const parts = [`${film.runtime}m`, film.fetchFailed ? 'score unavailable' : `score ${addCommas(film.score)}`];
+  if (recent) parts.push(`recent ${recent.ceiling ? '≤' : ''}${recent.pct}%`);
+  return parts.join(' · ');
 }
 
 function debugDetails(stats: any) {
@@ -106,6 +115,8 @@ function debugDetails(stats: any) {
   wrap.append(toggle, content);
   return wrap;
 }
+
+const WINNER_MSG = '★ Nothing similar scores higher.';
 
 function winnerBanner(message: string, listName?: string | null, listLink?: string | null) {
   const winner = el('div', 'lbx-winner');
@@ -662,7 +673,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   const films = result.films.filter((f: any) => f.fetchFailed || f.score >= threshold);
 
   if (films.length === 0) {
-    similarSection.append(winnerBanner('★ Winner! No similar film with an equal or higher adjusted score.', result.listName, result.listLink));
+    similarSection.append(winnerBanner(WINNER_MSG, result.listName, result.listLink));
     if (stats) similarSection.append(debugDetails(stats));
     return;
   }
@@ -674,12 +685,15 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   const sourceLink = el('a', 'lbx-similar-source', `From: ${result.listName}`) as HTMLAnchorElement;
   sourceLink.href = result.listLink;
   const list = el('ul', 'lbx-similar-list');
-  const drawerToggle = el('div', 'lbx-ignored-toggle');
+  const belowToggle = el('div', 'lbx-fold-toggle');
+  const below = el('ul', 'lbx-similar-list lbx-below-list');
+  const drawerToggle = el('div', 'lbx-fold-toggle');
   const drawer = el('ul', 'lbx-similar-list lbx-ignored-list');
-  similarSection.append(banner, header, sourceLink, list, drawerToggle, drawer);
+  similarSection.append(banner, header, sourceLink, list, belowToggle, below, drawerToggle, drawer);
 
   type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; adjusted: number };
   const items = new Map<string, Entry>();
+  let belowOpen = false;
   let drawerOpen = false;
   let drawerRevealed = false;
   let recentsSettled = false;
@@ -699,8 +713,16 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
       const label = isIgnored ? 'Restore — count this as a better pick again' : 'Ignore — don’t count this as a better pick';
       entry.button.title = label;
       entry.button.setAttribute('aria-label', `${label}: ${entry.film.name}`);
-      moveTo(entry.element, isIgnored ? drawer : list);
+      // Until the recents settle nothing has been disproved yet, so every film
+      // stays in the main list rather than flickering through the fold.
+      moveTo(entry.element, isIgnored ? drawer : entry.passes || !recentsSettled ? list : below);
     }
+
+    // The films that lost are receipts, not results: one folded line each way.
+    const belowCount = items.size - ignoredCount - passCount;
+    belowToggle.hidden = !recentsSettled || belowCount === 0;
+    belowToggle.textContent = `${belowOpen ? '▼' : '▶'} ${belowCount} didn’t reach ${addCommas(threshold)}`;
+    below.hidden = belowToggle.hidden || !belowOpen;
 
     drawerToggle.hidden = ignoredCount === 0;
     drawerToggle.textContent = `${drawerOpen ? '▼' : '▶'} ${ignoredCount} ignored`;
@@ -711,12 +733,14 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     header.hidden = isWinner;
     sourceLink.hidden = isWinner;
     if (isWinner) {
-      bannerText.textContent = ignoredCount === items.size
-        ? '★ Winner! Every similar film is ignored.'
-        : '★ Winner! No similar film with an equal or higher adjusted score.';
+      bannerText.textContent = ignoredCount === items.size ? '★ Every similar film is ignored.' : WINNER_MSG;
+    } else if (recentsSettled) {
+      // The heading carries the count, so no row has to repeat the threshold.
+      header.textContent = passCount === 1 ? '1 similar film scores higher' : `${passCount} similar films score higher`;
     }
   };
 
+  belowToggle.addEventListener('click', () => { belowOpen = !belowOpen; paint(); });
   drawerToggle.addEventListener('click', () => { drawerOpen = !drawerOpen; paint(); });
 
   const toggleIgnored = (slug: string) => {
@@ -736,6 +760,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     const link = el('a', 'lbx-similar-link', film.name) as HTMLAnchorElement;
     link.href = film.link;
     const meta = el('span', 'lbx-similar-meta', filmMeta(film));
+    item.title = filmTooltip(film);
     const button = el('button', 'lbx-ignore') as HTMLButtonElement;
     button.type = 'button';
     button.addEventListener('click', () => toggleIgnored(film.slug));
@@ -750,14 +775,11 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
       getCandidateRecentRatings(film.slug, film.score, film.fetchFailed ? 0 : threshold).catch(() => null).then((recent) => {
         const entry = items.get(film.slug)!;
         entry.adjusted = recent ? adjustedScore(film.score, recent.pct) : 0;
-        const cap = recent?.ceiling ? '≤' : '';
-        const adjustedText = !recent ? '?' : film.fetchFailed ? `${recent.pct}%` : `${cap}${recent.pct}% → ${cap}${addCommas(entry.adjusted)}`;
+        const adjustedText = !recent || film.fetchFailed ? '?' : `${recent.ceiling ? '≤' : ''}${addCommas(entry.adjusted)}`;
         entry.meta.textContent = filmMeta(film, adjustedText);
+        entry.element.title = filmTooltip(film, recent);
         entry.passes = !!(film.fetchFailed || (recent && entry.adjusted >= threshold));
-        if (!entry.passes) {
-          entry.element.classList.add('lbx-excluded');
-          entry.button.before(el('span', 'lbx-similar-reason', `need ≥${addCommas(threshold)}`));
-        }
+        if (!entry.passes) entry.element.classList.add('lbx-excluded');
       })
     )
   );

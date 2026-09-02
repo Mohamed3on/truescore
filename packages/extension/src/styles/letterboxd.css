@@ -58,11 +58,14 @@
   font-weight: 500;
   text-decoration: none;
   flex: 1;
+  min-width: 0;
 }
 .lbx-similar-meta {
   color: #678;
   font-size: .85rem;
   white-space: nowrap;
+  flex: none;
+  font-variant-numeric: tabular-nums;
 }
 .lbx-winner {
   display: flex;
@@ -79,16 +82,10 @@
   text-decoration: none;
 }
 .lbx-similar-item.lbx-excluded {
-  opacity: .45;
+  opacity: .6;
 }
 .lbx-similar-item.lbx-excluded .lbx-similar-link {
-  color: #678;
-  text-decoration: line-through;
-}
-.lbx-similar-reason {
-  color: #e54;
-  font-size: .75rem;
-  white-space: nowrap;
+  color: #9ab;
 }
 .lbx-debug-toggle {
   color: #567;
@@ -202,7 +199,7 @@
 .lbx-similar-item:hover .lbx-ignore,
 .lbx-ignore:focus-visible { opacity: 1; }
 .lbx-ignore:hover { color: #e54; }
-.lbx-ignored-toggle {
+.lbx-fold-toggle {
   margin-top: .75rem;
   color: #567;
   font-size: .78rem;
@@ -210,11 +207,11 @@
   user-select: none;
   transition: color .15s ease;
 }
-.lbx-ignored-toggle:hover { color: #9ab; }
+.lbx-fold-toggle:hover { color: #9ab; }
+.lbx-below-list,
 .lbx-ignored-list { margin-top: .5rem; }
 .lbx-ignored-list .lbx-similar-item { opacity: .45; }
 .lbx-ignored-list .lbx-similar-link { text-decoration: line-through; }
-.lbx-ignored-list .lbx-similar-reason { display: none; }
 .lbx-ignored-list .lbx-ignore { opacity: .55; }
 .lbx-ignored-list .lbx-ignore:hover { opacity: 1; color: #00e054; }
 .lbx-similar-item.lbx-moved { animation: lbx-slide-in .28s cubic-bezier(0.16, 1, 0.3, 1); }
