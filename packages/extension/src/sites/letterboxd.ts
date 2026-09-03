@@ -1,4 +1,5 @@
 import { idbGet, idbSet } from '../shared/idb-cache';
+import { couldReach, rankPicks } from '../shared/better-picks';
 import { adjust, ratioFromTally, TEN_POINT } from '../shared/recency';
 import { buildMediaSummary } from '../shared/review-summary';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
@@ -330,7 +331,10 @@ async function getRecentRatingsSummary(slug: string | null = null): Promise<Rece
 
   tally.ratio = ratioFromTally(tally.net, tally.total);
 
-  setCachedRecentRatings(effectiveSlug, tally);
+  // Only a measured run is worth remembering. Caching a null would pin
+  // "Recent: n/a" — and with it a null threshold that shows no picks at all —
+  // for the whole TTL after one bad fetch. Goodreads already guarded this.
+  if (tally.ratio !== null) setCachedRecentRatings(effectiveSlug, tally);
   return tally;
 }
 
@@ -376,7 +380,7 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
     }
   }
   tally.ratio = ratioFromTally(tally.net, tally.total);
-  setCachedRecentRatings(slug, tally);
+  if (tally.ratio !== null) setCachedRecentRatings(slug, tally);
   return { ratio: tally.ratio, ceiling: false };
 }
 
@@ -655,7 +659,7 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
  * Films the user has ignored move to a collapsed drawer and stop counting
  * towards the winner check; restoring one from the drawer undoes that.
  */
-async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<{ score: number; adjusted: number | null }>, currentRuntime: number, anchor: HTMLElement) {
+async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<{ score: number; ratio: number | null; adjusted: number | null }>, currentRuntime: number, anchor: HTMLElement) {
   const similarSection = el('section', 'lbx-similar');
   similarSection.append(el('span', 'lbx-progress', 'Finding similar picks...'));
   anchor.after(similarSection);
@@ -677,9 +681,10 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   // rather than compared against a fabricated 0 — which would pass them all.
   const threshold = current.adjusted;
   const stats = result.stats && { ...result.stats, currentScore: current.score, currentAdjusted: threshold };
-  // The adjusted score never exceeds the score, so a film scoring below the threshold can't
-  // qualify — skip its review fetch instead of proving it.
-  const films = threshold == null ? [] : result.films.filter((f: any) => f.fetchFailed || f.score >= threshold);
+  // Skip the review fetch for films the threshold already rules out (see couldReach).
+  // A null threshold means the current film's own recency never resolved, so there
+  // is nothing to beat and nothing to show.
+  const films = threshold == null ? [] : result.films.filter((f: any) => couldReach(threshold, f.score, f.fetchFailed));
 
   if (films.length === 0) {
     similarSection.append(winnerBanner(WINNER_MSG, result.listName, result.listLink));
@@ -778,23 +783,30 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   });
   paint();
 
+  const recents = new Map<string, { ratio: number | null; ceiling: boolean } | null>();
   await Promise.all(
     films.map((film: any) =>
-      // A film whose fetch failed keeps the benefit of the doubt, so it always gets the full tally.
-      getCandidateRecentRatings(film.slug, film.score, film.fetchFailed ? 0 : threshold).catch(() => null).then((recent) => {
-        const entry = items.get(film.slug)!;
-        entry.adjusted = recent ? adjust(film.score, recent.ratio) : null;
-        const adjustedText = entry.adjusted == null || film.fetchFailed ? '?' : `${recent!.ceiling ? '≤' : ''}${addCommas(entry.adjusted)}`;
-        entry.meta.textContent = filmMeta(film, adjustedText);
-        entry.element.title = filmTooltip(film, recent);
-        // Unknown is not "beaten": a candidate we couldn't measure keeps the
-        // benefit of the doubt only when its own score fetch failed, exactly as
-        // before — it is never silently pushed past the threshold by a 0.
-        entry.passes = !!(film.fetchFailed || (entry.adjusted != null && threshold != null && entry.adjusted >= threshold));
-        if (!entry.passes) entry.element.classList.add('lbx-excluded');
-      })
-    )
+      // A film whose score fetch failed keeps the benefit of the doubt, so it always gets the full tally.
+      getCandidateRecentRatings(film.slug, film.score, film.fetchFailed ? null : threshold)
+        .catch(() => null)
+        .then((recent) => recents.set(film.slug, recent)),
+    ),
   );
+
+  // One verdict, shared with Goodreads (shared/better-picks.ts).
+  for (const pick of rankPicks(
+    { score: current.score, ratio: current.ratio },
+    films.map((film: any) => ({ key: film.slug, item: film, score: film.score, ratio: recents.get(film.slug)?.ratio ?? null, unresolved: !!film.fetchFailed })),
+  ).ranked) {
+    const entry = items.get(pick.key)!;
+    const recent = recents.get(pick.key) ?? null;
+    entry.adjusted = pick.adjusted;
+    entry.passes = pick.passes;
+    const adjustedText = pick.adjusted == null || pick.unresolved ? '?' : `${recent?.ceiling ? '≤' : ''}${addCommas(pick.adjusted)}`;
+    entry.meta.textContent = filmMeta(pick.item, adjustedText);
+    entry.element.title = filmTooltip(pick.item, recent);
+    if (!entry.passes) entry.element.classList.add('lbx-excluded');
+  }
   recentsSettled = true;
   paint();
 
@@ -858,7 +870,7 @@ async function run(ratings: number[]) {
     adjustedElement.textContent = adjusted == null
       ? 'Adjusted: — · Recent: n/a'
       : `Adjusted: ${addCommas(adjusted)} · Recent: ${pctText(ratio!)}`;
-    return { score, adjusted };
+    return { score, ratio, adjusted };
   });
 
   // AI summary of recent reviews sits between the adjusted line and Similar Picks.

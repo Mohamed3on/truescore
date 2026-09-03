@@ -1,4 +1,5 @@
 import { idbGet, idbSet } from '../shared/idb-cache';
+import { rankPicks } from '../shared/better-picks';
 import { recentRatio } from '../shared/recency';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
@@ -733,7 +734,7 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
     `Scored: ${result.allScored.length}`,
     `Qualifying (score ≥ ${addCommas(Math.round(refScore))}): ${result.qualifying.length}`,
   ];
-  if (threshold !== null) lines.push(`Recent % threshold: ${threshold}%`);
+  lines.push(threshold !== null ? `Adjusted threshold: ${addCommas(threshold)}` : 'Adjusted threshold: unknown (no recent reviews for this book)');
   if (result.allScored.length) {
     lines.push('', 'All scored:');
     for (const b of result.allScored) {
@@ -762,7 +763,15 @@ type SimilarView = { shelf: string; result: SimilarResult; recent: PickRecent; r
 /** Renders a fully-resolved picks view (no network) — shared by the fresh and cached paths. */
 const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: BookStats) => {
   const { shelf, result, recent, refRecentRatio } = view;
-  const threshold = refRecentRatio !== null ? Math.round(refRecentRatio * 100) : null;
+  // One verdict, shared with Letterboxd (shared/better-picks.ts): score folded
+  // with the recent run into one comparable number. This used to be two
+  // independent gates, which passed books Letterboxd's rule rejected and
+  // rejected books it passed.
+  const ranking = rankPicks(
+    { score: currentStats.score, ratio: refRecentRatio },
+    result.qualifying.map((pick) => ({ key: pick.bookId, item: pick, score: pick.score, ratio: recent[pick.bookId] ?? null })),
+  );
+  const threshold = ranking.threshold;
   section.textContent = '';
 
   const header = el('h3', 'gr-similar-header');
@@ -786,26 +795,24 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   }
 
   const list = el('ul', 'gr-similar-list');
-  let passCount = 0;
-  for (const pick of result.qualifying) {
-    const { item, recent: recentEl } = buildItem(pick);
-    const rr = recent[pick.bookId] ?? null;
-    const rrPct = rr !== null ? Math.round(rr * 100) : null;
-    const passes = refRecentRatio === null || (rr !== null && rr >= refRecentRatio);
-    recentEl.textContent = rrPct !== null ? `Recent: ${rrPct}%` : 'Recent: N/A';
-    if (passes) {
-      passCount++;
-      if (rrPct !== null) recentEl.classList.add('-pass');
+  // Best adjusted first, the way Letterboxd already ordered its list — the raw
+  // score order buried the book that actually wins.
+  for (const ranked of ranking.ranked) {
+    const { item, recent: recentEl } = buildItem(ranked.item);
+    const rr = ranked.ratio;
+    recentEl.textContent = rr !== null ? `Recent: ${Math.round(rr * 100)}%` : 'Recent: N/A';
+    if (ranked.passes) {
+      if (rr !== null) recentEl.classList.add('-pass');
     } else {
       item.classList.add('-excluded');
       recentEl.classList.add('-fail');
-      item.append(el('span', 'gr-similar-reason', `need ≥${threshold}%`));
+      if (threshold !== null) item.append(el('span', 'gr-similar-reason', `need \u2265${addCommas(threshold)} adjusted`));
     }
     list.append(item);
   }
 
-  if (passCount === 0 && threshold !== null) {
-    section.append(winnerBanner('Winner! No book matches score AND recent reviews.', shelf));
+  if (!ranking.passed.length && threshold !== null) {
+    section.append(winnerBanner('Winner! No book beats its recent-adjusted score.', shelf));
   }
   section.append(list);
   section.append(debugPane(shelf, result, threshold, currentStats.score));
