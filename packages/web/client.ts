@@ -1,4 +1,5 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
+import { beginPlace, currentPlace, endPlace, type PlaceEpoch } from './place-session';
 import { fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, streamNdjson } from './http';
 import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz } from './hours';
 import {
@@ -56,7 +57,6 @@ const PLACES_TOP_N = 8;
 let placesCache: PlaceItem[] = [];
 let placesExpanded = false;
 
-let currentFeatureId = '';
 let currentMergedPct = 0;
 let currentDisplayPct = 0;
 // The chip panel shows one subject at a time — a highlight chip or a free-text
@@ -69,7 +69,6 @@ const panelReviews = (): Review[] | undefined =>
 const panelFilter = (): string | undefined =>
   activePanel?.kind === 'highlight' ? activePanel.chip.label : activePanel?.kind === 'search' ? activePanel.result.query : undefined;
 let currentHighlights: UiChip[] = [];
-let highlightReviewsInflight: Promise<void> | null = null;
 
 // Standouts (praised items) and Better-alternatives (rival places) are the same
 // kind of group: each item is auto-scored by its own label search (a SearchResult
@@ -174,17 +173,18 @@ function renderScored(kind: ScoredKind) {
 }
 
 async function scoreChip(kind: ScoredKind, featureId: string, d: ScoredChip) {
+  const epoch = currentPlace();
   try {
     // The server expands the term to its accent/hyphen/space spellings.
     let result: SearchResult | null = null;
     for await (const evt of streamNdjson<SearchEvent>('/api/search', { featureId, query: d.item } satisfies SearchRequest)) {
       if (evt.type === 'search') result = evt.result;
     }
-    if (currentFeatureId !== featureId) return;
+    if (epoch?.featureId !== featureId || !epoch.alive) return;
     d.result = result ?? undefined;
     d.state = result ? 'done' : 'error';
   } catch {
-    if (currentFeatureId !== featureId) return;
+    if (epoch?.featureId !== featureId || !epoch.alive) return;
     d.state = 'error';
   }
   renderScored(kind);
@@ -251,7 +251,8 @@ function closeChipPanel() {
 
 async function askChipPanel() {
   const q = chipQuestionInput.value.trim();
-  if (!q || !currentFeatureId) return;
+  const epoch = currentPlace();
+  if (!q || !epoch) return;
   const reviews = panelReviews();
   const filter = panelFilter();
   if (!reviews || !filter) return;
@@ -262,8 +263,9 @@ async function askChipPanel() {
   chipBody.replaceChildren(el('div', 'chip-loading', 'asking…'));
   try {
     const data = await postJson<{ answer?: string }>('/api/ask', {
-      featureId: currentFeatureId, question: q, filter, reviewTexts,
+      featureId: epoch.featureId, question: q, filter, reviewTexts,
     } satisfies AskRequest);
+    if (!epoch.alive) return;
     const answer = el('div', 'answer');
     renderMarkdown(answer, data.answer ?? '');
     chipBody.replaceChildren(answer);
@@ -354,7 +356,7 @@ function renderChipSummary(summary: Summary) {
 }
 
 async function onHighlightClick(h: UiChip) {
-  if (!currentFeatureId) return;
+  if (!currentPlace()) return;
   if (activePanel?.kind === 'highlight' && activePanel.chip.token === h.token) {
     closeChipPanel();
     return;
@@ -370,15 +372,17 @@ async function onHighlightClick(h: UiChip) {
 
 async function summarizeActiveChip() {
   const h = activePanel?.kind === 'highlight' ? activePanel.chip : null;
-  if (!h || !currentFeatureId) return;
+  const epoch = currentPlace();
+  if (!h || !epoch) return;
   chipSummarizeBtn.disabled = true;
   chipSummarizeBtn.textContent = 'SUMMARIZING…';
   setStatus(`Summarizing "${h.label}"…`);
   const t0 = Date.now();
   try {
     const data = await postJson<{ summary?: Summary; cached?: boolean }>('/api/highlight-summary', {
-      featureId: currentFeatureId, token: h.token,
+      featureId: epoch.featureId, token: h.token,
     } satisfies HighlightSummaryRequest);
+    if (!epoch.alive) return;
     if (data.summary) {
       renderChipSummary(data.summary);
       chipSummarizeBtn.disabled = false;
@@ -394,7 +398,8 @@ async function summarizeActiveChip() {
 
 async function summarizeActiveSearch() {
   const r = activePanel?.kind === 'search' ? activePanel.result : null;
-  if (!r || !currentFeatureId) return;
+  const epoch = currentPlace();
+  if (!r || !epoch) return;
   chipSummarizeBtn.disabled = true;
   chipSummarizeBtn.textContent = 'SUMMARIZING…';
   setStatus(`Summarizing "${r.query}"…`);
@@ -403,8 +408,9 @@ async function summarizeActiveSearch() {
     let result: SearchResult | null = null;
     let cached = false;
     for await (const evt of streamNdjson<SearchEvent>('/api/search', {
-      featureId: currentFeatureId, query: r.query, summarize: true,
+      featureId: epoch.featureId, query: r.query, summarize: true,
     } satisfies SearchRequest)) {
+      if (!epoch.alive) return;
       if (evt.type === 'search') {
         result = evt.result;
         cached = evt.cached;
@@ -429,14 +435,16 @@ async function summarizeActiveSearch() {
 }
 
 async function runSearch(query: string, force = false) {
-  if (!currentFeatureId || !query.trim()) return;
+  const epoch = currentPlace();
+  if (!epoch || !query.trim()) return;
   searchBtn.disabled = true;
   setStatus(`Searching "${query}"…`);
   const t0 = Date.now();
   try {
     for await (const evt of streamNdjson<SearchEvent>('/api/search', {
-      featureId: currentFeatureId, query, force,
+      featureId: epoch.featureId, query, force,
     } satisfies SearchRequest)) {
+      if (!epoch.alive) return;
       if (evt.type === 'search-progress') {
         // Per-page progress: same `Searching "x" · N reviews · P%` shape so
         // the user sees the search count climb instead of staring at a fixed
@@ -461,21 +469,20 @@ async function runSearch(query: string, force = false) {
 // The server harvests a cold place's topic chips in the background (the preview
 // RPC serves them only intermittently) and answers 202 `pending` meanwhile.
 // loadHighlights polls through that: re-request on a bounded schedule until the
-// chips stream or it 404s. `highlightsGen` supersedes an in-flight poll when the
+// chips stream or it 404s. The place epoch supersedes an in-flight poll when the
 // place is re-looked-up or refreshed — the fetch/sleep awaits bail on a bump.
 // The poll budget must outlast the server's warm budget (15 rounds of 3 preview
 // shots, spaced 2.5s — roughly 75-100s wall clock). At the old 12 × 3.5s ≈ 42s
 // the client gave up mid-warm, so chips that landed at t=60s were never shown:
 // the row just vanished with no message and no way to ask again.
-let highlightsGen = 0;
 const HIGHLIGHTS_MAX_REPOLLS = 34;
 const HIGHLIGHTS_REPOLL_MS = 3500;
 
 async function loadHighlights(force = false) {
-  const featureId = currentFeatureId;
-  if (!featureId) return;
-  const gen = ++highlightsGen;
-  const superseded = () => gen !== highlightsGen || currentFeatureId !== featureId;
+  const epoch = currentPlace();
+  if (!epoch) return;
+  const featureId = epoch.featureId;
+  const superseded = () => !epoch.alive;
   showHighlightsLoading(force ? 'refreshing…' : 'loading highlights…');
   highlightsRefreshBtn.hidden = true;
   for (let attempt = 0; ; attempt++) {
@@ -538,28 +545,27 @@ function showHighlights(highlights: UiChip[]) {
 // hit is fast and the result is mutated into the in-memory chips so
 // subsequent clicks are instant.
 async function ensureHighlightReviews(): Promise<void> {
-  if (highlightReviewsInflight) return highlightReviewsInflight;
-  if (!currentFeatureId || !currentHighlights.length) return;
+  const epoch = currentPlace();
+  if (!epoch || !currentHighlights.length) return;
   if (currentHighlights.every((h) => h.reviews)) return;
-  highlightReviewsInflight = (async () => {
-    try {
-      const resp = await fetchWithRetry('/api/highlights', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ featureId: currentFeatureId } satisfies HighlightsRequest),
-      });
-      const ct = resp.headers.get('content-type') ?? '';
-      if (!resp.ok || !ct.includes('json')) return;
-      const data = await resp.json() as HighlightsResponse;
-      const byToken = new Map((data.highlights ?? []).map((h) => [h.token, h.reviews]));
-      for (const h of currentHighlights) {
-        if (!h.reviews) h.reviews = byToken.get(h.token);
-      }
-    } finally {
-      highlightReviewsInflight = null;
+  // Keyed on the epoch: a click on place B must not await — or adopt — a
+  // request that was issued for place A.
+  return epoch.once('highlight-reviews', async () => {
+    const resp = await fetchWithRetry('/api/highlights', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ featureId: epoch.featureId } satisfies HighlightsRequest),
+    });
+    if (!epoch.alive) return;
+    const ct = resp.headers.get('content-type') ?? '';
+    if (!resp.ok || !ct.includes('json')) return;
+    const data = await resp.json() as HighlightsResponse;
+    if (!epoch.alive) return;
+    const byToken = new Map((data.highlights ?? []).map((h) => [h.token, h.reviews]));
+    for (const h of currentHighlights) {
+      if (!h.reviews) h.reviews = byToken.get(h.token);
     }
-  })();
-  return highlightReviewsInflight;
+  });
 }
 
 async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
@@ -678,7 +684,7 @@ function paintScore(data: PaintData) {
 function initResultPanel(featureId: string, resolvedUrl?: string) {
   result.hidden = false;
   document.body.dataset.state = 'scored';
-  currentFeatureId = featureId;
+  beginPlace(featureId);
   activePanel = null;
   answerEl.textContent = '';
   questionInput.value = '';
@@ -742,15 +748,16 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
         cachedTotal = evt.score.totalReviews;
         renderScore(evt);
         freshnessLabel.classList.add('rechecking');
-        if (evt.overallPct == null) fetchHistogramFor(evt.score.featureId, currentDisplayPct);
+        const epoch = currentPlace();
+        if (epoch && evt.overallPct == null) fetchHistogramFor(epoch, currentDisplayPct);
         if (evt.highlights?.length) showHighlights(evt.highlights);
         else loadHighlights();
-        if (evt.summary) {
-          renderSummary(evt.summary);
+        if (evt.summary && epoch) {
+          renderSummary(evt.summary, epoch);
           setStatus(`Cached · ${scoreMs}ms`);
-        } else {
+        } else if (epoch) {
           setStatus(`Score in ${(scoreMs / 1000).toFixed(1)}s · summarizing…`);
-          fetchSummaryFor(evt.score.featureId).then((sum) => {
+          fetchSummaryFor(epoch).then((sum) => {
             if (!refreshed) {
               setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
             }
@@ -832,16 +839,16 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
           }
         }
         if (provisional) freshnessLabel.classList.remove('rechecking');
-        const featureId = evt.score.featureId;
+        const epoch = currentPlace();
         // Kick off summary + highlights now that we know the place is real
         // and the score has settled. Idempotent (summaryKicked guards reruns
         // if a future server change ever re-emits `score`).
-        if (!summaryKicked) {
+        if (!summaryKicked && epoch) {
           summaryKicked = true;
           loadHighlights();
           if (throttled) setStatus('Recheck came back empty — showing the extension score', true);
           else setStatus(`Score in ${(evt.fetchMs / 1000).toFixed(1)}s · summarizing…`);
-          fetchSummaryFor(featureId).then((sum) => {
+          fetchSummaryFor(epoch).then((sum) => {
             if (throttled) return;
             setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
           });
@@ -964,16 +971,19 @@ function renderOverallScore(histogram: number[] | undefined | null) {
   $('placeMetaRow').hidden = false;
 }
 
-function renderSummary(summary: Summary) {
+// `epoch` is the place this summary was requested for. It used to read the
+// global featureId instead, so a summary that landed after the user pasted a
+// second place painted place A's verdict into B — and then auto-searched A's
+// praised items against B's featureId.
+function renderSummary(summary: Summary, epoch: PlaceEpoch) {
+  if (!epoch.alive) return;
   $('valueForMoney').textContent = `${summary.valueForMoney}/5`;
   renderMarkdown($('verdict'), summary.verdict);
   resummarizeBtn.hidden = false;
   highlightsListEl.replaceChildren();
   renderHighlightList(highlightsListEl, summary.highlights);
-  if (currentFeatureId) {
-    showScored('standouts', summary.items, currentFeatureId);
-    showScored('alternatives', summary.alternatives, currentFeatureId);
-  } else { clearScored('standouts'); clearScored('alternatives'); }
+  showScored('standouts', summary.items, epoch.featureId);
+  showScored('alternatives', summary.alternatives, epoch.featureId);
 }
 
 function renderSummaryError(msg: string) {
@@ -982,28 +992,28 @@ function renderSummaryError(msg: string) {
   clearScored('alternatives');
 }
 
-async function fetchHistogramFor(featureId: string, mergedPct: number) {
+async function fetchHistogramFor(epoch: PlaceEpoch, mergedPct: number) {
   try {
-    const data = await postJson<HistogramResponse>('/api/histogram', { featureId } satisfies HistogramRequest);
+    const data = await postJson<HistogramResponse>('/api/histogram', { featureId: epoch.featureId } satisfies HistogramRequest);
+    if (!epoch.alive) return;
     if (data.overallPct != null) renderOverall(data.overallPct, mergedPct);
     if (data.histogram) renderOverallScore(data.histogram);
   } catch {}
 }
 
-async function fetchSummaryFor(featureId: string, force = false): Promise<{ ok: boolean; ms: number }> {
+async function fetchSummaryFor(epoch: PlaceEpoch, force = false): Promise<{ ok: boolean; ms: number }> {
   const t0 = Date.now();
   try {
-    const data = await postJson<SummarizeResponse>('/api/summarize', { featureId, force } satisfies SummarizeRequest);
+    const data = await postJson<SummarizeResponse>('/api/summarize', { featureId: epoch.featureId, force } satisfies SummarizeRequest);
+    if (!epoch.alive) return { ok: false, ms: Date.now() - t0 };
     if (data.error) {
       renderSummaryError(data.error);
       return { ok: false, ms: Date.now() - t0 };
     }
-    if (data.summary) {
-      renderSummary(data.summary);
-    }
+    if (data.summary) renderSummary(data.summary, epoch);
     return { ok: true, ms: Date.now() - t0 };
   } catch (e) {
-    renderSummaryError(e instanceof Error ? e.message : String(e));
+    epoch.run(() => renderSummaryError(e instanceof Error ? e.message : String(e)));
     return { ok: false, ms: Date.now() - t0 };
   }
 }
@@ -1038,10 +1048,11 @@ form.addEventListener('submit', async (e) => {
 });
 
 resummarizeBtn.addEventListener('click', async () => {
-  if (!currentFeatureId) return;
+  const epoch = currentPlace();
+  if (!epoch) return;
   resummarizeBtn.disabled = true;
   setStatus('Re-summarizing…');
-  const { ok, ms } = await fetchSummaryFor(currentFeatureId, true);
+  const { ok, ms } = await fetchSummaryFor(epoch, true);
   setStatus(ok ? `New summary in ${(ms / 1000).toFixed(1)}s` : 'Re-summarize failed', !ok);
   resummarizeBtn.disabled = false;
 });
@@ -1084,6 +1095,9 @@ searchRefreshBtn.addEventListener('click', () => {
 chipCloseBtn.addEventListener('click', closeChipPanel);
 
 function goHome() {
+  // Nothing is on screen to paint into, so any in-flight summary/search for the
+  // place we just left must not land.
+  endPlace();
   delete document.body.dataset.state;
   result.hidden = true;
   urlInput.value = '';
@@ -1160,14 +1174,16 @@ chipAskForm.addEventListener('submit', (e) => { e.preventDefault(); askChipPanel
 askForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const q = questionInput.value.trim();
-  if (!q || !currentFeatureId) return;
+  const epoch = currentPlace();
+  if (!q || !epoch) return;
   askBtn.disabled = true;
   answerEl.textContent = '';
   setStatus('Asking…');
   try {
     const data = await postJson<{ answer?: string }>('/api/ask', {
-      featureId: currentFeatureId, question: q,
+      featureId: epoch.featureId, question: q,
     } satisfies AskRequest);
+    if (!epoch.alive) return;
     renderMarkdown(answerEl, data.answer ?? '');
     questionInput.value = '';
     setStatus('');
