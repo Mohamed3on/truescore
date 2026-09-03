@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { buildListReq, buildTokenReq, buildSearchReq, PAGE_SIZE, type MapsCreds, type MapsReq } from './index';
+import { buildListReq, buildTokenReq, buildSearchReq, credsFromBatchExecute, PAGE_SIZE, type MapsCreds, type MapsReq } from './index';
 
 // Pins the reverse-engineered ListUgcPosts f.req shape (from real qv9Egd curls):
 // place in slot 0[0], query in 0[2], highlight token in 0[4], page size + cursor
@@ -49,5 +49,27 @@ describe('batchexecute request builders', () => {
     expect(req.init!.headers!['x-maps-bgkey']).toBe('BG');
     expect(req.init!.headers!['x-maps-bgbind']).toBe('BB');
     expect(req.init!.body).toContain('at=AT%3A1'); // url-encoded
+  });
+});
+
+describe('credsFromBatchExecute', () => {
+  // Real capture shape: the inner ListUgcPosts request is a JSON string nested
+  // inside the outer f.req JSON, so its quotes arrive backslash-escaped.
+  const body = 'f.req=' + encodeURIComponent(JSON.stringify([[['qv9Egd',
+    JSON.stringify([[[FID]], [10, ''], null, null, ['9RSOasuVJ_qXxc8P8_2Z8QQ', null, null, null, null, null, 81]]),
+    null, 'generic']]])) + '&';
+
+  test('lifts the sessionId from the escaped body when bgbind is absent', () => {
+    // Google stopped sending x-maps-bgbind on the review RPC; the body is the
+    // only source left, and the replay works with an empty bgbind.
+    expect(credsFromBatchExecute('BG', '', body).sessionId).toBe('9RSOasuVJ_qXxc8P8_2Z8QQ');
+  });
+  test('still reads the unescaped bgbind form first', () => {
+    const bgbind = '["OTHERSESSIONID123456",null,null,null,null,null,81]';
+    expect(credsFromBatchExecute('BG', bgbind, body).sessionId).toBe('OTHERSESSIONID123456');
+  });
+  test('at is optional', () => {
+    expect(credsFromBatchExecute('BG', '', body).at).toBe('');
+    expect(credsFromBatchExecute('BG', '', body + 'at=AT%3A1&').at).toBe('AT:1');
   });
 });

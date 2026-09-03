@@ -175,9 +175,12 @@ export type MapsReq = { url: string; init?: { method?: string; headers?: Record<
 // Lift the session-bound creds off a captured review batchexecute (the only request
 // carrying x-maps-bgkey). sessionId is the 81-tagged token in the bgbind or the f.req
 // body — ["<sid>",null,null,null,null,null,81]; `at` is a url-encoded body param.
+// In the body the inner request is JSON nested inside JSON, so its quotes arrive
+// escaped (["<sid>" reads as [\"<sid>\") — the optional backslashes match both that
+// and the bare bgbind form, which Google has stopped sending on the review RPC.
 // One home for this RPC-schema-coupled extraction: the extension capture and the
 // server minter both call it, so a Google-side change is fixed in one place.
-const SESSION_ID_RE = /\["([A-Za-z0-9_-]{16,}?)",null,null,null,null,null,81\]/;
+const SESSION_ID_RE = /\[\\?"([A-Za-z0-9_-]{16,}?)\\?",null,null,null,null,null,81\]/;
 export const credsFromBatchExecute = (bgkey: string, bgbind: string, body: string): Omit<MapsCreds, 'hl'> => {
   let decoded = body;
   try { decoded = decodeURIComponent(body); } catch { /* body already raw */ }
