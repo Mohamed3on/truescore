@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "lato",
+        "createdAt": "2026-09-03T18:33:03.832Z",
+        "reason": "Pre-existing goodreads.ts panel styling: Lato is Goodreads' own body font, chosen to mirror the host page (with Merriweather headings + beige/teal palette), not as a generic default. Not introduced by this change."
+      }
+    ]
+  }
+}

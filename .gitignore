@@ -10,3 +10,4 @@ packages/extension/truescore/
 # old standalone build artifacts (legacy)
 dist/
 build/
+agent-browser.json
