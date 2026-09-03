@@ -244,7 +244,9 @@ function streamHighlights(name: string, featureId: string, url: string, chips: C
 // place without the user needing to refresh.
 function streamCachedLookup(featureId: string, name: string, resolvedUrl: string, cached: CacheEntry): Response {
   void cache.touch(featureId).catch((e) => console.error('[touch]', e));
-  const slimHighlights = cached.highlights?.map(({ reviews: _r, ...rest }) => rest);
+  // A throttle-shortened set is withheld rather than painted, so the client's
+  // normal "no chips yet" path re-scores it instead of settling for the remnant.
+  const slimHighlights = cache.highlightsServable(cached) ? cached.highlights?.map(({ reviews: _r, ...rest }) => rest) : undefined;
   const cachedScoreTs = cached.scoreTs ?? 0;
   const cachedHighlightsTs = cached.highlightsTs ?? 0;
   return ndjsonStream<LookupEvent>(async (write) => {
@@ -442,7 +444,7 @@ Bun.serve({
         return corsJson({
           found: true,
           summary: entry.summary,
-          highlights: entry.highlights,
+          highlights: cache.highlightsServable(entry) ? entry.highlights : undefined,
           highlightSummaries: entry.highlightSummaries,
         } satisfies CachedResponse);
       },
@@ -545,8 +547,9 @@ Bun.serve({
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
           // `.length`, not truthiness: an empty contributed array must fall through
-          // to a harvest, not pin the row blank forever.
-          if (entry.highlights?.length && !body.force) return json({ highlights: entry.highlights, cached: true } satisfies HighlightsResponse);
+          // to a harvest, not pin the row blank forever. A set the throttle cut
+          // short falls through the same way, so the missing topics come back.
+          if (cache.highlightsServable(entry) && !body.force) return json({ highlights: entry.highlights, cached: true } satisfies HighlightsResponse);
           const url = mapsUrlFor(featureId);
 
           // Chips already in hand (a prior harvest, or the lookup's preview) — score + stream.

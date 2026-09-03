@@ -20,6 +20,9 @@ export type CacheEntry = {
   summaryTs?: number;
   highlights?: Chip[];
   highlightsTs?: number;
+  // Set when the last scoring pass lost chips to a throttle, so the cached set is
+  // short. Serving it would pin the missing topics out of the panel forever.
+  highlightsPartial?: boolean;
   // Unscored topic chips harvested from the preview RPC. Cached so /api/highlights
   // can score them without a second preview fetch. Last non-empty set wins.
   chipMeta?: ChipMeta[];
@@ -204,6 +207,14 @@ const ensureEntry = (featureId: string, name: string): void => {
 const isThrottledScrape = (totalReviews: number, liveTotal: number | null | undefined): boolean =>
   totalReviews === 0 && liveTotal !== 0;
 
+// A chip Google said carries reviews (count > 0) that came back with none is the
+// same 200-with-empty-body throttle putScore refuses to trust — scoreHighlight
+// has already retried it once on a fresh proxy exit. Persisting it freezes that
+// topic at 0% (rendered red, and wrong) until the place's review count drifts
+// past the 1% revalidate threshold. `fetched === 0` strictly: a producer that
+// never set the field is not making a claim about a throttle.
+const chipThrottled = (h: Chip): boolean => h.fetched === 0 && h.count > 0;
+
 export const cache = {
   get(featureId: string): CacheEntry | undefined {
     return read(featureId);
@@ -260,10 +271,23 @@ export const cache = {
     if (!existing) return;
     persist(featureId, { ...existing, summary, summaryTs: Date.now() });
   },
+  // Cached chips are servable only when the last pass wasn't cut short. Before
+  // this, `highlights` had no freshness rule at all — highlightsTs was written
+  // and never read — so a throttled set was served unchanged forever.
+  highlightsServable(entry: CacheEntry): boolean {
+    return !!entry.highlights?.length && !entry.highlightsPartial;
+  },
   async putHighlights(featureId: string, highlights: Chip[]) {
     const existing = read(featureId);
     if (!existing) return;
-    persist(featureId, { ...existing, highlights, highlightsTs: Date.now() });
+    const usable = highlights.filter((h) => !chipThrottled(h));
+    if (!usable.length) return;
+    persist(featureId, {
+      ...existing,
+      highlights: usable,
+      highlightsTs: Date.now(),
+      highlightsPartial: usable.length < highlights.length || undefined,
+    });
   },
   async putHighlightSummary(featureId: string, token: string, summary: Summary) {
     const existing = read(featureId);

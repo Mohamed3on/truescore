@@ -54,3 +54,43 @@ test('a patch applied to an evicted entry preserves the data still on disk', asy
   expect(entry?.name).toBe('Place 1'); // survived the read-modify-write
   expect(entry?.summary).toBeDefined();
 });
+
+// Chips got the "never trust a 0" rule the score path already had.
+const chip = (label: string, count: number, fetched?: number) =>
+  ({ label, token: `t-${label}`, count, fetched, score: { totalReviews: fetched ?? 0, trustedReviews: 0, scorePct: 0 } }) as any;
+
+test('putHighlights drops chips a throttle emptied, and marks the set short', async () => {
+  const fid = 'thr-1';
+  await cache.putScore(fid, 'Test Place', { featureId: fid, totalReviews: 10, trustedReviews: 5, scorePct: 40, relevant: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, newest: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, reviews: [] } as unknown as ScoreResult, 10);
+
+  await cache.putHighlights(fid, [chip('good', 12, 12), chip('throttled', 8, 0)]);
+  const entry = cache.get(fid)!;
+
+  expect(entry.highlights?.map((h) => h.label)).toEqual(['good']);
+  expect(entry.highlightsPartial).toBe(true);
+  // Short sets aren't served — the missing topic comes back on the next request
+  // instead of rendering red at 0% until the review count drifts.
+  expect(cache.highlightsServable(entry)).toBe(false);
+});
+
+test('a chip Google itself says is empty is kept — count 0 is not a throttle', async () => {
+  const fid = 'thr-2';
+  await cache.putScore(fid, 'Test Place', { featureId: fid, totalReviews: 10, trustedReviews: 5, scorePct: 40, relevant: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, newest: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, reviews: [] } as unknown as ScoreResult, 10);
+
+  await cache.putHighlights(fid, [chip('good', 12, 12), chip('genuinely-empty', 0, 0)]);
+  const entry = cache.get(fid)!;
+
+  expect(entry.highlights?.map((h) => h.label)).toEqual(['good', 'genuinely-empty']);
+  expect(entry.highlightsPartial).toBeUndefined();
+  expect(cache.highlightsServable(entry)).toBe(true);
+});
+
+test('an all-throttled pass persists nothing rather than blanking the panel', async () => {
+  const fid = 'thr-3';
+  await cache.putScore(fid, 'Test Place', { featureId: fid, totalReviews: 10, trustedReviews: 5, scorePct: 40, relevant: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, newest: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, reviews: [] } as unknown as ScoreResult, 10);
+
+  await cache.putHighlights(fid, [chip('a', 5, 12)]);
+  await cache.putHighlights(fid, [chip('a', 5, 0), chip('b', 9, 0)]);
+
+  expect(cache.get(fid)!.highlights?.map((h) => h.label)).toEqual(['a']);
+});
