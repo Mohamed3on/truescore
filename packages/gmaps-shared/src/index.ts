@@ -628,3 +628,7 @@ export * from './collect';
 // shared by the server, the web client, and the extension.
 export * from './wire';
 export * from './markdown';
+
+// Reading fields out of JSON a model didn't finish writing — both packages hit
+// the same truncation against the same providers.
+export * from './json-salvage';
