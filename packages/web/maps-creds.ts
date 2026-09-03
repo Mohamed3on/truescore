@@ -26,7 +26,15 @@ const SEED_PATH =
 export type Seed = { bgkey: string; bgbind: string; sessionId: string; at: string; cookies: string };
 type PersistedSeed = Seed & { ts: number };
 
-let cached: MapsCreds | null = null;
+// The session is ONE value. It used to be two module globals in two files —
+// `cached` here and `cookieOverride` in browser.ts — joined only by apply()
+// happening to call both setters. Nothing enforced the pairing, and the env
+// fallback below broke it outright: it returned creds with no matching cookie
+// override, so googleFetch paired an env bgkey with the anonymous baked jar —
+// precisely the combination the comment above says cannot work. Every review RPC
+// then came back empty, which reads as a stale session, which triggers a doomed
+// headless mint every 60s. Silent zeros, not a crash.
+let session: MapsSession | null = null;
 let seededAt: number | null = null;
 // Banner health: true while reviews load. Flipped false only when review RPCs come
 // back empty even after the transport's retries (a genuinely expired session that
@@ -42,15 +50,17 @@ const setRenewOk = (v: boolean, reason: string): void => {
   logEvent('health', { renewOk: v, reason });
 };
 
-export function setMapsCreds(creds: MapsCreds): void {
-  cached = creds;
-}
+/** A bgkey and the cookies it was minted with. Only adoptable as a pair. */
+export type MapsSession = { creds: MapsCreds; cookies: string };
 
-const apply = (s: Seed): void => {
-  setMapsCreds({ bgkey: s.bgkey, bgbind: s.bgbind, sessionId: s.sessionId, at: s.at, hl: 'en' });
-  setGoogleCookieOverride(s.cookies);
+const adopt = (next: MapsSession): void => {
+  session = next;
+  setGoogleCookieOverride(next.cookies);
   setRenewOk(true, 'apply');
 };
+
+const apply = (s: Seed): void =>
+  adopt({ creds: { bgkey: s.bgkey, bgbind: s.bgbind, sessionId: s.sessionId, at: s.at, hl: 'en' }, cookies: s.cookies });
 
 // Write the seed atomically at 0600: create a fresh temp at that mode, then
 // rename over the target, so the real file — a logged-in Google session — never
@@ -94,20 +104,38 @@ export async function loadPersistedSeed(): Promise<void> {
   }
 }
 
-// null when unconfigured — callers degrade to an empty score rather than throw,
-// so a creds-less deploy behaves like the (already review-less) status quo until
-// the extension seeds, instead of erroring the whole lookup.
-export function getMapsCreds(): MapsCreds | null {
-  if (cached) return cached;
+// An operator-supplied session, for pinning one by hand. All five parts or
+// nothing: TRUESCORE_MAPS_COOKIES is not optional, because a bgkey without the
+// jar that minted it is not a session — it is the failure mode this module
+// exists to avoid.
+const envSession = (): MapsSession | null => {
   const bgkey = process.env.TRUESCORE_MAPS_BGKEY;
   const bgbind = process.env.TRUESCORE_MAPS_BGBIND;
   const sessionId = process.env.TRUESCORE_MAPS_SESSION;
   const at = process.env.TRUESCORE_MAPS_AT;
-  if (bgkey && bgbind && sessionId && at) {
-    cached = { bgkey, bgbind, sessionId, at, hl: 'en' };
-    return cached;
+  const cookies = process.env.TRUESCORE_MAPS_COOKIES;
+  if (!(bgkey && bgbind && sessionId && at)) return null;
+  if (!cookies) {
+    console.warn('[maps-creds] TRUESCORE_MAPS_BGKEY is set without TRUESCORE_MAPS_COOKIES — ignoring: the token only validates against the session that minted it');
+    return null;
   }
-  return null;
+  return { creds: { bgkey, bgbind, sessionId, at, hl: 'en' }, cookies };
+};
+
+/** The live session, or null when unconfigured. Never a half of one. */
+export function mapsSession(): MapsSession | null {
+  if (!session) {
+    const fromEnv = envSession();
+    if (fromEnv) adopt(fromEnv);
+  }
+  return session;
+}
+
+// null when unconfigured — callers degrade to an empty score rather than throw,
+// so a creds-less deploy behaves like the (already review-less) status quo until
+// the extension seeds, instead of erroring the whole lookup.
+export function getMapsCreds(): MapsCreds | null {
+  return mapsSession()?.creds ?? null;
 }
 
 // The transport calls these from the actual review-RPC outcome (see gmaps.ts),
