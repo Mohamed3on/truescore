@@ -29,8 +29,11 @@ export interface SearchReviewFields { rating: number; title?: string; body?: str
 
 const MAX_RENDERED_RESULTS = 50;
 const SEARCH_DEBOUNCE_MS = 120;
+// Remote searches cost a request per keystroke-burst, so they wait longer.
+const REMOTE_DEBOUNCE_MS = 350;
 
 export interface ReviewSearchOpts<T> {
+  // The local corpus. Panels backed by a remote `search` pass `[]` and a `total`.
   reviews: T[];
   // Card/haystack projection of a review; searching matches against its
   // title + body + meta, lowercased.
@@ -39,6 +42,13 @@ export interface ReviewSearchOpts<T> {
   toText: (r: T) => string;
   summaryPrompt: string;
   exampleQuery: string;
+  // Corpus size behind the "of N reviews" copy (default: reviews.length).
+  total?: number;
+  // Server-side search over the whole corpus, replacing the local filter. Its
+  // `total` is the true match count when the site returns only a first page.
+  search?: (terms: string[]) => Promise<{ matches: T[]; total?: number }>;
+  // How a raw query splits into match/highlight terms (default: Gmail-style ` OR `).
+  terms?: (raw: string) => string[];
 }
 
 // The review-search section shared by panels that hold a full review corpus:
@@ -46,7 +56,11 @@ export interface ReviewSearchOpts<T> {
 // subset, a "Summarize <query>" free-form LLM pass over the matches, and the
 // highlighted result cards. Cmd/Ctrl+Shift+F jumps to the box. Returns the
 // section for the caller to place in its island.
-export const buildSearchSection = <T,>({ reviews, fields, toText, summaryPrompt, exampleQuery }: ReviewSearchOpts<T>) => {
+export const buildSearchSection = <T,>({
+  reviews, fields, toText, summaryPrompt, exampleQuery,
+  total, search, terms: splitTerms = queryTerms,
+}: ReviewSearchOpts<T>) => {
+  const corpusSize = total ?? reviews.length;
   const projected = reviews.map((r) => {
     const f = fields(r);
     return { r, f, h: [f.title, f.body, f.meta].filter(Boolean).join(' ').toLowerCase() };
@@ -56,7 +70,7 @@ export const buildSearchSection = <T,>({ reviews, fields, toText, summaryPrompt,
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'ars-search-input';
-  input.placeholder = `Search ${addCommas(reviews.length)} reviews… (e.g. "${exampleQuery}")`;
+  input.placeholder = `Search ${addCommas(corpusSize)} reviews… (e.g. "${exampleQuery}")`;
   section.appendChild(input);
 
   const header = el('div', 'ars-search-header');
@@ -80,6 +94,19 @@ export const buildSearchSection = <T,>({ reviews, fields, toText, summaryPrompt,
   let timer: number | null = null;
   let currentQuery = '';
 
+  type Match = { r: T; f: SearchReviewFields };
+  let lastMatches: Match[] = [];
+
+  const findMatches = async (terms: string[]): Promise<{ matches: Match[]; total: number }> => {
+    if (!search) {
+      const matches = projected.filter((p) => terms.some((t) => p.h.includes(t)));
+      return { matches, total: matches.length };
+    }
+    const hit = await search(terms);
+    const matches = hit.matches.map((r) => ({ r, f: fields(r) }));
+    return { matches, total: hit.total ?? matches.length };
+  };
+
   const hideSummary = () => {
     sumPanel.style.display = 'none';
     sumPanel.textContent = '';
@@ -97,9 +124,7 @@ export const buildSearchSection = <T,>({ reviews, fields, toText, summaryPrompt,
   sumBtn.addEventListener('click', async () => {
     const query = currentQuery;
     if (!query) return;
-    const terms = queryTerms(query);
-    const matches = projected.filter((p) => terms.some((t) => p.h.includes(t)));
-    const texts = matches.map((p) => toText(p.r)).filter(Boolean);
+    const texts = lastMatches.map((p) => toText(p.r)).filter(Boolean);
     if (!texts.length) {
       sumPanel.style.display = 'block';
       sumPanel.textContent = 'No review text to summarize';
@@ -121,7 +146,7 @@ export const buildSearchSection = <T,>({ reviews, fields, toText, summaryPrompt,
     }
   });
 
-  const render = () => {
+  const render = async () => {
     const raw = input.value.trim();
     const q = raw.toLowerCase();
     currentQuery = raw;
@@ -131,15 +156,34 @@ export const buildSearchSection = <T,>({ reviews, fields, toText, summaryPrompt,
       hideSummary();
       return;
     }
-    const terms = queryTerms(raw);
-    const matches = projected.filter((p) => terms.some((t) => p.h.includes(t)));
+    const terms = splitTerms(raw);
 
     header.style.display = '';
     list.style.display = '';
+    if (search) {
+      hideSummary();
+      summary.textContent = `Searching ${addCommas(corpusSize)} reviews…`;
+      scoreChip.style.display = 'none';
+      sumBtn.disabled = true;
+    }
+
+    let found: { matches: Match[]; total: number };
+    try { found = await findMatches(terms); }
+    catch {
+      if (currentQuery !== raw) return;
+      summary.textContent = 'Search failed';
+      list.textContent = '';
+      return;
+    }
+    // A slower earlier query must not overwrite the results now on screen.
+    if (currentQuery !== raw) return;
+    const { matches, total: matchTotal } = found;
+    lastMatches = matches;
+
     summary.textContent = '';
     summary.append(
-      el('span', 'ars-search-count', addCommas(matches.length)),
-      document.createTextNode(` of ${addCommas(reviews.length)} reviews mention "${raw}"`),
+      el('span', 'ars-search-count', addCommas(matchTotal)),
+      document.createTextNode(` of ${addCommas(corpusSize)} reviews mention "${raw}"`),
     );
 
     if (matches.length) {
@@ -156,11 +200,12 @@ export const buildSearchSection = <T,>({ reviews, fields, toText, summaryPrompt,
       scoreChip.style.display = 'none';
     }
 
-    sumBtn.disabled = matches.length === 0;
     const cached = summaryCache.get(q);
     if (cached) renderCached(raw, cached);
     else hideSummary();
     if (matches.length) sumBtn.textContent = cached ? `Re-summarize "${raw}"` : `✦ Summarize "${raw}"`;
+    // After the branch above: both renderCached and hideSummary re-enable the button.
+    sumBtn.disabled = matches.length === 0;
 
     list.textContent = '';
     if (!matches.length) {
@@ -169,7 +214,9 @@ export const buildSearchSection = <T,>({ reviews, fields, toText, summaryPrompt,
     }
     const shown = matches.slice(0, MAX_RENDERED_RESULTS);
     for (const p of shown) list.appendChild(buildReviewCard(p.f, terms));
-    if (matches.length > shown.length) {
+    // matchTotal, not matches.length: a remote search reports every hit but
+    // only hands back its first page.
+    if (matchTotal > shown.length) {
       list.appendChild(el('div', 'ars-search-truncated',
         `Showing first ${shown.length} — refine the search to see more.`));
     }
@@ -177,7 +224,7 @@ export const buildSearchSection = <T,>({ reviews, fields, toText, summaryPrompt,
 
   input.addEventListener('input', () => {
     if (timer != null) clearTimeout(timer);
-    timer = setTimeout(render, SEARCH_DEBOUNCE_MS) as unknown as number;
+    timer = setTimeout(() => void render(), search ? REMOTE_DEBOUNCE_MS : SEARCH_DEBOUNCE_MS) as unknown as number;
   });
 
   // Self-removing so SPA re-injections (which rebuild the section) don't stack
