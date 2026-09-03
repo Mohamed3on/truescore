@@ -3,7 +3,8 @@ import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cach
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
-import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, adjustedScore } from '../shared/score-island';
+import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
+import { adjust, recentRatio } from '../shared/recency';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -208,11 +209,11 @@ const addSummarizeUI = (
   const reviewsPromise = fetchRecentReviews(tld, locale, sku, productId);
   reviewsPromise
     .then((reviews) => {
-      const ratio = recentPositiveRatio(reviews.map((r) => r.rating));
+      const ratio = recentRatio(reviews.map((r) => r.rating));
       fillRecentGauge(gauge, ratio);
       if (ratio == null) return;
       const stats = el('div', 'ars-stats') as HTMLElement;
-      if (scoreData) appendStat(stats, addCommas(adjustedScore(scoreData.score, ratio)), 'adjusted');
+      if (scoreData) appendStat(stats, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
       appendStat(stats, String(reviews.length), 'analyzed');
       gauge.after(stats);
     })

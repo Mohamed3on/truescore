@@ -1,4 +1,5 @@
 import { idbGet, idbSet } from '../shared/idb-cache';
+import { adjust, ratioFromTally, TEN_POINT } from '../shared/recency';
 import { buildMediaSummary } from '../shared/review-summary';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
@@ -56,11 +57,14 @@ function parseRatings(root: Document | Element): number[] {
   });
 }
 
-/** Recent %: net loved-minus-hated ratings over all rated recent reviews. */
-const recentPct = (net: number, total: number) => (total > 0 ? Math.round((net / total) * 100) : 0);
-
-/** Adjusted score: the combined score damped by the recent %. */
-const adjustedScore = (score: number, pct: number) => Math.round((score * pct) / 100);
+/**
+ * A running tally of recent ratings on Letterboxd's 10-point half-star scale.
+ * `ratio` is the shared −1..1 unit from shared/recency; null means we have no
+ * evidence, which is not the same as "hated" and must never become a 0.
+ */
+type RecentTally = { total: number; net: number; ratio: number | null };
+const emptyTally = (): RecentTally => ({ total: 0, net: 0, ratio: null });
+const pctText = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
 /**
  * Row meta: the year to tell films apart, and the adjusted score — the only
@@ -71,9 +75,9 @@ function filmMeta(film: any, adjustedText = '…') {
   return film.year ? `${film.year} · ${adjustedText}` : adjustedText;
 }
 
-function filmTooltip(film: any, recent?: { pct: number; ceiling?: boolean } | null) {
+function filmTooltip(film: any, recent?: { ratio: number | null; ceiling?: boolean } | null) {
   const parts = [`${film.runtime}m`, film.fetchFailed ? 'score unavailable' : `score ${addCommas(film.score)}`];
-  if (recent) parts.push(`recent ${recent.ceiling ? '≤' : ''}${recent.pct}%`);
+  if (recent?.ratio != null) parts.push(`recent ${recent.ceiling ? '≤' : ''}${pctText(recent.ratio)}`);
   return parts.join(' · ');
 }
 
@@ -138,12 +142,12 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
 // summary cache stays on localStorage (owned by buildMediaSummary).
 const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v2_${slug}`, CONFIG.CACHE_EXPIRY_MS);
 const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v2_${slug}`, data);
-const getCachedRecentRatings = (slug: string) => idbGet(`lbx_recent_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
-const setCachedRecentRatings = (slug: string, data: any) => idbSet(`lbx_recent_${slug}`, data);
+const getCachedRecentRatings = (slug: string): Promise<RecentTally | null> => idbGet(`lbx_recent_v2_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
+const setCachedRecentRatings = (slug: string, data: RecentTally) => idbSet(`lbx_recent_v2_${slug}`, data);
 // A tally abandoned early by getCandidateRecentRatings — kept apart from the full
 // one so the film's own page never mistakes a ceiling for its real recent %.
-const getCachedRecentPartial = (slug: string) => idbGet(`lbx_recent_part_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
-const setCachedRecentPartial = (slug: string, data: any) => idbSet(`lbx_recent_part_${slug}`, data);
+const getCachedRecentPartial = (slug: string): Promise<(RecentTally & { room: number }) | null> => idbGet(`lbx_recent_part_v2_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
+const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number }) => idbSet(`lbx_recent_part_v2_${slug}`, data);
 // v3: holds every scored runtime match; the comparison against the current film
 // happens at display time, so the cache no longer bakes in a threshold.
 const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v3_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
@@ -293,42 +297,41 @@ function calculateCombinedScore(lbRatings: number[], imdbScore = 0, imdbTotal = 
 /**
  * Tallies ratings from review page for recent reviews calculation
  */
-function tallyRatings(doc: Document, recentRatings: { totalNumberOfRatings: number; scoreAbsolute: number; scorePercentage: number }) {
+function tallyRatings(doc: Document, tally: RecentTally) {
   doc.querySelectorAll('svg.-rating[aria-label]').forEach((svg) => {
     const label = svg.getAttribute('aria-label')!;
     const value = (label.match(/★/g) || []).length * 2 + (label.includes('½') ? 1 : 0);
-    if (value > 0) {
-      recentRatings.totalNumberOfRatings += 1;
-      if (value > 8) recentRatings.scoreAbsolute += 1;
-      if (value <= 2) recentRatings.scoreAbsolute -= 1;
-    }
+    if (value <= 0) return;
+    tally.total += 1;
+    if (value >= TEN_POINT.positive) tally.net += 1;
+    else if (value <= TEN_POINT.negative) tally.net -= 1;
   });
-  return recentRatings;
+  return tally;
 }
 
 /**
  * Fetches and calculates recent ratings summary
  */
-async function getRecentRatingsSummary(slug: string | null = null) {
+async function getRecentRatingsSummary(slug: string | null = null): Promise<RecentTally | null> {
   const effectiveSlug = slug || extractSlugFromUrl(window.location.href);
-  if (!effectiveSlug) return { totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 };
+  if (!effectiveSlug) return null;
 
   const cached = await getCachedRecentRatings(effectiveSlug);
   if (cached) return cached;
 
-  const recentRatings = { totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 };
+  const tally = emptyTally();
   const parser = new DOMParser();
 
   const pages = await Promise.all(
     Array.from({ length: CONFIG.RECENT_RATING_PAGES }, (_, i) => fetchReviewPage(effectiveSlug, i + 1))
   );
 
-  pages.forEach((html) => tallyRatings(parser.parseFromString(html, 'text/html'), recentRatings));
+  pages.forEach((html) => tallyRatings(parser.parseFromString(html, 'text/html'), tally));
 
-  recentRatings.scorePercentage = recentPct(recentRatings.scoreAbsolute, recentRatings.totalNumberOfRatings);
+  tally.ratio = ratioFromTally(tally.net, tally.total);
 
-  setCachedRecentRatings(effectiveSlug, recentRatings);
-  return recentRatings;
+  setCachedRecentRatings(effectiveSlug, tally);
+  return tally;
 }
 
 /**
@@ -339,21 +342,24 @@ async function getRecentRatingsSummary(slug: string | null = null) {
  * tallies enter the shared recent cache; an abandoned one is kept apart so a
  * revisit can re-check it against the threshold without refetching.
  */
-async function getCandidateRecentRatings(slug: string, score: number, threshold: number): Promise<{ pct: number; ceiling: boolean }> {
+async function getCandidateRecentRatings(slug: string, score: number, threshold: number | null): Promise<{ ratio: number | null; ceiling: boolean }> {
   const full = await getCachedRecentRatings(slug);
-  if (full) return { pct: full.scorePercentage, ceiling: false };
+  if (full) return { ratio: full.ratio, ceiling: false };
 
   // `room` = the most ratings the unfetched pages could still add, all of them 5★.
-  const hopeless = (tally: { scoreAbsolute: number; totalNumberOfRatings: number }, room: number) => {
-    const ceiling = recentPct(tally.scoreAbsolute + room, tally.totalNumberOfRatings + room);
-    return adjustedScore(score, ceiling) < threshold ? { pct: ceiling, ceiling: true } : null;
+  // With no threshold there is nothing to disprove, so nothing is ever hopeless.
+  const hopeless = (tally: { net: number; total: number }, room: number) => {
+    if (threshold == null) return null;
+    const ceiling = ratioFromTally(tally.net + room, tally.total + room);
+    const best = adjust(score, ceiling);
+    return best != null && best < threshold ? { ratio: ceiling, ceiling: true } : null;
   };
   const partial = await getCachedRecentPartial(slug);
   const known = partial && hopeless(partial, partial.room);
   if (known) return known;
 
   const parser = new DOMParser();
-  const tally = { totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 };
+  const tally = emptyTally();
   let perPage = 0;
   for (let page = 1; page <= CONFIG.RECENT_RATING_PAGES; page++) {
     const doc = parser.parseFromString(await fetchReviewPage(slug, page), 'text/html');
@@ -369,9 +375,9 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
       return verdict;
     }
   }
-  tally.scorePercentage = recentPct(tally.scoreAbsolute, tally.totalNumberOfRatings);
+  tally.ratio = ratioFromTally(tally.net, tally.total);
   setCachedRecentRatings(slug, tally);
-  return { pct: tally.scorePercentage, ceiling: false };
+  return { ratio: tally.ratio, ceiling: false };
 }
 
 // =============================================================================
@@ -649,7 +655,7 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
  * Films the user has ignored move to a collapsed drawer and stop counting
  * towards the winner check; restoring one from the drawer undoes that.
  */
-async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<{ score: number; adjusted: number }>, currentRuntime: number, anchor: HTMLElement) {
+async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<{ score: number; adjusted: number | null }>, currentRuntime: number, anchor: HTMLElement) {
   const similarSection = el('section', 'lbx-similar');
   similarSection.append(el('span', 'lbx-progress', 'Finding similar picks...'));
   anchor.after(similarSection);
@@ -666,11 +672,14 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     return;
   }
 
+  // Null when the current film's own recent ratings never arrived. Without a
+  // reference there is nothing to beat, so every candidate is left unjudged
+  // rather than compared against a fabricated 0 — which would pass them all.
   const threshold = current.adjusted;
   const stats = result.stats && { ...result.stats, currentScore: current.score, currentAdjusted: threshold };
   // The adjusted score never exceeds the score, so a film scoring below the threshold can't
   // qualify — skip its review fetch instead of proving it.
-  const films = result.films.filter((f: any) => f.fetchFailed || f.score >= threshold);
+  const films = threshold == null ? [] : result.films.filter((f: any) => f.fetchFailed || f.score >= threshold);
 
   if (films.length === 0) {
     similarSection.append(winnerBanner(WINNER_MSG, result.listName, result.listLink));
@@ -691,7 +700,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   const drawer = el('ul', 'lbx-similar-list lbx-ignored-list');
   similarSection.append(banner, header, sourceLink, list, belowToggle, below, drawerToggle, drawer);
 
-  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; adjusted: number };
+  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; adjusted: number | null };
   const items = new Map<string, Entry>();
   let belowOpen = false;
   let drawerOpen = false;
@@ -704,7 +713,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     let ignoredCount = 0;
     // Appending in adjusted order re-sorts both lists; until recents settle every
     // entry still carries its score, so this keeps the initial score order.
-    const ordered = [...items.values()].sort((a, b) => b.adjusted - a.adjusted);
+    const ordered = [...items.values()].sort((a, b) => (b.adjusted ?? -Infinity) - (a.adjusted ?? -Infinity));
     for (const entry of ordered) {
       const isIgnored = ignored.has(entry.film.slug);
       if (isIgnored) ignoredCount++;
@@ -721,7 +730,7 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     // The films that lost are receipts, not results: one folded line each way.
     const belowCount = items.size - ignoredCount - passCount;
     belowToggle.hidden = !recentsSettled || belowCount === 0;
-    belowToggle.textContent = `${belowOpen ? '▼' : '▶'} ${belowCount} didn’t reach ${addCommas(threshold)}`;
+    if (!belowToggle.hidden) belowToggle.textContent = `${belowOpen ? '▼' : '▶'} ${belowCount} didn’t reach ${addCommas(threshold!)}`;
     below.hidden = belowToggle.hidden || !belowOpen;
 
     drawerToggle.hidden = ignoredCount === 0;
@@ -774,11 +783,14 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
       // A film whose fetch failed keeps the benefit of the doubt, so it always gets the full tally.
       getCandidateRecentRatings(film.slug, film.score, film.fetchFailed ? 0 : threshold).catch(() => null).then((recent) => {
         const entry = items.get(film.slug)!;
-        entry.adjusted = recent ? adjustedScore(film.score, recent.pct) : 0;
-        const adjustedText = !recent || film.fetchFailed ? '?' : `${recent.ceiling ? '≤' : ''}${addCommas(entry.adjusted)}`;
+        entry.adjusted = recent ? adjust(film.score, recent.ratio) : null;
+        const adjustedText = entry.adjusted == null || film.fetchFailed ? '?' : `${recent!.ceiling ? '≤' : ''}${addCommas(entry.adjusted)}`;
         entry.meta.textContent = filmMeta(film, adjustedText);
         entry.element.title = filmTooltip(film, recent);
-        entry.passes = !!(film.fetchFailed || (recent && entry.adjusted >= threshold));
+        // Unknown is not "beaten": a candidate we couldn't measure keeps the
+        // benefit of the doubt only when its own score fetch failed, exactly as
+        // before — it is never silently pushed past the threshold by a 0.
+        entry.passes = !!(film.fetchFailed || (entry.adjusted != null && threshold != null && entry.adjusted >= threshold));
         if (!entry.passes) entry.element.classList.add('lbx-excluded');
       })
     )
@@ -804,7 +816,7 @@ async function run(ratings: number[]) {
 
   const cachedFilmRaw = currentSlug ? await getCachedFilmData(currentSlug) : null;
   const cachedFilm = cachedFilmRaw?.score > 0 ? cachedFilmRaw : null;
-  const recentRatingsRaw = getRecentRatingsSummary().catch(() => ({ totalNumberOfRatings: 0, scoreAbsolute: 0, scorePercentage: 0 }));
+  const recentRatingsRaw = getRecentRatingsSummary().catch(() => null);
 
   const reviewSection = document.querySelector('.review.body-text');
   // Anchor on the histogram container, not Letterboxd's average — films below
@@ -841,8 +853,11 @@ async function run(ratings: number[]) {
   }
 
   const currentPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score }, recentRatings]) => {
-    const adjusted = adjustedScore(score, recentRatings.scorePercentage);
-    adjustedElement.textContent = `Adjusted: ${addCommas(adjusted)} · Recent: ${recentRatings.scorePercentage}%`;
+    const ratio = recentRatings?.ratio ?? null;
+    const adjusted = adjust(score, ratio);
+    adjustedElement.textContent = adjusted == null
+      ? 'Adjusted: — · Recent: n/a'
+      : `Adjusted: ${addCommas(adjusted)} · Recent: ${pctText(ratio!)}`;
     return { score, adjusted };
   });
 

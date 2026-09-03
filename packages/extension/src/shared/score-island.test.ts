@@ -5,8 +5,6 @@ import {
   buildRecentGauge,
   createIslandShell,
   fillRecentGauge,
-  recentPositiveRatio,
-  adjustedScore,
 } from './score-island';
 
 describe('createIslandShell', () => {
@@ -42,26 +40,6 @@ describe('buildGauge', () => {
     const [gauge] = buildGauge({ score: -50, nps: -30, total: 100 });
     const fill = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
     expect(fill.style.cssText).toContain('scaleX(0)');
-  });
-});
-
-describe('recentPositiveRatio', () => {
-  test('is the 5★-minus-1★ share of the reviews', () => {
-    expect(recentPositiveRatio([5, 5, 1, 3])).toBe(0.25);
-  });
-
-  test('null when there are no reviews to judge', () => {
-    expect(recentPositiveRatio([])).toBeNull();
-  });
-
-  test('can go negative when 1★ outweighs 5★', () => {
-    expect(recentPositiveRatio([1, 1, 5, 2])).toBe(-0.25);
-  });
-});
-
-describe('adjustedScore', () => {
-  test('damps the overall score by the recent ratio, rounded', () => {
-    expect(adjustedScore(1234, 0.62)).toBe(765);
   });
 });
 

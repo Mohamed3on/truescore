@@ -1,4 +1,5 @@
 import { idbGet, idbSet } from '../shared/idb-cache';
+import { recentRatio } from '../shared/recency';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 import { buildMediaSummary } from '../shared/review-summary';
@@ -477,15 +478,15 @@ const fetchReviewNodes = async (
   };
 };
 
+// The window is the Goodreads-specific part; the polarity and the null contract
+// come from shared/recency so every site answers "how recent-positive?" the same way.
 const recentRatioFromNodes = (nodes: ReviewNode[]): number | null => {
   const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
-  const ratings = nodes
-    .filter((n) => n.rating && n.createdAt != null && n.createdAt >= oneYearAgo)
-    .map((n) => n.rating as number);
-  if (!ratings.length) return null;
-  let s = 0;
-  for (const r of ratings) { if (r === 5) s++; if (r === 1) s--; }
-  return s / ratings.length;
+  return recentRatio(
+    nodes
+      .filter((n) => n.rating && n.createdAt != null && n.createdAt >= oneYearAgo)
+      .map((n) => n.rating as number),
+  );
 };
 
 /** Recent-positive ratio plus the size of the book's text-review corpus (0 when unknown). */

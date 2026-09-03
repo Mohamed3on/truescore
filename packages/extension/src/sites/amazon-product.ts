@@ -1,5 +1,6 @@
 import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas, el, npsColor, npsStats } from '../shared/utils';
+import { adjust, ratioFromTally } from '../shared/recency';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { queryTerms, buildReviewCard } from '../shared/review-search';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
@@ -357,11 +358,11 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     };
 
     const updateLiveStats = () => {
-      if (numberOfParsedReviews === 0) return;
-      const pctRaw = scores.recent.absolute / numberOfParsedReviews;
+      const pctRaw = ratioFromTally(scores.recent.absolute, numberOfParsedReviews);
+      if (pctRaw == null) return;
       const pct = Math.round(pctRaw * 100);
       const { backgroundColor } = getColorForPercentage(pctRaw);
-      const adjustedScore = Math.round(scores.total.calculated * pctRaw);
+      const adjustedScore = adjust(scores.total.calculated, pctRaw);
 
       pctEl.textContent = `${pct}%`;
       pctEl.style.color = backgroundColor;
@@ -457,12 +458,12 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     }
   } else {
     // Cached path: build final widget immediately
-    if (numberOfParsedReviews > 0) {
-      scores.recent.percentage = (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
-      const pctRaw = parseFloat(scores.recent.percentage);
+    const pctRaw = ratioFromTally(scores.recent.absolute, numberOfParsedReviews);
+    if (pctRaw != null) {
+      scores.recent.percentage = pctRaw.toFixed(2);
       const pct = Math.round(pctRaw * 100);
       const { backgroundColor } = getColorForPercentage(pctRaw);
-      const adjustedScore = Math.round(scores.total.calculated * pctRaw);
+      const adjustedScore = adjust(scores.total.calculated, pctRaw);
 
       const gauge = document.createElement('a');
       gauge.className = 'ars-gauge';

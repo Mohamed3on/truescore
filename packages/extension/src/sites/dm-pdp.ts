@@ -3,7 +3,8 @@ import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cach
 import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { buildSearchSection } from '../shared/review-search';
 import { setupSpaInjector } from '../shared/spa-injector';
-import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge, recentPositiveRatio, adjustedScore } from '../shared/score-island';
+import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
+import { adjust, recentRatio } from '../shared/recency';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const API_BASE = 'https://apps.bazaarvoice.com/bfd/v1/clients/dm-de/api-products/cv2/resources/data/reviews.json';
@@ -312,11 +313,11 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
   if (total > 0 && productId) {
     fetchReviews(productId, total)
       .then((reviews) => {
-        const ratio = recentPositiveRatio(reviews.map((r) => r.rating));
+        const ratio = recentRatio(reviews.map((r) => r.rating));
         fillRecentGauge(gauge, ratio);
         if (ratio != null && scoreData) {
           const row = wrapper.querySelector<HTMLElement>('.ars-stats');
-          if (row) appendStat(row, addCommas(adjustedScore(scoreData.score, ratio)), 'adjusted');
+          if (row) appendStat(row, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
         }
         if (reviews.length >= 5) {
           searchSlot.appendChild(buildSearchSection({

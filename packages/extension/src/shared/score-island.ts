@@ -1,5 +1,8 @@
 import { addCommas, el, npsColor } from './utils';
 
+// The recent ratio and the adjusted Score live in ./recency — one polarity rule,
+// one unit, and null (not 0) for "no evidence". This module only renders them.
+
 // The retail PDP "score island": a dark-glass panel embedded into the host page.
 // Sites compose it — shell + gauge + their own sections (variation card, topics,
 // summarize widget) — and inject it via setupSpaInjector. The `.ars-*` styling
@@ -54,22 +57,6 @@ export const buildGauge = ({ score, nps, total }: IslandScore): [HTMLElement, HT
 
   return [gauge, stats];
 };
-
-// Amazon's "% recent positive": NPS over an item's newest reviews —
-// (5★ − 1★) / count. Null when there is nothing to judge.
-export const recentPositiveRatio = (ratings: number[]): number | null => {
-  if (!ratings.length) return null;
-  let net = 0;
-  for (const rating of ratings) {
-    if (rating >= 5) net++;
-    else if (rating <= 1) net--;
-  }
-  return net / ratings.length;
-};
-
-// The adjusted score: the item's overall score damped by how positive
-// its newest reviews run.
-export const adjustedScore = (score: number, ratio: number): number => Math.round(score * ratio);
 
 // The "% recent positive" bar. With a ratio it renders complete; without one it
 // renders a scanning placeholder for fillRecentGauge to finish — or remove —
