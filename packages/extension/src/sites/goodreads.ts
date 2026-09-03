@@ -440,8 +440,8 @@ const REVIEW_PAGE_LIMIT = 100;
 /**
  * One getReviews call (newest first). `withText` also pulls the review prose for the AI
  * summary; `searchText` runs Goodreads' own full-text search across the *whole* review
- * corpus (its tokens are OR'd server-side), with `totalCount` the exact number of hits
- * even when they overflow the single page we ask for.
+ * corpus (see phraseQuery for its OR-vs-phrase syntax), with `totalCount` the exact
+ * number of hits even when they overflow the single page we ask for.
  */
 const fetchReviewNodes = async (
   workId: string,
@@ -946,42 +946,57 @@ const makeGetReviews = (workId: string, jwtToken: string | null): (() => Promise
 
 const GR_SEARCH_SUMMARY_PROMPT = `Summarize what these book reviews say about the searched topic. Lead with the bottom line, keep it specific to what reviewers actually wrote, and avoid plot spoilers. A short paragraph or a few bullets.`;
 
-// Goodreads' search ORs the query's tokens itself, so the panel highlights per
-// token rather than by the shared Gmail-style ` OR ` split, and a typed "OR" is
-// dropped so both spellings of an OR query behave the same.
-const searchTerms = (raw: string): string[] =>
-  raw.toLowerCase().split(/\s+/).filter((t) => t && t !== 'or');
+/**
+ * Bare searchText ORs its tokens, so "chapter 8" would match every review mentioning
+ * either word (113 of them). A LEADING UNBALANCED double quote switches the endpoint to
+ * an exact phrase match — `"chapter 8` returns the 4 reviews that really say it, with an
+ * exact totalCount and no effect on single words. A closing quote breaks it back to zero
+ * results, so strip any the user typed and supply our own.
+ */
+const phraseQuery = (term: string) => `"${term.replace(/"/g, '')}`;
 
 const REVIEW_FIELDS = (r: GrReview) => ({ rating: r.rating, body: r.body, meta: r.date });
 
 /**
  * Search every review of the book through Goodreads' own endpoint — one request per
- * query, results cached so backspacing doesn't refire it. Without a token there is no
- * endpoint to call, so it falls back to filtering the reviews embedded in the page.
+ * ` OR ` term, results cached so backspacing doesn't refire them. Without a token there
+ * is no endpoint to call, so it falls back to filtering the reviews embedded in the page.
  *
- * The match count is exact, but only the newest REVIEW_PAGE_LIMIT hits come back, so a
- * term with more matches than that has its %-positive read off that newest sample.
+ * A single term's count is exact, but only the newest REVIEW_PAGE_LIMIT hits come back,
+ * so a term with more matches than that has its %-positive read off that newest sample.
  */
 const buildReviewSearch = (workId: string, jwtToken: string, total: number) => {
   const cache = new Map<string, { matches: GrReview[]; total: number }>();
   return buildSearchSection<GrReview>({
     reviews: [],
     total,
-    terms: searchTerms,
     search: async (terms) => {
-      const searchText = terms.join(' ');
-      let hit = cache.get(searchText);
+      const key = terms.join(' OR ');
+      let hit = cache.get(key);
       if (!hit) {
-        const { nodes, totalCount } = await fetchReviewNodes(workId, jwtToken, { withText: true, searchText });
-        hit = { matches: nodes.map(toReview), total: totalCount };
-        cache.set(searchText, hit);
+        const pages = await Promise.all(terms.map((t) =>
+          fetchReviewNodes(workId, jwtToken, { withText: true, searchText: phraseQuery(t) })));
+        const seen = new Set<string>();
+        const matches: GrReview[] = [];
+        for (const { nodes } of pages) {
+          for (const n of nodes) {
+            const r = toReview(n);
+            if (r.body && !seen.has(r.body)) { seen.add(r.body); matches.push(r); }
+          }
+        }
+        // Concatenated pages lose the endpoint's newest-first order; one page keeps it.
+        if (pages.length > 1) matches.sort((a, b) => b.date.localeCompare(a.date));
+        // One term: the endpoint's own count spans every review, not just the page we
+        // pulled. Several: all we can honestly claim is what the union actually holds.
+        hit = { matches, total: pages.length === 1 ? pages[0].totalCount : matches.length };
+        cache.set(key, hit);
       }
       return hit;
     },
     fields: REVIEW_FIELDS,
     toText: (r) => r.body,
     summaryPrompt: GR_SEARCH_SUMMARY_PROMPT,
-    exampleQuery: 'pacing',
+    exampleQuery: 'slow start OR pacing',
   });
 };
 
@@ -1036,11 +1051,10 @@ const appendScore = async (bookTitle: Element) => {
     if (reviews.length) {
       summarySection.appendChild(buildSearchSection<GrReview>({
         reviews,
-        terms: searchTerms,
         fields: REVIEW_FIELDS,
         toText: (r) => r.body,
         summaryPrompt: GR_SEARCH_SUMMARY_PROMPT,
-        exampleQuery: 'pacing',
+        exampleQuery: 'slow start OR pacing',
       }));
     }
   }

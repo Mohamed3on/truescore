@@ -47,8 +47,6 @@ export interface ReviewSearchOpts<T> {
   // Server-side search over the whole corpus, replacing the local filter. Its
   // `total` is the true match count when the site returns only a first page.
   search?: (terms: string[]) => Promise<{ matches: T[]; total?: number }>;
-  // How a raw query splits into match/highlight terms (default: Gmail-style ` OR `).
-  terms?: (raw: string) => string[];
 }
 
 // The review-search section shared by panels that hold a full review corpus:
@@ -58,7 +56,7 @@ export interface ReviewSearchOpts<T> {
 // section for the caller to place in its island.
 export const buildSearchSection = <T,>({
   reviews, fields, toText, summaryPrompt, exampleQuery,
-  total, search, terms: splitTerms = queryTerms,
+  total, search,
 }: ReviewSearchOpts<T>) => {
   const corpusSize = total ?? reviews.length;
   const projected = reviews.map((r) => {
@@ -156,7 +154,7 @@ export const buildSearchSection = <T,>({
       hideSummary();
       return;
     }
-    const terms = splitTerms(raw);
+    const terms = queryTerms(raw);
 
     header.style.display = '';
     list.style.display = '';
