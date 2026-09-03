@@ -40,13 +40,19 @@ export interface ReviewSearchOpts<T> {
   fields: (r: T) => SearchReviewFields;
   // Text sent to the LLM when summarizing the matched subset ('' = skip).
   toText: (r: T) => string;
-  summaryPrompt: string;
+  // A function when the prompt names the query ("what reviewers say about X").
+  summaryPrompt: string | ((query: string) => string);
   exampleQuery: string;
   // Corpus size behind the "of N reviews" copy (default: reviews.length).
   total?: number;
   // Server-side search over the whole corpus, replacing the local filter. Its
   // `total` is the true match count when the site returns only a first page.
   search?: (terms: string[]) => Promise<{ matches: T[]; total?: number }>;
+  // Mount your own summarize UI under the results instead of the built-in
+  // one-shot pass — for panels that want the full widget (Ask, per-query cache).
+  // Called with a fresh host on every settled search; the built-in button is
+  // hidden when this is set.
+  mountSummarize?: (host: HTMLElement, query: string, texts: string[]) => void;
 }
 
 // The review-search section shared by panels that hold a full review corpus:
@@ -56,8 +62,9 @@ export interface ReviewSearchOpts<T> {
 // section for the caller to place in its island.
 export const buildSearchSection = <T,>({
   reviews, fields, toText, summaryPrompt, exampleQuery,
-  total, search,
+  total, search, mountSummarize,
 }: ReviewSearchOpts<T>) => {
+  const promptFor = (query: string) => (typeof summaryPrompt === 'function' ? summaryPrompt(query) : summaryPrompt);
   const corpusSize = total ?? reviews.length;
   const projected = reviews.map((r) => {
     const f = fields(r);
@@ -87,6 +94,11 @@ export const buildSearchSection = <T,>({
   const list = el('div', 'ars-search-list');
   list.style.display = 'none';
   section.appendChild(list);
+
+  // Re-filled with a fresh widget on every settled search when the caller mounts
+  // its own; empty otherwise.
+  const sumHost = el('div');
+  if (mountSummarize) { sumBtn.style.display = 'none'; section.appendChild(sumHost); }
 
   const summaryCache = new Map<string, string>();
   let timer: number | null = null;
@@ -133,7 +145,7 @@ export const buildSearchSection = <T,>({
     sumPanel.style.display = 'block';
     sumPanel.textContent = 'Summarizing…';
     try {
-      const text = await llmSummarize(texts, summaryPrompt, null);
+      const text = await llmSummarize(texts, promptFor(query), null);
       summaryCache.set(query.toLowerCase(), text);
       if (currentQuery !== query) return;
       renderCached(query, text);
@@ -151,9 +163,11 @@ export const buildSearchSection = <T,>({
     if (!q) {
       header.style.display = 'none';
       list.style.display = 'none';
+      sumHost.textContent = '';
       hideSummary();
       return;
     }
+    sumHost.textContent = '';
     const terms = queryTerms(raw);
 
     header.style.display = '';
@@ -217,6 +231,11 @@ export const buildSearchSection = <T,>({
     if (matchTotal > shown.length) {
       list.appendChild(el('div', 'ars-search-truncated',
         `Showing first ${shown.length} — refine the search to see more.`));
+    }
+
+    if (mountSummarize) {
+      const texts = matches.map((p) => toText(p.r)).filter(Boolean);
+      if (texts.length) mountSummarize(sumHost, raw, texts);
     }
   };
 

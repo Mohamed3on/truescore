@@ -1,8 +1,8 @@
 import { cacheGet, cacheSet } from '../shared/cache';
-import { addCommas, el, npsColor, npsStats } from '../shared/utils';
+import { addCommas, el } from '../shared/utils';
 import { adjust, ratioFromTally } from '../shared/recency';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
-import { queryTerms, buildReviewCard } from '../shared/review-search';
+import { buildSearchSection } from '../shared/review-search';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 import { createIslandShell } from '../shared/score-island';
 
@@ -518,105 +518,38 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     return groups.flat();
   };
 
+  // The shared section (shared/review-search.ts) owns the box, the OR-term
+  // matching, the 50-result cap + truncation notice, the "N of M reviews
+  // mention" copy, the 350ms remote debounce and the Cmd/Ctrl+Shift+F jump.
+  // Amazon used to hand-roll all of it — emitting the module's own class names
+  // while missing every one of those guards. The two genuinely Amazon-specific
+  // parts stay injected: the remote keyword fetch, and the full summarize widget
+  // (Ask + a per-keyword cache) where the section's default is a one-shot pass.
   const buildKeywordSearch = () => {
-    const section = el('div', 'ars-search-section');
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'ars-search-input';
-    input.placeholder = 'Search all reviews… e.g. "battery OR strap" (Enter)';
-    section.appendChild(input);
-
-    const header = el('div', 'ars-search-header');
-    header.style.display = 'none';
-    const scoreChip = el('span', 'ars-search-score');
-    const summary = el('span', 'ars-search-summary');
-    header.append(scoreChip, summary);
-    section.appendChild(header);
-
-    const list = el('div', 'ars-search-list');
-    list.style.display = 'none';
-    section.appendChild(list);
-
-    // Re-filled with a fresh summarize/ask widget (scoped + cached per keyword)
-    // on every successful search.
-    const sumHost = el('div');
-    section.appendChild(sumHost);
-
-    let seq = 0;
-    const reset = () => {
-      seq++; // invalidate any in-flight search so it can't render after a clear
-      header.style.display = 'none';
-      list.style.display = 'none';
-      list.textContent = '';
-      sumHost.textContent = '';
-    };
-
-    const run = async () => {
-      const query = input.value.trim();
-      if (!query) { reset(); return; }
-      const mySeq = ++seq;
-      const terms = queryTerms(query);
-      header.style.display = '';
-      list.style.display = 'none';
-      scoreChip.style.display = 'none';
-      summary.textContent = `Searching “${query}”…`;
-      sumHost.textContent = '';
-
-      let reviews: FilteredReview[];
-      try {
-        reviews = await fetchReviewsByKeyword(terms);
-      } catch (e) {
-        if (mySeq === seq) summary.textContent = 'Search failed';
-        console.error('[ARS] keyword search failed', e);
-        return;
-      }
-      if (mySeq !== seq) return;
-
-      let five = 0, one = 0;
-      for (const r of reviews) { if (r.rating === 5) five++; else if (r.rating === 1) one++; }
-
-      summary.textContent = '';
-      summary.append(
-        el('span', 'ars-search-count', addCommas(reviews.length)),
-        document.createTextNode(` review${reviews.length === 1 ? '' : 's'} mention “${query}”`),
-      );
-
-      if (reviews.length) {
-        const { nps } = npsStats(five, one, reviews.length);
-        scoreChip.textContent = `${Math.round(nps)}%`;
-        scoreChip.style.color = npsColor(nps);
-        scoreChip.style.display = '';
-      }
-
-      list.style.display = '';
-      list.textContent = '';
-      if (!reviews.length) {
-        list.appendChild(el('div', 'ars-search-empty', 'No reviews mention this'));
-        return;
-      }
-      for (const r of reviews) {
-        const meta = [r.verified ? '✓ Verified' : '', r.meta].filter(Boolean).join(' · ');
-        list.appendChild(buildReviewCard({ rating: r.rating, title: r.title, body: r.body, meta }, terms));
-      }
-
-      const texts = reviews
-        .map((r) => [r.title, r.body].filter(Boolean).join('. '))
-        .filter((t) => t.length >= 20);
-      if (texts.length) {
-        buildSummarizeWidget({
-          wrapper: sumHost,
-          cacheKey: `review-summary-${cacheASIN}-kw-${query.toLowerCase()}`,
-          summaryPrompt: keywordSummaryPrompt(query),
-          fetchReviews: async () => texts,
-          questionPlaceholder: `Ask about “${query}” reviews…`,
-        });
-      }
-    };
-
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
-    input.addEventListener('input', () => { if (!input.value.trim()) reset(); });
-
-    wrapper.appendChild(section);
+    wrapper.appendChild(buildSearchSection<FilteredReview>({
+      reviews: [],
+      total: numOfRatings || numberOfParsedReviews,
+      search: async (terms) => ({ matches: await fetchReviewsByKeyword(terms) }),
+      fields: (r) => ({
+        rating: r.rating,
+        title: r.title,
+        body: r.body,
+        meta: [r.verified ? '\u2713 Verified' : '', r.meta].filter(Boolean).join(' \u00b7 '),
+      }),
+      toText: (r) => {
+        const t = [r.title, r.body].filter(Boolean).join('. ');
+        return t.length >= 20 ? t : '';
+      },
+      summaryPrompt: keywordSummaryPrompt,
+      exampleQuery: 'battery OR strap',
+      mountSummarize: (host, query, texts) => buildSummarizeWidget({
+        wrapper: host,
+        cacheKey: `review-summary-${cacheASIN}-kw-${query.toLowerCase()}`,
+        summaryPrompt: keywordSummaryPrompt(query),
+        fetchReviews: async () => texts,
+        questionPlaceholder: `Ask about \u201c${query}\u201d reviews\u2026`,
+      }),
+    }));
   };
 
   if (numberOfParsedReviews > 0) {
