@@ -33,6 +33,7 @@ import { cache, type CacheEntry } from './cache';
 import { logEvent } from './events';
 import { createInflight } from './inflight';
 import index from './index.html';
+import { errStatus, resolveSubject } from './summary-subject';
 
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -521,19 +522,17 @@ Bun.serve({
           // overwrite the canonical entry.summary slot.
           if (!filter && entry?.summary && !force) return corsJson({ summary: entry.summary, cached: true } satisfies SummarizeResponse);
 
-          const placeName = entry?.name ?? body.name ?? '';
-          // Pre-formatted reviewTexts win (extension already ran textReviewsFor
-          // on the local scrape and shouldn't have to ship the full Review[]).
-          // Falling back to cache lets the web caller keep its old shape.
-          const reviewTexts = body.reviewTexts ?? (entry?.score ? textReviewsFor(entry.score.reviews) : null);
-          if (!reviewTexts?.length) return corsJson({ error: 'no reviews — look up the place first or pass reviewTexts in the body' }, 404);
+          const { placeName, reviewTexts } = resolveSubject({
+            entry, name: body.name, reviewTexts: body.reviewTexts, reviews: entry?.score?.reviews,
+            hint: 'look up the place first or pass reviewTexts in the body',
+          });
 
           const summary = await summarize(placeName, reviewTexts, filter, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
           if (!filter && entry) await cache.putSummary(featureId, summary);
           return corsJson({ summary, cached: false } satisfies SummarizeResponse);
         } catch (e) {
           console.error('[summarize]', e);
-          return corsJson(errBody(e), 400);
+          return corsJson(errBody(e), errStatus(e));
         }
       },
       OPTIONS: corsOptions,
@@ -601,16 +600,17 @@ Bun.serve({
           const highlight = entry?.highlights?.find((h) => h.token === token);
           const label = highlight?.label ?? body.label;
           if (!label) return corsJson({ error: 'missing label (and no cached highlight)' }, 400);
-          const placeName = entry?.name ?? body.name ?? '';
-          const reviewTexts = body.reviewTexts ?? (highlight?.reviews ? textReviewsFor(highlight.reviews) : null);
-          if (!reviewTexts?.length) return corsJson({ error: 'no review text — pass reviewTexts in the body or run highlights first' }, 400);
+          const { placeName, reviewTexts } = resolveSubject({
+            entry, name: body.name, reviewTexts: body.reviewTexts, reviews: highlight?.reviews,
+            hint: 'pass reviewTexts in the body or run highlights first',
+          });
 
-          const summary = await summarize(placeName, reviewTexts, label);
+          const summary = await summarize(placeName, reviewTexts, label, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
           if (entry) await cache.putHighlightSummary(featureId, token, summary);
           return corsJson({ summary, label, cached: false } satisfies HighlightSummaryResponse);
         } catch (e) {
           console.error('[highlight-summary]', e);
-          return corsJson(errBody(e), 400);
+          return corsJson(errBody(e), errStatus(e));
         }
       },
       OPTIONS: corsOptions,
@@ -653,14 +653,19 @@ Bun.serve({
               }
               write({ type: 'search', result, cached: false });
 
+              // Persist the scrape BEFORE summarizing: the search is the
+              // expensive half, and a failed summary used to throw past this and
+              // discard it, so the next request paid for the whole thing again.
+              await cache.putSearch(featureId, term, result);
+
               if (doSummarize && (!result.summary || force)) {
                 const reviewTexts = textReviewsFor(result.reviews);
                 if (reviewTexts.length) {
-                  result.summary = await summarize(placeName, reviewTexts, term);
+                  result.summary = await summarize(placeName, reviewTexts, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
                   write({ type: 'search-summary', summary: result.summary });
+                  await cache.putSearch(featureId, term, result);
                 }
               }
-              await cache.putSearch(featureId, term, result);
             } catch (e) {
               console.error(`[search] "${term}" (${featureId}):`, e);
               write({ type: 'error', error: friendlyError(e) });
@@ -683,16 +688,17 @@ Bun.serve({
           const { featureId, question } = body;
           if (!question) return corsJson({ error: 'missing question' }, 400);
 
-          const entry = featureId ? cache.get(featureId) : null;
-          const placeName = entry?.name ?? body.name ?? '';
-          const reviewTexts = body.reviewTexts ?? (entry?.score ? textReviewsFor(entry.score.reviews) : null);
-          if (!reviewTexts?.length) return corsJson({ error: 'no reviews — look up the place first or pass reviewTexts in the body' }, 404);
+          const entry = featureId ? cache.get(featureId) : undefined;
+          const { placeName, reviewTexts } = resolveSubject({
+            entry, name: body.name, reviewTexts: body.reviewTexts, reviews: entry?.score?.reviews,
+            hint: 'look up the place first or pass reviewTexts in the body',
+          });
 
           const answer = await ask(placeName, reviewTexts, question, body.filter?.trim() || undefined, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
           return corsJson({ answer } satisfies AskResponse);
         } catch (e) {
           console.error('[ask]', e);
-          return corsJson(errBody(e), 400);
+          return corsJson(errBody(e), errStatus(e));
         }
       },
       OPTIONS: corsOptions,

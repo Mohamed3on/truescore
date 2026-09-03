@@ -124,8 +124,8 @@ export type LookupRequest = { url: string };
 export type SummarizeRequest = { featureId: string; name?: string; reviewTexts?: string[]; filter?: string; force?: boolean } & LlmOverrides;
 export type HistogramRequest = { featureId: string };
 export type HighlightsRequest = { featureId: string; force?: boolean };
-export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean };
-export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean };
+export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean } & LlmOverrides;
+export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean } & LlmOverrides;
 export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string } & LlmOverrides;
 // `score` omits the per-review array — the web only needs the numbers to paint,
 // and a place's reviews run to megabytes. It is the extension's RAW score: the
