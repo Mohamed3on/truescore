@@ -99,7 +99,9 @@ export type SummarizeResponse = { summary?: Summary; cached?: boolean; error?: s
 export type HighlightSummaryResponse = { summary?: Summary; label?: string; cached?: boolean; error?: string };
 export type HistogramResponse = { histogram?: number[]; overallPct?: number; cached?: boolean; error?: string };
 export type AskResponse = { answer?: string; error?: string };
-export type PlaceItem = { featureId: string; name: string; scorePct: number; resolvedUrl: string; lastAccessTs: number };
+// `scorePct` is the DISPLAY score — the removal penalty already applied, so a
+// tile and the detail page it opens can never show two different numbers.
+export type PlaceItem = { featureId: string; name: string; scorePct: number; adjusted?: boolean; resolvedUrl: string; lastAccessTs: number };
 export type PlacesResponse = { places?: PlaceItem[]; error?: string };
 export type CachedResponse = { found: boolean; summary?: Summary; highlights?: Chip[]; highlightSummaries?: Record<string, Summary> };
 export type ContributeResponse = { ok?: boolean; error?: string };

@@ -2,7 +2,7 @@ import { renderMarkdown, renderMarkdownInline } from './markdown';
 import { fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, streamNdjson } from './http';
 import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz } from './hours';
 import {
-  chipPolarity, compileMatchRegex, histogramTotal, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, scoreWithRemovalPenalty, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  chipPolarity, compileMatchRegex, displayScore, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
@@ -620,26 +620,28 @@ function paintScore(data: PaintData) {
   // Removals are weighed against the place's own review count, so the penalty
   // holds still whatever our scrape depth. The histogram is the same total
   // Google shows; googleReviewCount backs it up until the preview lands.
-  const removedCount = removedCountEstimate(data.meta?.removedReviews);
-  const placeTotal = (data.histogram ? histogramTotal(data.histogram) : 0) || data.meta?.googleReviewCount || 0;
-  const displayScore = data.score
-    ? Math.round(scoreWithRemovalPenalty(data.score.scorePct / 100, removedCount, placeTotal) * 100)
-    : 0;
+  const { pct: displayPct, adjusted } = displayScore({
+    score: (data.score?.scorePct ?? 0) / 100,
+    histogram: data.histogram,
+    googleReviewCount: data.meta?.googleReviewCount,
+    removedReviews: data.meta?.removedReviews,
+  });
   const nameEl = $('name') as HTMLAnchorElement;
   nameEl.textContent = displayName;
   if (data.resolvedUrl) nameEl.href = data.resolvedUrl;
   else if (featureId) nameEl.href = `https://www.google.com/maps?q=&ftid=${featureId}`;
   document.title = data.score
-    ? `${displayName} · ${displayScore}% · TrueScore`
+    ? `${displayName} · ${displayPct}% · TrueScore`
     : `${displayName} · TrueScore`;
   renderPlaceMeta(data.meta ?? undefined);
+  $('scoreLabel').textContent = adjusted ? 'SCORE · ADJUSTED' : 'SCORE';
   if (data.score && 'reviews' in data.score && data.score.reviews) {
     renderFreshness(data.score.reviews);
   }
   const pctEl = $('scorePct');
   if (data.score) {
-    pctEl.textContent = `${displayScore}`;
-    pctEl.className = `score-num ${scoreClass(displayScore)}`;
+    pctEl.textContent = `${displayPct}`;
+    pctEl.className = `score-num ${scoreClass(displayPct)}`;
     const trustedPct = data.score.totalReviews
       ? Math.round((data.score.trustedReviews / data.score.totalReviews) * 100)
       : 0;
@@ -656,7 +658,7 @@ function paintScore(data: PaintData) {
       deltaEl.className = `delta ${delta > 0 ? 'pos' : delta < 0 ? 'neg' : ''}`;
     }
     currentMergedPct = data.score.scorePct;
-    currentDisplayPct = displayScore;
+    currentDisplayPct = displayPct;
   } else {
     pctEl.textContent = '—';
     pctEl.className = 'score-num';
@@ -666,7 +668,7 @@ function paintScore(data: PaintData) {
     $('newestDelta').textContent = '';
   }
   renderOverallScore(data.histogram ?? null);
-  renderOverall(data.overallPct ?? null, data.score ? displayScore : 0);
+  renderOverall(data.overallPct ?? null, data.score ? displayPct : 0);
 }
 
 // One-time setup for a new lookup: show the result panel, wipe the previous
@@ -916,7 +918,6 @@ function renderPlaceMeta(meta: PlaceMeta | undefined) {
 function renderRemovedReviews(meta: PlaceMeta | undefined) {
   const banner = $('placeRemoved') as HTMLAnchorElement;
   const removed = meta?.removedReviews;
-  $('scoreLabel').textContent = removed ? 'SCORE · ADJUSTED' : 'SCORE';
   if (!removed) { banner.hidden = true; return; }
   $('placeRemovedText').textContent = removed.text;
   const est = removedCountEstimate(removed);
@@ -1127,6 +1128,7 @@ function renderPlaces() {
       el('span', `place-score ${scoreClass(p.scorePct)}`, `${p.scorePct}`),
       el('span', 'place-age', timeAgo(p.lastAccessTs)),
     );
+    if (p.adjusted) tile.title = 'Adjusted for removed reviews';
     tile.addEventListener('click', () => { urlInput.value = p.resolvedUrl; form.requestSubmit(); });
     placesList.appendChild(tile);
   }

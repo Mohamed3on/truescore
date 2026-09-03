@@ -22,7 +22,7 @@ import {
   removedCountEstimate,
   removedReviewsFromPreview,
   reviewAge,
-  scoreWithRemovalPenalty,
+  displayScore,
   selectScoredChips,
   sortChipsByImpact,
   sortedDisplayReviews,
@@ -138,6 +138,10 @@ let fullPctObserverTarget: Element | null = null;
 let staleHistogramKey: string | null = null;
 let lastHistogramKey: string | null = null;
 let activeRemovedReviews: RemovedReviews | null = null;
+// Google's quoted review count, off the same preview as the removal notice. It
+// backs the DOM histogram up on the split search+place layout, where fewer than
+// five rows render and readHistogramCounts returns null.
+let activeGoogleReviewCount: number | null = null;
 // Which place's captured preview we've already read the notice out of.
 let removedNoticeCheckedFor: string | null = null;
 // Which place we've already spent the one app-state walk on.
@@ -434,6 +438,7 @@ const resetScores = () => {
   lastHistogramKey = null;
   highlightCandidates = [];
   activeRemovedReviews = null;
+  activeGoogleReviewCount = null;
   removedNoticeCheckedFor = null;
   appStateTriedFor = null;
   credsRetried = false;
@@ -670,6 +675,7 @@ const harvestHighlightsFromPreview = async (): Promise<HighlightCandidate[]> => 
 const applyRemovedNotice = (featureId: string, data: any): void => {
   if (getFeatureId() !== featureId) return;
   removedNoticeCheckedFor = featureId;
+  activeGoogleReviewCount = metaFromPreview(data).googleReviewCount ?? null;
   const removed = removedReviewsFromPreview(data);
   const changed = activeRemovedReviews?.text !== removed?.text;
   activeRemovedReviews = removed ?? null;
@@ -1659,9 +1665,14 @@ const updateUI = () => {
   // Removals are weighed against the place's own review count (Google's own
   // histogram), not our trusted sample, so the penalty can't drift with how far
   // pagination got. No readable histogram → no penalty rather than a guessed one.
-  const removedPenalty = currentOption === 'total' ? removedCountEstimate(activeRemovedReviews) : 0;
-  const placeTotal = removedPenalty ? histogramTotal(readHistogramCounts() ?? []) : 0;
-  const displayPct = scoreWithRemovalPenalty(mergedPct, removedPenalty, placeTotal);
+  // Removals apply to the all-time score only — a period score is already a
+  // slice, and penalising it twice would double-count.
+  const { pct: displayRounded, adjusted, removedCount, placeTotal } = displayScore({
+    score: mergedPct,
+    histogram: readHistogramCounts(),
+    googleReviewCount: activeGoogleReviewCount,
+    removedReviews: currentOption === 'total' ? activeRemovedReviews : null,
+  });
 
   if (noData) {
     els.pctEl.childNodes[0].textContent = '—';
@@ -1671,12 +1682,12 @@ const updateUI = () => {
     els.barFill.style.width = '0%';
     els.diffEl.style.display = 'none';
   } else {
-    const mergedRound = toPct(displayPct);
+    const mergedRound = displayRounded;
     els.pctEl.childNodes[0].textContent = `${mergedRound}%`;
     const sortTotal = (k: SortKey) => store.sortTotal(k, currentOption);
     const relLabel = sortTotal('relevant') ? `${toPct(store.scorePct('relevant', currentOption))}%` : '—';
     const newLabel = sortTotal('newest') ? `${toPct(store.scorePct('newest', currentOption))}%` : '—';
-    els.tooltip.textContent = removedPenalty
+    els.tooltip.textContent = adjusted
       ? `Raw: ${toPct(mergedPct)}% · Relevant: ${relLabel} · Newest: ${newLabel}`
       : `Relevant: ${relLabel} · Newest: ${newLabel}`;
 
@@ -1690,7 +1701,7 @@ const updateUI = () => {
       els.diffEl.style.color = color;
       els.diffEl.style.display = '';
     } else {
-      const color = getAbsoluteScoreColor(displayPct);
+      const color = getAbsoluteScoreColor(displayRounded / 100);
       els.pctEl.style.color = color;
       els.pctEl.style.textShadow = `0 0 24px ${color}40`;
       els.diffEl.style.display = 'none';
@@ -1723,7 +1734,7 @@ const updateUI = () => {
       }
     }
 
-    els.barFill.style.width = `${Math.max(2, Math.min(100, (displayPct + 1) / 2 * 100))}%`;
+    els.barFill.style.width = `${Math.max(2, Math.min(100, (displayRounded / 100 + 1) / 2 * 100))}%`;
   }
 
   els.countEl.textContent = String(totalCount);
@@ -1732,7 +1743,7 @@ const updateUI = () => {
     totalAll > 0 ? `${totalTrusted} trusted of ${totalAll}` : '',
     // What the removal penalty actually did, next to the number it did it to —
     // the banner says how many were removed, this says what it cost.
-    removedPenalty && placeTotal ? `from ${toPct(mergedPct)}% · ${addCommas(removedPenalty)} removed of ${addCommas(placeTotal)}` : '',
+    adjusted ? `from ${toPct(mergedPct)}% · ${addCommas(removedCount)} removed of ${addCommas(placeTotal)}` : '',
     headReview?.timestamp ? `newest review ${timeAgo(headReview.timestamp / 1000)}` : '',
   ].filter(Boolean);
   const detailText = parts.join(' · ');

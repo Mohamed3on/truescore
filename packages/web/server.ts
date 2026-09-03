@@ -473,6 +473,7 @@ Bun.serve({
             featureId: e.featureId,
             name: e.name,
             scorePct: e.scorePct,
+            adjusted: e.adjusted,
             resolvedUrl: e.resolvedUrl ?? mapsUrlFor(e.featureId),
             lastAccessTs: e.lastAccessTs,
           }))

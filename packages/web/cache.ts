@@ -1,7 +1,7 @@
 import { db, DB_PATH, LEGACY_JSON_PATH } from './db';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './llm';
-import type { Chip, ChipMeta, PartialScore, PlaceMeta } from '@truescore/gmaps-shared';
+import { displayScore, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews } from '@truescore/gmaps-shared';
 
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
 // How long a background chip-warm that came back empty is trusted as "this place
@@ -59,13 +59,33 @@ const upsertStmt = db.prepare<void, [string, string]>('INSERT OR REPLACE INTO en
 const selectOneStmt = db.prepare<{ data: string }, [string]>('SELECT data FROM entries WHERE featureId = ?');
 // Only the /api/places listing fields, projected in sqlite — so building the
 // listing never materialises the full entries (see IndexRow below).
-const selectIndexStmt = db.prepare<{ featureId: string } & IndexRow, []>(`
+type IndexProjection = {
+  featureId: string;
+  name: string;
+  rawPct: number;
+  resolvedUrl: string | null;
+  histogramJson: string | null;
+  googleReviewCount: number | null;
+  removedJson: string | null;
+  lastAccessTs: number;
+};
+const selectIndexStmt = db.prepare<IndexProjection, []>(`
   SELECT featureId,
          json_extract(data, '$.name') AS name,
-         COALESCE(json_extract(data, '$.score.scorePct'), 0) AS scorePct,
+         COALESCE(json_extract(data, '$.score.scorePct'), 0) AS rawPct,
          json_extract(data, '$.resolvedUrl') AS resolvedUrl,
+         json_extract(data, '$.histogram') AS histogramJson,
+         json_extract(data, '$.meta.googleReviewCount') AS googleReviewCount,
+         json_extract(data, '$.meta.removedReviews') AS removedJson,
          COALESCE(json_extract(data, '$.lastAccessTs'), json_extract(data, '$.scoreTs'), 0) AS lastAccessTs
   FROM entries`);
+
+// json_extract hands back nested objects/arrays as JSON text; a malformed one
+// just drops out of the penalty rather than failing the whole listing.
+const parseJson = <T>(raw: string | null): T | null => {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as T; } catch { return null; }
+};
 
 // sqlite is the store; `store` is a bounded LRU window over it. Entries carry full
 // review text and average ~360KB, so holding every one resident cost ~1.5GB RSS and
@@ -76,9 +96,20 @@ const store = new Map<string, CacheEntry>();
 
 // Every place's listing fields, always resident — ~100 bytes each, so /api/places
 // stays an in-memory read rather than a full-table json scan on every request.
-type IndexRow = { name: string; scorePct: number; resolvedUrl: string | null; lastAccessTs: number };
+type IndexRow = { name: string; scorePct: number; adjusted: boolean; resolvedUrl: string | null; lastAccessTs: number };
 const index = new Map<string, IndexRow>();
-for (const { featureId, ...fields } of selectIndexStmt.all()) index.set(featureId, fields);
+
+const rowToIndex = (r: IndexProjection): IndexRow => {
+  const { pct, adjusted } = displayScore({
+    score: (r.rawPct ?? 0) / 100,
+    histogram: parseJson<Histogram>(r.histogramJson),
+    googleReviewCount: r.googleReviewCount,
+    removedReviews: parseJson<RemovedReviews>(r.removedJson),
+  });
+  return { name: r.name, scorePct: pct, adjusted, resolvedUrl: r.resolvedUrl, lastAccessTs: r.lastAccessTs };
+};
+
+for (const row of selectIndexStmt.all()) index.set(row.featureId, rowToIndex(row));
 
 // Map iterates in insertion order, so delete-then-set moves a key to the newest end
 // and the first key is always the least-recently-used one to drop.
@@ -90,9 +121,16 @@ const remember = (featureId: string, entry: CacheEntry): void => {
 };
 
 const indexEntry = (featureId: string, entry: CacheEntry): void => {
+  const { pct, adjusted } = displayScore({
+    score: entry.score.scorePct / 100,
+    histogram: entry.histogram,
+    googleReviewCount: entry.meta?.googleReviewCount,
+    removedReviews: entry.meta?.removedReviews,
+  });
   index.set(featureId, {
     name: entry.name,
-    scorePct: entry.score.scorePct,
+    scorePct: pct,
+    adjusted,
     resolvedUrl: entry.resolvedUrl ?? null,
     lastAccessTs: entry.lastAccessTs ?? entry.scoreTs,
   });

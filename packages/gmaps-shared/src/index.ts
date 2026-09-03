@@ -564,6 +564,46 @@ export const overallScoreFromHistogram = (h: Histogram): number => {
   return Math.round((diff * Math.abs(diff)) / total);
 };
 
+// The Score as it should be shown: the raw net polarity damped by the place's
+// removal rate. The penalty maths is one function, but its *inputs* used not to
+// be — each renderer picked its own `placeTotal`, so the same Place read 72 on
+// the web home tile, 55 in the detail header and something else again in the
+// extension panel. The precedence lives here, beside the maths it feeds.
+//
+// Google's own histogram is the place's real review count; its quoted review
+// count backs it up until the preview lands, and covers the layouts where the
+// histogram isn't readable at all (Maps' split search+place view renders fewer
+// than five rows). No total either way → no penalty, rather than a guessed one.
+export type DisplayScoreInput = {
+  /** Raw net polarity on the app's native −1..1 scale. */
+  score: number;
+  histogram?: Histogram | null;
+  googleReviewCount?: number | null;
+  removedReviews?: RemovedReviews | null;
+};
+
+/**
+ * `pct` and `rawPct` are whole percentages; `adjusted` is true when the penalty
+ * actually moved the number (a notice Google quoted no numerals in moves
+ * nothing). `removedCount` and `placeTotal` are the inputs it resolved, for
+ * renderers that explain the adjustment beside the score it adjusted.
+ */
+export type DisplayScore = {
+  pct: number;
+  rawPct: number;
+  adjusted: boolean;
+  removedCount: number;
+  placeTotal: number;
+};
+
+export const displayScore = ({ score, histogram, googleReviewCount, removedReviews }: DisplayScoreInput): DisplayScore => {
+  const rawPct = Math.round(score * 100);
+  const removedCount = removedCountEstimate(removedReviews);
+  const placeTotal = (histogram?.length ? histogramTotal(histogram) : 0) || googleReviewCount || 0;
+  const pct = Math.round(scoreWithRemovalPenalty(score, removedCount, placeTotal) * 100);
+  return { pct, rawPct, adjusted: pct !== rawPct, removedCount, placeTotal };
+};
+
 export const timeAgo = (ms: number): string => {
   const sec = Math.max(0, (Date.now() - ms) / 1000);
   if (sec < 60) return 'just now';

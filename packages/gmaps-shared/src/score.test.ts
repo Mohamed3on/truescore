@@ -1,12 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import {
-  statsForReviews,
-  overallPctFromHistogram,
-  overallScoreFromHistogram,
-  removedCountEstimate,
-  scoreWithRemovalPenalty,
-  type Review,
-} from './index';
+import { displayScore, overallPctFromHistogram, overallScoreFromHistogram, removedCountEstimate, scoreWithRemovalPenalty, statsForReviews, type Review } from './index';
 
 const rv = (stars: number, count: number): Review =>
   ({ reviewId: `r${Math.round(stars * 1000 + count)}`, stars, reviewerReviewCount: count, timestamp: 1_700_000_000_000, text: 'x' });
@@ -110,5 +103,52 @@ describe('overallScoreFromHistogram (diff·|diff|/total)', () => {
   });
   test('equal 5★/1★ → 0 regardless of volume', () => {
     expect(overallScoreFromHistogram([5, 0, 0, 0, 5])).toBe(0);
+  });
+});
+
+// The penalty maths above is one function; what used to differ per renderer was
+// the placeTotal fed into it. These pin the precedence, which is where the three
+// surfaces disagreed.
+describe('displayScore (placeTotal precedence)', () => {
+  const removed = { text: '21 to 50 reviews removed', min: 21, max: 50 };
+
+  test('no removals → the raw score, unadjusted', () => {
+    const d = displayScore({ score: 0.72, histogram: [100, 0, 0, 0, 0] });
+    expect(d.pct).toBe(72);
+    expect(d.rawPct).toBe(72);
+    expect(d.adjusted).toBe(false);
+  });
+
+  test("prefers Google's own histogram total", () => {
+    const d = displayScore({ score: 0.72, histogram: [800, 100, 50, 30, 22], googleReviewCount: 5, removedReviews: removed });
+    expect(d.placeTotal).toBe(1002);
+    expect(d.removedCount).toBe(36);
+    expect(d.adjusted).toBe(true);
+  });
+
+  test('falls back to the quoted review count when the histogram is unreadable', () => {
+    // Maps' split search+place layout renders fewer than five rows, so the
+    // extension's DOM read comes back null. Without this fallback the penalty
+    // silently vanished there while the web still applied it.
+    const withHistogram = displayScore({ score: 0.72, histogram: [800, 100, 50, 30, 22], removedReviews: removed });
+    const withoutHistogram = displayScore({ score: 0.72, histogram: null, googleReviewCount: 1002, removedReviews: removed });
+    expect(withoutHistogram.pct).toBe(withHistogram.pct);
+  });
+
+  test('an empty histogram is not a total', () => {
+    const d = displayScore({ score: 0.72, histogram: [], googleReviewCount: 1002, removedReviews: removed });
+    expect(d.placeTotal).toBe(1002);
+  });
+
+  test('no total either way → no penalty rather than a guessed one', () => {
+    const d = displayScore({ score: 0.72, removedReviews: removed });
+    expect(d.pct).toBe(72);
+    expect(d.adjusted).toBe(false);
+  });
+
+  test('a notice Google quoted no numerals in adjusts nothing', () => {
+    const d = displayScore({ score: 0.72, histogram: [1000, 0, 0, 0, 2], removedReviews: { text: 'some reviews were removed' } });
+    expect(d.removedCount).toBe(0);
+    expect(d.adjusted).toBe(false);
   });
 });
