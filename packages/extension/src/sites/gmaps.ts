@@ -2039,9 +2039,13 @@ const handleDomMutation = () => {
   // rating block updateUI gates on, so that first updateUI bails and — on a
   // stable URL — nothing would ever call it again until a review page landed.
   // This retries the build until the panel exists; updateUI is a cheap no-op
-  // until the DOM is ready for it.
-  tryRemovedNoticeFromCapture();
-  if (activeRemovedReviews && !document.querySelector('#reviews-container')) updateUI();
+  // until the DOM is ready for it. Gated like the inject above: updateUI reads
+  // the histogram, and a read before the nav block's resetScores gets marked
+  // stale as the previous place's — hiding this place's header score for good.
+  if (getFeatureId() === lastFeatureId) {
+    tryRemovedNoticeFromCapture();
+    if (activeRemovedReviews && !document.querySelector('#reviews-container')) updateUI();
+  }
 
   if (url === lastUrl) return;
   lastUrl = url;
