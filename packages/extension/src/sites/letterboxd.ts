@@ -642,10 +642,11 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 function moveTo(element: HTMLElement, target: HTMLElement) {
   const moved = element.parentElement !== target;
   // Re-inserting a node blurs whatever inside it had focus — hand it back so the
-  // ignore/restore button stays keyboard-reachable after it flips.
+  // ignore/restore button stays keyboard-reachable after it flips. Without
+  // preventScroll, focus() scrolls the row's new list into view, jumping the page.
   const focused = moved && element.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
   target.append(element);
-  focused?.focus();
+  focused?.focus({ preventScroll: true });
   if (!moved) return;
   element.classList.add('lbx-moved');
   element.addEventListener('animationend', () => element.classList.remove('lbx-moved'), { once: true });
