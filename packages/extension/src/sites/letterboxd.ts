@@ -143,8 +143,9 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
 // live in IndexedDB — they'd otherwise fill the ~5MB localStorage cap. The small
 // summary cache stays on localStorage (owned by buildMediaSummary).
 // v3: v2 scores lost their sign (see netScore), so hated films read positive.
-const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v3_${slug}`, CONFIG.CACHE_EXPIRY_MS);
-const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v3_${slug}`, data);
+// v4: v3 placeholders lacked ratings, so a later runtime match was scored — and cached — as 0.
+const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v4_${slug}`, CONFIG.CACHE_EXPIRY_MS);
+const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v4_${slug}`, data);
 // v3: v2 tallies counted the review pages' icon sprite as ratings (see tallyRatings).
 const getCachedRecentRatings = (slug: string): Promise<RecentTally | null> => idbGet(`lbx_recent_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
 const setCachedRecentRatings = (slug: string, data: RecentTally) => idbSet(`lbx_recent_v3_${slug}`, data);
@@ -154,9 +155,9 @@ const getCachedRecentPartial = (slug: string): Promise<(RecentTally & { room: nu
 const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number }) => idbSet(`lbx_recent_part_v3_${slug}`, data);
 // v3: holds every scored runtime match; the comparison against the current film
 // happens at display time, so the cache no longer bakes in a threshold.
-// v4: candidate scores keep their sign.
-const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v4_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
-const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v4_${slug}`, data);
+// v4: candidate scores keep their sign. v5: drops candidates v4 scored as 0 from placeholders.
+const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v5_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
+const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v5_${slug}`, data);
 
 // Films the user has muted from Similar Picks. Deliberately not a cache — it's
 // user intent, so it lives in chrome.storage.local: no TTL, survives clearing
@@ -250,9 +251,11 @@ async function getFilmBasicData(slug: string) {
   const filmUrl = `https://letterboxd.com/film/${slug}/`;
   const statsUrl = `https://letterboxd.com/csi/film/${slug}/rating-histogram/`;
 
+  // The film page never carries the histogram — it arrives by CSI — so a failed
+  // histogram fetch is a failed film (unknown), never a film with no ratings (0).
   const [pageResponse, statsResponse] = await Promise.all([
     throttledFetch(filmUrl),
-    throttledFetch(statsUrl, { credentials: 'include', headers: { 'Referer': filmUrl } }).catch(() => null),
+    throttledFetch(statsUrl, { credentials: 'include', headers: { 'Referer': filmUrl } }),
   ]);
 
   const html = await pageResponse.text();
@@ -262,17 +265,9 @@ async function getFilmBasicData(slug: string) {
   const filmName = doc.querySelector('h1.headline-1')?.textContent?.trim() || slug;
   const imdbLink = doc.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null;
 
-  let ratings: number[] = [];
-  let statsHtmlLen = 0;
-  if (statsResponse) {
-    const statsHtml = await statsResponse.text();
-    statsHtmlLen = statsHtml.length;
-    const statsDoc = new DOMParser().parseFromString(statsHtml, 'text/html');
-    ratings = parseRatings(statsDoc);
-  }
-  if (!ratings.length) ratings = parseRatings(doc);
-
-  const parseEmpty = ratings.length === 0 && statsHtmlLen > 500;
+  const statsHtml = await statsResponse.text();
+  const ratings = parseRatings(new DOMParser().parseFromString(statsHtml, 'text/html'));
+  const parseEmpty = ratings.length === 0 && statsHtml.length > 500;
 
   debug(`${slug}: runtime=${runtime}, year=${year}, ratings=${ratings.join(',') || 'none'}`);
   return { runtime, year, filmName, imdbLink, ratings, parseEmpty };
@@ -581,7 +576,8 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 
     allBasicData.forEach((f: any) => {
       if (!f.fromCache && !f.fetchFailed && f.runtime) {
-        setCachedFilmData(f.slug, { score: 0, ratio: 0, scored: false, runtime: f.runtime, year: f.year, filmName: f.filmName });
+        // Carry what scoring needs, so a later runtime match scores from here — not from nothing.
+        setCachedFilmData(f.slug, { score: 0, ratio: 0, scored: false, runtime: f.runtime, year: f.year, filmName: f.filmName, ratings: f.ratings, imdbLink: f.imdbLink });
       }
     });
 
@@ -629,9 +625,10 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 
     debug(`Candidate films: ${candidates.length}`);
     const result = { films: candidates, stats, listName, listLink };
-    const cacheable = candidates.filter((f: any) => !f.fetchFailed);
-    if (cacheable.length) {
-      setCachedSimilarPicks(currentSlug, { films: cacheable, listName, listLink, stats });
+    // Only a fully resolved crawl is worth a week: caching the survivors of a
+    // partial one would drop every film that failed from the picks until expiry.
+    if (candidates.length && !candidates.some((f: any) => f.fetchFailed)) {
+      setCachedSimilarPicks(currentSlug, { films: candidates, listName, listLink, stats });
     }
     return result;
   } catch (error) {
