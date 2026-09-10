@@ -18,7 +18,6 @@ declare global {
     __truescorePreviewCapture?: boolean;
     __truescoreMapsCreds?: MapsCapturedCreds;
     __truescoreRequestMapsCreds?: () => Promise<MapsCapturedCreds | null>;
-    __rcGmapsKeybound?: boolean;
     __truescoreGmaps?: { fetchLabelSearch: (query: string) => Promise<unknown[]> } & Record<string, unknown>;
   }
 }

@@ -1,6 +1,5 @@
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
-import { findReviewsScroll } from '../shared/gmaps-dom';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import { getReasoningEffort, getProviderChoice } from '../shared/config';
@@ -449,62 +448,7 @@ const resetScores = () => {
     if (abortControllers[key]) { abortControllers[key]!.abort(); abortControllers[key] = null; }
   }
   if (fullPctObserver) { fullPctObserver.disconnect(); fullPctObserver = null; }
-  stopAutoScroll();
 };
-
-let autoScroll: { active: boolean; abort: AbortController | null } = { active: false, abort: null };
-
-const stopAutoScroll = () => {
-  if (!autoScroll.active) return;
-  autoScroll.active = false;
-  autoScroll.abort?.abort();
-  autoScroll.abort = null;
-};
-
-const startAutoScroll = async () => {
-  const container = findReviewsScroll();
-  if (!container) return;
-  const ctrl = new AbortController();
-  autoScroll = { active: true, abort: ctrl };
-  container.addEventListener('wheel', (e) => { if ((e as WheelEvent).deltaY < 0) stopAutoScroll(); }, { signal: ctrl.signal });
-
-  let stagnant = 0;
-  while (autoScroll.active) {
-    const beforeCount = container.querySelectorAll('.jftiEf[data-review-id]').length;
-    const beforeHeight = container.scrollHeight;
-    container.scrollTo({ top: container.scrollHeight });
-    await new Promise((r) => setTimeout(r, 350));
-    if (!autoScroll.active) return;
-    const afterCount = container.querySelectorAll('.jftiEf[data-review-id]').length;
-    if (afterCount === beforeCount && container.scrollHeight === beforeHeight) {
-      if (++stagnant >= 2) break;
-    } else stagnant = 0;
-  }
-  stopAutoScroll();
-};
-
-const isTypingTarget = (el: EventTarget | null) => {
-  if (!(el instanceof HTMLElement)) return false;
-  const tag = el.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
-};
-
-if (!(window as any).__rcGmapsKeybound) {
-  (window as any).__rcGmapsKeybound = true;
-  document.addEventListener('keydown', (e) => {
-    if (e.repeat || isTypingTarget(e.target)) return;
-    if (e.key === 'Escape' && autoScroll.active) { stopAutoScroll(); return; }
-    if (e.key !== 'Alt' || e.ctrlKey || e.metaKey) return;
-    const container = findReviewsScroll();
-    if (!container) return;
-    e.preventDefault();
-    if (e.shiftKey) {
-      stopAutoScroll();
-      container.scrollTo({ top: 0, behavior: 'smooth' });
-    } else if (autoScroll.active) stopAutoScroll();
-    else startAutoScroll();
-  });
-}
 
 type ColorStop = { at: number; r: number; g: number; b: number };
 const RED = { r: 248, g: 113, b: 113 };

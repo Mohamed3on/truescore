@@ -1,5 +1,4 @@
 import { MAPS_CREDS_CAPTURED, PREVIEW_CAPTURED, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
-import { findReviewsScroll } from '../shared/gmaps-dom';
 import { credsFromBatchExecute } from '@truescore/gmaps-shared';
 
 // MAIN world, document_start — early enough that our fetch/XHR patches wrap the
@@ -75,6 +74,18 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
     captureResolve = null;
     captureInFlight = null;
     resolve?.(c);
+  };
+  // Anchor on the rating histogram (.jANrlb) or a review card, both in the
+  // scrolling pane — Maps loads the list only once it scrolls into view, so a
+  // list pushed below the fold (e.g. by a removal notice) has no card yet.
+  const findReviewsScroll = (): HTMLElement | null => {
+    let el = document.querySelector<HTMLElement>('.jftiEf[data-review-id], .jANrlb')?.parentElement ?? null;
+    while (el) {
+      const s = getComputedStyle(el);
+      if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return el;
+      el = el.parentElement;
+    }
+    return null;
   };
   const requestCapture = (): Promise<MapsCapturedCreds | null> => {
     if (captureInFlight) return captureInFlight;
