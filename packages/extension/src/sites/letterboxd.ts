@@ -143,12 +143,13 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
 // summary cache stays on localStorage (owned by buildMediaSummary).
 const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v2_${slug}`, CONFIG.CACHE_EXPIRY_MS);
 const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v2_${slug}`, data);
-const getCachedRecentRatings = (slug: string): Promise<RecentTally | null> => idbGet(`lbx_recent_v2_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
-const setCachedRecentRatings = (slug: string, data: RecentTally) => idbSet(`lbx_recent_v2_${slug}`, data);
+// v3: v2 tallies counted the review pages' icon sprite as ratings (see tallyRatings).
+const getCachedRecentRatings = (slug: string): Promise<RecentTally | null> => idbGet(`lbx_recent_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
+const setCachedRecentRatings = (slug: string, data: RecentTally) => idbSet(`lbx_recent_v3_${slug}`, data);
 // A tally abandoned early by getCandidateRecentRatings — kept apart from the full
 // one so the film's own page never mistakes a ceiling for its real recent %.
-const getCachedRecentPartial = (slug: string): Promise<(RecentTally & { room: number }) | null> => idbGet(`lbx_recent_part_v2_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
-const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number }) => idbSet(`lbx_recent_part_v2_${slug}`, data);
+const getCachedRecentPartial = (slug: string): Promise<(RecentTally & { room: number }) | null> => idbGet(`lbx_recent_part_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
+const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number }) => idbSet(`lbx_recent_part_v3_${slug}`, data);
 // v3: holds every scored runtime match; the comparison against the current film
 // happens at display time, so the cache no longer bakes in a threshold.
 const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v3_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
@@ -296,10 +297,13 @@ function calculateCombinedScore(lbRatings: number[], imdbScore = 0, imdbTotal = 
 }
 
 /**
- * Tallies ratings from review page for recent reviews calculation
+ * Tallies ratings from review page for recent reviews calculation. Scoped to
+ * review entries: every page also inlines an icon sprite with one `svg.-rating`
+ * per star value, which would add 10 phantom ratings per page — even past the
+ * last page of reviews.
  */
 function tallyRatings(doc: Document, tally: RecentTally) {
-  doc.querySelectorAll('svg.-rating[aria-label]').forEach((svg) => {
+  doc.querySelectorAll('.production-viewing svg.-rating[aria-label]').forEach((svg) => {
     const label = svg.getAttribute('aria-label')!;
     const value = (label.match(/★/g) || []).length * 2 + (label.includes('½') ? 1 : 0);
     if (value <= 0) return;
