@@ -1,5 +1,6 @@
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
+import { findReviewsScroll } from '../shared/gmaps-dom';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import { getReasoningEffort, getProviderChoice } from '../shared/config';
@@ -453,18 +454,6 @@ const resetScores = () => {
 
 let autoScroll: { active: boolean; abort: AbortController | null } = { active: false, abort: null };
 
-const findReviewsScrollContainer = (): HTMLElement | null => {
-  const first = document.querySelector<HTMLElement>('.jftiEf[data-review-id]');
-  if (!first) return null;
-  let el: HTMLElement | null = first.parentElement;
-  while (el) {
-    const style = getComputedStyle(el);
-    if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return el;
-    el = el.parentElement;
-  }
-  return null;
-};
-
 const stopAutoScroll = () => {
   if (!autoScroll.active) return;
   autoScroll.active = false;
@@ -473,7 +462,7 @@ const stopAutoScroll = () => {
 };
 
 const startAutoScroll = async () => {
-  const container = findReviewsScrollContainer();
+  const container = findReviewsScroll();
   if (!container) return;
   const ctrl = new AbortController();
   autoScroll = { active: true, abort: ctrl };
@@ -506,7 +495,7 @@ if (!(window as any).__rcGmapsKeybound) {
     if (e.repeat || isTypingTarget(e.target)) return;
     if (e.key === 'Escape' && autoScroll.active) { stopAutoScroll(); return; }
     if (e.key !== 'Alt' || e.ctrlKey || e.metaKey) return;
-    const container = findReviewsScrollContainer();
+    const container = findReviewsScroll();
     if (!container) return;
     e.preventDefault();
     if (e.shiftKey) {
