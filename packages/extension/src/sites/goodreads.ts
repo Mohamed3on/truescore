@@ -6,10 +6,10 @@ import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 import { buildMediaSummary } from '../shared/review-summary';
 import { buildSearchSection } from '../shared/review-search';
+import { goodreadsViewerCacheScope, shelfScoreCacheTtl } from './goodreads-shelf-cache';
 
 const CONFIG = {
   BOOK_CACHE_MS: 14 * 24 * 60 * 60 * 1000,
-  SHELF_SCORE_CACHE_MS: 30 * 24 * 60 * 60 * 1000,
   PICKS_CACHE_MS: 7 * 24 * 60 * 60 * 1000,
   SUMMARY_CACHE_MS: 14 * 24 * 60 * 60 * 1000,
   MAX_CONCURRENCY: 15,
@@ -513,9 +513,12 @@ const getBookShelves = async (bookURL: string): Promise<string[]> => {
     .filter(Boolean);
 };
 
-const getShelfScore = async (shelf: string): Promise<number> => {
-  const cacheKey = `gr_shelf_score_${shelf}`;
-  const cached = await idbGet(cacheKey, CONFIG.SHELF_SCORE_CACHE_MS);
+const getShelfScore = async (shelf: string, viewerScope: string): Promise<number> => {
+  const cacheKey = `gr_shelf_score_v2_${viewerScope}_${shelf}`;
+  const cached = await idbGet(
+    cacheKey,
+    (score) => shelfScoreCacheTtl(score, CONFIG.IGNORED_SHELF_THRESHOLD),
+  );
   if (cached !== null) return cached;
   const doc = await fetchDoc(`https://www.goodreads.com/shelf/show/${shelf}`);
   const liked = doc.querySelectorAll('[data-rating="4"], [data-rating="5"]').length;
@@ -525,10 +528,10 @@ const getShelfScore = async (shelf: string): Promise<number> => {
   return score;
 };
 
-const pickShelf = async (shelves: string[]): Promise<string | null> => {
+const pickShelf = async (shelves: string[], viewerScope: string): Promise<string | null> => {
   for (const shelf of shelves) {
     try {
-      const score = await getShelfScore(shelf);
+      const score = await getShelfScore(shelf, viewerScope);
       if (score >= CONFIG.IGNORED_SHELF_THRESHOLD) return shelf;
     } catch (e: any) { debug(`shelf ${shelf} failed:`, e.message); }
   }
@@ -596,13 +599,14 @@ const pickBar = (threshold: number | null, refScore: number) => threshold ?? ref
 const findSimilarPicks = async (params: {
   originalBookURL: string;
   shelf: string;
+  viewerScope: string;
   /** The number a candidate has to be able to reach — see pickBar. */
   bar: number;
   refAvgRating: string;
 }): Promise<SimilarResult> => {
-  const { originalBookURL, shelf, bar, refAvgRating } = params;
+  const { originalBookURL, shelf, viewerScope, bar, refAvgRating } = params;
   const originalId = getBookIdFromURL(originalBookURL);
-  const cacheKey = `gr_picks_v2_${originalId}_${shelf}`;
+  const cacheKey = `gr_picks_v3_${viewerScope}_${originalId}_${shelf}`;
   const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
   if (cached) return cached;
   const refAvg = parseFloat(refAvgRating);
@@ -841,7 +845,8 @@ const renderSimilarPicks = async (
   // Cached full view → restore instantly; no shelf lookup or book fetches on refresh.
   // v2: bumped to flush entries poisoned by cached "Recent: N/A" from failed fetches.
   // v3: v2 views held unsigned scores and the old two-gate qualifying list.
-  const viewKey = `gr_picks_view3_${getBookIdFromURL(currentBookURL)}`;
+  const viewerScope = goodreadsViewerCacheScope(document);
+  const viewKey = `gr_picks_view4_${viewerScope}_${getBookIdFromURL(currentBookURL)}`;
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
   if (cachedView) { renderPicksView(section, cachedView, currentStats); return; }
 
@@ -857,7 +862,7 @@ const renderSimilarPicks = async (
       section.append(winnerBanner('No shelves found for this book.', null));
       return;
     }
-    const picked = await pickShelf(shelves);
+    const picked = await pickShelf(shelves, viewerScope);
     if (!picked) {
       section.textContent = '';
       section.append(winnerBanner('No usable shelf found for this book.', null));
@@ -870,6 +875,7 @@ const renderSimilarPicks = async (
     result = await findSimilarPicks({
       originalBookURL: currentBookURL,
       shelf,
+      viewerScope,
       bar: pickBar(adjust(currentStats.score, currentRecentRatio), currentStats.score),
       refAvgRating: currentStats.avgRating,
     });

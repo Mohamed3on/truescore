@@ -28,11 +28,14 @@ const run = <T>(mode: IDBTransactionMode, op: (store: IDBObjectStore) => IDBRequ
       }),
   );
 
-export const idbGet = async (key: string, ttl: number): Promise<any> => {
+export type CacheTtl = number | ((data: any) => number);
+
+export const idbGet = async (key: string, ttl: CacheTtl): Promise<any> => {
   try {
     const entry = await run<{ data: any; ts: number } | undefined>('readonly', (s) => s.get(key));
     if (!entry) return null;
-    if (Date.now() - entry.ts > ttl) { idbDel(key); return null; }
+    const entryTtl = typeof ttl === 'function' ? ttl(entry.data) : ttl;
+    if (Date.now() - entry.ts > entryTtl) { idbDel(key); return null; }
     return entry.data;
   } catch { return null; }
 };
