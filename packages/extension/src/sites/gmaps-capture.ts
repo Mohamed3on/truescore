@@ -75,8 +75,11 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
     captureInFlight = null;
     resolve?.(c);
   };
+  // Anchor on a review card, else the rating histogram (.jANrlb) in the same
+  // pane — Maps loads the list only once it scrolls into view, so a list pushed
+  // below the fold (e.g. by a removal notice) has no card to anchor on yet.
   const findReviewsScroll = (): HTMLElement | null => {
-    let el = document.querySelector<HTMLElement>('.jftiEf[data-review-id]')?.parentElement ?? null;
+    let el = document.querySelector<HTMLElement>('.jftiEf[data-review-id], .jANrlb')?.parentElement ?? null;
     while (el) {
       const s = getComputedStyle(el);
       if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return el;
