@@ -1,6 +1,6 @@
 // Amazon search page - sort by rating score
 import { addCommas } from '../shared/utils';
-import { markBestRatios, cycleBestRatios } from '../shared/score-grid';
+import { markBestRatios, cycleBestRatios, orderByCssBand } from '../shared/score-grid';
 
 const CACHE_KEY = 'amz-rating-cache';
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
@@ -78,6 +78,11 @@ const getRatingScores = async (productSIN: string, elementToReplace: Element, ca
   }
 };
 
+// Amazon empties far-off result cards as you scroll (their contents detached,
+// the card kept), so a re-sort — say, infinite scroll appending the next page —
+// can't find the rating inside them and would sink them as unrated. The detached
+// rating node keeps its score, so each card remembers it.
+const ratingEls = new WeakMap<Element, Element>();
 let picks: (Element | null)[] = [];
 let resultObs: MutationObserver | null = null;
 let observedContainer: Element | null = null;
@@ -113,9 +118,11 @@ const sortAmazonResults = async () => {
     const numberOfRatingsElement =
       item.querySelector('[data-cy="reviews-block"] a span.a-size-mini') ||
       item.querySelector('[data-cy="reviews-block"] .a-row.a-size-small a span.a-size-small') ||
-      item.querySelector('.sg-row .a-spacing-top-micro .a-link-normal span.a-size-base');
+      item.querySelector('.sg-row .a-spacing-top-micro .a-link-normal span.a-size-base') ||
+      ratingEls.get(item);
 
     if (!numberOfRatingsElement) { noRatingItems.push([0, item]); continue; }
+    ratingEls.set(item, numberOfRatingsElement);
 
     // Fallback dedup: color/style variants Amazon lists as separate ASINs without
     // swatch metadata. Variants share one review pool, so same brand + identical
@@ -149,19 +156,12 @@ const sortAmazonResults = async () => {
 
   const searchResults = document.querySelector('.s-result-list.s-search-results') || document.querySelector('#mainResults .s-result-list');
   if (searchResults && itemsArr.length > 0) {
-    // Skip when items already lead the container in sorted order — host
-    // mutations (lazy tiles, ad slots) refire this pass, and a no-op reshuffle
-    // would drag items out from under the cursor.
-    const inPlace = itemsArr.every(([, item], i) => searchResults.children[i] === item);
-    if (!inPlace) {
-      pauseObs();
-      for (const [, item] of itemsArr) item.remove();
-      const refNode = searchResults.firstChild;
-      for (const [, item] of itemsArr) searchResults.insertBefore(item, refNode);
-      resumeObs();
-    }
-    picks = markBestRatios(itemsArr.map(([, item]) => item.querySelector('[data-nps-ratio]')))
-      .map((badge) => badge.closest('.s-result-item'));
+    // Rank by CSS `order`, never by moving cards: Amazon doesn't refill an emptied
+    // card once it has been moved, so a re-sort after infinite scroll left every
+    // card that was emptied at the time blank for good.
+    orderByCssBand(searchResults, itemsArr.map(([, item]) => item));
+    const tinted = markBestRatios(itemsArr.map(([, item]) => ratingEls.get(item) ?? null));
+    picks = itemsArr.map(([, item]) => item).filter((item) => tinted.some((el) => el === ratingEls.get(item)));
   }
 };
 
