@@ -118,6 +118,59 @@ export const rankChildren = (container: Element): { scored: Element[]; rest: Ele
   return { scored: scored.map((s) => s.child), rest };
 };
 
+// Walking a ranking top-down, tint each badge whose ratio clearly beats every one
+// above it — the picks that trade some volume for a better hit rate. Ratios are
+// compared as displayed (`data-nps-ratio`, whole percent), where a one-point edge
+// can be rounding alone, so it takes two. A card scoring (`data-nps`) under the
+// floor is too thin for its ratio to mean much — one 5★ review reads as 100%.
+// Returns the tinted badges.
+const BEST_RATIO_MARGIN = 2;
+const BEST_RATIO_MIN_SCORE = 20;
+const BEST_RATIO_TINT = 'rgba(74, 222, 128, 0.2)';
+export const markBestRatios = (badges: (Element | null)[]): HTMLElement[] => {
+  const picks: HTMLElement[] = [];
+  let best = -Infinity;
+  for (const badge of badges) {
+    if (!(badge instanceof HTMLElement)) continue;
+    const ratio = Number(badge.dataset.npsRatio);
+    const on = ratio >= best + BEST_RATIO_MARGIN && Number(badge.dataset.nps) >= BEST_RATIO_MIN_SCORE;
+    if (ratio > best) best = ratio;
+    if (on) picks.push(badge);
+    badge.style.background = on ? BEST_RATIO_TINT : '';
+    badge.style.boxShadow = on ? `0 0 0 3px ${BEST_RATIO_TINT}` : '';
+    badge.style.borderRadius = on ? '3px' : '';
+  }
+  return picks;
+};
+
+// ] / [ step through the picks' cards in reading order, the way the YouTube
+// thumbnail bar cycles its ranked videos: smooth-scroll the card to center and
+// ring it, clamped at both ends. `picks` hands over the cards as of the last
+// ranking rather than re-querying badges, since Amazon empties far-off result
+// cards (badge and all) while the card itself stays put. Order is read off the
+// layout, since CSS `order` ranking leaves the DOM order stale.
+export const cycleBestRatios = (picks: () => (Element | null)[]): void => {
+  let current: HTMLElement | null = null;
+  document.addEventListener('keydown', (e) => {
+    if ((e.key !== ']' && e.key !== '[') || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement;
+    if (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+    const at = (el: Element) => el.getBoundingClientRect();
+    const cards = picks()
+      .filter((card): card is HTMLElement => card instanceof HTMLElement && card.isConnected)
+      .sort((a, b) => at(a).top - at(b).top || at(a).left - at(b).left);
+    if (!cards.length) return;
+    e.preventDefault();
+    const i = current ? cards.indexOf(current) : -1;
+    const next = cards[e.key === ']' ? Math.min(i + 1, cards.length - 1) : Math.max(i - 1, 0)];
+    // Outside the card: an inset ring loses to cards whose image paints over it.
+    current?.style.removeProperty('outline');
+    next.style.outline = '3px solid rgb(74, 222, 128)';
+    next.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    current = next;
+  });
+};
+
 // --- the grid ranker -------------------------------------------------------
 
 export interface ScoreGridOpts {
@@ -145,13 +198,16 @@ export const setupScoreGrid = ({
 }: ScoreGridOpts): void => {
   const discoverContainers = discover ?? structuralContainers(cardSelector);
 
+  let picks: (Element | null)[] = [];
   const resort = () => {
     const cards = [...document.querySelectorAll(cardSelector)];
     const containers = new Set(discoverContainers(cards));
+    picks = [];
     for (const container of containers) {
       const { scored, rest } = rankChildren(container);
       if (scored.length < 2) continue; // nothing to rank against
       applyOrder(container, scored, rest);
+      picks.push(...markBestRatios(scored.map(bearer)).map((badge) => badge.closest(cardSelector)));
     }
   };
 
@@ -191,6 +247,7 @@ export const setupScoreGrid = ({
           // the card wrapper being recreated around it.
           const badge = renderScoreBadge(data);
           badge.setAttribute('data-nps', String(data.score));
+          badge.setAttribute('data-nps-ratio', String(Math.round(data.nps)));
           placeBadge(card, badge);
           scheduleSort();
         })
@@ -206,4 +263,5 @@ export const setupScoreGrid = ({
 
   processCards();
   new MutationObserver(debouncedProcess).observe(document.body, { childList: true, subtree: true });
+  cycleBestRatios(() => picks);
 };

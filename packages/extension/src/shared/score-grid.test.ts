@@ -5,6 +5,7 @@ import {
   orderByAppend,
   orderByCssBand,
   renderScoreBadge,
+  markBestRatios,
 } from './score-grid';
 
 // --- DOM builders ----------------------------------------------------------
@@ -134,6 +135,42 @@ describe('applyOrder strategies', () => {
     expect((pending as HTMLElement).style.order).toBe('');
     // no node moved
     expect([...g.children]).toEqual([a, pending, b]);
+  });
+});
+
+// --- markBestRatios --------------------------------------------------------
+
+describe('markBestRatios', () => {
+  const badge = (score: number, ratio?: number): HTMLElement => {
+    const el = document.createElement('span');
+    el.setAttribute('data-nps', String(score));
+    if (ratio != null) el.setAttribute('data-nps-ratio', String(ratio));
+    return el;
+  };
+
+  test('tints each badge whose ratio clearly beats every one ranked above it', () => {
+    // The dm biscuit shelf ranked by score: dips, ties and a one-point edge stay plain.
+    const badges = [badge(162, 82), badge(147, 81), badge(137, 82), badge(128, 83), badge(123, 93)];
+    expect(markBestRatios(badges)).toEqual([badges[0], badges[4]]);
+    expect(badges[0].style.background).not.toBe('');
+    expect(badges[1].style.background).toBe('');
+  });
+
+  test('a thin card never earns a tint, however perfect its ratio', () => {
+    const badges = [badge(162, 82), badge(1, 100)];
+    expect(markBestRatios(badges)).toEqual([badges[0]]);
+  });
+
+  test('skips missing badges and unknown ratios without lowering the bar', () => {
+    const [hi, unknown, lo] = [badge(90, 70), badge(80), badge(70, 60)];
+    expect(markBestRatios([null, hi, unknown, lo])).toEqual([hi]);
+  });
+
+  test('clears a tint the badge no longer earns after a re-rank', () => {
+    const [a, b] = [badge(50, 80), badge(40, 90)];
+    markBestRatios([a, b]);
+    expect(markBestRatios([b, a])).toEqual([b]);
+    expect(a.style.background).toBe('');
   });
 });
 

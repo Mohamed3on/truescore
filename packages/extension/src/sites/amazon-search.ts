@@ -1,5 +1,6 @@
 // Amazon search page - sort by rating score
 import { addCommas } from '../shared/utils';
+import { markBestRatios, cycleBestRatios } from '../shared/score-grid';
 
 const CACHE_KEY = 'amz-rating-cache';
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
@@ -68,6 +69,8 @@ const getRatingScores = async (productSIN: string, elementToReplace: Element, ca
     const scoreAbsolute = Math.round(ratings.totalReviews * (scorePercentage / 100));
     const calculatedScore = Math.round(scoreAbsolute * (scorePercentage / 100)) || 0;
     elementToReplace.textContent = ` ${addCommas(calculatedScore)} ratio: (${scorePercentage}%)`;
+    elementToReplace.setAttribute('data-nps', String(calculatedScore));
+    elementToReplace.setAttribute('data-nps-ratio', String(scorePercentage));
     return { calculatedScore };
   } catch (e) {
     console.error(`Failed to get rating for ${productSIN}:`, e);
@@ -75,6 +78,7 @@ const getRatingScores = async (productSIN: string, elementToReplace: Element, ca
   }
 };
 
+let picks: (Element | null)[] = [];
 let resultObs: MutationObserver | null = null;
 let observedContainer: Element | null = null;
 const pauseObs = () => { if (resultObs) resultObs.disconnect(); };
@@ -156,6 +160,8 @@ const sortAmazonResults = async () => {
       for (const [, item] of itemsArr) searchResults.insertBefore(item, refNode);
       resumeObs();
     }
+    picks = markBestRatios(itemsArr.map(([, item]) => item.querySelector('[data-nps-ratio]')))
+      .map((badge) => badge.closest('.s-result-item'));
   }
 };
 
@@ -186,6 +192,7 @@ const sortAmazonResults = async () => {
     resultObs.observe(container, { childList: true });
   };
 
+  cycleBestRatios(() => picks);
   if (isSearchPage()) { await sortAmazonResults(); watchResults(); }
 
   let navObs: MutationObserver | null = null;
