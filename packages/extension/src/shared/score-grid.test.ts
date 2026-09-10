@@ -60,11 +60,15 @@ describe('rankChildren', () => {
     expect(scored).toEqual([hi, lo]);
   });
 
-  test('negative scores rank below positive ones', () => {
+  test('hated cards sink into their own band, below the unscored', () => {
     const neg = card(-30);
+    const worse = card(-90);
     const pos = card(5);
-    const { scored } = rankChildren(grid(neg, pos));
-    expect(scored).toEqual([pos, neg]);
+    const pending = card();
+    const { scored, rest, sunk } = rankChildren(grid(worse, neg, pending, pos));
+    expect(scored).toEqual([pos]);
+    expect(rest).toEqual([pending]);
+    expect(sunk).toEqual([neg, worse]);
   });
 
   test('all-unscored container yields no scored', () => {
@@ -135,6 +139,20 @@ describe('applyOrder strategies', () => {
     expect((pending as HTMLElement).style.order).toBe('');
     // no node moved
     expect([...g.children]).toEqual([a, pending, b]);
+  });
+
+  test('a hated card lands below the unscored under every strategy', () => {
+    const hated = card(-40);
+    const loved = card(60);
+    const pending = card();
+    const g = grid(hated, pending, loved);
+    const { scored, rest, sunk } = rankChildren(g);
+    orderByCssBand(g, scored, rest, sunk);
+    expect((loved as HTMLElement).style.order).toBe('-1');
+    expect((pending as HTMLElement).style.order).toBe('');
+    expect((hated as HTMLElement).style.order).toBe('1');
+    orderByAppend(g, scored, rest, sunk);
+    expect([...g.children]).toEqual([loved, pending, hated]);
   });
 });
 

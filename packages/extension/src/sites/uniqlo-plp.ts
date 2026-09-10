@@ -25,7 +25,7 @@ const scoreFromRateCount = (rc: any) => {
 };
 
 const fetchScore = async (country: string, lang: string, productId: string) => {
-  const cacheKey = `nps_uniqlo_score_${productId}`;
+  const cacheKey = `nps_uniqlo_score_v2_${productId}`; // v2: scores keep their sign (netScore)
   const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
   if (cached) return cached.value;
   // reuse PDP cache if available

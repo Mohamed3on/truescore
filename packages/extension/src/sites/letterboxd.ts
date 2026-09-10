@@ -1,3 +1,4 @@
+import { netScore } from '@truescore/gmaps-shared';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { couldReach, rankPicks } from '../shared/better-picks';
 import { adjust, ratioFromTally, TEN_POINT } from '../shared/recency';
@@ -104,7 +105,7 @@ function debugDetails(stats: any) {
       let status: string;
       if (f.fetchFailed) status = '(fetch failed)';
       else if (f.parseEmpty) status = '⚠ parse empty';
-      else status = f.score >= stats.currentAdjusted ? '✓' : '✗';
+      else status = stats.currentAdjusted != null && couldReach(stats.currentAdjusted, f.score) ? '✓' : '✗';
       lines.push(`  ${status} ${f.name} — ${f.runtime}m — ${f.fetchFailed ? '?' : addCommas(f.score)}`);
     }
   }
@@ -141,8 +142,9 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
 // Heavy per-film accumulators (one entry per candidate film during similar-picks)
 // live in IndexedDB — they'd otherwise fill the ~5MB localStorage cap. The small
 // summary cache stays on localStorage (owned by buildMediaSummary).
-const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v2_${slug}`, CONFIG.CACHE_EXPIRY_MS);
-const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v2_${slug}`, data);
+// v3: v2 scores lost their sign (see netScore), so hated films read positive.
+const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v3_${slug}`, CONFIG.CACHE_EXPIRY_MS);
+const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v3_${slug}`, data);
 // v3: v2 tallies counted the review pages' icon sprite as ratings (see tallyRatings).
 const getCachedRecentRatings = (slug: string): Promise<RecentTally | null> => idbGet(`lbx_recent_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
 const setCachedRecentRatings = (slug: string, data: RecentTally) => idbSet(`lbx_recent_v3_${slug}`, data);
@@ -152,8 +154,9 @@ const getCachedRecentPartial = (slug: string): Promise<(RecentTally & { room: nu
 const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number }) => idbSet(`lbx_recent_part_v3_${slug}`, data);
 // v3: holds every scored runtime match; the comparison against the current film
 // happens at display time, so the cache no longer bakes in a threshold.
-const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v3_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
-const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v3_${slug}`, data);
+// v4: candidate scores keep their sign.
+const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v4_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
+const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v4_${slug}`, data);
 
 // Films the user has muted from Similar Picks. Deliberately not a cache — it's
 // user intent, so it lives in chrome.storage.local: no TTL, survives clearing
@@ -291,9 +294,8 @@ function calculateCombinedScore(lbRatings: number[], imdbScore = 0, imdbTotal = 
   const totalScore = lbAbsolute + imdbScore;
   const totalRatings = lbTotal + imdbTotal;
   const ratio = totalRatings > 0 ? totalScore / totalRatings : 0;
-  const score = Math.round(totalScore * ratio);
 
-  return { score, ratio };
+  return { score: netScore(totalScore, totalRatings), ratio };
 }
 
 /**
@@ -832,7 +834,8 @@ async function run(ratings: number[]) {
   const currentFilmName = document.querySelector('h1.headline-1')?.textContent?.trim() || currentSlug;
 
   const cachedFilmRaw = currentSlug ? await getCachedFilmData(currentSlug) : null;
-  const cachedFilm = cachedFilmRaw?.score > 0 ? cachedFilmRaw : null;
+  // Similar Picks caches unscored placeholders; a hated film's real score is below 0.
+  const cachedFilm = cachedFilmRaw?.scored ? cachedFilmRaw : null;
   const recentRatingsRaw = getRecentRatingsSummary().catch(() => null);
 
   const reviewSection = document.querySelector('.review.body-text');

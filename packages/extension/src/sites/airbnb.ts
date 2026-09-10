@@ -1,3 +1,4 @@
+import { netScore } from '@truescore/gmaps-shared';
 import { addCommas } from '../shared/utils';
 
 let hasRun = false;
@@ -13,7 +14,7 @@ const getScore = (ratingElements: NodeListOf<Element>) => {
   const ratio = (ratingDetails[0] - ratingDetails[4]) / 100;
   const ratingsDescription = document.querySelector('h2.hpipapi[elementtiming="LCP-target"] > span');
   const numberOfReviews = getNumberOfReviews(ratingsDescription);
-  const score = Math.round(numberOfReviews * ratio * ratio);
+  const score = netScore(numberOfReviews * ratio, numberOfReviews);
   const newDiv = document.createElement('div');
   newDiv.textContent = `${addCommas(score)} (${Math.round(ratio * 100)}%)`;
   const h1 = document.querySelector('h1');

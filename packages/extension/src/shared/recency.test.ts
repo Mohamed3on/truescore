@@ -43,6 +43,13 @@ describe('adjust', () => {
     expect(adjust(1234, 0.62)).toBe(765);
   });
 
+  test('the newest reviews set the direction, the all-time Score the size', () => {
+    expect(adjust(1000, 0.5)).toBe(500); // loved, still loved
+    expect(adjust(1000, -0.5)).toBe(-500); // loved, now hated
+    expect(adjust(-1000, -0.5)).toBe(-500); // hated, still hated — used to read +500
+    expect(adjust(-1000, 0.5)).toBe(500); // hated, now loved: mirror of loved-now-hated
+  });
+
   test('propagates unknown instead of collapsing it to zero', () => {
     expect(adjust(1234, null)).toBeNull();
   });

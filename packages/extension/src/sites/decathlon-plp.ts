@@ -15,7 +15,7 @@ if (!site) throw new Error('unsupported locale');
 const { tld, locale } = site;
 
 const fetchScore = async (sku: string, productId: string) => {
-  const key = `nps_score_${productId}`;
+  const key = `nps_score_v2_${productId}`; // v2: scores keep their sign (netScore)
   const cached = cacheGetMaybe(key, CACHE_TTL);
   if (cached) return cached.value;
 

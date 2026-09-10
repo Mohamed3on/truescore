@@ -554,15 +554,20 @@ export const overallPctFromHistogram = (h: Histogram): number => {
   return Math.round((((h[0] ?? 0) - (h[4] ?? 0)) / total) * 100);
 };
 
-// (5★ − 1★) · |5★ − 1★| / total — the integer "score" shown next to the
-// place name. Sign tracks net polarity; magnitude scales with both the gap
-// between 5★/1★ counts and how decisively reviewers chose.
-export const overallScoreFromHistogram = (h: Histogram): number => {
-  const total = histogramTotal(h);
-  if (!total) return 0;
-  const diff = (h[0] ?? 0) - (h[4] ?? 0);
-  return Math.round((diff * Math.abs(diff)) / total);
+// The TrueScore, on every site: net · |net| / total, where net is loved minus
+// hated. Sign tracks net polarity; magnitude scales with both the gap and how
+// decisively reviewers chose. Never write it as `net * (net / total)` — that
+// squares the sign away and hands a hated item a big positive score. Rounded on
+// the magnitude so an item and its mirror image score exact opposites.
+export const netScore = (net: number, total: number): number => {
+  if (!(total > 0)) return 0;
+  const magnitude = Math.round((net * net) / total);
+  return net < 0 && magnitude ? -magnitude : magnitude;
 };
+
+// (5★ − 1★) · |5★ − 1★| / total — the integer "score" shown next to the place name.
+export const overallScoreFromHistogram = (h: Histogram): number =>
+  netScore((h[0] ?? 0) - (h[4] ?? 0), histogramTotal(h));
 
 // The Score as it should be shown: the raw net polarity damped by the place's
 // removal rate. The penalty maths is one function, but its *inputs* used not to

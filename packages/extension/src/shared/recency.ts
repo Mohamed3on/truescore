@@ -1,4 +1,4 @@
-// How positive an item's newest reviews run, and the Score damped by it.
+// How positive an item's newest reviews run, and the Score re-aimed by it.
 //
 // One rule, one unit, one absence contract. `recentRatio` is a signed share in
 // −1..1 and `null` means "no evidence" — never "hated". `adjust` propagates that
@@ -38,9 +38,14 @@ export const recentRatio = (ratings: number[], p: Polarity = FIVE_STAR): number 
 export const ratioFromTally = (net: number, total: number): number | null =>
   total > 0 ? net / total : null;
 
-/** The Score damped by the recent ratio. Unknown in → unknown out. */
+/**
+ * The Score re-aimed by the recent ratio: its size from the all-time Score, its
+ * direction and strength from the newest reviews. `score * ratio` multiplied two
+ * signs, so an item hated then and still hated now came out positive.
+ * Unknown in → unknown out.
+ */
 export function adjust(score: number, ratio: number): number;
 export function adjust(score: number, ratio: number | null): number | null;
 export function adjust(score: number, ratio: number | null): number | null {
-  return ratio == null ? null : Math.round(score * ratio);
+  return ratio == null ? null : Math.round(Math.abs(score) * ratio);
 }

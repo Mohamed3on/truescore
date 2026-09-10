@@ -1,6 +1,7 @@
+import { netScore } from '@truescore/gmaps-shared';
 import { idbGet, idbSet } from '../shared/idb-cache';
-import { rankPicks } from '../shared/better-picks';
-import { recentRatio } from '../shared/recency';
+import { couldReach, rankPicks } from '../shared/better-picks';
+import { adjust, recentRatio } from '../shared/recency';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 import { buildMediaSummary } from '../shared/review-summary';
@@ -395,7 +396,7 @@ const parseBookNextData = (nextData: any): BookStats | null => {
   const ratio = scoreAbsolute / total;
   return {
     avgRating: String(stats.averageRating),
-    score: scoreAbsolute * ratio,
+    score: netScore(scoreAbsolute, total),
     ratio,
     workId: workKey.replace('Work:', ''),
     jwtToken: nextData?.props?.pageProps?.jwtToken ?? null,
@@ -411,7 +412,8 @@ const getCurrentBookStats = (): BookStats | null => {
 const getBookIdFromURL = (url: string): string | null =>
   url.match(/\/show\/(\d+)/)?.[1] ?? null;
 
-const bookCacheKey = (id: string) => `gr_book_${id}`;
+// v2: v1 scores lost their sign (see netScore), so hated books read positive.
+const bookCacheKey = (id: string) => `gr_book_v2_${id}`;
 
 const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
   const id = getBookIdFromURL(bookURL);
@@ -583,16 +585,24 @@ type SimilarResult = {
   foundOnPage: number;
 };
 
+/**
+ * What a shelf candidate must be able to reach to be worth its recency fetch: the
+ * reference's recent-adjusted score, the verdict rankPicks will apply. When the
+ * reference's own recency is unknown there is no verdict to bound, so fall back
+ * to its all-time Score to keep the list to books that at least match it.
+ */
+const pickBar = (threshold: number | null, refScore: number) => threshold ?? refScore;
+
 const findSimilarPicks = async (params: {
   originalBookURL: string;
   shelf: string;
-  refScore: number;
-  refRatio: number;
+  /** The number a candidate has to be able to reach — see pickBar. */
+  bar: number;
   refAvgRating: string;
 }): Promise<SimilarResult> => {
-  const { originalBookURL, shelf, refScore, refRatio, refAvgRating } = params;
+  const { originalBookURL, shelf, bar, refAvgRating } = params;
   const originalId = getBookIdFromURL(originalBookURL);
-  const cacheKey = `gr_picks_${originalId}_${shelf}`;
+  const cacheKey = `gr_picks_v2_${originalId}_${shelf}`;
   const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
   if (cached) return cached;
   const refAvg = parseFloat(refAvgRating);
@@ -644,7 +654,7 @@ const findSimilarPicks = async (params: {
 
     const qualifying = scored
       .filter((b): b is ScoredCandidate => !('failed' in b))
-      .filter(b => b.score >= refScore && b.ratio >= refRatio)
+      .filter(b => couldReach(bar, b.score))
       .sort((a, b) => b.score - a.score);
 
     if (qualifying.length) {
@@ -724,6 +734,7 @@ const buildItem = (pick: ScoredCandidate) => {
 };
 
 const debugPane = (shelf: string, result: SimilarResult, threshold: number | null, refScore: number) => {
+  const bar = pickBar(threshold, refScore);
   const toggle = el('div', 'gr-debug-toggle', '▶ Debug info');
   const content = el('div', 'gr-debug-content');
   content.style.display = 'none';
@@ -732,7 +743,7 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
     `Pages searched: ${result.pagesSearched}${result.foundOnPage ? ` (reference on page ${result.foundOnPage})` : ''}`,
     `Eligible candidates: ${result.totalEligible}`,
     `Scored: ${result.allScored.length}`,
-    `Qualifying (score ≥ ${addCommas(Math.round(refScore))}): ${result.qualifying.length}`,
+    `Qualifying (score can reach ${addCommas(bar)}): ${result.qualifying.length}`,
   ];
   lines.push(threshold !== null ? `Adjusted threshold: ${addCommas(threshold)}` : 'Adjusted threshold: unknown (no recent reviews for this book)');
   if (result.allScored.length) {
@@ -741,7 +752,7 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
       if ('failed' in b) {
         lines.push(`  (failed) ${b.title || b.bookId}`);
       } else {
-        const mark = b.score >= refScore ? '✓' : '✗';
+        const mark = couldReach(bar, b.score) ? '✓' : '✗';
         lines.push(`  ${mark} ${b.title} — ${addCommas(Math.round(b.score))} (${Math.round(b.ratio * 100)}%)`);
       }
     }
@@ -829,7 +840,8 @@ const renderSimilarPicks = async (
 
   // Cached full view → restore instantly; no shelf lookup or book fetches on refresh.
   // v2: bumped to flush entries poisoned by cached "Recent: N/A" from failed fetches.
-  const viewKey = `gr_picks_view2_${getBookIdFromURL(currentBookURL)}`;
+  // v3: v2 views held unsigned scores and the old two-gate qualifying list.
+  const viewKey = `gr_picks_view3_${getBookIdFromURL(currentBookURL)}`;
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
   if (cachedView) { renderPicksView(section, cachedView, currentStats); return; }
 
@@ -858,8 +870,7 @@ const renderSimilarPicks = async (
     result = await findSimilarPicks({
       originalBookURL: currentBookURL,
       shelf,
-      refScore: currentStats.score,
-      refRatio: currentStats.ratio,
+      bar: pickBar(adjust(currentStats.score, currentRecentRatio), currentStats.score),
       refAvgRating: currentStats.avgRating,
     });
   } catch (e: any) {

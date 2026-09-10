@@ -42,7 +42,8 @@ export const productId = (): string | null =>
 
 // `v2` retires the entries a `totalNum` denominator scored, which would otherwise
 // keep serving their ratio for the length of the TTL.
-const scoreKey = (id: string) => `nps_ali_v2_${id}`;
+// v3: v2 scores lost their sign (see netScore).
+const scoreKey = (id: string) => `nps_ali_v3_${id}`;
 
 // `buyerEval` is the share of five stars a review is worth, not a star count:
 // 100 → 5★, 20 → 1★.

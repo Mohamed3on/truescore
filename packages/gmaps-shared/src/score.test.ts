@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { displayScore, overallPctFromHistogram, overallScoreFromHistogram, removedCountEstimate, scoreWithRemovalPenalty, statsForReviews, type Review } from './index';
+import { displayScore, netScore, overallPctFromHistogram, overallScoreFromHistogram, removedCountEstimate, scoreWithRemovalPenalty, statsForReviews, type Review } from './index';
 
 const rv = (stars: number, count: number): Review =>
   ({ reviewId: `r${Math.round(stars * 1000 + count)}`, stars, reviewerReviewCount: count, timestamp: 1_700_000_000_000, text: 'x' });
@@ -89,6 +89,23 @@ describe('overallPctFromHistogram ([5★,4★,3★,2★,1★])', () => {
   });
   test('rounds to nearest integer', () => {
     expect(overallPctFromHistogram([3, 1, 1, 1, 1])).toBe(29);
+  });
+});
+
+describe('netScore (net·|net|/total)', () => {
+  test('a hated item scores negative — the sign is never squared away', () => {
+    // 6 loved, 98 hated of 164 — `net * (net / total)` read this as +52.
+    expect(netScore(6 - 98, 164)).toBe(-52);
+    expect(netScore(98 - 6, 164)).toBe(52);
+  });
+  test('an item and its mirror image score exact opposites, even on a .5', () => {
+    // 3²/6 = 1.5: Math.round alone would give 2 and -1.
+    expect(netScore(3, 6)).toBe(2);
+    expect(netScore(-3, 6)).toBe(-2);
+  });
+  test('no ratings → 0, never NaN or -0', () => {
+    expect(netScore(0, 0)).toBe(0);
+    expect(Object.is(netScore(-1, 1000), 0)).toBe(true);
   });
 });
 

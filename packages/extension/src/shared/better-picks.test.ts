@@ -72,4 +72,20 @@ describe('couldReach', () => {
     expect(couldReach(null, 1)).toBe(true);
     expect(couldReach(500, 0, true)).toBe(true);
   });
+
+  test("a hated candidate can still reach its Score's size if its newest reviews turned", () => {
+    expect(couldReach(500, -600)).toBe(true);
+    expect(couldReach(500, -400)).toBe(false);
+  });
+});
+
+describe('rankPicks with hated items', () => {
+  test('a hated reference still hated recently sets a negative bar, not a positive one', () => {
+    const { threshold, passed } = rankPicks({ score: -1000, ratio: -0.5 }, [
+      { key: 'meh', item: null, score: 100, ratio: 0 },
+      { key: 'worse', item: null, score: -2000, ratio: -0.5 },
+    ]);
+    expect(threshold).toBe(-500);
+    expect(passed.map((p) => p.key)).toEqual(['meh']);
+  });
 });

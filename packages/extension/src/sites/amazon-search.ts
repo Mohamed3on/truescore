@@ -1,4 +1,5 @@
 // Amazon search page - sort by rating score
+import { netScore } from '@truescore/gmaps-shared';
 import { addCommas } from '../shared/utils';
 import { markBestRatios, cycleBestRatios, orderByCssBand } from '../shared/score-grid';
 
@@ -67,7 +68,7 @@ const getRatingScores = async (productSIN: string, elementToReplace: Element, ca
     }
     const scorePercentage = ratings.fiveStars - ratings.oneStars;
     const scoreAbsolute = Math.round(ratings.totalReviews * (scorePercentage / 100));
-    const calculatedScore = Math.round(scoreAbsolute * (scorePercentage / 100)) || 0;
+    const calculatedScore = netScore(scoreAbsolute, ratings.totalReviews) || 0;
     elementToReplace.textContent = ` ${addCommas(calculatedScore)} ratio: (${scorePercentage}%)`;
     elementToReplace.setAttribute('data-nps', String(calculatedScore));
     elementToReplace.setAttribute('data-nps-ratio', String(scorePercentage));

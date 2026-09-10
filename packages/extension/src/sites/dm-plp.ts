@@ -111,7 +111,7 @@ const getScoreFromStats = (stats: any) => {
 };
 
 const fetchScore = async (productId: string) => {
-  const cacheKey = `nps_dm_score_${productId}`;
+  const cacheKey = `nps_dm_score_v2_${productId}`; // v2: scores keep their sign (netScore)
   const cached = cacheGet(cacheKey, CACHE_TTL);
   if (cached) return cached;
 

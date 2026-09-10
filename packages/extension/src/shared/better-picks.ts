@@ -36,7 +36,7 @@ export type Candidate<T> = {
 export type Reference = { score: number; ratio: number | null };
 
 export type RankedPick<T> = Candidate<T> & {
-  /** score x ratio, or null when either input is unknown. */
+  /** adjust(score, ratio), or null when either input is unknown. */
   adjusted: number | null;
   passes: boolean;
 };
@@ -77,9 +77,10 @@ export const rankPicks = <T>(reference: Reference, candidates: Candidate<T>[]): 
 
 /**
  * A candidate whose Score alone can't reach the threshold can't qualify however
- * good its recent run is — the adjusted score never exceeds the score — so its
- * recency fetch can be skipped rather than proved. With no threshold there is
- * nothing to prefilter against and everything stays in.
+ * good its recent run is — the adjusted score never exceeds the Score's size, even
+ * for a hated item whose newest reviews turned — so its recency fetch can be
+ * skipped rather than proved. With no threshold there is nothing to prefilter
+ * against and everything stays in.
  */
 export const couldReach = (threshold: number | null, score: number, unresolved = false): boolean =>
-  unresolved || threshold == null || score >= threshold;
+  unresolved || threshold == null || Math.abs(score) >= threshold;

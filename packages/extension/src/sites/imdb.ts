@@ -1,3 +1,4 @@
+import { netScore } from '@truescore/gmaps-shared';
 import { addCommas } from '../shared/utils';
 
 function calculateRatings() {
@@ -15,7 +16,7 @@ function calculateRatings() {
 
   const absoluteScore = ratings[9] + ratings[8] - ratings[0] - ratings[1];
   const ratio = absoluteScore / totalRatings;
-  const calculatedScore = Math.round(absoluteScore * ratio);
+  const calculatedScore = netScore(absoluteScore, totalRatings);
 
   const scoreElement = document.createElement('div');
   scoreElement.textContent = `${addCommas(calculatedScore)} (${Math.round(ratio * 100)}%)`;

@@ -1,3 +1,4 @@
+import { netScore } from '@truescore/gmaps-shared';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas, el } from '../shared/utils';
 import { adjust, ratioFromTally } from '../shared/recency';
@@ -142,9 +143,8 @@ const setTotalRatingsScore = (totalRatingPercentages: { fiveStars: number; oneSt
   const { fiveStars, oneStars } = totalRatingPercentages;
 
   const scorePercentage = fiveStars - oneStars;
-  const scoreAbsolute = Math.round(parseInt(numOfRatings) * (scorePercentage / 100));
-
-  const calculatedScore = Math.round(scoreAbsolute * (scorePercentage / 100));
+  const total = parseInt(numOfRatings);
+  const calculatedScore = netScore(Math.round(total * (scorePercentage / 100)), total);
 
   elementToReplace.textContent = ` ${addCommas(calculatedScore)} ratio: (${scorePercentage}%)`;
 
@@ -186,7 +186,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   };
   const formatRatings: Record<string, number> = {};
 
-  const scoresCacheKey = `ars-scores-v3-${cacheASIN}`;
+  // v4: v3 cached the total score before it kept its sign.
+  const scoresCacheKey = `ars-scores-v4-${cacheASIN}`;
   const cachedScores = cacheGet(scoresCacheKey, THREE_DAYS);
   let usedCache = false;
 
