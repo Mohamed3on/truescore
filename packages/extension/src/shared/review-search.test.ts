@@ -98,6 +98,20 @@ describe('buildSearchSection', () => {
     expect(section.querySelectorAll('.ars-search-review').length).toBe(1);
   });
 
+  test('unrated reviews count as matches but stay out of the %-positive chip', async () => {
+    const section = mount({ reviews: [review(5, 'battery a'), review(5, 'battery b'), review(1, 'battery c'), review(0, 'battery d')] });
+    await search(section, 'battery');
+    expect(section.querySelector('.ars-search-count')?.textContent).toBe('4');
+    // (2 loved − 1 hated) / 3 rated, not / 4 matches.
+    expect(section.querySelector('.ars-search-score')?.textContent).toBe('33%');
+  });
+
+  test('a match set with no ratings shows no chip', async () => {
+    const section = mount({ reviews: [review(0, 'battery a')] });
+    await search(section, 'battery');
+    expect((section.querySelector('.ars-search-score') as HTMLElement).style.display).toBe('none');
+  });
+
   test('clearing the box hides the results', async () => {
     const section = mount({ reviews: [review(5, 'battery lasts')] });
     await search(section, 'battery');

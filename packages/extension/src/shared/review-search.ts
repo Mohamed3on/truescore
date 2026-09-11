@@ -198,13 +198,16 @@ export const buildSearchSection = <T,>({
       document.createTextNode(` of ${addCommas(corpusSize)} reviews mention "${raw}"`),
     );
 
-    if (matches.length) {
+    // An unrated review (Goodreads lets one skip the stars; it arrives as 0) is no
+    // evidence either way, so it stays out of the %-positive denominator.
+    const rated = matches.filter(({ f }) => f.rating > 0);
+    if (rated.length) {
       let five = 0, one = 0;
-      for (const { f } of matches) {
+      for (const { f } of rated) {
         if (f.rating === 5) five++;
         else if (f.rating === 1) one++;
       }
-      const { nps } = npsStats(five, one, matches.length);
+      const { nps } = npsStats(five, one, rated.length);
       scoreChip.textContent = `${Math.round(nps)}%`;
       scoreChip.style.color = npsColor(nps);
       scoreChip.style.display = '';

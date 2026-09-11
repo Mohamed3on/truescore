@@ -528,8 +528,17 @@ const getShelfScore = async (shelf: string, viewerScope: string): Promise<number
   return score;
 };
 
+/**
+ * Shelves that say how a reader holds a book, not what it is: reading status, ownership,
+ * format, favourites, the year it was read. They open every book's list (to-read,
+ * currently-reading), so picks came from "to-read". Matched per hyphenated word —
+ * "physical-tbr" and "books-i-own" go, "banned-books" stays.
+ */
+const NON_CONTENT_SHELF = /(^|-)(tbr|read|reread|currently-reading|dnf|did-not-finish|default|wish-?list|to-buy|own(ed)?|library|(book)?shelf|fav(ou?rite|e)?s?|kindle|e-?books?|audio(-?books?)?|audible|arcs?|netgalley|(19|20)\d\d)(-|$)/;
+
 const pickShelf = async (shelves: string[], viewerScope: string): Promise<string | null> => {
   for (const shelf of shelves) {
+    if (NON_CONTENT_SHELF.test(shelf)) continue;
     try {
       const score = await getShelfScore(shelf, viewerScope);
       if (score >= CONFIG.IGNORED_SHELF_THRESHOLD) return shelf;
@@ -589,6 +598,12 @@ type SimilarResult = {
 };
 
 /**
+ * A candidate whose book page failed is a gap, not a loser: a result with gaps is
+ * still shown, but never cached, so the next visit retries instead of trusting it.
+ */
+const isComplete = (result: SimilarResult) => !result.allScored.some(b => 'failed' in b);
+
+/**
  * What a shelf candidate must be able to reach to be worth its recency fetch: the
  * reference's recent-adjusted score, the verdict rankPicks will apply. When the
  * reference's own recency is unknown there is no verdict to bound, so fall back
@@ -598,15 +613,22 @@ const pickBar = (threshold: number | null, refScore: number) => threshold ?? ref
 
 const findSimilarPicks = async (params: {
   originalBookURL: string;
+  /** Shared by every edition — a shelf can list the book under another edition's id. */
+  refWorkId: string;
   shelf: string;
   viewerScope: string;
-  /** The number a candidate has to be able to reach — see pickBar. */
-  bar: number;
+  /** The reference's recent-adjusted score, or null when its recency is unknown — see pickBar. */
+  threshold: number | null;
+  refScore: number;
   refAvgRating: string;
 }): Promise<SimilarResult> => {
-  const { originalBookURL, shelf, viewerScope, bar, refAvgRating } = params;
+  const { originalBookURL, refWorkId, shelf, viewerScope, threshold, refScore, refAvgRating } = params;
+  const bar = pickBar(threshold, refScore);
   const originalId = getBookIdFromURL(originalBookURL);
-  const cacheKey = `gr_picks_v3_${viewerScope}_${originalId}_${shelf}`;
+  // v4: v3 could list the book's own other edition and keep scans cut short by failures.
+  // A scan bounded by the all-time Score is narrower than one bounded by the threshold,
+  // so it keeps its own entry — one throttled reviews call can't stand in for a week.
+  const cacheKey = `gr_picks_v4_${viewerScope}_${originalId}_${shelf}${threshold === null ? '_alltime' : ''}`;
   const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
   if (cached) return cached;
   const refAvg = parseFloat(refAvgRating);
@@ -620,24 +642,22 @@ const findSimilarPicks = async (params: {
     const end = Math.min(start + CONFIG.PAGE_BATCH - 1, CONFIG.MAX_PAGES);
     debug(`Scanning shelf "${shelf}" pages ${start}-${end}`);
 
+    // A page that fails to load fails the search: it isn't the end of the shelf (that's
+    // a 200 with no rows), and a scan that skipped it can't claim nothing beats the book.
     const pageResults = await Promise.all(
       Array.from({ length: end - start + 1 }, (_, i) => {
         const pageNum = start + i;
         return fetchDoc(`https://www.goodreads.com/shelf/show/${shelf}?page=${pageNum}`)
-          .then(doc => ({ pageNum, doc }))
-          .catch(() => ({ pageNum, doc: null as Document | null }));
+          .then(doc => ({ pageNum, doc }));
       })
     );
 
     pagesSearched = end;
 
     const rowsWithPage = pageResults.flatMap(({ pageNum, doc }) =>
-      doc ? parseShelfPage(doc).map(c => ({ ...c, pageNum })) : []
+      parseShelfPage(doc).map(c => ({ ...c, pageNum }))
     );
     if (!rowsWithPage.length) break;
-
-    const refRow = rowsWithPage.find(r => r.bookId === originalId);
-    if (refRow && !foundOnPage) foundOnPage = refRow.pageNum;
 
     const eligible = rowsWithPage.filter(({ bookId, isRead, bookRating }) => {
       if (bookId === originalId) return false;
@@ -654,16 +674,23 @@ const findSimilarPicks = async (params: {
         return { ...c, failed: true as const };
       }
     }));
-    allScored.push(...scored);
 
-    const qualifying = scored
+    // Another edition of this very book has its own id but the same work, and so the
+    // same stats: it's the reference — never its own pick, and where the book sits.
+    const refIds = new Set([originalId, ...scored.filter(b => !('failed' in b) && b.workId === refWorkId).map(b => b.bookId)]);
+    const refRow = rowsWithPage.find(r => refIds.has(r.bookId));
+    if (refRow && !foundOnPage) foundOnPage = refRow.pageNum;
+    const candidates = scored.filter(b => !refIds.has(b.bookId));
+    allScored.push(...candidates);
+
+    const qualifying = candidates
       .filter((b): b is ScoredCandidate => !('failed' in b))
       .filter(b => couldReach(bar, b.score))
       .sort((a, b) => b.score - a.score);
 
     if (qualifying.length) {
       const result: SimilarResult = { qualifying, allScored, totalEligible, pagesSearched, foundOnPage };
-      idbSet(cacheKey, result);
+      if (isComplete(result)) idbSet(cacheKey, result);
       return result;
     }
 
@@ -672,7 +699,7 @@ const findSimilarPicks = async (params: {
   }
 
   const result: SimilarResult = { qualifying: [], allScored, totalEligible, pagesSearched, foundOnPage };
-  idbSet(cacheKey, result);
+  if (isComplete(result)) idbSet(cacheKey, result);
   return result;
 };
 
@@ -818,17 +845,18 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
     recentEl.textContent = rr !== null ? `Recent: ${Math.round(rr * 100)}%` : 'Recent: N/A';
     if (ranked.passes) {
       if (rr !== null) recentEl.classList.add('-pass');
-    } else {
+    } else if (threshold !== null) {
       item.classList.add('-excluded');
       recentEl.classList.add('-fail');
-      if (threshold !== null) item.append(el('span', 'gr-similar-reason', `need \u2265${addCommas(threshold)} adjusted`));
+      item.append(el('span', 'gr-similar-reason', `need \u2265${addCommas(threshold)} adjusted`));
     }
     list.append(item);
   }
 
-  if (!ranking.passed.length && threshold !== null) {
-    section.append(winnerBanner('Winner! No book beats its recent-adjusted score.', shelf));
-  }
+  // No recent % for this book means no verdict: the picks stay unjudged, not struck
+  // through as if they had lost.
+  if (threshold === null) section.append(el('p', 'gr-similar-sub', "Can't judge: this book's recent % is unknown."));
+  else if (!ranking.passed.length) section.append(winnerBanner('Winner! No book beats its recent-adjusted score.', shelf));
   section.append(list);
   section.append(debugPane(shelf, result, threshold, currentStats.score));
 };
@@ -845,8 +873,10 @@ const renderSimilarPicks = async (
   // Cached full view → restore instantly; no shelf lookup or book fetches on refresh.
   // v2: bumped to flush entries poisoned by cached "Recent: N/A" from failed fetches.
   // v3: v2 views held unsigned scores and the old two-gate qualifying list.
+  // v5: v4 views could come from "to-read", list the book's own other edition, rest on
+  //     failed fetches, or bake in an unknown reference recency that struck every pick.
   const viewerScope = goodreadsViewerCacheScope(document);
-  const viewKey = `gr_picks_view4_${viewerScope}_${getBookIdFromURL(currentBookURL)}`;
+  const viewKey = `gr_picks_view5_${viewerScope}_${getBookIdFromURL(currentBookURL)}`;
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
   if (cachedView) { renderPicksView(section, cachedView, currentStats); return; }
 
@@ -874,9 +904,11 @@ const renderSimilarPicks = async (
 
     result = await findSimilarPicks({
       originalBookURL: currentBookURL,
+      refWorkId: currentStats.workId,
       shelf,
       viewerScope,
-      bar: pickBar(adjust(currentStats.score, currentRecentRatio), currentStats.score),
+      threshold: adjust(currentStats.score, currentRecentRatio),
+      refScore: currentStats.score,
       refAvgRating: currentStats.avgRating,
     });
   } catch (e: any) {
@@ -900,7 +932,11 @@ const renderSimilarPicks = async (
 
   const view: SimilarView = { shelf, result, recent, refRecentRatio: currentRecentRatio };
   // Persist a slim copy — allScored is a large per-candidate debug list we don't need to keep.
-  if (!recentFailed) idbSet(viewKey, { ...view, result: { ...result, allScored: [] } });
+  // Only a view that holds all week: no failed book, and the reference's own recency known —
+  // the view keeps it, so an unknown one would stay unjudged long after it resolves.
+  if (!recentFailed && isComplete(result) && currentRecentRatio !== null) {
+    idbSet(viewKey, { ...view, result: { ...result, allScored: [] } });
+  }
   renderPicksView(section, view, currentStats);
 };
 
