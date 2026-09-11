@@ -9,6 +9,8 @@ const STAMPED_STORE = 'bjj-fanatics.myshopify.com';
 const REVIEWS_CACHE_MS = 14 * 24 * 60 * 60 * 1000;
 const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
+// v2: never holds a sample with a failed page (v1 could, and served the hole for good).
+const reviewsCacheKey = (id: string) => `bjj-reviews-v2-${id}`;
 
 interface ProductInfo {
   id: string;
@@ -63,7 +65,7 @@ const dedupeById = (reviews: StampedReview[]): StampedReview[] => {
 };
 
 const fetchAllReviews = async (info: ProductInfo): Promise<ReviewBundle> => {
-  const cacheKey = `bjj-reviews-${info.id}`;
+  const cacheKey = reviewsCacheKey(info.id);
   const cached = cacheGet(cacheKey, REVIEWS_CACHE_MS) as ReviewBundle | null;
 
   // Always probe page 1 — gives current `total` plus the newest reviews,
@@ -90,29 +92,39 @@ const fetchAllReviews = async (info: ProductInfo): Promise<ReviewBundle> => {
   }
 
   // Otherwise refetch the rest in parallel.
+  let complete = true;
   const remaining = Math.min(MAX_PAGES, Math.ceil(total / PAGE_SIZE)) - 1;
   if (remaining > 0) {
     const rest = await Promise.all(
       Array.from({ length: remaining }, (_, i) => fetchPage(i + 2, info).catch(() => null))
     );
-    for (const r of rest) if (r?.data) merged.push(...r.data);
+    for (const r of rest) {
+      if (r?.data) merged.push(...r.data);
+      else complete = false;
+    }
   }
 
   const deduped = dedupeById(merged);
   const bundle = { total, reviews: deduped };
-  if (deduped.length) cacheSet(cacheKey, bundle);
+  // A sample with a failed page is shown but never cached, so the next visit
+  // refetches it whole — a cached hole was served (and merged into) for good.
+  if (complete && deduped.length) cacheSet(cacheKey, bundle);
   return bundle;
 };
 
+// The 5★/1★ tallies cover only the fetched sample (≤ MAX_PAGES pages, minus any
+// that failed), so they're shares of the sample scaled to Stamped's full count —
+// never sample counts over `total`, which read 1,000 of 2,500 5★ reviews as 40%.
 const computeScore = ({ total, reviews }: ReviewBundle) => {
+  if (!reviews.length) return null;
   let five = 0, one = 0;
   for (const r of reviews) {
     if (r.reviewRating === 5) five++;
     else if (r.reviewRating === 1) one++;
   }
-  const denom = total || reviews.length;
-  if (!denom) return null;
-  return { ...npsStats(five, one, denom), total: denom };
+  const n = Math.max(total, reviews.length);
+  const scale = n / reviews.length;
+  return { ...npsStats(five * scale, one * scale, n), total: n };
 };
 
 const MIN_REVIEW_CHARS = 20;
@@ -286,7 +298,7 @@ openCourseAccordions();
 
   // Paint instantly from cache; the Stamped API is cold-start slow (~9s first
   // hit), so blocking the panel on it makes the widget feel absent.
-  const cached = cacheGet(`bjj-reviews-${info.id}`, REVIEWS_CACHE_MS) as ReviewBundle | null;
+  const cached = cacheGet(reviewsCacheKey(info.id), REVIEWS_CACHE_MS) as ReviewBundle | null;
   if (cached?.reviews.length) render(cached);
 
   // Then confirm against the API in the background, re-rendering only if the

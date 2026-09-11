@@ -1,17 +1,28 @@
 // Booking.com search page - sort by combined score
+import { parseRatingAndCount } from '../shared/locale-number';
+
 let sortingEnabled = false;
 const scoresByUrl = new Map<string, number>();
 
+// Booking localizes the block ("8,6 Fabelhaft 1.437 Bewertungen"), so it's read
+// by its numbers alone — see parseRatingAndCount.
 const calculateScore = (reviewText: string) => {
-  const rating = parseFloat(reviewText.match(/\d+(\.\d+)?/)?.[0] || '0') / 10;
-  const reviewCount = parseInt(reviewText.match(/(\d+(?:,\d+)*)\s*reviews?/i)?.[1]?.replace(/,/g, '') || '0');
-  return Math.round(reviewCount * Math.pow(rating, 15));
+  const { rating, count } = parseRatingAndCount(reviewText);
+  return Math.round(count * Math.pow(rating / 10, 15));
+};
+
+// The score block's text minus our own badge (appended inside it), whose
+// digits would otherwise read as the review count on a re-parse.
+const reviewTextOf = (card: Element) => {
+  const block = card.querySelector('[data-testid="review-score"]')?.cloneNode(true) as Element | undefined;
+  block?.querySelector('.score')?.remove();
+  return block?.textContent;
 };
 
 const getCardScore = (card: Element) => {
   const url = (card.querySelector('a') as HTMLAnchorElement)?.href?.split('?')[0];
   if (url && scoresByUrl.has(url)) return scoresByUrl.get(url)!;
-  const reviewText = card.querySelector('[data-testid="review-score"]')?.textContent;
+  const reviewText = reviewTextOf(card);
   // Score not rendered yet — 0 for this pass, but uncached so a later pass
   // reads the real value instead of locking the URL to 0.
   if (!reviewText) return 0;

@@ -1,13 +1,12 @@
 import { netScore } from '@truescore/gmaps-shared';
 import { addCommas } from '../shared/utils';
+import { parseRatingAndCount } from '../shared/locale-number';
 
 let hasRun = false;
 
-const getNumberOfReviews = (ratingsDescription: Element | null): number => {
-  if (!ratingsDescription) return 0;
-  const match = ratingsDescription.textContent?.match(/(\d+) reviews/);
-  return match ? parseInt(match[1], 10) : 0;
-};
+// "4.95 · 1,234 reviews" / "4,95 · 1.234 Bewertungen" — the count, in any locale.
+const getNumberOfReviews = (ratingsDescription: Element | null): number =>
+  parseRatingAndCount(ratingsDescription?.textContent ?? '').count;
 
 const getScore = (ratingElements: NodeListOf<Element>) => {
   const ratingDetails = Array.from(ratingElements).map(el => parseInt((el as HTMLElement).style.width, 10));

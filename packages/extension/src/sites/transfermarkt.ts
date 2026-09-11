@@ -2,9 +2,15 @@
 // Constants & Utilities
 // ============================================================
 import { el } from '../shared/utils';
+import { parseAbbreviated, parseLocaleNumber } from '../shared/locale-number';
+import { createThrottledFetcher } from '../shared/throttled-fetch';
 
 const CACHE_TTL = 3 * 24 * 60 * 60 * 1000; // 3 days
-const CACHE_PREFIX = 'tmSorter_v5_';
+const CACHE_PREFIX = 'tmSorter_v6_'; // v6: German values parsed right; no partial results
+
+// transfermarkt.de prints German numbers ("1,43 Mrd. €", "25,4", "1.234") where
+// .com prints English ones ("€1.43bn", "25.4", "1,234").
+const DECIMAL = location.hostname.endsWith('.de') ? ',' : '.';
 
 // Sorts pause the table-discovery observer around their own row mutations (its
 // callback runs after the task, so a sync flag can never guard it).
@@ -15,46 +21,38 @@ const resumeObs = () => { if (tableObs) tableObs.observe(document.body, { childL
 const parseValue = (text: string): any => {
   const cleaned = text.trim();
 
-  // Market value (€1.40bn, €56.04m, €928k)
+  // Market value (€1.40bn, €56.04m, €928k / 1,40 Mrd. €, 56,04 Mio. €, 928 Tsd. €)
   if (cleaned.includes('€')) {
-    const val = cleaned.replace(/[€\s]/g, '');
-    const multipliers: Record<string, number> = { bn: 1e9, m: 1e6, k: 1e3, 'Th.': 1e3 };
-    for (const [suffix, mult] of Object.entries(multipliers)) {
-      if (val.endsWith(suffix)) {
-        const num = parseFloat(val.slice(0, -suffix.length));
-        return isNaN(num) ? 0 : num * mult;
-      }
-    }
-    return parseFloat(val) || 0;
+    return parseAbbreviated(cleaned, DECIMAL) || 0;
   }
 
   // Percentage
   if (cleaned.includes('%')) {
-    return parseFloat(cleaned.replace('%', '')) || 0;
+    return parseLocaleNumber(cleaned, DECIMAL) || 0;
   }
 
   // Number
-  const num = parseFloat(cleaned.replace(/,/g, ''));
+  const num = parseLocaleNumber(cleaned, DECIMAL);
   if (!isNaN(num)) return num;
 
   return cleaned.toLowerCase();
 };
 
-const getColumnValue = (cell: Element): any => {
-  const text = cell.textContent!.trim();
+// A linked amount (a club's total market value) is still an amount, not text —
+// sorted as text, billions landed below millions.
+const linkValue = (link: Element) => {
+  const linkText = link.textContent!.trim();
+  return linkText.includes('€') ? parseValue(linkText) : linkText.toLowerCase();
+};
 
+const getColumnValue = (cell: Element): any => {
   const hauptlink = cell.querySelector('.hauptlink a');
-  if (hauptlink) {
-    const linkText = hauptlink.textContent!.trim();
-    return linkText.includes('€') ? parseValue(linkText) : linkText.toLowerCase();
-  }
+  if (hauptlink) return linkValue(hauptlink);
 
   const link = cell.querySelector('a');
-  if (link && !cell.querySelector('img')) {
-    return link.textContent!.trim().toLowerCase();
-  }
+  if (link && !cell.querySelector('img')) return linkValue(link);
 
-  return parseValue(text);
+  return parseValue(cell.textContent!.trim());
 };
 
 const extractVereinId = (element: Element) => {
@@ -126,10 +124,15 @@ const parseRowsFromHtml = (html: string) => {
   }));
 };
 
+// Transfermarkt answers request bursts with 403/429 pages: pages go out a few
+// at a time, and a non-OK answer fails its page rather than parsing as empty.
+const throttledFetch = createThrottledFetcher(3);
+
 const fetchPage = async (baseUrl: string, pageNum: number) => {
-  const response = await fetch(buildPageUrl(baseUrl, pageNum), {
+  const response = await throttledFetch(buildPageUrl(baseUrl, pageNum), {
     headers: { 'X-Requested-With': 'XMLHttpRequest' }
   });
+  if (!response.ok) throw new Error(`page ${pageNum}: HTTP ${response.status}`);
   return parseRowsFromHtml(await response.text());
 };
 
@@ -138,24 +141,25 @@ const fetchAllPages = async (baseUrl: string, totalPages: number, onProgress?: (
   const cached = cache.get(cacheKey);
   if (cached) {
     console.log('[TM Sorter] Using cache:', cached.length, 'rows');
-    return cached;
+    return { rows: cached, failedPages: 0 };
   }
 
   console.log('[TM Sorter] Fetching', totalPages, 'pages');
   let completed = 0;
 
-  const results = await Promise.all(
-    Array.from({ length: totalPages }, (_, i) => i + 1).map(async (page) => {
-      const rows = await fetchPage(baseUrl, page);
-      onProgress?.(++completed, totalPages);
-      return { page, rows };
-    })
+  const results = await Promise.allSettled(
+    Array.from({ length: totalPages }, (_, i) =>
+      fetchPage(baseUrl, i + 1).finally(() => onProgress?.(++completed, totalPages))
+    )
   );
 
-  const allRows = results.sort((a, b) => a.page - b.page).flatMap(r => r.rows);
-  console.log('[TM Sorter] Fetched:', allRows.length, 'rows');
-  cache.set(cacheKey, allRows);
-  return allRows;
+  const rows = results.flatMap(r => (r.status === 'fulfilled' ? r.value : []));
+  const failedPages = results.filter(r => r.status === 'rejected').length;
+  console.log('[TM Sorter] Fetched:', rows.length, 'rows', failedPages ? `(${failedPages} pages failed)` : '');
+  if (!rows.length) throw new Error('no rows loaded');
+  // A result missing pages is shown (and flagged) but never cached.
+  if (!failedPages) cache.set(cacheKey, rows);
+  return { rows, failedPages };
 };
 
 const detectPaginationInfo = () => {
@@ -176,7 +180,7 @@ const detectPaginationInfo = () => {
 const getLeagueTableData = () => {
   for (const table of document.querySelectorAll('table.items')) {
     const headerText = table.querySelector('thead tr')?.textContent || '';
-    if (!headerText.includes('Pts') || isMarketValueTable(table)) continue;
+    if (!/Pts|Pkt\./.test(headerText) || isMarketValueTable(table)) continue; // .com / .de
 
     const leagueData = new Map<string, { position: number; points: number }>();
     table.querySelectorAll('tbody tr').forEach((row, index) => {
@@ -234,7 +238,7 @@ const updateRankings = (table: HTMLTableElement) => {
 // ============================================================
 const getMarketValueColumnIndex = (table: HTMLTableElement) => {
   const headers = Array.from(table.querySelectorAll('thead th'));
-  return headers.findIndex(th => th.textContent!.includes('ø') && th.textContent!.toLowerCase().includes('market'));
+  return headers.findIndex(th => th.textContent!.includes('ø') && /market|marktwert/.test(th.textContent!.toLowerCase()));
 };
 
 const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { position: number; points: number }>) => {
@@ -348,14 +352,16 @@ const hideLoading = (table: HTMLTableElement) => {
   if (overlay) overlay.style.display = 'none';
 };
 
-const showGlobalBadge = (table: HTMLTableElement, count: number) => {
+const showGlobalBadge = (table: HTMLTableElement, count: number, failedPages: number) => {
   const parent = table.parentNode as Element;
   let badge = parent.querySelector('.global-sort-badge') as HTMLElement | null;
   if (!badge) {
     badge = el('div', 'global-sort-badge') as HTMLElement;
     parent.insertBefore(badge, table);
   }
-  badge.textContent = `Global Sort Active - Showing all ${count} players (Shift+Click to re-sort)`;
+  badge.textContent = failedPages
+    ? `Global Sort Active - Showing ${count} players, ${failedPages} page${failedPages > 1 ? 's' : ''} failed to load (Shift+Click to retry)`
+    : `Global Sort Active - Showing all ${count} players (Shift+Click to re-sort)`;
   badge.style.display = 'block';
 };
 
@@ -412,7 +418,7 @@ const globalSortTableByColumn = async (table: HTMLTableElement, columnIndex: num
   showLoading(table);
 
   try {
-    const allRows = await fetchAllPages(baseUrl, totalPages, (cur, tot) => showLoading(table, cur, tot));
+    const { rows: allRows, failedPages } = await fetchAllPages(baseUrl, totalPages, (cur, tot) => showLoading(table, cur, tot));
     const dir = ascending ? 1 : -1;
     const sorted = [...allRows].sort((a: any, b: any) =>
       compareValues(a.cells[columnIndex]?.value, b.cells[columnIndex]?.value, dir)
@@ -421,7 +427,7 @@ const globalSortTableByColumn = async (table: HTMLTableElement, columnIndex: num
     renderGlobalResults(table, sorted);
     updateSortHeaders(table, columnIndex, ascending);
     updateRankings(table);
-    showGlobalBadge(table, sorted.length);
+    showGlobalBadge(table, sorted.length, failedPages);
     table.setAttribute('data-global-sorted', 'true');
   } catch (error) {
     console.error('[TM Sorter] Global sort failed:', error);

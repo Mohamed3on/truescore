@@ -149,7 +149,7 @@
       "run_at": "document_end"
     },
     {
-      "matches": ["*://*.uniqlo.com/*/products/*"],
+      "matches": ["*://*.uniqlo.com/*"],
       "js": ["sites/uniqlo-pdp.js"],
       "css": ["sites/amazon-product.css"],
       "run_at": "document_end"
