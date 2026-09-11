@@ -35,7 +35,9 @@ let lastSeed = { bgkey: '', ts: 0 };
 
 type SeedCreds = Pick<MapsCreds, 'bgkey' | 'bgbind' | 'sessionId' | 'at'>;
 const seedMapsCreds = async (creds: SeedCreds) => {
-  if (!creds?.bgkey || !creds.bgbind || !creds.sessionId || !creds.at) return;
+  // bgbind may be '': Google stopped sending x-maps-bgbind on the review RPC
+  // (gmaps-capture records it empty) and the replay works without it.
+  if (!creds?.bgkey || !creds.sessionId || !creds.at) return;
   const now = Date.now();
   if (creds.bgkey === lastSeed.bgkey && now - lastSeed.ts < SEED_MIN_INTERVAL_MS) return;
   const { rc_seed_url: url, rc_seed_secret: secret } = await chrome.storage.local.get(['rc_seed_url', 'rc_seed_secret']);

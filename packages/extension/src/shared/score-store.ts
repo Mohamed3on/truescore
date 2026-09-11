@@ -56,7 +56,9 @@ const isFullyHydrated = (e: ScoreCacheEntry | null): e is FullScoreCacheEntry =>
 
 export const createScoreStore = ({ storage, now }: { storage: Storage; now: () => number }) => {
   let reviewMap: Record<SortKey, Record<string, Review>> = { relevant: {}, newest: {} };
-  let reviewData: Record<SortKey, ReviewData> = { relevant: makeReviewData(), newest: makeReviewData() };
+  // Ids this visit's live fetch returned, either sort — a cache-restored review
+  // is held but not seen until a live page returns it too.
+  let seen = new Set<string>();
   let cached: ScoreCacheEntry | null = null;
   let servedFresh = false;
 
@@ -80,6 +82,19 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
       }
     }
   };
+
+  // Aggregates are tallied on read, against the clock now — never kept from
+  // ingest time, so a review restored from cache ages out of Past Month / Past
+  // Year on its own instead of keeping the bucket it had when first fetched.
+  const tally = (reviews: Record<string, Review>): ReviewData => {
+    const rd = makeReviewData();
+    for (const id in reviews) process(reviews[id], rd);
+    return rd;
+  };
+
+  // A sort's live aggregates, else the cached entry's (one without review bodies).
+  const sortData = (sort: SortKey): ReviewData | undefined =>
+    Object.keys(reviewMap[sort]).length ? tally(reviewMap[sort]) : cached?.[sort];
 
   const merge = (): Record<string, Review> => {
     const m: Record<string, Review> = {};
@@ -110,17 +125,27 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
   const store = {
     reset() {
       reviewMap = { relevant: {}, newest: {} };
-      reviewData = { relevant: makeReviewData(), newest: makeReviewData() };
+      seen = new Set();
       cached = null;
       servedFresh = false;
     },
 
-    // Add a page of one sort, deduped by reviewId; only new reviews touch the
-    // per-period aggregates (so a cache-restored review isn't double-counted).
+    // Add a page of one sort, deduped by reviewId (the live copy replaces a
+    // cache-restored one).
     ingest(sort: SortKey, reviews: Review[]) {
-      for (const r of reviews) {
-        if (!reviewMap[sort][r.reviewId]) { reviewMap[sort][r.reviewId] = r; process(r, reviewData[sort]); }
-      }
+      for (const r of reviews) { reviewMap[sort][r.reviewId] = r; seen.add(r.reviewId); }
+    },
+
+    // Call once the live fetch has paged `sort` to its last page: every review
+    // Google still lists has now been seen, so one this visit never fetched was
+    // removed since. It goes from both sorts — left in either, the merged score
+    // would keep counting it, on top of the removal penalty that already counts
+    // it. The disk entry still has it, so that goes stale too.
+    dropUnseen(sort: SortKey) {
+      const gone = Object.keys(reviewMap[sort]).filter((id) => !seen.has(id));
+      if (!gone.length) return;
+      for (const key of SORT_KEYS) for (const id of gone) delete reviewMap[key][id];
+      cached = null;
     },
 
     hasLiveData: (): boolean => SORT_KEYS.some((k) => Object.keys(reviewMap[k]).length > 0),
@@ -145,20 +170,16 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
     },
 
     scorePct(sort: SortKey, period: Period): number {
-      const live = reviewData[sort];
-      if (live.totalReviews.total === 0 && cached) {
-        const c = cached[sort];
-        return c.reviewsScores[period] / c.trustedReviews[period] || 0;
-      }
-      return live.reviewsScores[period] / live.trustedReviews[period] || 0;
+      const d = sortData(sort);
+      return d ? d.reviewsScores[period] / d.trustedReviews[period] || 0 : 0;
     },
 
     sortTotal(sort: SortKey, period: Period): number {
-      return reviewData[sort].totalReviews[period] || cached?.[sort].totalReviews[period] || 0;
+      return sortData(sort)?.totalReviews[period] || 0;
     },
 
     sortTrusted(sort: SortKey, period: Period): number {
-      return reviewData[sort].trustedReviews[period] || cached?.[sort].trustedReviews[period] || 0;
+      return sortData(sort)?.trustedReviews[period] || 0;
     },
 
     mergedStats(period: Period): MergedStats {
@@ -192,12 +213,8 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
       if (!entry || !stillValid() || cached || store.hasLiveData()) return false;
       cached = entry;
       if (isFullyHydrated(entry)) {
-        // Restore reviewData too — otherwise the live refetch's dedup-skip of
-        // cached reviews leaves them out of per-sort aggregates.
         reviewMap.relevant = pickFrom(entry.reviews, entry.relevantIds);
         reviewMap.newest = pickFrom(entry.reviews, entry.newestIds);
-        reviewData.relevant = structuredClone(entry.relevant);
-        reviewData.newest = structuredClone(entry.newest);
       }
       return true;
     },
@@ -210,15 +227,13 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
       if (servedFresh && isFullyHydrated(cached)) return false;
       const liveMerged = merge();
       if (!Object.keys(liveMerged).length) return false;
-      const mergedRD = makeReviewData();
-      for (const id in liveMerged) process(liveMerged[id], mergedRD);
       const newestIds = Object.keys(reviewMap.newest);
       const entry: ScoreCacheEntry = {
         ts: now(),
         newestHeadId: newestHeadId() ?? newestIds[0],
-        relevant: reviewData.relevant,
-        newest: reviewData.newest,
-        merged: mergedRD,
+        relevant: tally(reviewMap.relevant),
+        newest: tally(reviewMap.newest),
+        merged: tally(liveMerged),
         reviews: liveMerged,
         relevantIds: Object.keys(reviewMap.relevant),
         newestIds,

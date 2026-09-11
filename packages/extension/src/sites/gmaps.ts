@@ -152,13 +152,13 @@ const abortControllers: Record<SortKey, AbortController | null> = { relevant: nu
 // re-summarize, never by review count drift like score/highlights.
 let summaryCache: { all: SummaryResult | null } = { all: null };
 
-const getSummaryCacheKey = () => `${SUMMARY_CACHE_PREFIX}${lastFeatureId || 'default'}`;
+const getSummaryCacheKey = (featureId: string | null = lastFeatureId) => `${SUMMARY_CACHE_PREFIX}${featureId || 'default'}`;
 const loadSummaryCache = () => {
   try { summaryCache = JSON.parse(localStorage.getItem(getSummaryCacheKey()) as string) || { all: null }; }
   catch { summaryCache = { all: null }; }
 };
-const saveSummaryCache = () => {
-  try { localStorage.setItem(getSummaryCacheKey(), JSON.stringify(summaryCache)); } catch {}
+const saveSummaryCache = (featureId: string | null = lastFeatureId, cache = summaryCache) => {
+  try { localStorage.setItem(getSummaryCacheKey(featureId), JSON.stringify(cache)); } catch {}
 };
 
 // Label-search summaries, keyed by lowercased query, persisted per place like
@@ -166,23 +166,27 @@ const saveSummaryCache = () => {
 // a place explored with many searches can't crowd out the localStorage quota.
 const SEARCH_SUMMARY_LIMIT = 20;
 let searchSummaryCache: Record<string, SummaryResult> = {};
-const getSearchSummaryCacheKey = () => `${SEARCH_SUMMARY_CACHE_PREFIX}${lastFeatureId || 'default'}`;
-const loadSearchSummaryCache = () => {
-  try { searchSummaryCache = JSON.parse(localStorage.getItem(getSearchSummaryCacheKey()) as string) || {}; }
-  catch { searchSummaryCache = {}; }
+const getSearchSummaryCacheKey = (featureId: string | null = lastFeatureId) => `${SEARCH_SUMMARY_CACHE_PREFIX}${featureId || 'default'}`;
+const readSearchSummaryCache = (featureId?: string | null): Record<string, SummaryResult> => {
+  try { return JSON.parse(localStorage.getItem(getSearchSummaryCacheKey(featureId)) as string) || {}; }
+  catch { return {}; }
 };
-const saveSearchSummaryCache = () => {
+const loadSearchSummaryCache = () => { searchSummaryCache = readSearchSummaryCache(); };
+const saveSearchSummaryCache = (featureId: string | null, cache: Record<string, SummaryResult>) => {
   try {
-    const keys = Object.keys(searchSummaryCache);
-    for (const k of keys.slice(0, Math.max(0, keys.length - SEARCH_SUMMARY_LIMIT))) delete searchSummaryCache[k];
-    localStorage.setItem(getSearchSummaryCacheKey(), JSON.stringify(searchSummaryCache));
+    const keys = Object.keys(cache);
+    for (const k of keys.slice(0, Math.max(0, keys.length - SEARCH_SUMMARY_LIMIT))) delete cache[k];
+    localStorage.setItem(getSearchSummaryCacheKey(featureId), JSON.stringify(cache));
   } catch {}
 };
-const cacheSearchSummary = (query: string, summary: SummaryResult) => {
+// Filed under the place the search ran on: the summary lands seconds later,
+// maybe after an SPA nav, and the in-memory map is only ever the current place's.
+const cacheSearchSummary = (featureId: string | null, query: string, summary: SummaryResult) => {
+  const cache = featureId === lastFeatureId ? searchSummaryCache : readSearchSummaryCache(featureId);
   const key = query.toLowerCase();
-  delete searchSummaryCache[key]; // re-insert so the most-recently-used stays newest
-  searchSummaryCache[key] = summary;
-  saveSearchSummaryCache();
+  delete cache[key]; // re-insert so the most-recently-used stays newest
+  cache[key] = summary;
+  saveSearchSummaryCache(featureId, cache);
 };
 
 // chrome.storage.local proxy via gmaps-bridge.ts (we run in MAIN world).
@@ -279,9 +283,15 @@ let highlightCandidates: HighlightCandidate[] = [];
 // so an SPA nav can start the new place's compute while the old run winds down.
 let highlightsComputingFor: string | null = null;
 const getHighlightsCacheKey = () => `${HIGHLIGHTS_CACHE_PREFIX}${lastFeatureId || 'default'}`;
+// Google counts reviews under this topic, yet the fetch returned none: a dead
+// session or a throttle, never a real 0% — so it's neither kept nor shown (the
+// load filter also heals entries saved before computeHighlights checked this).
+const chipFetchFailed = (h: Highlight): boolean => h.fetched === 0 && h.count > 0;
 const loadHighlightsCache = () => {
-  try { highlightsState = JSON.parse(localStorage.getItem(getHighlightsCacheKey()) as string) || null; }
-  catch { highlightsState = null; }
+  try {
+    highlightsState = JSON.parse(localStorage.getItem(getHighlightsCacheKey()) as string) || null;
+    if (highlightsState) highlightsState.items = highlightsState.items.filter((h) => !chipFetchFailed(h));
+  } catch { highlightsState = null; }
 };
 const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
 // Bounds the cloud-cache GET so a slow/hung server can't delay auto-highlights
@@ -305,14 +315,17 @@ const fetchCloudCache = async (featureId: string): Promise<CloudCache | null> =>
   } catch { return null; }
 };
 
+// Place identity as of now. Work that awaits first (an LLM call takes seconds)
+// must capture it before it starts: by the time it lands the user may have
+// opened another place, and the URL and heading would name that one instead.
+const currentPlace = () => ({ featureId: getFeatureId(), name: getPlaceInfo().name });
+
 const pushContribution = (patch: {
   summary?: SummaryResult;
   highlights?: Highlight[];
   highlightSummaries?: Record<string, SummaryResult>;
   score?: PartialScore;
-}): void => {
-  const featureId = getFeatureId();
-  const { name } = getPlaceInfo();
+}, { featureId, name } = currentPlace()): void => {
   if (!featureId || !name) return;
   fetch(`${TRUESCORE_API_BASE}/api/contribute`, {
     method: 'POST',
@@ -336,10 +349,13 @@ const contributeScore = (): void => {
   if (!featureId || !store.hasLiveData()) return;
   const { totalAll, totalTrusted, mergedPct } = store.mergedStats('total');
   if (!totalAll) return;
+  // The unrounded ratio rides along so the web penalises the same number we do
+  // (penalising the rounded % put the two a point apart).
   const statsFor = (sort: SortKey): SortStats => ({
     totalReviews: store.sortTotal(sort, 'total'),
     trustedReviews: store.sortTrusted(sort, 'total'),
     scorePct: toPct(store.scorePct(sort, 'total')),
+    ratio: store.scorePct(sort, 'total'),
   });
   pushContribution({
     score: {
@@ -347,6 +363,7 @@ const contributeScore = (): void => {
       totalReviews: totalAll,
       trustedReviews: totalTrusted,
       scorePct: toPct(mergedPct),
+      ratio: mergedPct,
       relevant: statsFor('relevant'),
       newest: statsFor('newest'),
     },
@@ -792,6 +809,7 @@ const computeHighlights = async (force = false) => {
         const reviews = await fetchAllForToken(featureId, chip.token, creds);
         if (!stillCurrent()) return;
         const item = { ...chip, fetched: reviews.length, score: statsForReviews(reviews), reviews };
+        if (chipFetchFailed(item)) return;
         items.push(item);
         highlightsState = { items: [...items], ts: Date.now() };
         saveHighlightsCache();
@@ -898,6 +916,9 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
         // seed the next place's store with this place's reviews.
         if (getFeatureId() !== featureId) return 'stop';
         store.ingest(sortKey, pageReviews);
+        // Last page: this visit has now seen all Google lists, so the store can
+        // drop cached reviews that have since been removed.
+        if (!nextCursor) store.dropUnseen(sortKey);
         state.pageCount = index + 1;
         if (nextCursor) state.cursor = nextCursor;
         scheduleUpdateUI();
@@ -934,10 +955,11 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
   // cloud hydrate first so a cloud hit (with summaries) isn't clobbered by a
   // redundant recompute; computeHighlights no-ops if highlights already exist.
   if (fetchState.relevant.done && fetchState.newest.done) {
-    // Zero reviews from a real place means the cached bgkey expired — drop it and
-    // nudge Maps to mint a fresh one (the capture listener then refetches). Once
-    // per place, so a genuinely review-less place doesn't loop.
-    if (!store.hasLiveData() && currentCreds() && !credsRetried) {
+    // No page back from a real place means the cached bgkey expired — drop it and
+    // nudge Maps to mint a fresh one (the capture listener then refetches). Only
+    // this visit's fetches count: reviews restored from the score cache say
+    // nothing about the creds. Once per place, so a review-less place doesn't loop.
+    if (!SORT_KEYS.some((k) => fetchState[k].pageCount) && currentCreds() && !credsRetried) {
       credsRetried = true;
       invalidateCreds();
       for (const k of SORT_KEYS) fetchState[k] = makeFetchState(); // let the self-heal relaunch
@@ -1190,6 +1212,7 @@ const summarizeActiveChip = async () => {
     sumBtn.textContent = 'Summarize';
     return;
   }
+  const place = currentPlace();
   try {
     const result = await summarizeReviews(texts, h.label, null);
     if (typeof result === 'object') {
@@ -1199,7 +1222,7 @@ const summarizeActiveChip = async () => {
       renderSummary(body, result);
       sumBtn.textContent = 'Show Reviews';
       chipViewMode = 'summary';
-      pushContribution({ highlightSummaries: { [h.token]: result } });
+      pushContribution({ highlightSummaries: { [h.token]: result } }, place);
     }
   } catch (e) {
     console.error('[highlights] summary failed', e);
@@ -1339,13 +1362,18 @@ const summarizeLabelSearch = async (btn?: HTMLButtonElement) => {
   }
 
   if (btn) { btn.disabled = true; btn.textContent = 'Summarizing…'; }
+  const featureId = getFeatureId();
   try {
     const result = await summarizeReviews(texts, search.query, null);
     if (typeof result === 'object') {
       search.summary = result;
-      cacheSearchSummary(search.query, result);
-      panel.className = 'rc-summary-panel';
-      renderSummary(panel, result);
+      cacheSearchSummary(featureId, search.query, result);
+      // Paint only while this search is still the one showing (a nav or a newer
+      // search resets activeLabelSearch).
+      if (activeLabelSearch === search) {
+        panel.className = 'rc-summary-panel';
+        renderSummary(panel, result);
+      }
     }
   } catch (e) {
     console.error('[label search] summary failed', e);
@@ -1785,7 +1813,11 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
         // null = creds still missing: leave the chip pending — nothing may
         // cache or persist a fake zero; the next render or stale-refresh retries.
         if (!reviews) return;
-        standoutScoreTransient.delete(key);
+        // An empty result is display-only too: a dead session or a throttle
+        // comes back empty just like an unmentioned item, and a persisted 0 would
+        // hide the chip until new reviews land.
+        if (reviews.length) standoutScoreTransient.delete(key);
+        else standoutScoreTransient.add(key);
         standoutScoreCache.set(key, statsForReviews(reviews));
         standoutReviewsCache.set(key, reviews);
         saveScoredCache();
@@ -1935,14 +1967,18 @@ const triggerSummarize = async () => {
   if (cardEls.sumBtn) cardEls.sumBtn.disabled = true;
   if (cardEls.resumBtn) cardEls.resumBtn.disabled = true;
   const customQuestion = cardEls.questionInput?.value?.trim() || null;
+  const place = currentPlace();
   try {
     const result = await summarizeReviews(texts, null, customQuestion);
+    // Filed and uploaded under the place it was asked about; the in-memory cache
+    // and panel only if that's still the place open (see currentPlace).
+    const current = place.featureId === lastFeatureId;
     if (!customQuestion && typeof result !== 'string') {
-      summaryCache.all = result;
-      saveSummaryCache();
-      pushContribution({ summary: result });
+      if (current) summaryCache.all = result;
+      saveSummaryCache(place.featureId, { all: result });
+      pushContribution({ summary: result }, place);
     }
-    renderSummary(panel, result);
+    if (current && cardEls.sumPanel) renderSummary(cardEls.sumPanel, result);
   } catch (e) {
     console.error('[Reviews] Summarize error:', e);
     panel.textContent = 'Summarization failed';

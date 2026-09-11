@@ -115,6 +115,53 @@ describe('period bucketing + trust filtering', () => {
   });
 });
 
+describe('a cache that outlives its reviews', () => {
+  const seedCache = async (storage: Storage, reviews: Review[], now = () => NOW) => {
+    const b = createScoreStore({ storage, now });
+    b.ingest('relevant', reviews);
+    b.ingest('newest', reviews);
+    await b.persistIfReady(KEY);
+  };
+
+  test('a restored review ages out of Past Month as the clock moves, not when it was cached', async () => {
+    const storage = memStorage();
+    await seedCache(storage, [rv('r', 20)]); // 20 days old when cached
+    const store = createScoreStore({ storage, now: () => NOW + 15 * DAY }); // 35 days old now
+    await store.loadCache(KEY);
+    expect(store.sortTotal('relevant', 'inPastMonth')).toBe(0);
+    expect(store.sortTotal('relevant', 'inPastYear')).toBe(1);
+    expect(store.mergedStats('inPastMonth').totalAll).toBe(0);
+  });
+
+  test('a complete live listing drops cached reviews Google removed, from both sorts', async () => {
+    const storage = memStorage();
+    await seedCache(storage, [rv('keep', 5), rv('removed', 6, 1), rv('old', 30)]);
+    const store = newStore(storage);
+    await store.loadCache(KEY);
+    store.ingest('newest', [rv('keep', 5), rv('old', 30)]); // no 'removed'
+    expect(Object.keys(store.mergedReviews())).toHaveLength(3); // a partial listing proves nothing
+    store.dropUnseen('newest'); // …but that was the last page
+    expect(Object.keys(store.mergedReviews()).sort()).toEqual(['keep', 'old']);
+    // The disk entry still lists it, so it can't be served fresh — it's rewritten.
+    expect(store.reconcile('keep')).toBe('unknown');
+    expect(await store.persistIfReady(KEY)).toBe(true);
+    const reloaded = newStore(storage);
+    await reloaded.loadCache(KEY);
+    expect(Object.keys(reloaded.mergedReviews()).sort()).toEqual(['keep', 'old']);
+  });
+
+  test('a review the other sort fetched live this visit is kept', async () => {
+    const storage = memStorage();
+    await seedCache(storage, [rv('a', 5), rv('b', 6)]);
+    const store = newStore(storage);
+    await store.loadCache(KEY);
+    store.ingest('newest', [rv('b', 6)]);
+    store.ingest('relevant', [rv('a', 5)]);
+    store.dropUnseen('relevant'); // relevant's listing lacked b, but newest just returned it
+    expect(Object.keys(store.mergedReviews()).sort()).toEqual(['a', 'b']);
+  });
+});
+
 describe('loadCache guards', () => {
   test('skips when live data already arrived', async () => {
     const storage = memStorage();
