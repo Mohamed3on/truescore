@@ -9,7 +9,12 @@ const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 // don't refetch on every sort pass; transport failures throw and stay uncached.
 const NEG_TTL = 6 * 60 * 60 * 1000;
 
-const sortFunction = (a: [number, Element], b: [number, Element]) => (a[0] === b[0] ? 0 : a[0] < b[0] ? 1 : -1);
+// The score grids' three bands: loved (≥ 0, best first), then the unknown — no
+// rating on the card, or a failed popover fetch — in page order, then the hated.
+// Unknown is not a net 0, so it never ranks among the zeros.
+const band = (score: number | null) => (score == null ? 1 : score < 0 ? 2 : 0);
+const sortFunction = ([a]: [number | null, Element], [b]: [number | null, Element]) =>
+  band(a) - band(b) || (b ?? 0) - (a ?? 0);
 
 const htmlToElement = (html: string) => {
   const template = document.createElement('template');
@@ -75,7 +80,7 @@ const getRatingScores = async (productSIN: string, elementToReplace: Element, ca
     return { calculatedScore };
   } catch (e) {
     console.error(`Failed to get rating for ${productSIN}:`, e);
-    return { calculatedScore: 0 };
+    return { calculatedScore: null };
   }
 };
 
@@ -97,15 +102,17 @@ const sortAmazonResults = async () => {
   const items = document.querySelectorAll('.s-result-item[data-asin]:not([data-asin=""]):not(.AdHolder)');
   const seenASINs = new Set<string>();
   const seenKeys = new Set<string>();
-  const fetchPromises: Promise<[number, Element]>[] = [];
-  const noRatingItems: [number, Element][] = [];
+  const fetchPromises: Promise<[number | null, Element]>[] = [];
   const cache = getCache();
 
   // The scan loop is synchronous, so pausing here blinds the observer only to
   // our own dedup removals — host mutations can't interleave with it.
   pauseObs();
   for (const item of items) {
-    if (item.querySelector('.s-shopping-adviser')) continue;
+    // A sponsored carousel is one result slot whose cards are result items too.
+    // Only the slots are results: a carousel card that claimed an ASIN or a
+    // variant family first would get its organic twin skipped or removed.
+    if (item.parentElement?.closest('.s-result-item') || item.querySelector('.s-shopping-adviser')) continue;
     const productSIN = item.getAttribute('data-asin');
     if (!productSIN || seenASINs.has(productSIN)) continue;
 
@@ -122,7 +129,7 @@ const sortAmazonResults = async () => {
       item.querySelector('.sg-row .a-spacing-top-micro .a-link-normal span.a-size-base') ||
       ratingEls.get(item);
 
-    if (!numberOfRatingsElement) { noRatingItems.push([0, item]); continue; }
+    if (!numberOfRatingsElement) { fetchPromises.push(Promise.resolve([null, item])); continue; }
     ratingEls.set(item, numberOfRatingsElement);
 
     // Fallback dedup: color/style variants Amazon lists as separate ASINs without
@@ -140,7 +147,7 @@ const sortAmazonResults = async () => {
     }
 
     fetchPromises.push(
-      getRatingScores(productSIN, numberOfRatingsElement, cache).then(({ calculatedScore }) => [calculatedScore, item] as [number, Element])
+      getRatingScores(productSIN, numberOfRatingsElement, cache).then(({ calculatedScore }) => [calculatedScore, item] as [number | null, Element])
     );
   }
   resumeObs();
@@ -148,10 +155,9 @@ const sortAmazonResults = async () => {
   const results = await Promise.allSettled(fetchPromises);
   saveCache(cache);
 
-  const itemsArr: [number, Element][] = results
-    .filter((r): r is PromiseFulfilledResult<[number, Element]> => r.status === 'fulfilled')
-    .map(r => r.value)
-    .concat(noRatingItems);
+  const itemsArr: [number | null, Element][] = results
+    .filter((r): r is PromiseFulfilledResult<[number | null, Element]> => r.status === 'fulfilled')
+    .map(r => r.value);
 
   itemsArr.sort(sortFunction);
 

@@ -6,7 +6,9 @@ const CARD = 'a.search-card-item';
 
 const throttledFetch = createThrottledFetcher(8);
 
-const listingId = (card: Element) => card.getAttribute('href')?.match(/\/item\/(\d+)\.html/)?.[1];
+// A card links to `/item/<id>.html`, or — for a bundle deal — to a landing page
+// naming the item in `productIds=<id>:<sku>`.
+const listingId = (card: Element) => card.getAttribute('href')?.match(/(?:\/item\/|[?&]productIds=)(\d+)/)?.[1];
 
 // AliExpress hashes every class on a search card, so find the seller's rating by
 // shape instead: the lone leaf span holding a bare number, inside the box that
@@ -25,6 +27,7 @@ setupScoreGrid({
     const id = listingId(card);
     return id ? fetchItemScore(throttledFetch, id) : Promise.resolve(null);
   },
+  idOf: listingId,
   placeBadge: (card, badge) => {
     // Beside the star average so the two numbers can be read against each other.
     const rating = ratingEl(card);

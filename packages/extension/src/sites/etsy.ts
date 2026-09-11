@@ -10,6 +10,7 @@ setupScoreGrid({
   cardSelector: CARD,
   scoreForCard: (card) =>
     fetchItemScore(throttledFetch, card.getAttribute('data-listing-id')!, card.getAttribute('data-shop-id')!),
+  idOf: (card) => card.getAttribute('data-listing-id'),
   placeBadge: (card, badge) => {
     // Sit beside the shop's stars so the two numbers can be read against each
     // other. A shop page rates itself in the header and leaves its own cards

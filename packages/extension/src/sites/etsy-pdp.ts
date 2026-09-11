@@ -42,11 +42,13 @@ const recentReviews = async (meta: ListingMeta): Promise<EtsyReview[]> => {
 
   const pages = await Promise.all(
     Array.from({ length: RECENT_PAGES }, (_, i) =>
-      fetchRecentReviews(throttledFetch, meta, i + 1).catch((): EtsyReview[] => [])
+      fetchRecentReviews(throttledFetch, meta, i + 1).catch(() => null)
     )
   );
-  const reviews = pages.flat();
-  if (reviews.length) cacheSet(key, reviews);
+  const reviews = pages.flatMap((page) => page ?? []);
+  // A failed page leaves a hole in the sample: show what came back, but pin
+  // only a whole one for the week.
+  if (reviews.length && !pages.includes(null)) cacheSet(key, reviews);
   return reviews;
 };
 

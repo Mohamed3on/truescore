@@ -111,6 +111,31 @@ describe('structuralContainers', () => {
     const containers = structuralContainers('.card')([only]);
     expect([...containers]).toEqual([]);
   });
+
+  // AliExpress's #card-list: 12 rendered cards behind 48 empty `lazy-load` divs.
+  const placeholder = (): HTMLElement => {
+    const el = document.createElement('div');
+    el.className = 'lazy-load';
+    el.style.cssText = 'width:220px;height:220px';
+    return el;
+  };
+  const section = (text: string): HTMLElement => {
+    const el = document.createElement('section');
+    el.textContent = text;
+    return el;
+  };
+
+  test('empty lazy-load placeholders weigh on neither side', () => {
+    const cards = [card(), card(), card()];
+    const g = grid(...cards.map(wrap), ...Array.from({ length: 12 }, placeholder));
+    expect([...structuralContainers('.card')(cards)]).toEqual([g]);
+  });
+
+  test('still rejects a page-level ancestor whose children are mostly other content', () => {
+    const [c1, c2] = [card(), card()];
+    grid(wrap(c1), wrap(c2), section('Related searches'), section('Help'), section('Footer'), placeholder(), placeholder());
+    expect([...structuralContainers('.card')([c1, c2])]).toEqual([]);
+  });
 });
 
 // --- applyOrder strategies -------------------------------------------------
@@ -153,6 +178,30 @@ describe('applyOrder strategies', () => {
     expect((hated as HTMLElement).style.order).toBe('1');
     orderByAppend(g, scored, rest, sunk);
     expect([...g.children]).toEqual([loved, pending, hated]);
+  });
+
+  test('orderByCssBand returns a child that dropped out of the ranking to the default', () => {
+    // A recycled card loses its badge; until its new product scores it's unscored.
+    const [a, b, c] = [card(50), card(10), card(-5)];
+    const g = grid(a, b, c);
+    const band = () => {
+      const { scored, rest, sunk } = rankChildren(g);
+      orderByCssBand(g, scored, rest, sunk);
+    };
+    band();
+    b.removeAttribute('data-nps');
+    c.removeAttribute('data-nps');
+    band();
+    expect([a.style.order, b.style.order, c.style.order]).toEqual(['-1', '', '']);
+  });
+
+  test('orderByCssBand never clears an order the host set itself', () => {
+    const hostPinned = card();
+    hostPinned.style.order = '3';
+    const g = grid(card(20), card(10), hostPinned);
+    const { scored, rest, sunk } = rankChildren(g);
+    orderByCssBand(g, scored, rest, sunk);
+    expect(hostPinned.style.order).toBe('3');
   });
 });
 

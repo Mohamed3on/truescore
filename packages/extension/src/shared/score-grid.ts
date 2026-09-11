@@ -37,13 +37,18 @@ export const structuralContainers =
       let el: Element = card;
       while (el.parentElement) {
         const parent = el.parentElement;
-        const bearers = [...parent.children].filter(isBearer).length;
+        const children = [...parent.children];
+        const bearers = children.filter(isBearer).length;
         if (bearers >= 2) {
           // A page-level ancestor can also reach 2 — via unrelated sections that
           // each hold a card somewhere. A real row's children are mostly bearers;
           // reject rather than rank (and reshuffle) whole page sections. A lone
-          // card then simply stays unranked.
-          return bearers * 2 >= parent.children.length ? parent : null;
+          // card then simply stays unranked. Empty children — lazy-load
+          // placeholders holding the places of cards not yet rendered (AliExpress
+          // ships 48 behind its first 12) — are neither card nor content, so
+          // they weigh on neither side.
+          const content = children.filter((child) => child.childElementCount || child.textContent!.trim()).length;
+          return bearers * 2 >= content ? parent : null;
         }
         el = parent;
       }
@@ -91,14 +96,20 @@ export const orderByCssImportant = (_container: Element, scored: Element[], rest
 // it. Grid/flex layout honours it, the host framework never inspects it, and a
 // resort makes zero childList mutations — so re-rendering hosts (React/Vue grids,
 // lazy-load placeholder rows) have nothing to fight and observers nothing to
-// re-fire on.
-export const orderByCssBand = (_container: Element, scored: Element[], _rest: Element[] = [], sunk: Element[] = []): void => {
+// re-fire on. A child that drops back out of the ranking (its card recycled for
+// an unscored product) returns to the default — only one this band ordered,
+// never an order the host set itself.
+const banded = new WeakSet<Element>();
+export const orderByCssBand = (_container: Element, scored: Element[], rest: Element[] = [], sunk: Element[] = []): void => {
   scored.forEach((child, i) => {
     (child as HTMLElement).style.order = String(i - scored.length);
+    banded.add(child);
   });
   sunk.forEach((child, i) => {
     (child as HTMLElement).style.order = String(i + 1);
+    banded.add(child);
   });
+  for (const child of rest) if (banded.delete(child)) (child as HTMLElement).style.order = '';
 };
 
 // The module owns `data-nps`, so a container's scored child is whichever element
@@ -186,6 +197,10 @@ export interface ScoreGridOpts {
   cardSelector: string;
   // Resolve a card's id and fetch its score. Throttling stays per-site.
   scoreForCard: (card: Element) => Promise<ScoreData | null>;
+  // The product a card shows. When it changes — a host recycling the card
+  // element for another product — the card drops its badge and is rescored.
+  // Without it a card is scored once for good.
+  idOf?: (card: Element) => string | null | undefined;
   // Place the badge relative to the card's own rating.
   placeBadge: (card: Element, badge: HTMLElement) => void;
   // Container discovery. Defaults to `structuralContainers(cardSelector)`.
@@ -198,14 +213,23 @@ export interface ScoreGridOpts {
   applyOrder?: (container: Element, scored: Element[], rest: Element[], sunk: Element[]) => void;
 }
 
+// A null score or a failed fetch is retried a few times, backing off (2s, 8s,
+// 32s). Fetchers cache their definitive misses (a reviewless product), so only
+// transient ones — a 429, a missing CSRF token, a dropped connection — pay for
+// another request.
+const RETRIES = 3;
+const RETRY_BASE_MS = 2000;
+
 export const setupScoreGrid = ({
   cardSelector,
   scoreForCard,
+  idOf,
   placeBadge,
   discover,
   applyOrder = orderByCssBand,
 }: ScoreGridOpts): void => {
   const discoverContainers = discover ?? structuralContainers(cardSelector);
+  const identity = (card: Element) => idOf?.(card) ?? '';
 
   let picks: (Element | null)[] = [];
   const resort = () => {
@@ -232,35 +256,57 @@ export const setupScoreGrid = ({
     });
   };
 
-  const processCards = () => {
-    const cards = [...document.querySelectorAll(`${cardSelector}:not([data-nps-done])`)];
-    if (!cards.length) return;
+  const score = (card: Element, id: string, attempt = 0): void => {
+    scoreForCard(card)
+      .catch(() => null)
+      .then((data) => {
+        // Recycled for another product while in flight, or badged meanwhile.
+        if (identity(card) !== id || card.querySelector('.nps-score-badge')) return;
+        if (!data || isNaN(data.nps)) {
+          if (attempt < RETRIES) {
+            setTimeout(() => {
+              if (card.isConnected && identity(card) === id) score(card, id, attempt + 1);
+            }, RETRY_BASE_MS * 4 ** attempt);
+          }
+          return;
+        }
+        // The badge, not the card, carries `data-nps`: the badge lives inside
+        // the rating node hosts persist across re-renders, so the rank survives
+        // the card wrapper being recreated around it.
+        const badge = renderScoreBadge(data);
+        badge.setAttribute('data-nps', String(data.score));
+        badge.setAttribute('data-nps-ratio', String(Math.round(data.nps)));
+        badge.setAttribute('data-nps-id', id);
+        placeBadge(card, badge);
+        scheduleSort();
+      })
+      .catch(() => {});
+  };
 
-    for (const card of cards) {
-      card.setAttribute('data-nps-done', '1');
+  const processCards = () => {
+    for (const card of document.querySelectorAll(cardSelector)) {
+      // `data-nps-done` names the product the card was scored for, so a card
+      // the host recycles for another product comes round again.
+      const id = identity(card);
+      if (card.getAttribute('data-nps-done') === id) continue;
+      card.setAttribute('data-nps-done', id);
       // Idempotent guard. Some hosts (e.g. Uniqlo's and IKEA's React grids)
       // re-render a card's wrapper around a persisted rating node, so a
       // freshly-matched card can already carry our badge. Never stack a second
       // one — but do re-rank, because the recreated wrapper lost any CSS
       // `order` it carried. Loop-safe because the default CSS-band resort
       // makes no childList mutations for the observer to re-fire on.
-      if (card.querySelector('.nps-score-badge')) {
+      const badge = card.querySelector<HTMLElement>('.nps-score-badge[data-nps-id]');
+      if (badge?.dataset.npsId === id) {
         scheduleSort();
         continue;
       }
-      scoreForCard(card)
-        .then((data) => {
-          if (!data || isNaN(data.nps) || card.querySelector('.nps-score-badge')) return;
-          // The badge, not the card, carries `data-nps`: the badge lives inside
-          // the rating node hosts persist across re-renders, so the rank survives
-          // the card wrapper being recreated around it.
-          const badge = renderScoreBadge(data);
-          badge.setAttribute('data-nps', String(data.score));
-          badge.setAttribute('data-nps-ratio', String(Math.round(data.nps)));
-          placeBadge(card, badge);
-          scheduleSort();
-        })
-        .catch(() => {});
+      // A recycled card's badge, and so its rank, belong to its last product.
+      if (badge) {
+        badge.remove();
+        scheduleSort();
+      }
+      score(card, id);
     }
   };
 

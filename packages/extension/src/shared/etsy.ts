@@ -154,7 +154,9 @@ export const fetchRecentReviews = async (
   page: number
 ): Promise<EtsyReview[]> => {
   const js = await deepDive(fetcher, listingId, shopId, page, 'Recent');
-  return (js?.reviews ?? []).map((r: any) => ({
+  // A failed page (429, no CSRF) isn't an empty one — past the last page is.
+  if (!js) throw new Error(`Etsy review page ${page} failed`);
+  return (js.reviews ?? []).map((r: any) => ({
     transactionId: r.transactionId,
     rating: r.reviewInfo?.rating ?? 0,
     text: (r.reviewContent?.reviewText ?? '').trim(),

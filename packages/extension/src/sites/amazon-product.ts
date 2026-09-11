@@ -236,11 +236,13 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   // (cursor via nextPageToken), fall back to the plain product-reviews page, parse,
   // and hand each page to onPage. extraParams (e.g. filterByKeyword) flow into both
   // the POST body and the fallback URL so filtered searches stay filtered; onPage
-  // returns 'stop' to end pagination early.
+  // returns 'stop' to end pagination early. Resolves whether the walk ran its
+  // course — out of pages or out of budget — rather than stopping early on a
+  // failed fetch or a 'stop': only a whole sample is worth caching.
   const fetchReviewPages = async (
     onPage: (doc: Document, page: number) => 'stop' | void,
     extraParams: Record<string, string> = {},
-  ) => {
+  ): Promise<boolean> => {
     const parser = new DOMParser();
     let nextToken: string | null = null;
     for (let page = 1; page <= NUMBER_OF_PAGES_TO_PARSE; page++) {
@@ -268,14 +270,15 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
           if (res.ok) html = await res.text();
         } catch (_) {}
       }
-      if (!html) break;
+      if (!html) return false;
 
-      if (onPage(parser.parseFromString(html, 'text/html'), page) === 'stop') break;
+      if (onPage(parser.parseFromString(html, 'text/html'), page) === 'stop') return false;
 
       const tokenMatch = html.match(/nextPageToken[^:]*?:\s*(?:&quot;|")([^"&]+)/);
       nextToken = tokenMatch?.[1] ?? null;
-      if (!nextToken) break;
+      if (!nextToken) return true;
     }
+    return true;
   };
 
   const extractReviewTexts = (doc: Document, seen: Set<string>) => {
@@ -380,7 +383,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     const seenReviewIds = new Set<string>();
     const collectedReviewTexts: string[] = [];
     const reviewTextsSeen = new Set<string>();
-    await fetchReviewPages((syntheticDocument, page) => {
+    const complete = await fetchReviewPages((syntheticDocument, page) => {
       if (!totalRatingPercentages) {
         totalRatingPercentages = getRatingPercentages(syntheticDocument);
         const { calculatedScore, totalScorePercentage } = setTotalRatingsScore(
@@ -435,7 +438,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       updateLiveStats();
     });
 
-    if (numberOfParsedReviews > 0) {
+    // A walk cut short still shows what it read, but isn't pinned for days.
+    if (complete && numberOfParsedReviews > 0) {
       cacheSet(scoresCacheKey, { numberOfParsedReviews, scores, formatRatings });
     }
     if (collectedReviewTexts.length) {
