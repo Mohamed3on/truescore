@@ -452,13 +452,15 @@ function updateProgress(element: HTMLElement, step: number, detail = '') {
 }
 
 /**
- * Which of `uids` the user has watched, asked in batches of a list page's 100
- * posters — the call Letterboxd's own posters make. Empty when logged out or on
- * failure, so nothing is hidden.
+ * Which of `uids` the user has watched, and their rating (out of 10) of those
+ * they rated, asked in batches of a list page's 100 posters — the call
+ * Letterboxd's own posters make. Empty when logged out or on failure, so
+ * nothing is hidden.
  */
-async function fetchWatched(uids: (string | null | undefined)[]): Promise<Set<string>> {
+async function fetchWatched(uids: (string | null | undefined)[]) {
   const ids = uids.filter((uid): uid is string => !!uid);
   const watched = new Set<string>();
+  const ratings = new Map<string, number>();
   for (let i = 0; i < ids.length; i += 100) {
     try {
       const res = await fetch('/ajax/letterboxd-metadata/', {
@@ -466,12 +468,14 @@ async function fetchWatched(uids: (string | null | undefined)[]): Promise<Set<st
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(ids.slice(i, i + 100).map((uid) => ['productions', uid])),
       });
-      for (const uid of (await res.json()).watched ?? []) watched.add(uid);
+      const meta = await res.json();
+      for (const uid of meta.watched ?? []) watched.add(uid);
+      for (const { uid, rating } of meta.ratings ?? []) ratings.set(uid, rating);
     } catch (e: any) {
       debug('Failed to fetch metadata:', e.message);
     }
   }
-  return watched;
+  return { watched, ratings };
 }
 
 /**
@@ -485,11 +489,14 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
   document.cookie = 'filmFilter=; path=/; domain=.letterboxd.com; max-age=0';
 
   // Films the user has seen stay out of the picks — unless they've seen this one
-  // too — asked per film rather than through that cookie, the user's own setting.
+  // too, when only those they rated below it do — asked per film rather than
+  // through that cookie, the user's own setting.
   const productionUid = document.querySelector('#backdrop[data-production-uid]')?.getAttribute('data-production-uid');
   const unseen = async <T extends { uid?: string }>(films: T[]) => {
-    const watched = await fetchWatched([productionUid, ...films.map((f) => f.uid)]);
-    return productionUid && watched.has(productionUid) ? films : films.filter((f) => !watched.has(f.uid ?? ''));
+    const { watched, ratings } = await fetchWatched([productionUid, ...films.map((f) => f.uid)]);
+    if (!productionUid || !watched.has(productionUid)) return films.filter((f) => !watched.has(f.uid ?? ''));
+    const bar = ratings.get(productionUid) ?? 0; // unrated: nothing to fall below
+    return films.filter((f) => (ratings.get(f.uid ?? '') ?? bar) >= bar);
   };
 
   try {
