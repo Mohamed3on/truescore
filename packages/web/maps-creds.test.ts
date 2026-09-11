@@ -39,10 +39,27 @@ describe('the env session is all of it or none of it', () => {
     expect(getMapsCreds()).toBeNull();
   });
 
+  test('bgbind may be blank — Google stopped sending it on the review RPC', async () => {
+    const { TRUESCORE_MAPS_BGBIND: _drop, ...noBind } = FULL;
+    setEnv(noBind);
+    const { getMapsCreds } = await freshModule();
+    expect(getMapsCreds()).toEqual({ bgkey: 'bg', bgbind: '', sessionId: 'sid', at: 'at', hl: 'en' });
+  });
+
   test('a partial creds set is refused too', async () => {
     setEnv({ TRUESCORE_MAPS_BGKEY: 'bg', TRUESCORE_MAPS_COOKIES: 'SID=x' });
     const { mapsSession } = await freshModule();
     expect(mapsSession()).toBeNull();
+  });
+
+  test('a throttled scrape shows the banner until the next good reply', async () => {
+    setEnv(FULL);
+    const { mapsSessionHealthy, onThrottledScrape, onFreshRpc } = await freshModule();
+    expect(mapsSessionHealthy()).toBe(true);
+    onThrottledScrape();
+    expect(mapsSessionHealthy()).toBe(false);
+    onFreshRpc();
+    expect(mapsSessionHealthy()).toBe(true);
   });
 
   test('unconfigured is null, not a throw — a credless deploy still serves', async () => {

@@ -160,6 +160,20 @@ describe('metaFromPreview', () => {
     expect(meta.googleReviewCount).toBe(1234);
     expect(meta.category).toBe('Ice cream shop');
   });
+  test('reads every hours slot, with minutes', () => {
+    const six: any = [];
+    six[203] = [[
+      ['Monday', 1, [2026, 9, 7], [['11:30 AM–2:30 PM', [[11, 30], [14, 30]]], ['5–10 PM', [[17], [22]]]], 0, 1],
+      ['Saturday', 6, [2026, 9, 12], [['6 PM–2 AM', [[18], [2]]]], 0, 1],
+      ['Sunday', 7, [2026, 9, 13], [], 0, 1],
+    ]];
+    const d: any = []; d[6] = six;
+    expect(metaFromPreview(d).hoursWeek).toEqual([
+      { day: 'Monday', label: '11:30 AM–2:30 PM, 5–10 PM', slots: [[11.5, 14.5], [17, 22]] },
+      { day: 'Saturday', label: '6 PM–2 AM', slots: [[18, 2]] },
+      { day: 'Sunday', label: 'Closed' },
+    ]);
+  });
 });
 
 describe('removedReviewsFromPreview', () => {

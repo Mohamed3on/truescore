@@ -92,6 +92,9 @@ export async function collectToken(featureId: string, token: string, transport: 
 // caller can stream progress; the union grows incrementally from each page, and
 // the snapshot spread is paid only when a caller is listening. A plain
 // (single-term) query is just the N=1 case.
+// As many chains as the old 6-term cap ever allowed at once, so no query is slower.
+const SEARCH_CONCURRENCY = 6;
+
 export async function collectSearchTerms(
   terms: string[],
   reqFor: (term: string, cursor: string) => MapsReq,
@@ -99,17 +102,22 @@ export async function collectSearchTerms(
   onMerged?: (merged: Review[]) => void,
 ): Promise<Review[]> {
   const union = new Map<string, Review>();
-  await Promise.all(
-    terms.map((term) =>
-      collectPaged((c) => reqFor(term, c), transport, {
+  // Every term is searched — none is dropped — but only a few paging chains run
+  // against Maps at once, however many terms and spellings a query expands to.
+  const queue = [...terms];
+  const worker = async () => {
+    for (let term = queue.shift(); term !== undefined; term = queue.shift()) {
+      const t = term;
+      await collectPaged((c) => reqFor(t, c), transport, {
         maxPages: 30,
         stabilize: true,
         onPage: (_running, { pageReviews }) => {
           for (const r of pageReviews) union.set(r.reviewId, r);
           onMerged?.([...union.values()]);
         },
-      }),
-    ),
-  );
+      });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SEARCH_CONCURRENCY, terms.length) }, worker));
   return [...union.values()];
 }

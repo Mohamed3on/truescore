@@ -1,7 +1,7 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
 import { beginPlace, currentPlace, endPlace, type PlaceEpoch } from './place-session';
 import { fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, streamNdjson } from './http';
-import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz } from './hours';
+import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz, slotsOf } from './hours';
 import {
   chipPolarity, compileMatchRegex, displayScore, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
@@ -627,7 +627,7 @@ function paintScore(data: PaintData) {
   // holds still whatever our scrape depth. The histogram is the same total
   // Google shows; googleReviewCount backs it up until the preview lands.
   const { pct: displayPct, adjusted } = displayScore({
-    score: (data.score?.scorePct ?? 0) / 100,
+    score: data.score ?? 0,
     histogram: data.histogram,
     googleReviewCount: data.meta?.googleReviewCount,
     removedReviews: data.meta?.removedReviews,
@@ -653,8 +653,10 @@ function paintScore(data: PaintData) {
       : 0;
     $('reviewsLabel').textContent =
       `${data.score.totalReviews} · ${data.score.trustedReviews} (${trustedPct}%)`;
-    $('relevantPct').textContent = `${data.score.relevant.scorePct}%`;
-    $('newestPct').textContent = `${data.score.newest.scorePct}%`;
+    // A sort with no reviews (yet) has no score — '—', never a confident 0%.
+    const sortPct = (s: SortStats) => (s.totalReviews ? `${s.scorePct}%` : '—');
+    $('relevantPct').textContent = sortPct(data.score.relevant);
+    $('newestPct').textContent = sortPct(data.score.newest);
     const delta = data.score.newest.scorePct - data.score.relevant.scorePct;
     const deltaEl = $('newestDelta');
     if (data.score.newest.trustedReviews === 0 || data.score.relevant.trustedReviews === 0) {
@@ -674,7 +676,8 @@ function paintScore(data: PaintData) {
     $('newestDelta').textContent = '';
   }
   renderOverallScore(data.histogram ?? null);
-  renderOverall(data.overallPct ?? null, data.score ? displayPct : 0);
+  // No score, no delta — "−70% vs overall" beside a '—' measured nothing.
+  renderOverall(data.score ? data.overallPct ?? null : null, displayPct);
 }
 
 // One-time setup for a new lookup: show the result panel, wipe the previous
@@ -726,7 +729,9 @@ function flashIfChanged(el: HTMLElement, prev: string) {
   el.classList.add('flash');
 }
 
-async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number): Promise<void> {
+// `current` is false once a newer lookup (or goHome) superseded this one: its
+// remaining events are dropped, so a late `refreshed` can't paint place A over B.
+async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number, current: () => boolean): Promise<void> {
   const freshnessLabel = $('freshnessLabel');
   // Accumulator for cache-miss progressive events. The server emits these in
   // arbitrary order (preview lands ~500ms-1s, score-progress every 1-2s) so
@@ -743,6 +748,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
 
   try {
     for await (const evt of readNdjson<LookupEvent>(body)) {
+      if (!current()) return;
       if (evt.type === 'lookup') {
         const scoreMs = Date.now() - t0;
         cachedTotal = evt.score.totalReviews;
@@ -758,7 +764,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
         } else if (epoch) {
           setStatus(`Score in ${(scoreMs / 1000).toFixed(1)}s · summarizing…`);
           fetchSummaryFor(epoch).then((sum) => {
-            if (!refreshed) {
+            if (!refreshed && epoch.alive) {
               setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
             }
           });
@@ -819,12 +825,19 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
           setStatus(`Scoring · ${evt.score.totalReviews} reviews so far…`);
         }
       } else if (evt.type === 'score') {
-        // A 0-review scrape is Google throttling us, not a review-less place
-        // (the server refuses to cache it for the same reason). With a
-        // provisional score on screen, repainting would replace a real number
-        // with a fake zero — so keep what we have and say the recheck failed.
-        // Summary + highlights still kick off below.
-        const throttled = provisional && evt.score.totalReviews === 0;
+        // `throttled`: the server refused to cache this scrape — no reviews, or
+        // one sort empty, for a place that has them — so it is not a score. With
+        // a provisional score on screen, keep it and say the recheck failed
+        // (summary + highlights still kick off below, from the contribution).
+        // Without one, clear the progress numbers and stop: there's nothing to
+        // summarize, and the session banner (re-checked after the lookup) says why.
+        const throttled = evt.throttled;
+        if (throttled && !provisional) {
+          acc.score = undefined;
+          paintScore(acc);
+          setStatus("Google didn't return this place's reviews — try again in a moment", true);
+          continue;
+        }
         if (!throttled) {
           acc.score = evt.score;
           const prevScore = $('scorePct').textContent ?? '';
@@ -849,7 +862,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
           if (throttled) setStatus('Recheck came back empty — showing the extension score', true);
           else setStatus(`Score in ${(evt.fetchMs / 1000).toFixed(1)}s · summarizing…`);
           fetchSummaryFor(epoch).then((sum) => {
-            if (throttled) return;
+            if (throttled || !epoch.alive) return;
             setStatus(sum.ok ? `Done in ${((Date.now() - t0) / 1000).toFixed(1)}s` : 'Summary failed', !sum.ok);
           });
         }
@@ -858,7 +871,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number)
       }
     }
   } finally {
-    freshnessLabel.classList.remove('rechecking');
+    if (current()) freshnessLabel.classList.remove('rechecking');
   }
 }
 
@@ -869,15 +882,15 @@ function renderHoursToday(meta: PlaceMeta | undefined) {
   const week = meta?.hoursWeek;
   if (!week?.length) { hoursEl.hidden = true; return; }
   const { day, hour } = localHourInTz(meta?.timezone);
-  const today = week.find((d) => WEEKDAYS.indexOf(d.day as typeof WEEKDAYS[number]) === day) ?? week[0];
-  const open = isOpenNow(today, hour);
+  const on = (d: number) => week.find((h) => WEEKDAYS.indexOf(h.day as typeof WEEKDAYS[number]) === d);
+  const today = on(day) ?? week[0];
+  const open = isOpenNow(today, hour, on((day + 6) % 7));
   const status = open === true ? 'open' : open === false ? 'closed' : null;
   hoursStatusEl.className = `place-hours-status ${status ?? ''}`;
   hoursStatusEl.textContent = status ? status.toUpperCase() : '';
   hoursStatusEl.hidden = status === null;
-  const hoursLabel = today?.openHour != null && today.closeHour != null
-    ? `${formatHourLabel(today.openHour)}–${formatHourLabel(today.closeHour)}`
-    : (today?.label ?? '');
+  const hoursLabel = slotsOf(today).map(([o, c]) => `${formatHourLabel(o)}–${formatHourLabel(c)}`).join(', ')
+    || (today?.label ?? '');
   hoursTodayEl.textContent = hoursLabel && today ? `${today.day.slice(0, 3)} · ${hoursLabel}` : '';
   hoursEl.hidden = false;
 }
@@ -1018,10 +1031,18 @@ async function fetchSummaryFor(epoch: PlaceEpoch, force = false): Promise<{ ok: 
   }
 }
 
+// Each submit is one lookup, and only the newest may paint. Back/Forward and the
+// home tiles call requestSubmit() past the disabled button, so an older lookup's
+// stream can still be open when a newer one starts.
+let lookupSeq = 0;
+const resetGoBtn = () => { goBtn.disabled = false; goBtn.textContent = 'SCORE'; };
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const url = urlInput.value.trim();
   if (!url) return;
+  const seq = ++lookupSeq;
+  const current = () => seq === lookupSeq;
   // Push a history entry for user-initiated nav so back/forward works. Skip
   // when already at this URL (initial load with ?url=, popstate replay, or
   // a duplicate submit).
@@ -1034,13 +1055,13 @@ form.addEventListener('submit', async (e) => {
   const t0 = Date.now();
   try {
     const resp = await postNdjson('/api/lookup', { url } satisfies LookupRequest);
-    await consumeLookupStream(resp.body!, t0);
+    await consumeLookupStream(resp.body!, t0, current);
   } catch (e) {
+    if (!current()) return;
     delete document.body.dataset.state;
     setStatus(e instanceof Error ? e.message : String(e), true);
   } finally {
-    goBtn.disabled = false;
-    goBtn.textContent = 'SCORE';
+    if (current()) resetGoBtn();
     // A lookup is when staleness surfaces (empty reviews) — re-check health so
     // the banner appears right when the user hits it.
     refreshSessionHealth();
@@ -1096,8 +1117,10 @@ chipCloseBtn.addEventListener('click', closeChipPanel);
 
 function goHome() {
   // Nothing is on screen to paint into, so any in-flight summary/search for the
-  // place we just left must not land.
+  // place we just left must not land — nor any event of an in-flight lookup.
   endPlace();
+  lookupSeq++;
+  resetGoBtn();
   delete document.body.dataset.state;
   result.hidden = true;
   urlInput.value = '';

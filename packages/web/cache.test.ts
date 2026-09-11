@@ -94,3 +94,76 @@ test('an all-throttled pass persists nothing rather than blanking the panel', as
 
   expect(cache.get(fid)!.highlights?.map((h) => h.label)).toEqual(['a']);
 });
+
+const stat = (n: number, pct = 80) => ({ totalReviews: n, trustedReviews: n, scorePct: pct });
+const scrape = (fid: string, relevant: number, newest: number): ScoreResult =>
+  ({ featureId: fid, ...stat(relevant + newest), relevant: stat(relevant), newest: stat(newest), reviews: [] });
+
+test('a scrape with one sort empty is a throttle, not a score', async () => {
+  expect(await cache.putScore('part-1', 'P', scrape('part-1', 200, 0), 5000)).toBe(false);
+  expect(cache.get('part-1')).toBeUndefined();
+  expect(cache.scoreUsable({ score: scrape('x', 200, 0) } as CacheEntry, 5000)).toBe(false);
+  expect(await cache.putScore('part-1', 'P', scrape('part-1', 200, 150), 5000)).toBe(true);
+});
+
+test('putScore never blanks a stored name', async () => {
+  await cache.putScore('name-1', 'Kept Name', scrape('name-1', 10, 10), 20);
+  await cache.putScore('name-1', '', scrape('name-1', 10, 10), 20); // a bare ?q=&ftid= link
+  expect(cache.get('name-1')?.name).toBe('Kept Name');
+});
+
+test('searches: an empty result is never cached, and a cached one expires', async () => {
+  const search = (n: number, ts = Date.now()) => ({ query: 'pho', totalReviews: n, trustedReviews: n, scorePct: 50, reviews: [], ts });
+  await cache.putScore('search-1', 'S', scrape('search-1', 10, 10), 20);
+  await cache.putSearch('search-1', 'Pho', search(0)); // what a credless / stale session returns
+  expect(cache.get('search-1')?.searches?.pho).toBeUndefined();
+  await cache.putSearch('search-1', 'Pho', search(4));
+  expect(cache.searchServable(cache.get('search-1')?.searches?.pho)).toBe(true);
+  expect(cache.searchServable(search(4, Date.now() - 25 * 3600_000))).toBe(false);
+  expect(cache.searchServable(search(0))).toBe(false); // a legacy cached empty
+});
+
+test('a preview with no place data keeps the good meta, and a readable one re-stamps the histogram', async () => {
+  const fid = 'preview-1';
+  await cache.putScore(fid, 'P', scrape(fid, 10, 10), 300);
+  const meta = { canonicalName: 'P', removedReviews: { text: '21 to 50 reviews removed', min: 21, max: 50 } };
+  await cache.putPreviewBundle(fid, { histogram: [200, 40, 20, 10, 30], meta, chips: [] });
+  const stamped = cache.get(fid)!.histogramTs!;
+  await cache.putPreviewBundle(fid, { histogram: null, meta: {}, chips: [] });
+  expect(cache.get(fid)!.meta).toEqual(meta);
+  const realNow = Date.now;
+  Date.now = () => realNow() + 7 * 3600_000; // past the 6h TTL
+  try {
+    await cache.putPreviewBundle(fid, { histogram: [200, 40, 20, 10, 30], meta, chips: [] }); // unchanged
+    expect(cache.get(fid)!.histogramTs).toBeGreaterThan(stamped);
+    expect(cache.histogramFresh(cache.get(fid)!)).toBe(true);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('a set missing a known chip is short, and never replaces a complete one', async () => {
+  const fid = 'chips-1';
+  await cache.putScore(fid, 'C', scrape(fid, 10, 10), 20);
+  const metas = ['a', 'b', 'c', 'd', 'e'].map((l) => ({ token: `t-${l}`, label: l, count: 5 }));
+  await cache.recordChipWarm(fid, metas);
+  // Two chips threw, so only three were scored: short, not served.
+  await cache.putHighlights(fid, ['a', 'b', 'c'].map((l) => chip(l, 5, 5)));
+  expect(cache.highlightsServable(cache.get(fid)!)).toBe(false);
+  await cache.putHighlights(fid, ['a', 'b', 'c', 'd', 'e'].map((l) => chip(l, 5, 5)));
+  expect(cache.highlightsServable(cache.get(fid)!)).toBe(true);
+  // A later short set — a throw, or an extension contribution — keeps the full one.
+  await cache.putContribution(fid, 'C', { highlights: [chip('a', 5, 5)] });
+  expect(cache.get(fid)!.highlights).toHaveLength(5);
+});
+
+test('a contribution-only stub lists its contributed score, not a placeholder 0', async () => {
+  const score = { featureId: 'stub-1', ...stat(412, 87), ratio: 0.87, relevant: stat(300, 85), newest: stat(200, 90) };
+  await cache.putContribution('stub-1', 'Extension Place', { score });
+  const row = cache.all().find((p) => p.featureId === 'stub-1')!;
+  expect(row.scorePct).toBe(87);
+  expect(Date.now() - row.lastAccessTs).toBeLessThan(60_000);
+  // A stub with no score of any kind has nothing to list.
+  await cache.putContribution('stub-2', 'Summary Only', { summary: { text: 'x' } as unknown as Summary });
+  expect(cache.all().find((p) => p.featureId === 'stub-2')).toBeUndefined();
+});

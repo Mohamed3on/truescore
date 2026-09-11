@@ -81,6 +81,7 @@ export type ScoreResult = {
   totalReviews: number;
   trustedReviews: number;
   scorePct: number;
+  ratio?: number;
   relevant: SortStats;
   newest: SortStats;
   reviews: Review[];
@@ -153,6 +154,7 @@ export async function scorePlace(
       totalReviews: m.totalReviews,
       trustedReviews: m.trustedReviews,
       scorePct: m.scorePct,
+      ratio: m.ratio,
       relevant: statsForReviews(latestRelevant),
       newest: statsForReviews(latestNewest),
     });
@@ -175,6 +177,7 @@ export async function scorePlace(
     totalReviews: m.totalReviews,
     trustedReviews: m.trustedReviews,
     scorePct: m.scorePct,
+    ratio: m.ratio,
     relevant: statsForReviews(relevant),
     newest: statsForReviews(newest),
     reviews: all,

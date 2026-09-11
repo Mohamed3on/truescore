@@ -25,6 +25,7 @@ export type Score = {
   totalReviews: number;
   trustedReviews: number;
   scorePct: number;
+  ratio?: number; // unrounded — see SortStats
   relevant: SortStats;
   newest: SortStats;
   reviews: Review[];
@@ -71,7 +72,10 @@ export type LookupEvent =
   | { type: 'provisional'; score: PartialScore; contributedAt: number }
   | { type: 'preview'; histogram: number[] | null; overallPct: number | null; meta?: PlaceMeta }
   | { type: 'score-progress'; score: PartialScore }
-  | { type: 'score'; score: Score; fetchMs: number }
+  // `throttled`: the server refused to cache this scrape — Google returned no
+  // reviews, or left one sort empty, for a place that has them. It is not the
+  // place's score; never paint it.
+  | { type: 'score'; score: Score; fetchMs: number; throttled: boolean }
   | { type: 'error'; error: string };
 
 // ---- /api/highlights (NDJSON stream, or JSON on cache hit) ----

@@ -104,17 +104,18 @@ export async function loadPersistedSeed(): Promise<void> {
   }
 }
 
-// An operator-supplied session, for pinning one by hand. All five parts or
-// nothing: TRUESCORE_MAPS_COOKIES is not optional, because a bgkey without the
-// jar that minted it is not a session — it is the failure mode this module
-// exists to avoid.
+// An operator-supplied session, for pinning one by hand. All of it or nothing:
+// TRUESCORE_MAPS_COOKIES is not optional, because a bgkey without the jar that
+// minted it is not a session — it is the failure mode this module exists to
+// avoid. Only bgbind may be blank: Google stopped sending it on the review RPC,
+// and the replay works without it.
 const envSession = (): MapsSession | null => {
   const bgkey = process.env.TRUESCORE_MAPS_BGKEY;
-  const bgbind = process.env.TRUESCORE_MAPS_BGBIND;
+  const bgbind = process.env.TRUESCORE_MAPS_BGBIND ?? '';
   const sessionId = process.env.TRUESCORE_MAPS_SESSION;
   const at = process.env.TRUESCORE_MAPS_AT;
   const cookies = process.env.TRUESCORE_MAPS_COOKIES;
-  if (!(bgkey && bgbind && sessionId && at)) return null;
+  if (!(bgkey && sessionId && at)) return null;
   if (!cookies) {
     console.warn('[maps-creds] TRUESCORE_MAPS_BGKEY is set without TRUESCORE_MAPS_COOKIES — ignoring: the token only validates against the session that minted it');
     return null;
@@ -144,6 +145,11 @@ export function getMapsCreds(): MapsCreds | null {
 // no human. A good reply doesn't itself flip the banner; renewSession owns that.
 export function onStaleRpc(): void { void renewSession('stale-detected'); }
 export function onFreshRpc(): void { setRenewOk(true, 'fresh-rpc'); }
+// A whole scrape the cache refused: no reviews (or one sort empty) for a place
+// that has them. Its replies can parse as valid-but-empty, which the stale check
+// above passes as fresh — so without this the banner stayed hidden while every
+// lookup read zero. The next good reply clears it.
+export function onThrottledScrape(): void { setRenewOk(false, 'throttled-scrape'); }
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
 
 // --- self-mint: refresh the bgkey via a stealth-cloaked headless browser ---

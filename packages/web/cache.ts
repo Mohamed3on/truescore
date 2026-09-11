@@ -1,9 +1,11 @@
 import { db, DB_PATH, LEGACY_JSON_PATH } from './db';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './llm';
-import { displayScore, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews } from '@truescore/gmaps-shared';
+import { displayScore, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews, type SortStats } from '@truescore/gmaps-shared';
 
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
+// How long a cached review search is served before it's re-run.
+const SEARCH_TTL_MS = 24 * 60 * 60 * 1000;
 // How long a background chip-warm that came back empty is trusted as "this place
 // genuinely has no topic chips" before we bother harvesting again.
 const CHIP_WARM_TTL_MS = 6 * 60 * 60 * 1000;
@@ -65,22 +67,32 @@ const selectOneStmt = db.prepare<{ data: string }, [string]>('SELECT data FROM e
 type IndexProjection = {
   featureId: string;
   name: string;
-  rawPct: number;
+  canonicalName: string | null;
   resolvedUrl: string | null;
+  scoreTs: number | null;
+  scorePct: number | null;
+  ratio: number | null;
+  contributedJson: string | null;
+  contributedScoreTs: number | null;
+  lastAccessTs: number | null;
   histogramJson: string | null;
   googleReviewCount: number | null;
   removedJson: string | null;
-  lastAccessTs: number;
 };
 const selectIndexStmt = db.prepare<IndexProjection, []>(`
   SELECT featureId,
          json_extract(data, '$.name') AS name,
-         COALESCE(json_extract(data, '$.score.scorePct'), 0) AS rawPct,
+         json_extract(data, '$.meta.canonicalName') AS canonicalName,
          json_extract(data, '$.resolvedUrl') AS resolvedUrl,
+         json_extract(data, '$.scoreTs') AS scoreTs,
+         json_extract(data, '$.score.scorePct') AS scorePct,
+         json_extract(data, '$.score.ratio') AS ratio,
+         json_extract(data, '$.contributedScore') AS contributedJson,
+         json_extract(data, '$.contributedScoreTs') AS contributedScoreTs,
+         json_extract(data, '$.lastAccessTs') AS lastAccessTs,
          json_extract(data, '$.histogram') AS histogramJson,
          json_extract(data, '$.meta.googleReviewCount') AS googleReviewCount,
-         json_extract(data, '$.meta.removedReviews') AS removedJson,
-         COALESCE(json_extract(data, '$.lastAccessTs'), json_extract(data, '$.scoreTs'), 0) AS lastAccessTs
+         json_extract(data, '$.meta.removedReviews') AS removedJson
   FROM entries`);
 
 // json_extract hands back nested objects/arrays as JSON text; a malformed one
@@ -99,18 +111,53 @@ const store = new Map<string, CacheEntry>();
 
 // Every place's listing fields, always resident — ~100 bytes each, so /api/places
 // stays an in-memory read rather than a full-table json scan on every request.
+// null: the place exists but has no score to list.
 type IndexRow = { name: string; scorePct: number; adjusted: boolean; resolvedUrl: string | null; lastAccessTs: number };
-const index = new Map<string, IndexRow>();
+const index = new Map<string, IndexRow | null>();
 
-const rowToIndex = (r: IndexProjection): IndexRow => {
-  const { pct, adjusted } = displayScore({
-    score: (r.rawPct ?? 0) / 100,
-    histogram: parseJson<Histogram>(r.histogramJson),
-    googleReviewCount: r.googleReviewCount,
-    removedReviews: parseJson<RemovedReviews>(r.removedJson),
-  });
-  return { name: r.name, scorePct: pct, adjusted, resolvedUrl: r.resolvedUrl, lastAccessTs: r.lastAccessTs };
+// What the listing reads off an entry: the full CacheEntry, or the projection
+// above rebuilt into its shape — so both paths go through one toIndexRow.
+type ListedScore = Pick<SortStats, 'scorePct' | 'ratio'>;
+type Listable = {
+  name: string;
+  resolvedUrl?: string | null;
+  scoreTs?: number | null;
+  score?: ListedScore | null;
+  contributedScore?: ListedScore | null;
+  contributedScoreTs?: number | null;
+  lastAccessTs?: number | null;
+  histogram?: Histogram | null;
+  meta?: { canonicalName?: string | null; googleReviewCount?: number | null; removedReviews?: RemovedReviews | null } | null;
 };
+
+const toIndexRow = (e: Listable): IndexRow | null => {
+  // A contribution-only stub (scoreTs 0) holds a placeholder 0 we never computed:
+  // list the extension's contributed score instead, or nothing at all.
+  const score = e.scoreTs === 0 ? e.contributedScore : e.score;
+  if (!score) return null;
+  const { pct, adjusted } = displayScore({
+    score,
+    histogram: e.histogram,
+    googleReviewCount: e.meta?.googleReviewCount,
+    removedReviews: e.meta?.removedReviews,
+  });
+  return {
+    // A name blanked by a bare ?q=&ftid= link reads back from the preview.
+    name: e.name || e.meta?.canonicalName || '',
+    scorePct: pct,
+    adjusted,
+    resolvedUrl: e.resolvedUrl ?? null,
+    lastAccessTs: e.lastAccessTs || e.scoreTs || e.contributedScoreTs || 0,
+  };
+};
+
+const rowToIndex = (r: IndexProjection): IndexRow | null => toIndexRow({
+  ...r,
+  score: { scorePct: r.scorePct ?? 0, ratio: r.ratio ?? undefined },
+  contributedScore: parseJson<ListedScore>(r.contributedJson),
+  histogram: parseJson<Histogram>(r.histogramJson),
+  meta: { canonicalName: r.canonicalName, googleReviewCount: r.googleReviewCount, removedReviews: parseJson<RemovedReviews>(r.removedJson) },
+});
 
 for (const row of selectIndexStmt.all()) index.set(row.featureId, rowToIndex(row));
 
@@ -124,19 +171,7 @@ const remember = (featureId: string, entry: CacheEntry): void => {
 };
 
 const indexEntry = (featureId: string, entry: CacheEntry): void => {
-  const { pct, adjusted } = displayScore({
-    score: entry.score.scorePct / 100,
-    histogram: entry.histogram,
-    googleReviewCount: entry.meta?.googleReviewCount,
-    removedReviews: entry.meta?.removedReviews,
-  });
-  index.set(featureId, {
-    name: entry.name,
-    scorePct: pct,
-    adjusted,
-    resolvedUrl: entry.resolvedUrl ?? null,
-    lastAccessTs: entry.lastAccessTs ?? entry.scoreTs,
-  });
+  index.set(featureId, toIndexRow(entry));
 };
 
 // Read through the resident window to sqlite. A corrupt row is dropped rather than
@@ -203,9 +238,13 @@ const ensureEntry = (featureId: string, name: string): void => {
 // histogram is unknown (null/undefined — the preview fetch failed, or the featureId
 // is dead) we can't confirm the place is genuinely empty. In both cases don't trust
 // the 0 — never persist or serve it — so a transient preview failure can't poison the
-// cache with a false 0.
-const isThrottledScrape = (totalReviews: number, liveTotal: number | null | undefined): boolean =>
-  totalReviews === 0 && liveTotal !== 0;
+// cache with a false 0. A scrape with reviews but one sort empty is the same
+// throttle hitting that sort — both sorts page the same reviews — and caching it
+// served "Newest 0%" as authoritative. (Legacy rows may lack the sorts.)
+const isThrottledScrape = (score: Pick<ScoreResult, 'totalReviews' | 'relevant' | 'newest'>, liveTotal: number | null | undefined): boolean =>
+  score.totalReviews === 0
+    ? liveTotal !== 0
+    : score.relevant?.totalReviews === 0 || score.newest?.totalReviews === 0;
 
 // A chip Google said carries reviews (count > 0) that came back with none is the
 // same 200-with-empty-body throttle putScore refuses to trust — scoreHighlight
@@ -229,9 +268,10 @@ export const cache = {
   },
   // A cached 0-review score is only usable when the live histogram confirms zero; if
   // it shows reviews (throttle) or is unknown (preview failed), treat it as unusable
-  // so revalidate re-scrapes instead of serving a possibly-false 0.
+  // so revalidate re-scrapes instead of serving a possibly-false 0. Same for a
+  // score with one sort empty.
   scoreUsable(entry: CacheEntry, currentTotal?: number | null): boolean {
-    return !isThrottledScrape(entry.score.totalReviews, currentTotal);
+    return !isThrottledScrape(entry.score, currentTotal);
   },
   histogramFresh(entry: CacheEntry): boolean {
     return !!entry.histogramTs && Date.now() - entry.histogramTs < HISTOGRAM_TTL_MS;
@@ -241,10 +281,12 @@ export const cache = {
   // nothing is persisted, so the prior entry stands and the next lookup retries.
   async putScore(featureId: string, name: string, score: ScoreResult, totalReviewsAtCache: number | null, resolvedUrl?: string): Promise<boolean> {
     const existing = read(featureId);
-    if (isThrottledScrape(score.totalReviews, totalReviewsAtCache)) return false;
+    if (isThrottledScrape(score, totalReviewsAtCache)) return false;
     persist(featureId, {
       ...existing,
-      name,
+      // Never blank a name: a bare ?q=&ftid= link — the home tile of a place we
+      // only know from an extension contribution — carries none.
+      name: name || existing?.name || '',
       resolvedUrl: resolvedUrl ?? existing?.resolvedUrl,
       score,
       scoreTs: Date.now(),
@@ -263,8 +305,9 @@ export const cache = {
       accessCount: (existing.accessCount ?? 1) + 1,
     });
   },
+  // Every place with a score to list: ours, or a stub's contributed one.
   all(): Array<{ featureId: string } & IndexRow> {
-    return Array.from(index, ([featureId, row]) => ({ featureId, ...row }));
+    return [...index].flatMap(([featureId, row]) => (row ? [{ featureId, ...row }] : []));
   },
   async putSummary(featureId: string, summary: Summary) {
     const existing = read(featureId);
@@ -282,11 +325,18 @@ export const cache = {
     if (!existing) return;
     const usable = highlights.filter((h) => !chipThrottled(h));
     if (!usable.length) return;
+    // Short = missing any chip we know the place has: emptied by a throttle here,
+    // or never scored at all — a chip that threw, or one an extension
+    // contribution left out (it posts only the chips that succeeded).
+    const partial = usable.length < Math.max(highlights.length, existing.chipMeta?.length ?? 0);
+    // A short set never replaces a complete one: it wouldn't be served, so
+    // writing it would only throw the good set away.
+    if (partial && this.highlightsServable(existing)) return;
     persist(featureId, {
       ...existing,
       highlights: usable,
       highlightsTs: Date.now(),
-      highlightsPartial: usable.length < highlights.length || undefined,
+      highlightsPartial: partial || undefined,
     });
   },
   async putHighlightSummary(featureId: string, token: string, summary: Summary) {
@@ -295,9 +345,20 @@ export const cache = {
     const highlightSummaries = { ...(existing.highlightSummaries ?? {}), [token]: summary };
     persist(featureId, { ...existing, highlightSummaries });
   },
+  // Served only while recent and non-empty: `ts` used to be written and never
+  // read, so a search was served unchanged forever — and rows cached before
+  // putSearch refused empties still hold them.
+  searchServable(s: SearchResult | undefined): s is SearchResult {
+    return !!s?.totalReviews && Date.now() - s.ts < SEARCH_TTL_MS;
+  },
+  // Never trust a zero: an empty search is what a credless or stale session
+  // hands back (fetchAllForSearch serves [] rather than throw). Cached, it hid
+  // the term — and the summary's auto-scored chip, which never forces — from
+  // every visitor for good. A term that truly matches nothing costs one cheap
+  // RPC to re-ask.
   async putSearch(featureId: string, query: string, result: SearchResult) {
     const existing = read(featureId);
-    if (!existing) return;
+    if (!existing || !result.totalReviews) return;
     const searches = { ...(existing.searches ?? {}), [query.toLowerCase()]: result };
     persist(featureId, { ...existing, searches });
   },
@@ -343,13 +404,16 @@ export const cache = {
   async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta; chips?: ChipMeta[] }) {
     const existing = read(featureId);
     if (!existing) return;
-    const next: CacheEntry = { ...existing, meta: bundle.meta };
-    // Keep the last non-empty chip set: a later empty A-B bucket mustn't wipe good chips.
+    const next: CacheEntry = { ...existing };
+    // Keep the last non-empty meta and chip set: a later shot with no place data
+    // (an A-B bucket, a throttle) mustn't wipe them — nor, with the removal
+    // notice, the penalty.
+    if (Object.values(bundle.meta).some((v) => v != null)) next.meta = bundle.meta;
     if (bundle.chips?.length) next.chipMeta = bundle.chips;
-    const histogramChanged = bundle.histogram &&
-      (!existing.histogram || existing.histogram.some((v, i) => v !== bundle.histogram![i]));
-    if (histogramChanged) {
-      next.histogram = bundle.histogram!;
+    // A readable histogram is a successful preview: stamp it even when unchanged,
+    // or every lookup past the TTL refetches.
+    if (bundle.histogram) {
+      next.histogram = bundle.histogram;
       next.histogramTs = Date.now();
     }
     persist(featureId, next);

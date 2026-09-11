@@ -6,7 +6,12 @@ const rv = (stars: number, count: number): Review =>
 
 describe('statsForReviews', () => {
   test('empty → all zero', () => {
-    expect(statsForReviews([])).toEqual({ totalReviews: 0, trustedReviews: 0, scorePct: 0 });
+    expect(statsForReviews([])).toEqual({ totalReviews: 0, trustedReviews: 0, scorePct: 0, ratio: 0 });
+  });
+  test('ratio is the unrounded net polarity scorePct rounds', () => {
+    const s = statsForReviews([rv(5, 9), rv(5, 9), rv(1, 9)]);
+    expect(s.ratio).toBeCloseTo(1 / 3);
+    expect(s.scorePct).toBe(33);
   });
   test('only trusted authors (>=3 reviews) score; untrusted count toward total only', () => {
     const s = statsForReviews([rv(5, 9), rv(5, 1)]);
@@ -161,6 +166,17 @@ describe('displayScore (placeTotal precedence)', () => {
     const d = displayScore({ score: 0.72, removedReviews: removed });
     expect(d.pct).toBe(72);
     expect(d.adjusted).toBe(false);
+  });
+
+  test('penalises the unrounded ratio, so the web and the extension agree', () => {
+    // 37 net of 40 trusted: the web fed in the rounded 93% and read 64, the
+    // extension fed in the raw 0.925 and read 63.
+    const place = { histogram: [120, 20, 10, 5, 45], removedReviews: removed };
+    const ext = displayScore({ score: 0.925, ...place });
+    expect(displayScore({ score: { scorePct: 93, ratio: 0.925 }, ...place }).pct).toBe(ext.pct);
+    expect(ext.pct).toBe(63);
+    // Stats cached before `ratio` existed fall back to the rounded percentage.
+    expect(displayScore({ score: { scorePct: 93 }, ...place }).pct).toBe(64);
   });
 
   test('a notice Google quoted no numerals in adjusts nothing', () => {

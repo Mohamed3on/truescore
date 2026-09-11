@@ -24,7 +24,7 @@ import {
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
-import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, startMintTimer, renewSession } from './maps-creds';
+import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
@@ -138,9 +138,9 @@ function ensureChips(featureId: string, name: string): Promise<ChipMeta[]> {
 }
 
 // Score every chip in parallel: collect successes, count failures, and cache
-// whatever succeeded — even on partial failure, so one transient chip error
-// doesn't discard the rest and force a full re-scrape next time. Optional hooks
-// let the streaming caller emit an NDJSON event as each chip resolves.
+// whatever succeeded. A set missing a chip that threw is stored as short, so
+// it's re-scored rather than served as the place's topics (see putHighlights).
+// Optional hooks let the streaming caller emit an NDJSON event as each chip resolves.
 async function scoreChips(
   featureId: string,
   name: string,
@@ -197,8 +197,9 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
     // putScore returns false when it rejects a throttled (empty) scrape — keep the
     // prior entry and let the next request retry.
     if (!(await cache.putScore(featureId, name, score, currentTotal, resolvedUrl))) {
-      console.warn(`[revalidate] ${name} (${featureId}): re-scrape got 0 vs histogram ${currentTotal} — keeping prior entry (likely throttle)`);
+      console.warn(`[revalidate] ${name} (${featureId}): re-scrape got ${score.totalReviews} (relevant ${score.relevant.totalReviews}, newest ${score.newest.totalReviews}) vs histogram ${currentTotal} — keeping prior entry (likely throttle)`);
       logEvent('throttle', { where: 'revalidate', name, fid: featureId, histogram: currentTotal });
+      onThrottledScrape();
       return;
     }
     console.log(`[revalidate] ${name}: total ${prevTotal ?? 'unset'} → ${currentTotal}, re-scored`);
@@ -216,8 +217,6 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
   });
 }
 
-// Cache whatever chips succeeded, even on partial failure, so one transient chip
-// error doesn't discard the rest and force a full re-scrape next lookup.
 function streamHighlights(name: string, featureId: string, url: string, chips: ChipMeta[]): Response {
   return ndjsonStream<HighlightEvent>(async (write) => {
     write({ type: 'chips', chips });
@@ -338,14 +337,21 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string,
     });
     const bundle = await previewPromise;
     const currentTotal = bundle.histogram ? histogramTotal(bundle.histogram) : null;
-    // putScore rejects a throttled (0-review) scrape when the histogram shows the
-    // place has reviews, so the next lookup retries instead of caching the empty
-    // result. Genuinely review-less places have currentTotal 0 and still cache.
-    if (!(await cache.putScore(featureId, name, score, currentTotal, resolvedUrl))) {
-      console.warn(`[lookup] ${name} (${featureId}): scraped 0 but histogram has ${currentTotal} — not caching (likely throttle)`);
+    // putScore rejects a throttled scrape — 0 reviews while the histogram shows
+    // the place has them, or one sort empty — so the next lookup retries instead
+    // of caching it. Genuinely review-less places have currentTotal 0 and still
+    // cache. The client is told, so it doesn't paint the throttle as a score.
+    const throttled = !(await cache.putScore(featureId, name, score, currentTotal, resolvedUrl));
+    if (throttled) {
+      console.warn(`[lookup] ${name} (${featureId}): scraped ${score.totalReviews} (relevant ${score.relevant.totalReviews}, newest ${score.newest.totalReviews}) but histogram has ${currentTotal} — not caching (likely throttle)`);
       logEvent('throttle', { where: 'lookup', name, fid: featureId, histogram: currentTotal });
+      onThrottledScrape();
+    } else if (!cached) {
+      // The preview landed before putScore created this place's row, so its
+      // putPreviewBundle had nothing to patch — persist it now the row exists.
+      await cache.putPreviewBundle(featureId, bundle);
     }
-    write({ type: 'score', score, fetchMs: Date.now() - t0 });
+    write({ type: 'score', score, fetchMs: Date.now() - t0, throttled });
   });
 }
 
@@ -382,8 +388,9 @@ Bun.serve({
           // highlights but a placeholder 0-review score the server never computed.
           // Serving it cached paints "0 reviews" until revalidate lands — route it to
           // the fresh path so the score scrapes first (the contributed summary +
-          // highlights still load from cache right after the score settles).
-          if (cached?.scoreTs) return streamCachedLookup(featureId, name, resolvedUrl, cached);
+          // highlights still load from cache right after the score settles). A
+          // throttle-cut score cached before putScore refused them goes fresh too.
+          if (cached?.scoreTs && cache.scoreUsable(cached, cached.totalReviewsAtCache)) return streamCachedLookup(featureId, name, resolvedUrl, cached);
           return streamFreshLookup(featureId, name, resolvedUrl, cached);
         } catch (e) {
           console.error(`[lookup] ${e instanceof Error ? e.message : e}`);
@@ -409,8 +416,9 @@ Bun.serve({
         if (!secret) return json({ error: 'seeding disabled' }, 404);
         if (req.headers.get('x-truescore-seed') !== secret) return json({ error: 'forbidden' }, 403);
         try {
-          const { bgkey, bgbind, sessionId, at, cookies } = (await req.json()) as Record<string, string>;
-          if (!bgkey || !bgbind || !sessionId || !at || !cookies) return json({ error: 'incomplete creds' }, 400);
+          const { bgkey, bgbind = '', sessionId, at, cookies } = (await req.json()) as Record<string, string>;
+          // bgbind may be blank: Google stopped sending it on the review RPC.
+          if (!bgkey || !sessionId || !at || !cookies) return json({ error: 'incomplete creds' }, 400);
           await applySeed({ bgkey, bgbind, sessionId, at, cookies });
           return json({ ok: true });
         } catch (e) {
@@ -631,7 +639,8 @@ Bun.serve({
           if (!entry) return json({ error: 'look up the place first' }, 404);
 
           const key = term.toLowerCase();
-          const cached = entry.searches?.[key];
+          const prior = entry.searches?.[key];
+          const cached = cache.searchServable(prior) ? prior : undefined;
           const doSummarize = !!body.summarize;
           const force = !!body.force;
           const placeName = entry.name;
@@ -656,14 +665,18 @@ Bun.serve({
               // Persist the scrape BEFORE summarizing: the search is the
               // expensive half, and a failed summary used to throw past this and
               // discard it, so the next request paid for the whole thing again.
-              await cache.putSearch(featureId, term, result);
+              // Not while the session is unhealthy: a stale page mid-pagination
+              // cuts a search short without failing it. (putSearch itself
+              // refuses an empty result.)
+              const cacheable = mapsSessionHealthy();
+              if (cacheable) await cache.putSearch(featureId, term, result);
 
               if (doSummarize && (!result.summary || force)) {
                 const reviewTexts = textReviewsFor(result.reviews);
                 if (reviewTexts.length) {
                   result.summary = await summarize(placeName, reviewTexts, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
                   write({ type: 'search-summary', summary: result.summary });
-                  await cache.putSearch(featureId, term, result);
+                  if (cacheable) await cache.putSearch(featureId, term, result);
                 }
               }
             } catch (e) {

@@ -21,7 +21,9 @@ export type Review = {
 export type SortKey = 'relevant' | 'newest';
 export type Histogram = number[]; // [5★, 4★, 3★, 2★, 1★]
 export type Locale = { hl?: string; gl?: string };
-export type SortStats = { totalReviews: number; trustedReviews: number; scorePct: number };
+// `ratio` is the unrounded net polarity (−1..1) that `scorePct` rounds — what
+// displayScore penalises. Absent on stats built before it existed.
+export type SortStats = { totalReviews: number; trustedReviews: number; scorePct: number; ratio?: number };
 export type ChipMeta = { token: string; label: string; count: number };
 
 export const PAGE_SIZE = 20;
@@ -123,14 +125,13 @@ export const mergeByReviewId = (...lists: Review[][]): Review[] => {
 // into distinct non-empty terms: "breakfast OR parking" → ["breakfast",
 // "parking"], a plain query → one term, "" → []. Server-side searches (Google
 // RPC) run one upstream search per term and merge; client-side searches match
-// ANY term. Capped so an OR chain can't fan out into unbounded upstream calls.
-export const MAX_OR_TERMS = 6;
+// ANY term. Never capped — a dropped term is a silently wrong result; the upstream
+// load is bounded by pacing instead (collectSearchTerms).
 export const parseOrQuery = (query: string): string[] =>
   query
     .split(/\s+OR\s+/i)
     .map((t) => t.trim())
-    .filter(Boolean)
-    .slice(0, MAX_OR_TERMS);
+    .filter(Boolean);
 
 // Strip combining diacritics so accented spellings fold to ASCII: "açaí" →
 // "acai", "jalapeño" → "jalapeno". NFD separates each base letter from its
@@ -138,28 +139,31 @@ export const parseOrQuery = (query: string): string[] =>
 export const stripAccents = (s: string): string =>
   s.normalize('NFD').replace(/\p{Diacritic}/gu, '');
 
-// Search query for a keyword, broadened for recall: OR in the accent-folded
-// spelling ("açaí" → "açaí OR acai") and swap hyphens↔spaces ("europa-park" →
-// "europa-park OR europa park"). Google ranks "europa-park", "europa park" and
-// the quoted phrase differently and returns different counts, so we search the
-// spellings and union the hits rather than betting on one. Plain single words
-// are unchanged. Variants fan out through parseOrQuery, capped at MAX_OR_TERMS.
-export const accentVariantQuery = (term: string): string => {
+// A keyword's spellings, broadened for recall: the accent-folded one ("açaí" →
+// "acai") and hyphens↔spaces ("europa-park" → "europa park"). Google ranks
+// "europa-park", "europa park" and the quoted phrase differently and returns
+// different counts, so we search the spellings and union the hits rather than
+// betting on one. A plain single word is just itself. At most six: two bases,
+// each with at most one hyphen and one space swap.
+export const spellingVariants = (term: string): string[] => {
   const variants = new Set<string>();
   for (const base of [term, stripAccents(term)]) {
     variants.add(base);
     if (base.includes('-')) variants.add(base.replace(/-/g, ' '));
     if (/\s/.test(base)) variants.add(base.replace(/\s+/g, '-'));
   }
-  return [...variants].slice(0, MAX_OR_TERMS).join(' OR ');
+  return [...variants];
 };
 
-// Upstream search terms for a query: split on OR, expand each to its
-// accent/hyphen/space variants, dedupe, cap the fan-out. Both the extension and
-// the server feed this to collectSearchTerms, so a typed query gets the same
+// Upstream search terms for a query: split on OR, expand each term to its
+// spellings, dedupe. The cap is on the terms the user typed (parseOrQuery), not
+// the spellings — capping after the expansion let one spelling-heavy term crowd
+// the later ones out. And spellings never go back through parseOrQuery: the
+// space swap of "hit-or-miss" would split on its own "or". Both the extension
+// and the server feed this to collectSearchTerms, so a typed query gets the same
 // spelling-variant recall as a chip's auto-search.
 export const expandSearchTerms = (query: string): string[] =>
-  [...new Set(parseOrQuery(query).flatMap((t) => parseOrQuery(accentVariantQuery(t))))].slice(0, MAX_OR_TERMS);
+  [...new Set(parseOrQuery(query).flatMap(spellingVariants))];
 
 // Google retired GET /maps/rpc/listugcposts — it now returns [null,…,1] for
 // everyone, Maps' own page included. Reviews come only from the batchexecute
@@ -354,10 +358,12 @@ export const statsForReviews = (reviews: Review[]): SortStats => {
     trusted++;
     score += starScore(r.stars);
   }
+  const ratio = trusted ? score / trusted : 0;
   return {
     totalReviews: reviews.length,
     trustedReviews: trusted,
-    scorePct: trusted ? Math.round((score / trusted) * 100) : 0,
+    scorePct: Math.round(ratio * 100),
+    ratio,
   };
 };
 
@@ -388,7 +394,13 @@ export const histogramFromPreview = (data: any): Histogram | null => {
   return [counts[4], counts[3], counts[2], counts[1], counts[0]];
 };
 
-export type DayHours = { day: string; label: string; openHour?: number; closeHour?: number };
+// One opening slot, [open, close] in fractional hours (11:30 → 11.5). A close at
+// or before its open runs past midnight into the next day.
+export type HoursSlot = [open: number, close: number];
+// `slots` is every slot of the day — Google splits lunch/dinner days in two.
+// `openHour`/`closeHour` are only what metas cached before `slots` carry: the
+// first slot, in whole hours.
+export type DayHours = { day: string; label: string; slots?: HoursSlot[]; openHour?: number; closeHour?: number };
 
 // Google's own admission that reviews for this place were taken down after
 // legal complaints (Germany's defamation-takedown regime is the common case).
@@ -446,16 +458,28 @@ const findPhotoUrl = (v: any, depth = 0): string | undefined => {
 const resizePhoto = (url: string, w: number, h: number): string =>
   url.replace(/=w\d+-h\d+(-k)?(-no)?$/, '') + `=w${w}-h${h}-k-no`;
 
+// A slot's time is [hour, minute?] — the minute is dropped when it's zero.
+const slotHour = (t: any): number | undefined => {
+  const h = asNumber(t?.[0]);
+  return h == null ? undefined : h + (asNumber(t?.[1]) ?? 0) / 60;
+};
+
+// Each day is [name, …, [[label, [[openH, openM?], [closeH, closeM?]]], …]] —
+// one [label, times] per slot.
 const parseHoursDay = (entry: any): DayHours | null => {
   const day = asString(entry?.[0]);
   if (!day) return null;
-  const slot = entry?.[3]?.[0];
-  if (!slot) return { day, label: 'Closed' };
+  const raw: any[] = Array.isArray(entry?.[3]) ? entry[3] : [];
+  if (!raw[0]) return { day, label: 'Closed' };
+  const slots = raw.flatMap((s): HoursSlot[] => {
+    const open = slotHour(s?.[1]?.[0]);
+    const close = slotHour(s?.[1]?.[1]);
+    return open != null && close != null ? [[open, close]] : [];
+  });
   return {
     day,
-    label: asString(slot[0]) || '—',
-    openHour: asNumber(slot?.[1]?.[0]?.[0]),
-    closeHour: asNumber(slot?.[1]?.[1]?.[0]),
+    label: raw.map((s) => asString(s?.[0])).filter(Boolean).join(', ') || '—',
+    ...(slots.length ? { slots } : {}),
   };
 };
 
@@ -580,8 +604,13 @@ export const overallScoreFromHistogram = (h: Histogram): number =>
 // histogram isn't readable at all (Maps' split search+place view renders fewer
 // than five rows). No total either way → no penalty, rather than a guessed one.
 export type DisplayScoreInput = {
-  /** Raw net polarity on the app's native −1..1 scale. */
-  score: number;
+  /**
+   * Raw net polarity on the app's native −1..1 scale — or the stats it comes
+   * from, whose unrounded `ratio` wins over the rounded scorePct. The penalty
+   * is applied to the unrounded number, once, here: the web used to feed it the
+   * rounded percentage and land a point off the extension.
+   */
+  score: number | Pick<SortStats, 'scorePct' | 'ratio'>;
   histogram?: Histogram | null;
   googleReviewCount?: number | null;
   removedReviews?: RemovedReviews | null;
@@ -602,10 +631,11 @@ export type DisplayScore = {
 };
 
 export const displayScore = ({ score, histogram, googleReviewCount, removedReviews }: DisplayScoreInput): DisplayScore => {
-  const rawPct = Math.round(score * 100);
+  const raw = typeof score === 'number' ? score : score.ratio ?? score.scorePct / 100;
+  const rawPct = Math.round(raw * 100);
   const removedCount = removedCountEstimate(removedReviews);
   const placeTotal = (histogram?.length ? histogramTotal(histogram) : 0) || googleReviewCount || 0;
-  const pct = Math.round(scoreWithRemovalPenalty(score, removedCount, placeTotal) * 100);
+  const pct = Math.round(scoreWithRemovalPenalty(raw, removedCount, placeTotal) * 100);
   return { pct, rawPct, adjusted: pct !== rawPct, removedCount, placeTotal };
 };
 

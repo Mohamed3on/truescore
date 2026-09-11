@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { parseOrQuery, accentVariantQuery, expandSearchTerms, stripAccents, mergeByReviewId, collectSearchTerms, type Review } from './index';
+import { parseOrQuery, spellingVariants, expandSearchTerms, stripAccents, mergeByReviewId, collectSearchTerms, type Review } from './index';
 
 const review = (id: string, stars = 5, count = 9): Review =>
   ({ reviewId: id, stars, reviewerReviewCount: count, timestamp: 1_700_000_000_000, text: `text-${id}` });
@@ -28,41 +28,51 @@ describe('parseOrQuery', () => {
     expect(parseOrQuery('quiet  OR   clean')).toEqual(['quiet', 'clean']);
   });
 
-  test('caps fan-out at MAX_OR_TERMS (6)', () => {
-    expect(parseOrQuery('a OR b OR c OR d OR e OR f OR g OR h')).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+  test('never drops a term — a long OR chain is paced upstream, not cut', () => {
+    expect(parseOrQuery('a OR b OR c OR d OR e OR f OR g OR h')).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
   });
 });
 
-describe('accentVariantQuery', () => {
+describe('spellingVariants', () => {
   test('strips combining diacritics to ASCII', () => {
     expect(stripAccents('açaí')).toBe('acai');
     expect(stripAccents('jalapeño')).toBe('jalapeno');
     expect(stripAccents('crème brûlée')).toBe('creme brulee');
   });
 
-  test('accented term → "term OR folded" so both spellings are caught', () => {
-    expect(accentVariantQuery('açaí')).toBe('açaí OR acai');
-    // The result feeds parseOrQuery, which yields both spellings as terms.
-    expect(parseOrQuery(accentVariantQuery('açaí'))).toEqual(['açaí', 'acai']);
+  test('accented term → itself and its folded spelling', () => {
+    expect(spellingVariants('açaí')).toEqual(['açaí', 'acai']);
   });
 
-  test('plain single ASCII word is returned unchanged', () => {
-    expect(accentVariantQuery('burger')).toBe('burger');
+  test('plain single ASCII word is just itself', () => {
+    expect(spellingVariants('burger')).toEqual(['burger']);
   });
 
   test('hyphen and space spellings are unioned for recall', () => {
-    expect(accentVariantQuery('europa-park')).toBe('europa-park OR europa park');
-    expect(accentVariantQuery('europa park')).toBe('europa park OR europa-park');
-    expect(accentVariantQuery('dirty burger')).toBe('dirty burger OR dirty-burger');
+    expect(spellingVariants('europa-park')).toEqual(['europa-park', 'europa park']);
+    expect(spellingVariants('europa park')).toEqual(['europa park', 'europa-park']);
+    expect(spellingVariants('dirty burger')).toEqual(['dirty burger', 'dirty-burger']);
   });
 });
 
 describe('expandSearchTerms', () => {
-  test('expands each OR term to its spelling variants, deduped and capped', () => {
+  test('expands each OR term to its spelling variants, deduped', () => {
     expect(expandSearchTerms('europa-park')).toEqual(['europa-park', 'europa park']);
     expect(expandSearchTerms('wifi OR europa park')).toEqual(['wifi', 'europa park', 'europa-park']);
     // Already-expanded input (e.g. a chip query) is idempotent.
     expect(expandSearchTerms('europa-park OR europa park')).toEqual(['europa-park', 'europa park']);
+  });
+
+  test('every term and spelling is searched — a later term is never crowded out', () => {
+    // Six spellings from the first two terms used to fill a cap, so phở was never searched.
+    expect(expandSearchTerms('europa-park OR crème brûlée OR phở')).toEqual([
+      'europa-park', 'europa park', 'crème brûlée', 'crème-brûlée', 'creme brulee', 'creme-brulee', 'phở', 'pho',
+    ]);
+    expect(expandSearchTerms('a OR b OR c OR d OR e OR f OR g')).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+  });
+
+  test('an "or" inside a hyphenated word is not an operator', () => {
+    expect(expandSearchTerms('hit-or-miss')).toEqual(['hit-or-miss', 'hit or miss']);
   });
 });
 
@@ -117,6 +127,21 @@ describe('collectSearchTerms', () => {
     const transport = async () => page([mkWrapper('r1', 5, 9), mkWrapper('r2', 4, 9)], null);
     const merged = await collectSearchTerms(['solo'], urlFor, transport);
     expect(merged.map((r) => r.reviewId).sort()).toEqual(['r1', 'r2']);
+  });
+
+  test('searches every term, but never more than six paging chains at once', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const terms = Array.from({ length: 20 }, (_, i) => `t${i}`);
+    const transport = async (url: string) => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((r) => setTimeout(r, 1));
+      inFlight--;
+      return page([mkWrapper(url.split('|')[0]!, 5, 9)], null);
+    };
+    const merged = await collectSearchTerms(terms, urlFor, transport);
+    expect(merged.map((r) => r.reviewId).sort()).toEqual([...terms].sort());
+    expect(peak).toBe(6);
   });
 
   test('no terms → [] and never touches the transport', async () => {
