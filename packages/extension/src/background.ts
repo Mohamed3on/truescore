@@ -1,5 +1,6 @@
 // Combined background service worker
 import { SCORE_CACHE_PREFIX } from './shared/cache-keys';
+import { createThrottledFetcher } from './shared/throttled-fetch';
 import type { MapsCreds } from '@truescore/gmaps-shared';
 
 // Drop rc_score_* entries older than 30 days. Registered on install/update
@@ -60,8 +61,41 @@ const seedMapsCreds = async (creds: SeedCreds) => {
   }
 };
 
-chrome.runtime.onMessage.addListener((msg) => {
+// IMDb's per-rating vote counts (index 0 = 1★ … 9 = 10★), from the GraphQL API
+// IMDb's own site uses. IMDb walls off page scrapers — the CORS proxy Letterboxd
+// used now only ever gets its empty 202 — and a content script can't make this
+// cross-origin call, so it lives here, throttled across every tab. Null on
+// failure; an id IMDb doesn't know has no ratings, so it's all zeros.
+const imdbFetch = createThrottledFetcher(10);
+const imdbHistogram = async (id: string): Promise<number[] | null> => {
+  try {
+    const r = await imdbFetch('https://caching.graphql.imdb.com/', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-imdb-client-name': 'imdb-web-next-localized' },
+      body: JSON.stringify({
+        query: 'query($id: ID!) { title(id: $id) { aggregateRatingsBreakdown { histogram { histogramValues { rating voteCount } } } } }',
+        variables: { id },
+      }),
+    });
+    if (!r.ok) return null;
+    const data = (await r.json())?.data;
+    if (!data) return null;
+    const counts: number[] = Array(10).fill(0);
+    for (const { rating, voteCount } of data.title?.aggregateRatingsBreakdown?.histogram?.histogramValues ?? []) {
+      if (rating >= 1 && rating <= 10) counts[rating - 1] = voteCount || 0;
+    }
+    return counts;
+  } catch {
+    return null;
+  }
+};
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'seedMapsCreds' && msg.creds) seedMapsCreds(msg.creds as SeedCreds);
+  if (msg?.type === 'imdbHistogram' && typeof msg.id === 'string') {
+    imdbHistogram(msg.id).then(sendResponse);
+    return true; // answered asynchronously
+  }
 });
 
 // Booking.com: notify content script on tab update

@@ -218,7 +218,6 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries
 const throttledFetch = createThrottledFetcher(CONFIG.MAX_CONCURRENCY, fetchWithRetry);
 // The IMDb proxy gets its own queue: unthrottled, a list crawl fired every
 // candidate's call at once, and the current film's never waits behind Letterboxd's.
-const throttledImdbFetch = createThrottledFetcher(CONFIG.MAX_CONCURRENCY, fetchWithRetry);
 
 /** Fetches one recent-reviews page (reviews/by/added) as HTML */
 const fetchReviewPage = (slug: string, page: number) =>
@@ -232,30 +231,19 @@ const fetchReviewPage = (slug: string, page: number) =>
 async function fetchImdbRatings(imdbLink: string | null): Promise<{ imdbScore: number; imdbTotal: number } | null> {
   if (!imdbLink) return { imdbScore: 0, imdbTotal: 0 };
 
-  try {
-    const ratingsUrl = imdbLink.replace('maindetails', 'ratings');
-    const corsProxy = 'https://vercel-cors-proxy-nine.vercel.app/api?url=';
-    const response = await throttledImdbFetch(corsProxy + encodeURIComponent(ratingsUrl));
-    const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
-    const nextData = doc.querySelector('script#__NEXT_DATA__');
-    // Not the ratings page at all — the proxy relays IMDb's bot challenge as an empty 202.
-    if (!nextData?.textContent) return null;
-
-    const data = JSON.parse(nextData.textContent);
-    const histogram = data?.props?.pageProps?.contentData?.histogramData;
-    if (histogram?.histogramValues) {
-      const sorted = histogram.histogramValues.sort((a: any, b: any) => a.rating - b.rating);
-      const counts = sorted.map((r: any) => r?.voteCount || 0);
-      return {
-        imdbScore: counts[8] + counts[9] - counts[0] - counts[1],
-        imdbTotal: histogram.totalVoteCount || 0,
-      };
-    }
-  } catch (e: any) {
-    debug('IMDB fetch failed:', e.message);
+  const id = imdbLink.match(/\/title\/(tt\d+)/)?.[1];
+  if (!id) return { imdbScore: 0, imdbTotal: 0 };
+  // Fetched by the background (see imdbHistogram there): IMDb walls off pages
+  // fetched through a proxy, and this is a cross-origin call a content script can't make.
+  const counts: number[] | null = await chrome.runtime.sendMessage({ type: 'imdbHistogram', id }).catch(() => null);
+  if (!counts) {
+    debug(`IMDb histogram unavailable for ${id}`);
     return null;
   }
-  return { imdbScore: 0, imdbTotal: 0 };
+  return {
+    imdbScore: counts[8] + counts[9] - counts[0] - counts[1],
+    imdbTotal: counts.reduce((a, b) => a + b, 0),
+  };
 }
 
 /**
