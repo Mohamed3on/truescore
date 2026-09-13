@@ -62,20 +62,12 @@ describe('removalNote', () => {
     expect(removalNote(undefined)).toBe('');
   });
 
-  test("quotes Google's fuller sentence when there is one, else the short line", () => {
+  test("quotes Google's short line and states the two rules: weigh, and stay silent unless corroborated", () => {
     const short = '21 to 50 reviews removed due to defamation complaints.';
-    const detail = 'In the past year, 21 to 50 reviews were removed from this place due to defamation complaints.';
-    expect(removalNote({ text: short, detail })).toContain(`"${detail}"`);
-    expect(removalNote({ text: short, detail })).not.toContain(`"${short}"`);
-    expect(removalNote({ text: short })).toContain(`"${short}"`);
-  });
-
-  test('asks the model to verify against the reviews, stay silent otherwise, and never invent', () => {
-    const note = removalNote({ text: '21 to 50 reviews removed due to defamation complaints.' });
-    expect(note).toMatch(/SURVIVED/);
-    expect(note).toMatch(/corroboration/);
+    const note = removalNote({ text: short, detail: 'In the past year, 21 to 50 reviews were removed from this place.' });
+    expect(note).toContain(`"${short}"`);
+    expect(note).toMatch(/skew positive/);
     // The UI already shows Google's banner; an uncorroborated echo is noise.
-    expect(note).toMatch(/Otherwise do not mention the removal at all/);
-    expect(note).toMatch(/Never guess at what the removed reviews said/);
+    expect(note).toMatch(/Don't mention the removals unless reviewers themselves/);
   });
 });

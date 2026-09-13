@@ -127,7 +127,7 @@ Also list items: up to 6 concrete things reviewers single out as what this place
 
 Separately, list alternatives: proper names of OTHER places reviewers say are BETTER than this one — somewhere they'd rather go because it beats this place (common when they call this place overrated). Better only: skip any place mentioned as worse, or that reviewers say this place beats. Can be anywhere — a nearby swap or a better one in another city/country, not just local substitutes. Names only — never put these in items, since a place named as a better alternative is not a feature of this one. Use the short name reviewers actually write ("BrunchIt", not "BrunchIt Café & Terrace") so searching mentions of it matches. Empty list if reviewers name none.
 
-${NOTES}${removal ? `\n\n${removal} If the reviews corroborate it, add one negative highlight with what reviewers describe (e.g. "Owner reports critical reviews; several say theirs were deleted"); if not, no highlight about it.` : ''}`;
+${NOTES}${removal ? `\n\n${removal} If they do, add one negative highlight for it.` : ''}`;
 
   const [verdict, structured] = await Promise.all([
     generateText({ model, providerOptions, maxOutputTokens: 1024, prompt: verdictPrompt }).then((r) => {
@@ -152,7 +152,7 @@ export async function ask({ placeName, reviewTexts, removedReviews }: Subject, q
   const removal = removalNote(removedReviews);
   const prompt = `${reviewBlock(reviewTexts)}\n\n---\n\nAnswer about ${subjectOf(placeName, filterQuery)} using the reviews. Be concise. Name specifics (prices, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree or don't cover it, say so.
 
-${NOTES}${removal ? `\n\n${removal} Bring it up only when it bears on the question.` : ''}
+${NOTES}${removal ? `\n\n${removal}` : ''}
 
 Question: ${question}`;
   const r = await generateText({ model, providerOptions, maxOutputTokens: 32768, prompt });
