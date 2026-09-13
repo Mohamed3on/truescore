@@ -1,4 +1,4 @@
-import { textReviewsFor, type Review } from '@truescore/gmaps-shared';
+import { textReviewsFor, type RemovedReviews, type Review } from '@truescore/gmaps-shared';
 import type { CacheEntry } from './cache';
 
 // What a summarize / ask call needs, resolved from one request body: who the
@@ -12,7 +12,10 @@ import type { CacheEntry } from './cache';
 // /api/ask reject "no review text here" with 404, /api/highlight-summary with
 // 400, for the same condition. One resolver, one failure, one status.
 
-export type Subject = { placeName: string; reviewTexts: string[] };
+// `removedReviews` is Google's takedown notice for the place, when either end
+// has read one: the model reads the reviews that SURVIVED the takedowns, so it
+// needs to know the set is filtered before it calls the place a safe bet.
+export type Subject = { placeName: string; reviewTexts: string[]; removedReviews?: RemovedReviews };
 
 /** The one precondition all three share: there is nothing here to read. */
 export class NoReviews extends Error {
@@ -31,14 +34,31 @@ export type SubjectRequest = {
   reviewTexts?: string[];
   /** Reviews to fall back on when the body shipped none. */
   reviews?: Review[];
+  /** The caller's own read of Google's takedown notice (the extension's live tab). */
+  removedReviews?: RemovedReviews | null;
   /** What the caller should do about it, appended to the error. */
   hint: string;
 };
 
-export const resolveSubject = ({ entry, name, reviewTexts, reviews, hint }: SubjectRequest): Subject => {
+export const resolveSubject = ({ entry, name, reviewTexts, reviews, removedReviews, hint }: SubjectRequest): Subject => {
   const texts = reviewTexts ?? (reviews ? textReviewsFor(reviews) : null);
   if (!texts?.length) throw new NoReviews(hint);
-  return { placeName: entry?.name ?? name ?? '', reviewTexts: texts };
+  // The body's notice is the live tab's read and wins; the cached preview meta
+  // covers the web caller, which only ever sends a featureId.
+  const removed = removedReviews ?? entry?.meta?.removedReviews;
+  return { placeName: entry?.name ?? name ?? '', reviewTexts: texts, ...(removed ? { removedReviews: removed } : {}) };
+};
+
+// The prompt paragraph that tells the model the review set is survivor-only.
+// Google discloses only a bucket ("21 to 50"), never which reviews went, so the
+// model is asked to do two things a number can't: check the surviving text for
+// corroboration (reviewers saying their review vanished, an owner who reports
+// or threatens critics) and couch its verdict to match — not to invent what the
+// missing reviews said. Empty when there is no notice, so the prompts append
+// it unconditionally.
+export const removalNote = (removed: RemovedReviews | undefined): string => {
+  if (!removed) return '';
+  return `Google Maps discloses that reviews of this place were taken down after legal complaints: "${removed.detail ?? removed.text}" Takedowns are requested by the business and are all but always negative, so the reviews above are the ones that SURVIVED — a filtered set, not the full picture. Double-check the claim against the reviews: do any reviewers say their review was deleted, or describe the owner reporting, disputing, or threatening critics? Say briefly whether the reviews corroborate it. Then couch your conclusions to match — a glowing consensus is weaker evidence here, and complaints that do survive are likelier understated. Mention the removal in one short clause; never guess at what the removed reviews said.`;
 };
 
 /** 404 for a missing subject; everything else stays a 400 as before. */

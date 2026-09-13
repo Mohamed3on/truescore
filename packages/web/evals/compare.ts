@@ -35,7 +35,7 @@ type Run = { label: string; ms: number; summary: Summary; inputTokens: number; o
 
 const runOne = async (f: (typeof fixtures)[number], c: Contestant): Promise<Run> => {
   const t0 = performance.now();
-  const summary = await summarize(f.place, f.reviewTexts, f.filter ?? undefined, c.provider, c.effort);
+  const summary = await summarize({ placeName: f.place, reviewTexts: f.reviewTexts }, f.filter ?? undefined, c.provider, c.effort);
   const ms = Math.round(performance.now() - t0);
   // Tokens are keyed by provider, so they're only meaningful in provider mode
   // (every nano variant reports as 'openai'); --nano relies on ms + judge scores.

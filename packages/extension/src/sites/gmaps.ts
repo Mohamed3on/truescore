@@ -873,6 +873,7 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
     const data = await post<{ answer: string }>('/api/ask', {
       featureId, name, reviewTexts, question: customQuestion,
       filter: filterQuery ?? undefined,
+      removedReviews: activeRemovedReviews,
       reasoningEffort, provider,
     } satisfies AskRequest);
     return data.answer;
@@ -880,6 +881,9 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
   const data = await post<{ summary: SummaryResult }>('/api/summarize', {
     featureId, name, reviewTexts,
     filter: filterQuery ?? undefined,
+    // Google's takedown notice for this place, so the model knows it's reading
+    // the survivors and couches the verdict (see summary-subject.removalNote).
+    removedReviews: activeRemovedReviews,
     // Extension manages its own client-side cache (summaryCache.all,
     // h.summary, search.summary). When it calls summarizeReviews, intent is
     // always "compute fresh" — Resummarize/refresh-search/highlight-summarize

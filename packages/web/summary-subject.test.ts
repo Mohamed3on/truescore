@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { NoReviews, errStatus, resolveSubject } from './summary-subject';
+import { NoReviews, errStatus, removalNote, resolveSubject } from './summary-subject';
 import type { CacheEntry } from './cache';
 
 const entry = (name: string) => ({ name } as unknown as CacheEntry);
@@ -39,5 +39,41 @@ describe('resolveSubject', () => {
 
   test('every other failure stays a 400', () => {
     expect(errStatus(new Error('upstream blew up'))).toBe(400);
+  });
+
+  test("the body's takedown notice wins; the cached preview meta covers a featureId-only caller", () => {
+    const fromTab = { text: '21 to 50 reviews removed due to defamation complaints.', min: 21, max: 50 };
+    const fromCache = { text: 'Six to ten reviews removed due to defamation complaints.', min: 6, max: 10 };
+    const cached = { name: 'P', meta: { removedReviews: fromCache } } as unknown as CacheEntry;
+    expect(resolveSubject({ entry: cached, reviewTexts: ['r'], removedReviews: fromTab, hint: 'x' }).removedReviews).toEqual(fromTab);
+    expect(resolveSubject({ entry: cached, reviewTexts: ['r'], hint: 'x' }).removedReviews).toEqual(fromCache);
+    // The extension sends null for "no notice on this place" — that must not
+    // mask a notice the server itself has seen.
+    expect(resolveSubject({ entry: cached, reviewTexts: ['r'], removedReviews: null, hint: 'x' }).removedReviews).toEqual(fromCache);
+  });
+
+  test('no notice anywhere leaves the subject without one', () => {
+    expect(resolveSubject({ entry: entry('P'), reviewTexts: ['r'], removedReviews: null, hint: 'x' })).not.toHaveProperty('removedReviews');
+  });
+});
+
+describe('removalNote', () => {
+  test('empty without a notice, so prompts can append it unconditionally', () => {
+    expect(removalNote(undefined)).toBe('');
+  });
+
+  test("quotes Google's fuller sentence when there is one, else the short line", () => {
+    const short = '21 to 50 reviews removed due to defamation complaints.';
+    const detail = 'In the past year, 21 to 50 reviews were removed from this place due to defamation complaints.';
+    expect(removalNote({ text: short, detail })).toContain(`"${detail}"`);
+    expect(removalNote({ text: short, detail })).not.toContain(`"${short}"`);
+    expect(removalNote({ text: short })).toContain(`"${short}"`);
+  });
+
+  test('asks the model to verify against the reviews and to hedge, not to invent', () => {
+    const note = removalNote({ text: '21 to 50 reviews removed due to defamation complaints.' });
+    expect(note).toMatch(/SURVIVED/);
+    expect(note).toMatch(/corroborate/);
+    expect(note).toMatch(/never guess at what the removed reviews said/);
   });
 });

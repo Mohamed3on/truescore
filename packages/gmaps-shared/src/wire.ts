@@ -3,7 +3,7 @@
 // server (producer), the web client, and the extension all import from here so
 // a shape change is one edit checked on every end, instead of drifting between
 // server route handlers and a re-declared copy in the client.
-import type { ChipMeta, PlaceMeta, Review, SortStats } from './index';
+import type { ChipMeta, PlaceMeta, RemovedReviews, Review, SortStats } from './index';
 
 // ---- payloads ----
 
@@ -125,12 +125,17 @@ export type LlmOverrides = { reasoningEffort?: ReasoningEffort; provider?: Provi
 
 // ---- request bodies ----
 export type LookupRequest = { url: string };
-export type SummarizeRequest = { featureId: string; name?: string; reviewTexts?: string[]; filter?: string; force?: boolean } & LlmOverrides;
+// `removedReviews`: Google's takedown notice for the place, when the caller has
+// it (the extension reads it off the preview Maps fetched for itself). The
+// server otherwise falls back to the notice on its own cached preview meta; a
+// caller that has neither just gets an uncouched summary. It goes to the model
+// so it can weigh a survivor-only review set and hedge its verdict.
+export type SummarizeRequest = { featureId: string; name?: string; reviewTexts?: string[]; filter?: string; force?: boolean; removedReviews?: RemovedReviews | null } & LlmOverrides;
 export type HistogramRequest = { featureId: string };
 export type HighlightsRequest = { featureId: string; force?: boolean };
 export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean } & LlmOverrides;
 export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean } & LlmOverrides;
-export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string } & LlmOverrides;
+export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string; removedReviews?: RemovedReviews | null } & LlmOverrides;
 // `score` omits the per-review array — the web only needs the numbers to paint,
 // and a place's reviews run to megabytes. It is the extension's RAW score: the
 // removal penalty is applied by whoever renders, off their own preview meta, so

@@ -5,8 +5,9 @@ import { generateObject, generateText, NoObjectGeneratedError } from 'ai';
 import { z } from 'zod';
 import { LLM_PROVIDERS, REASONING_EFFORTS, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
 import { cleanItems, salvageStructured } from './summary-parse';
+import { removalNote, type Subject } from './summary-subject';
 
-export type { Summary, SummaryHighlight, Provider, ReasoningEffort };
+export type { Summary, SummaryHighlight, Provider, ReasoningEffort, Subject };
 
 // The providers all run the same prompts and schema so the models are directly
 // comparable (see evals/compare.ts). LLM_PROVIDER=gemini|openai|deepseek picks
@@ -103,14 +104,19 @@ const subjectOf = (place: string, filter?: string) => {
 // string fields), so the prose verdict and structured highlights run as two
 // parallel calls. Input tokens overlap on the review block; output is clean
 // both ways.
-export async function summarize(placeName: string, reviewTexts: string[], filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Summary> {
+//
+// `removedReviews` on the subject (Google's takedown notice) is appended to both
+// prompts via removalNote so the verdict is couched and the highlights can carry
+// a "reviews removed" line when the surviving text corroborates it.
+export async function summarize({ placeName, reviewTexts, removedReviews }: Subject, filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Summary> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
+  const removal = removalNote(removedReviews);
 
   const verdictPrompt = `${block}\n\n---\n\nWrite a concise verdict on ${subject}: what stands out and whether it's worth it. Keep it about this place: only point to another place when many reviewers repeatedly name the same one as better — never a place they say is worse or that this place beats — and a one-off mention stays out, since alternatives are surfaced separately. Mention caveats only if the reviews raise real ones — don't invent them. **Bold** specifics. Markdown prose, no headings or bullets. Max 120 words.
 
-${NOTES}`;
+${NOTES}${removal ? `\n\n${removal}` : ''}`;
 
   const structuredPrompt = `${block}\n\n---\n\nExtract highlights about ${subject} and rate value for money 1-5 from pricing mentions.
 
@@ -120,7 +126,7 @@ Also list items: up to 6 concrete things reviewers single out as what this place
 
 Separately, list alternatives: proper names of OTHER places reviewers say are BETTER than this one — somewhere they'd rather go because it beats this place (common when they call this place overrated). Better only: skip any place mentioned as worse, or that reviewers say this place beats. Can be anywhere — a nearby swap or a better one in another city/country, not just local substitutes. Names only — never put these in items, since a place named as a better alternative is not a feature of this one. Use the short name reviewers actually write ("BrunchIt", not "BrunchIt Café & Terrace") so searching mentions of it matches. Empty list if reviewers name none.
 
-${NOTES}`;
+${NOTES}${removal ? `\n\n${removal} If the reviews corroborate it, add one negative highlight saying so (what reviewers describe, e.g. "Owner reports critical reviews; several say theirs were deleted"); if they don't, add no highlight about it.` : ''}`;
 
   const [verdict, structured] = await Promise.all([
     generateText({ model, providerOptions, maxOutputTokens: 1024, prompt: verdictPrompt }).then((r) => {
@@ -140,11 +146,12 @@ ${NOTES}`;
   return { verdict: verdict.trim(), ...structured };
 }
 
-export async function ask(placeName: string, reviewTexts: string[], question: string, filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<string> {
+export async function ask({ placeName, reviewTexts, removedReviews }: Subject, question: string, filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<string> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
+  const removal = removalNote(removedReviews);
   const prompt = `${reviewBlock(reviewTexts)}\n\n---\n\nAnswer about ${subjectOf(placeName, filterQuery)} using the reviews. Be concise. Name specifics (prices, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree or don't cover it, say so.
 
-${NOTES}
+${NOTES}${removal ? `\n\n${removal} Bring it up only when it bears on the question.` : ''}
 
 Question: ${question}`;
   const r = await generateText({ model, providerOptions, maxOutputTokens: 32768, prompt });
