@@ -51,14 +51,16 @@ export const resolveSubject = ({ entry, name, reviewTexts, reviews, removedRevie
 
 // The prompt paragraph that tells the model the review set is survivor-only.
 // Google discloses only a bucket ("21 to 50"), never which reviews went, so the
-// model is asked to do two things a number can't: check the surviving text for
-// corroboration (reviewers saying their review vanished, an owner who reports
-// or threatens critics) and couch its verdict to match — not to invent what the
-// missing reviews said. Empty when there is no notice, so the prompts append
-// it unconditionally.
+// model is asked to check the surviving text for corroboration (reviewers
+// saying their review vanished, an owner who reports or threatens critics) and
+// to weigh a filtered set accordingly — not to invent what the missing reviews
+// said. It must NOT restate the notice itself: the UI already shows Google's
+// banner above the summary, so a verdict that repeats "reviews were removed"
+// with nothing behind it is noise. Empty when there is no notice, so the
+// prompts append it unconditionally.
 export const removalNote = (removed: RemovedReviews | undefined): string => {
   if (!removed) return '';
-  return `Google Maps discloses that reviews of this place were taken down after legal complaints: "${removed.detail ?? removed.text}" Takedowns are requested by the business and are all but always negative, so the reviews above are the ones that SURVIVED — a filtered set, not the full picture. Double-check the claim against the reviews: do any reviewers say their review was deleted, or describe the owner reporting, disputing, or threatening critics? Say briefly whether the reviews corroborate it. Then couch your conclusions to match — a glowing consensus is weaker evidence here, and complaints that do survive are likelier understated. Mention the removal in one short clause; never guess at what the removed reviews said.`;
+  return `Context, not for repeating: Google Maps discloses that reviews of this place were taken down after legal complaints ("${removed.detail ?? removed.text}"). Takedowns are requested by the business and are all but always negative, so the reviews above are the ones that SURVIVED — a filtered set. Weigh that quietly: a glowing consensus is weaker evidence here, and complaints that do survive are likelier understated. Check the reviews for corroboration — reviewers saying their review was deleted, or describing the owner reporting, disputing, or threatening critics. Only if they do, say what they describe. Otherwise do not mention the removal at all: the reader already sees Google's notice. Never guess at what the removed reviews said.`;
 };
 
 /** 404 for a missing subject; everything else stays a 400 as before. */

@@ -106,8 +106,9 @@ const subjectOf = (place: string, filter?: string) => {
 // both ways.
 //
 // `removedReviews` on the subject (Google's takedown notice) is appended to both
-// prompts via removalNote so the verdict is couched and the highlights can carry
-// a "reviews removed" line when the surviving text corroborates it.
+// prompts via removalNote so the verdict is weighed as survivor-only; the model
+// only speaks of it when the surviving text corroborates it (the UI already
+// shows Google's banner).
 export async function summarize({ placeName, reviewTexts, removedReviews }: Subject, filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Summary> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const subject = subjectOf(placeName, filterQuery);
@@ -126,7 +127,7 @@ Also list items: up to 6 concrete things reviewers single out as what this place
 
 Separately, list alternatives: proper names of OTHER places reviewers say are BETTER than this one — somewhere they'd rather go because it beats this place (common when they call this place overrated). Better only: skip any place mentioned as worse, or that reviewers say this place beats. Can be anywhere — a nearby swap or a better one in another city/country, not just local substitutes. Names only — never put these in items, since a place named as a better alternative is not a feature of this one. Use the short name reviewers actually write ("BrunchIt", not "BrunchIt Café & Terrace") so searching mentions of it matches. Empty list if reviewers name none.
 
-${NOTES}${removal ? `\n\n${removal} If the reviews corroborate it, add one negative highlight saying so (what reviewers describe, e.g. "Owner reports critical reviews; several say theirs were deleted"); if they don't, add no highlight about it.` : ''}`;
+${NOTES}${removal ? `\n\n${removal} If the reviews corroborate it, add one negative highlight with what reviewers describe (e.g. "Owner reports critical reviews; several say theirs were deleted"); if not, no highlight about it.` : ''}`;
 
   const [verdict, structured] = await Promise.all([
     generateText({ model, providerOptions, maxOutputTokens: 1024, prompt: verdictPrompt }).then((r) => {

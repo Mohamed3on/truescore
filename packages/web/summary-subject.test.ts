@@ -70,10 +70,12 @@ describe('removalNote', () => {
     expect(removalNote({ text: short })).toContain(`"${short}"`);
   });
 
-  test('asks the model to verify against the reviews and to hedge, not to invent', () => {
+  test('asks the model to verify against the reviews, stay silent otherwise, and never invent', () => {
     const note = removalNote({ text: '21 to 50 reviews removed due to defamation complaints.' });
     expect(note).toMatch(/SURVIVED/);
-    expect(note).toMatch(/corroborate/);
-    expect(note).toMatch(/never guess at what the removed reviews said/);
+    expect(note).toMatch(/corroboration/);
+    // The UI already shows Google's banner; an uncorroborated echo is noise.
+    expect(note).toMatch(/Otherwise do not mention the removal at all/);
+    expect(note).toMatch(/Never guess at what the removed reviews said/);
   });
 });
