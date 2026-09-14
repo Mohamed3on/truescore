@@ -652,9 +652,10 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 function moveTo(element: HTMLElement, target: HTMLElement) {
   const moved = element.parentElement !== target;
   // Re-inserting a node blurs whatever inside it had focus — hand it back so the
-  // ignore/restore button stays keyboard-reachable after it flips. Without
-  // preventScroll, focus() scrolls the row's new list into view, jumping the page.
-  const focused = moved && element.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
+  // ignore/restore button stays keyboard-reachable after it flips or its list
+  // re-sorts under a landing check. Without preventScroll, focus() scrolls the
+  // row's new list into view, jumping the page.
+  const focused = element.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
   target.append(element);
   focused?.focus({ preventScroll: true });
   if (!moved) return;
@@ -666,7 +667,8 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
  * Displays similar picks section: a candidate beats the current film when its
  * adjusted score (score × recent %) is equal or higher. Recent ratings are
  * fetched lazily, only for candidates whose score could reach the threshold,
- * and only as far as needed to settle each one.
+ * and only as far as needed to settle each one. Each row is judged as soon as
+ * its own ratings land, so a long list checks off film by film.
  * Films the user has ignored move to a collapsed drawer and stop counting
  * towards the winner check; restoring one from the drawer undoes that.
  */
@@ -720,36 +722,37 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   const drawer = el('ul', 'lbx-similar-list lbx-ignored-list');
   similarSection.append(banner, header, sourceLink, list, belowToggle, below, drawerToggle, drawer);
 
-  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; adjusted: number | null };
+  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; adjusted: number | null; settled: boolean };
   const items = new Map<string, Entry>();
   let belowOpen = false;
   let drawerOpen = false;
   let drawerRevealed = false;
-  let recentsSettled = false;
 
-  /** Re-entrant render — the ignore set is the only mutable input. */
+  /** Re-entrant render — reruns as each film's check lands and on every ignore toggle. */
   const paint = () => {
     let passCount = 0;
     let ignoredCount = 0;
-    // Appending in adjusted order re-sorts both lists; until recents settle every
-    // entry still carries its score, so this keeps the initial score order.
+    let pendingCount = 0;
+    // Appending in adjusted order re-sorts both lists; an entry still being checked
+    // carries its score, so unchecked films keep the initial score order.
     const ordered = [...items.values()].sort((a, b) => (b.adjusted ?? -Infinity) - (a.adjusted ?? -Infinity));
     for (const entry of ordered) {
       const isIgnored = ignored.has(entry.film.slug);
       if (isIgnored) ignoredCount++;
       else if (entry.passes) passCount++;
+      else if (!entry.settled) pendingCount++;
       entry.button.textContent = isIgnored ? '↺' : '×';
       const label = isIgnored ? 'Restore — count this as a better pick again' : 'Ignore — don’t count this as a better pick';
       entry.button.title = label;
       entry.button.setAttribute('aria-label', `${label}: ${entry.film.name}`);
-      // Until the recents settle nothing has been disproved yet, so every film
+      // Until its own recents settle nothing has disproved a film yet, so it
       // stays in the main list rather than flickering through the fold.
-      moveTo(entry.element, isIgnored ? drawer : entry.passes || !recentsSettled ? list : below);
+      moveTo(entry.element, isIgnored ? drawer : entry.passes || !entry.settled ? list : below);
     }
 
     // The films that lost are receipts, not results: one folded line each way.
-    const belowCount = items.size - ignoredCount - passCount;
-    belowToggle.hidden = !recentsSettled || belowCount === 0;
+    const belowCount = items.size - ignoredCount - passCount - pendingCount;
+    belowToggle.hidden = belowCount === 0;
     if (!belowToggle.hidden) belowToggle.textContent = `${belowOpen ? '▼' : '▶'} ${belowCount} didn’t reach ${addCommas(threshold!)}`;
     below.hidden = belowToggle.hidden || !belowOpen;
 
@@ -757,15 +760,16 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     drawerToggle.textContent = `${drawerOpen ? '▼' : '▶'} ${ignoredCount} ignored`;
     drawer.hidden = !drawerOpen || ignoredCount === 0;
 
-    const isWinner = recentsSettled && passCount === 0;
+    const isWinner = pendingCount === 0 && passCount === 0;
     banner.hidden = !isWinner;
     header.hidden = isWinner;
     sourceLink.hidden = isWinner;
     if (isWinner) {
       bannerText.textContent = ignoredCount === items.size ? '★ Every similar film is ignored.' : WINNER_MSG;
-    } else if (recentsSettled) {
+    } else {
       // The heading carries the count, so no row has to repeat the threshold.
-      header.textContent = passCount === 1 ? '1 similar film scores higher' : `${passCount} similar films score higher`;
+      header.textContent = pendingCount ? 'Similar Picks'
+        : passCount === 1 ? '1 similar film scores higher' : `${passCount} similar films score higher`;
     }
   };
 
@@ -794,35 +798,32 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     button.type = 'button';
     button.addEventListener('click', () => toggleIgnored(film.slug));
     item.append(link, meta, button);
-    items.set(film.slug, { element: item, meta, button, film, passes: false, adjusted: film.score });
+    items.set(film.slug, { element: item, meta, button, film, passes: false, adjusted: film.score, settled: false });
   });
   paint();
 
-  const recents = new Map<string, { ratio: number | null; ceiling: boolean; floor?: boolean } | null>();
-  await Promise.all(
-    films.map(async (film: any) => recents.set(film.slug, film.fetchFailed
+  const check = async (film: any) => {
+    const recent = film.fetchFailed
       ? null
-      : await getCandidateRecentRatings(film.slug, film.score, threshold).catch(() => null))),
-  );
-
-  // One verdict, shared with Goodreads (shared/better-picks.ts). A film with no
-  // tally at all — unscored, or its fetch out of retries — was never measured, so
-  // it keeps the benefit of the doubt instead of counting as one that didn't reach.
-  for (const pick of rankPicks(
-    { score: current.score, ratio: current.ratio },
-    films.map((film: any) => ({ key: film.slug, item: film, score: film.score, ratio: recents.get(film.slug)?.ratio ?? null, unresolved: !recents.get(film.slug) })),
-  ).ranked) {
-    const entry = items.get(pick.key)!;
-    const recent = recents.get(pick.key) ?? null;
+      : await getCandidateRecentRatings(film.slug, film.score, threshold).catch(() => null);
+    // One verdict, shared with Goodreads (shared/better-picks.ts). A film with no
+    // tally at all — unscored, or its fetch out of retries — was never measured, so
+    // it keeps the benefit of the doubt instead of counting as one that didn't reach.
+    const [pick] = rankPicks(
+      { score: current.score, ratio: current.ratio },
+      [{ key: film.slug, item: film, score: film.score, ratio: recent?.ratio ?? null, unresolved: !recent }],
+    ).ranked;
+    const entry = items.get(film.slug)!;
     entry.adjusted = pick.adjusted;
     entry.passes = pick.passes;
+    entry.settled = true;
     const adjustedText = pick.adjusted == null || pick.unresolved ? '?' : `${recent?.ceiling ? '≤' : recent?.floor ? '≥' : ''}${addCommas(pick.adjusted)}`;
-    entry.meta.textContent = filmMeta(pick.item, adjustedText);
-    entry.element.title = filmTooltip(pick.item, recent);
+    entry.meta.textContent = filmMeta(film, adjustedText);
+    entry.element.title = filmTooltip(film, recent);
     if (!entry.passes) entry.element.classList.add('lbx-excluded');
-  }
-  recentsSettled = true;
-  paint();
+    paint();
+  };
+  await Promise.all(films.map(check));
 
   if (stats) similarSection.append(debugDetails(stats));
 }
