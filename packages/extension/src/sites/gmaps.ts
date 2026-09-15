@@ -908,7 +908,9 @@ const askReviews = async (panel: HTMLElement, reviewTexts: string[], filterQuery
   const ctrl = new AbortController();
   const search: SearchReviews = async (query, onFound) => {
     const reviews = await fetchAllForSearch(context.featureId, query, onFound);
-    return reviews && textReviewsFor(reviews);
+    if (!reviews) return null;
+    const { scorePct, trustedReviews } = statsForReviews(reviews);
+    return { texts: textReviewsFor(reviews), scorePct, trustedReviews };
   };
   let shown: AskView | undefined;
   await runAsk(`${TRUESCORE_API_BASE}/api/ask`, { ...context, reviewTexts, question, filter: filterQuery ?? undefined }, search, (v) => {
@@ -928,8 +930,13 @@ const askSearchRow = (s: AskSearch) => {
   row.append(
     el('span', 'rc-ask-search-label', s.done ? 'Searched all reviews' : 'Searching all reviews'),
     el('span', 'rc-ask-search-terms', parseOrQuery(s.query).join(' · ')),
-    el('span', 'rc-ask-search-count', s.found == null ? '—' : addCommas(s.found)),
   );
+  // The matches' TrueScore, graded against the place's like the topic chips.
+  if (s.scorePct != null) {
+    const overall = toPct(store.mergedStats(currentOption).mergedPct);
+    row.append(el('span', `rc-ask-search-pct ${chipPolarity(s.scorePct, overall)}`, s.trustedReviews ? `${s.scorePct}%` : '—'));
+  }
+  row.append(el('span', 'rc-ask-search-count', s.found == null ? '—' : `·${addCommas(s.found)}`));
   row.onclick = () => triggerLabelSearchFor(s.query);
   return row;
 };

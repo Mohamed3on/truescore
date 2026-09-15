@@ -21,7 +21,7 @@ describe('runAsk', () => {
   test('answers in one round when the model needs no Search', async () => {
     serve(ndjson({ type: 'delta', text: 'Ye' }, { type: 'delta', text: 's.' }, { type: 'answer', answer: 'Yes.' }));
     const views: AskView[] = [];
-    expect(await runAsk('/api/ask', { question: 'q' }, async () => [], (v) => views.push(v))).toBe('Yes.');
+    expect(await runAsk('/api/ask', { question: 'q' }, async () => null, (v) => views.push(v))).toBe('Yes.');
     expect(views.map((v) => v.text)).toEqual(['Ye', 'Yes.', 'Yes.']);
     expect(views.at(-1)?.done).toBe(true);
   });
@@ -32,16 +32,16 @@ describe('runAsk', () => {
       ndjson({ type: 'delta', text: 'Let me check' }, { type: 'search', searches: [{ id: 'c1', query: 'dog OR Hund' }], history }),
       ndjson({ type: 'delta', text: 'Yes' }, { type: 'answer', answer: 'Yes, dogs are welcome.' }),
     );
-    const matches = ['[2024-01-01] dog friendly', '[2024-02-01] Hunde willkommen'];
+    const matches = { texts: ['[2024-01-01] dog friendly', '[2024-02-01] Hunde willkommen'], scorePct: 80, trustedReviews: 2 };
     const views: AskView[] = [];
     const answer = await runAsk('/api/ask', { question: 'Dogs?' }, async (_q, onFound) => { onFound(1); return matches; }, (v) => views.push(v));
 
     expect(answer).toBe('Yes, dogs are welcome.');
-    expect(bodies[1]).toEqual({ question: 'Dogs?', history, results: [{ id: 'c1', texts: matches }] });
+    expect(bodies[1]).toEqual({ question: 'Dogs?', history, results: [{ id: 'c1', matches }] });
     // The draft written before searching gave way; the row climbed, then settled.
     expect(views.find((v) => v.searches.length)?.text).toBe('');
     expect(views.map((v) => v.searches[0]?.found)).toContain(1);
-    expect(views.at(-1)).toEqual({ searches: [{ query: 'dog OR Hund', found: 2, done: true }], text: 'Yes, dogs are welcome.', done: true });
+    expect(views.at(-1)).toEqual({ searches: [{ query: 'dog OR Hund', found: 2, done: true, scorePct: 80, trustedReviews: 2 }], text: 'Yes, dogs are welcome.', done: true });
   });
 
   test('a Search the client cannot run goes back as null', async () => {
@@ -51,7 +51,7 @@ describe('runAsk', () => {
     );
     const views: AskView[] = [];
     await runAsk('/api/ask', { question: 'Wifi?' }, async () => { throw new Error('no session'); }, (v) => views.push(v));
-    expect(bodies[1].results).toEqual([{ id: 'c1', texts: null }]);
+    expect(bodies[1].results).toEqual([{ id: 'c1', matches: null }]);
     expect(views.at(-1)?.searches).toEqual([{ query: 'wifi', found: null, done: true }]);
   });
 
@@ -61,13 +61,13 @@ describe('runAsk', () => {
       ndjson({ type: 'delta', text: 'a' }, { type: 'delta', text: 'b' }, { type: 'answer', answer: 'ab' }),
     );
     const views: AskView[] = [];
-    await runAsk('/api/ask', { question: 'Wifi?' }, async () => ['[2024-01-01] fast wifi'], (v) => views.push(v));
+    await runAsk('/api/ask', { question: 'Wifi?' }, async () => ({ texts: ['[2024-01-01] fast wifi'], scorePct: 100, trustedReviews: 1 }), (v) => views.push(v));
     const [a, b] = views.filter((v) => v.text === 'a' || v.text === 'ab');
     expect(b?.searches).toBe(a?.searches);
   });
 
   test('a stream that ends with neither an answer nor a Search is an error', async () => {
     serve(ndjson({ type: 'delta', text: 'half' }));
-    await expect(runAsk('/api/ask', { question: 'q' }, async () => [], () => {})).rejects.toThrow('cut off');
+    await expect(runAsk('/api/ask', { question: 'q' }, async () => null, () => {})).rejects.toThrow('cut off');
   });
 });

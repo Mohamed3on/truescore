@@ -147,9 +147,10 @@ export type HighlightsRequest = { featureId: string; force?: boolean };
 export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean } & LlmOverrides;
 export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean } & LlmOverrides;
 // `history` + `results` carry a later round (see AskEvent): the model's own
-// messages so far, opaque to clients, and each requested Search's matches as
-// review texts — `texts: null` when the client couldn't search.
-export type AskSearchResult = { id: string; texts: string[] | null };
+// messages so far, opaque to clients, and each requested Search's matches —
+// review texts plus their TrueScore — or `null` when the client couldn't search.
+export type SearchMatches = { texts: string[]; scorePct: number; trustedReviews: number };
+export type AskSearchResult = { id: string; matches: SearchMatches | null };
 export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string; removedReviews?: RemovedReviews | null; history?: unknown[]; results?: AskSearchResult[] } & LlmOverrides;
 // `score` omits the per-review array — the web only needs the numbers to paint,
 // and a place's reviews run to megabytes. It is the extension's RAW score: the

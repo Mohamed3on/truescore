@@ -285,7 +285,7 @@ async function streamAsk(box: HTMLElement, body: AskRequest, epoch: PlaceEpoch) 
   const search: SearchReviews = async (query, onFound) => {
     for await (const e of streamNdjson<SearchEvent>('/api/search', { featureId: epoch.featureId, query } satisfies SearchRequest, ctrl.signal)) {
       if (e.type === 'search-progress') onFound(e.totalReviews);
-      else if (e.type === 'search') return textReviewsFor(e.result.reviews);
+      else if (e.type === 'search') return { texts: textReviewsFor(e.result.reviews), scorePct: e.result.scorePct, trustedReviews: e.result.trustedReviews };
     }
     return null;
   };
@@ -307,8 +307,10 @@ function askSearchRow(s: AskSearch): HTMLButtonElement {
   row.append(
     el('span', 'micro', s.done ? 'SEARCHED ALL REVIEWS' : 'SEARCHING ALL REVIEWS'),
     el('span', 'ask-search-terms', parseOrQuery(s.query).join(' · ')),
-    el('span', 'ask-search-count', s.found == null ? '—' : String(s.found)),
   );
+  // The matches' TrueScore, graded against the place's like the topic chips.
+  if (s.scorePct != null) row.append(el('span', `ask-search-pct ${chipPolarity(s.scorePct, currentMergedPct)}`, s.trustedReviews ? `${s.scorePct}%` : '—'));
+  row.append(el('span', 'ask-search-count', s.found == null ? '—' : `·${s.found}`));
   row.addEventListener('click', () => {
     searchInput.value = s.query;
     runSearch(s.query);

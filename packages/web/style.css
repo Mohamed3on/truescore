@@ -951,12 +951,20 @@ section#result::before {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ask-search-count {
+.ask-search-pct {
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 600;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--t1);
+}
+.ask-search-pct.pos { color: var(--pos); }
+.ask-search-pct.neg { color: var(--neg); }
+.ask-search-count {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 500;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--t3);
 }
 .ask-text > :first-child { margin-top: 0; }
 .ask-text.reading:empty::before {

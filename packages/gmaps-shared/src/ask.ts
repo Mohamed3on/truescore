@@ -1,16 +1,16 @@
 import { streamNdjson } from './http';
-import type { AskEvent, AskRequest, AskSearchResult } from './wire';
+import type { AskEvent, AskRequest, AskSearchResult, SearchMatches } from './wire';
 
-// One Search an Ask ran for the model: its query and the matches found so far —
-// `null` once settled if the client couldn't search.
-export type AskSearch = { query: string; found: number | null; done: boolean };
+// One Search an Ask ran for the model: its query, the matches found so far,
+// and once settled their TrueScore — `found: null` if the client couldn't search.
+export type AskSearch = { query: string; found: number | null; done: boolean; scorePct?: number; trustedReviews?: number };
 // What a client paints while an Ask runs: its Searches, then the Answer text so
 // far; `done` once that text is final.
 export type AskView = { searches: AskSearch[]; text: string; done: boolean };
 // A client's own way to Search every review of the Place — the extension's tab
 // session, the web's /api/search. Resolves to the matches as review texts
-// (textReviewsFor), or null when it can't search.
-export type SearchReviews = (query: string, onFound: (found: number) => void) => Promise<string[] | null>;
+// (textReviewsFor) with their stats, or null when it can't search.
+export type SearchReviews = (query: string, onFound: (found: number) => void) => Promise<SearchMatches | null>;
 
 // The client half of an Ask (see AskEvent). Streams the Answer; when the model
 // wants Searches instead, runs them through `search` and asks again with the
@@ -35,12 +35,14 @@ export async function runAsk(url: string, body: AskRequest, search: SearchReview
 
     const base = view.searches.length;
     paint({ text: '', searches: [...view.searches, ...wanted.searches.map(({ query }) => ({ query, found: 0, done: false }))] });
-    const setRow = (i: number, found: number | null, done: boolean) =>
-      paint({ searches: view.searches.map((s, j) => (j === base + i ? { ...s, found, done } : s)) });
-    const results = await Promise.all(wanted.searches.map(async ({ id, query }, i) => {
-      const texts = await search(query, (found) => setRow(i, found, false)).catch(() => null);
-      setRow(i, texts ? texts.length : null, true);
-      return { id, texts };
+    const setRow = (i: number, patch: Partial<AskSearch>) =>
+      paint({ searches: view.searches.map((s, j) => (j === base + i ? { ...s, ...patch } : s)) });
+    const results = await Promise.all(wanted.searches.map(async ({ id, query }, i): Promise<AskSearchResult> => {
+      const matches = await search(query, (found) => setRow(i, { found })).catch(() => null);
+      setRow(i, matches
+        ? { found: matches.texts.length, done: true, scorePct: matches.scorePct, trustedReviews: matches.trustedReviews }
+        : { found: null, done: true });
+      return { id, matches };
     }));
     round = { history: wanted.history, results };
   }

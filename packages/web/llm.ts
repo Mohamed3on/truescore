@@ -179,7 +179,7 @@ const CACHE_BREAKPOINT = { openai: { promptCacheBreakpoint: { mode: 'explicit' a
 // No `execute`: calling it ends the round, and the call goes to the client,
 // which runs the Search its own way and answers with the next request.
 const searchReviews = tool({
-  description: 'Search every review of this place, not just the sample, for any of the terms. Returns how many reviews match and the matches not already in the sample.',
+  description: 'Search every review of this place, not just the sample, for any of the terms. Returns how many reviews match (found); their TrueScore (scorePct: the net share of trusted reviewers rating 5★ over 1★, from -100 to 100, resting on trustedReviews of them — cite it when it helps); and the matches not already in the sample (reviews).',
   inputSchema: z.object({ query: z.string().describe('Terms joined with " OR "') }),
 });
 
@@ -194,16 +194,14 @@ export async function ask({ placeName, reviewTexts, removedReviews }: Subject, {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const removal = removalNote(removedReviews);
   const seen = new Set(reviewTexts);
-  const matches = (texts: string[]) => {
-    const fresh = texts.filter((t) => !seen.has(t)).slice(0, SEARCH_HITS_MAX);
-    return `${texts.length} matching reviews found.${fresh.length ? ` Those not already above:\n\n${reviewBlock(fresh)}` : ''}`;
-  };
   const past: ModelMessage[] = results.length
     ? [...history, {
       role: 'tool',
-      content: results.map(({ id, texts }): ToolResultPart => ({
+      content: results.map(({ id, matches: m }): ToolResultPart => ({
         type: 'tool-result', toolCallId: id, toolName: 'searchReviews',
-        output: texts ? { type: 'text', value: matches(texts) } : { type: 'error-text', value: SEARCH_FAILED },
+        output: m
+          ? { type: 'json', value: { found: m.texts.length, scorePct: m.scorePct, trustedReviews: m.trustedReviews, reviews: m.texts.filter((t) => !seen.has(t)).slice(0, SEARCH_HITS_MAX) } }
+          : { type: 'error-text', value: SEARCH_FAILED },
       })),
     }]
     : history;

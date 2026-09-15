@@ -501,12 +501,20 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.rc-ask-search-count {
+.rc-ask-search-pct {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.88);
+}
+.rc-ask-search-pct.pos { color: #4ADE80; }
+.rc-ask-search-pct.neg { color: #F87171; }
+.rc-ask-search-count {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.5);
 }
 .rc-ask-search.live .rc-ask-search-label,
 .rc-ask-search.live .rc-ask-search-count { animation: rc-pulse 1.5s ease-in-out infinite; }
