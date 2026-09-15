@@ -99,10 +99,11 @@ const SEARCH_CONCURRENCY = 6;
 // an Ask's `dog OR Hund` after a typed `dog` — only searches its new terms.
 export type TermCache = { get(term: string): Review[] | undefined; set(term: string, reviews: Review[]): void };
 
-// The store behind TermCache: an LRU keyed by place + term, entries aging out
-// after `ttlMs`. `keep` vetoes a write — by default an empty result, which a
-// credless or stale session returns as readily as a genuine miss.
-export function createTermCache(ttlMs: number, max: number, keep: (reviews: Review[]) => boolean = (rs) => rs.length > 0) {
+// An in-memory TermCache store (the extension's; the server keeps a sqlite
+// table): an LRU keyed by place + term, entries aging out after `ttlMs`. Never
+// keeps an empty result, which a credless or stale session returns as readily
+// as a genuine miss.
+export function createTermCache(ttlMs: number, max: number) {
   const entries = new Map<string, { reviews: Review[]; ts: number }>();
   return {
     forPlace: (featureId: string): TermCache => ({
@@ -115,7 +116,7 @@ export function createTermCache(ttlMs: number, max: number, keep: (reviews: Revi
         return hit.reviews;
       },
       set(term, reviews) {
-        if (!keep(reviews)) return;
+        if (!reviews.length) return;
         entries.set(`${featureId}|${term.toLowerCase()}`, { reviews, ts: Date.now() });
         for (const oldest of entries.keys()) {
           if (entries.size <= max) break;

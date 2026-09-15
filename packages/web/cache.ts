@@ -1,11 +1,15 @@
 import { db, DB_PATH, LEGACY_JSON_PATH } from './db';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './llm';
-import { displayScore, normalizeQuestion, type AskSearch, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews, type SortStats } from '@truescore/gmaps-shared';
+import { displayScore, normalizeQuestion, type AskSearch, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews, type Review, type SortStats, type TermCache } from '@truescore/gmaps-shared';
 
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
-// How long a cached review search — or Ask Answer — is served before it's re-run.
-const SEARCH_TTL_MS = 24 * 60 * 60 * 1000;
+// How long a cached review search — a whole query, or a single term — is served
+// before it's re-run. Its matches only change as new reviews mention it, a
+// trickle a day even on busy places, so a week holds.
+const SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// A replayed Ask Answer is the model's reading of the reviews: a day.
+const ANSWER_TTL_MS = 24 * 60 * 60 * 1000;
 const ANSWERS_MAX = 30;
 // How long a background chip-warm that came back empty is trusted as "this place
 // genuinely has no topic chips" before we bother harvesting again.
@@ -72,6 +76,15 @@ db.run('CREATE TABLE IF NOT EXISTS entries (featureId TEXT PRIMARY KEY, data TEX
 
 const upsertStmt = db.prepare<void, [string, string]>('INSERT OR REPLACE INTO entries (featureId, data) VALUES (?, ?)');
 const selectOneStmt = db.prepare<{ data: string }, [string]>('SELECT data FROM entries WHERE featureId = ?');
+
+// Per-place, per-term search matches (cache.terms). A table of their own rather
+// than the entry row: terms overlap in the reviews they hold, and a row per term
+// reads and writes without rewriting the place.
+db.run('CREATE TABLE IF NOT EXISTS search_terms (featureId TEXT NOT NULL, term TEXT NOT NULL, reviews TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (featureId, term))');
+const selectTermStmt = db.prepare<{ reviews: string; ts: number }, [string, string]>('SELECT reviews, ts FROM search_terms WHERE featureId = ? AND term = ?');
+const upsertTermStmt = db.prepare<void, [string, string, string, number]>('INSERT OR REPLACE INTO search_terms (featureId, term, reviews, ts) VALUES (?, ?, ?, ?)');
+const pruneTermsStmt = db.prepare<void, [number]>('DELETE FROM search_terms WHERE ts < ?');
+let termsPrunedAt = 0;
 // Only the /api/places listing fields, projected in sqlite — so building the
 // listing never materialises the full entries (see IndexRow below).
 type IndexProjection = {
@@ -373,7 +386,27 @@ export const cache = {
     persist(featureId, { ...existing, searches });
   },
   answerServable(a: CachedAnswer | undefined): a is CachedAnswer {
-    return !!a && Date.now() - a.ts < SEARCH_TTL_MS;
+    return !!a && Date.now() - a.ts < ANSWER_TTL_MS;
+  },
+  // One place's per-term search cache (see collectSearchTerms), over the
+  // search_terms table. Empty results are never kept, as in putSearch; expired
+  // rows are skipped on read and pruned at most once a day.
+  terms(featureId: string): TermCache {
+    return {
+      get(term) {
+        const row = selectTermStmt.get(featureId, term.toLowerCase());
+        return row && Date.now() - row.ts < SEARCH_TTL_MS ? JSON.parse(row.reviews) as Review[] : undefined;
+      },
+      set(term, reviews) {
+        if (!reviews.length) return;
+        const now = Date.now();
+        upsertTermStmt.run(featureId, term.toLowerCase(), JSON.stringify(reviews), now);
+        if (now - termsPrunedAt > 24 * 60 * 60 * 1000) {
+          termsPrunedAt = now;
+          pruneTermsStmt.run(now - SEARCH_TTL_MS);
+        }
+      },
+    };
   },
   // Re-inserted so the most recent stays last, and the oldest past ANSWERS_MAX
   // drop off — a place asked a lot can't grow its row without bound.

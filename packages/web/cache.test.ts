@@ -119,8 +119,18 @@ test('searches: an empty result is never cached, and a cached one expires', asyn
   expect(cache.get('search-1')?.searches?.pho).toBeUndefined();
   await cache.putSearch('search-1', 'Pho', search(4));
   expect(cache.searchServable(cache.get('search-1')?.searches?.pho)).toBe(true);
-  expect(cache.searchServable(search(4, Date.now() - 25 * 3600_000))).toBe(false);
+  expect(cache.searchServable(search(4, Date.now() - 6 * 24 * 3600_000))).toBe(true); // a week holds
+  expect(cache.searchServable(search(4, Date.now() - 8 * 24 * 3600_000))).toBe(false);
   expect(cache.searchServable(search(0))).toBe(false); // a legacy cached empty
+});
+
+test('search terms: kept per place in sqlite, any case, never empty', () => {
+  const review = { reviewId: 'r1', stars: 5, reviewerReviewCount: 9, timestamp: 1, text: 'dog friendly' };
+  cache.terms('term-1').set('Dog', [review]);
+  cache.terms('term-1').set('cat', []);
+  expect(cache.terms('term-1').get('dog')).toEqual([review]);
+  expect(cache.terms('term-2').get('dog')).toBeUndefined();
+  expect(cache.terms('term-1').get('cat')).toBeUndefined();
 });
 
 test('answers: keyed by scope + normalized question, served for a day, the newest 30 kept', async () => {
