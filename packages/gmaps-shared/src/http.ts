@@ -1,8 +1,9 @@
-// Client-side HTTP transport: fetch-with-retry (Cloudflare 5xx returns an HTML
-// error page that would blow up resp.json() as "Unexpected token '<'"), the JSON
-// helpers, and the NDJSON stream reader used by /api/lookup, /api/search,
-// /api/highlights, /api/ask. Deliberately DOM-free so it's unit-testable in
-// bun without a browser (fetch / ReadableStream / TextDecoder are all globals).
+// Client-side HTTP transport for the web client and the extension:
+// fetch-with-retry (Cloudflare 5xx returns an HTML error page that would blow up
+// resp.json() as "Unexpected token '<'"), the JSON helpers, and the NDJSON stream
+// reader used by /api/lookup, /api/search, /api/highlights, /api/ask.
+// Deliberately DOM-free so it's unit-testable in bun without a browser (fetch /
+// ReadableStream / TextDecoder are all globals).
 
 const RETRY_STATUSES = new Set([502, 503, 504, 521, 522, 524]);
 

@@ -1,8 +1,8 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
 import { beginPlace, currentPlace, endPlace, type PlaceEpoch } from './place-session';
-import { fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, streamNdjson } from './http';
 import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz, slotsOf } from './hours';
 import {
+  fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, streamNdjson,
   chipPolarity, compileMatchRegex, displayScore, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
