@@ -74,9 +74,18 @@ export const sortedDisplayReviews = (reviews: Review[]): Review[] =>
     .filter((r) => r.text.length >= 10)
     .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
 
-// '★'×n + '☆'×(5−n) — review stars and the 1–5 value rating both render it.
+// '★'×n + '☆'×(5−n) — a review's stars.
 export const starString = (stars: number): string =>
   '★'.repeat(stars) + '☆'.repeat(Math.max(0, 5 - stars));
+
+// The Summary's 1–5 value-for-money rating as a point on an Overpriced →
+// Bargain rail: the word that carries the verdict, its tone, and where the dot
+// sits along the rail (0–1). Shared so web and extension read the scale alike.
+const VALUE_WORDS = ['Overpriced', 'Pricey', 'Fair value', 'Good value', 'Bargain'];
+export const valueForMoneyScale = (rating: number): { label: string; tone: 'neg' | 'mid' | 'pos'; position: number } => {
+  const v = Math.max(1, Math.min(5, Math.round(rating)));
+  return { label: VALUE_WORDS[v - 1]!, tone: v < 3 ? 'neg' : v > 3 ? 'pos' : 'mid', position: (v - 1) / 4 };
+};
 
 // A chip reads as positive when its score is at or above the place's overall
 // score — the binary green/red the topic chips and the scored standouts/

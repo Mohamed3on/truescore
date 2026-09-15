@@ -526,6 +526,36 @@ section#result::before {
   font-variant-numeric: tabular-nums;
   color: var(--t1);
 }
+
+/* Value for money on an Overpriced → Bargain rail: the word carries the
+   verdict, the dot shows where it sits; both tinted by tone, the rail only
+   faintly, so the dot is the one mark that reads. */
+.value-word { font-size: 13px; font-weight: 500; color: var(--t1); }
+.value-word.pos { color: var(--pos); }
+.value-word.mid { color: var(--mid); }
+.value-word.neg { color: var(--neg); }
+.value-track { display: flex; align-items: center; gap: 8px; margin-top: -2px; }
+.value-rail {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(248, 113, 113, 0.3), rgba(232, 184, 109, 0.3), rgba(74, 222, 128, 0.3));
+}
+.value-dot {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--t1);
+  box-shadow: 0 0 0 2px var(--bg);
+  transition: left 500ms var(--ease);
+}
+.value-dot.pos { background: var(--pos); }
+.value-dot.mid { background: var(--mid); }
+.value-dot.neg { background: var(--neg); }
 .delta {
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 500;

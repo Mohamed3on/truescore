@@ -1,5 +1,23 @@
 import { test, expect, describe } from 'bun:test';
-import { chipPolarity, selectScoredChips, sortChipsByImpact } from './index';
+import { chipPolarity, selectScoredChips, sortChipsByImpact, valueForMoneyScale } from './index';
+
+describe('valueForMoneyScale', () => {
+  test('maps each rating to its word, tone, and place on the rail', () => {
+    expect([1, 2, 3, 4, 5].map(valueForMoneyScale)).toEqual([
+      { label: 'Overpriced', tone: 'neg', position: 0 },
+      { label: 'Pricey', tone: 'neg', position: 0.25 },
+      { label: 'Fair value', tone: 'mid', position: 0.5 },
+      { label: 'Good value', tone: 'pos', position: 0.75 },
+      { label: 'Bargain', tone: 'pos', position: 1 },
+    ]);
+  });
+
+  test('clamps and rounds whatever the model returned', () => {
+    expect(valueForMoneyScale(9).label).toBe('Bargain');
+    expect(valueForMoneyScale(-2).label).toBe('Overpriced');
+    expect(valueForMoneyScale(3.6).label).toBe('Good value');
+  });
+});
 
 describe('sortChipsByImpact', () => {
   const chip = (scorePct: number, count: number, label: string) => ({ score: { scorePct }, count, label });

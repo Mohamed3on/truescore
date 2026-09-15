@@ -4,7 +4,7 @@ import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz, slotsOf } from './
 import {
   fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskSearch, type AskView, type SearchReviews,
-  chipPolarity, compileMatchRegex, displayScore, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
@@ -729,7 +729,7 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   activePanel = null;
   answerEl.textContent = '';
   questionInput.value = '';
-  $('valueForMoney').textContent = '—';
+  renderValue();
   $('verdict').textContent = '';
   resummarizeBtn.hidden = true;
   highlightsRow.hidden = true;
@@ -1026,9 +1026,24 @@ function renderOverallScore(histogram: number[] | undefined | null) {
 // global featureId instead, so a summary that landed after the user pasted a
 // second place painted place A's verdict into B — and then auto-searched A's
 // praised items against B's featureId.
+// Value for money on the Overpriced → Bargain rail: the word carries the
+// verdict and the dot shows where it sits, both tinted by tone. "—" and no rail
+// until a summary rates it.
+function renderValue(rating?: number) {
+  const word = $('valueForMoney');
+  $('valueTrack').hidden = !rating;
+  if (!rating) { word.textContent = '—'; word.className = 'value-word'; return; }
+  const { label, tone, position } = valueForMoneyScale(rating);
+  word.textContent = label;
+  word.className = `value-word ${tone}`;
+  const dot = $('valueDot');
+  dot.className = `value-dot ${tone}`;
+  dot.style.left = `${position * 100}%`;
+}
+
 function renderSummary(summary: Summary, epoch: PlaceEpoch) {
   if (!epoch.alive) return;
-  $('valueForMoney').textContent = `${summary.valueForMoney}/5`;
+  renderValue(summary.valueForMoney);
   renderMarkdown($('verdict'), summary.verdict);
   resummarizeBtn.hidden = false;
   highlightsListEl.replaceChildren();

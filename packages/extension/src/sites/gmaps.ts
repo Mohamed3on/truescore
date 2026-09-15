@@ -31,6 +31,7 @@ import {
   sortedDisplayReviews,
   starString,
   statsForReviews,
+  valueForMoneyScale,
   textReviewsFor,
   timeAgo,
   type Locale,
@@ -1911,6 +1912,23 @@ const refreshStaleScores = () => {
   }
 };
 
+// Value for money on an Overpriced → Bargain rail (valueForMoneyScale): the
+// word carries the verdict, the dot shows where it sits, both tinted by tone.
+const valueMeter = (rating: number) => {
+  const { label, tone, position } = valueForMoneyScale(rating);
+  const box = el('div', 'rc-value');
+  const head = el('div', 'rc-value-head');
+  head.append(el('span', 'rc-value-label', 'Value for money'), el('span', `rc-value-word ${tone}`, label));
+  const rail = el('span', 'rc-value-rail');
+  const dot = el('span', `rc-value-dot ${tone}`);
+  dot.style.left = `${position * 100}%`;
+  rail.append(dot);
+  const track = el('div', 'rc-value-track');
+  track.append(el('span', 'rc-value-end', 'Overpriced'), rail, el('span', 'rc-value-end', 'Bargain'));
+  box.append(head, track);
+  return box;
+};
+
 const renderSummary = (panel: HTMLElement, result: SummaryResult) => {
   panel.textContent = '';
   panel.className = 'rc-summary-panel';
@@ -1929,10 +1947,7 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult) => {
       panel.appendChild(row);
     }
   }
-  if (result.valueForMoney) {
-    const v = Math.max(1, Math.min(5, result.valueForMoney));
-    panel.appendChild(el('div', 'rc-value', `Value for money: ${starString(v)}`));
-  }
+  if (result.valueForMoney) panel.appendChild(valueMeter(result.valueForMoney));
   // Standouts and alternatives are scored chip groups about the place as a whole
   // — only the main summary, never a label-search/chip sub-summary whose items
   // would spawn nested searches off a filtered set.

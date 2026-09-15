@@ -388,11 +388,45 @@
 .rc-highlight.positive { color: #4ADE80; }
 .rc-highlight.negative { color: #F87171; }
 
-.rc-value {
-  margin-top: 8px;
-  font-size: 11px;
-  color: #E8B86D;
+/* Value for money on an Overpriced → Bargain rail: the word carries the
+   verdict, the dot shows where it sits; both tinted by tone, the rail only
+   faintly, so the dot is the one mark that reads. */
+.rc-value { margin-top: 10px; }
+.rc-value-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.rc-value-label,
+.rc-value-end {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
 }
+.rc-value-word { font-size: 12px; font-weight: 500; color: rgba(255, 255, 255, 0.88); }
+.rc-value-word.pos { color: #4ADE80; }
+.rc-value-word.mid { color: #E8B86D; }
+.rc-value-word.neg { color: #F87171; }
+.rc-value-track { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.rc-value-rail {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(248, 113, 113, 0.3), rgba(232, 184, 109, 0.3), rgba(74, 222, 128, 0.3));
+}
+.rc-value-dot {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 0 0 2px rgb(14, 16, 24);
+}
+.rc-value-dot.pos { background: #4ADE80; }
+.rc-value-dot.mid { background: #E8B86D; }
+.rc-value-dot.neg { background: #F87171; }
 
 .rc-verdict {
   margin-bottom: 8px;
