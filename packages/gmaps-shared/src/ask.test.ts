@@ -1,0 +1,73 @@
+import { test, expect, describe, afterEach } from 'bun:test';
+import { runAsk, type AskView } from './index';
+
+const ndjson = (...events: object[]) =>
+  new Response(events.map((e) => JSON.stringify(e) + '\n').join(''), { headers: { 'content-type': 'application/x-ndjson' } });
+
+describe('runAsk', () => {
+  const origFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = origFetch; });
+
+  // Serves the given responses in order and records every request body.
+  const serve = (...responses: Response[]) => {
+    const bodies: any[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return responses.shift()!;
+    }) as unknown as typeof fetch;
+    return bodies;
+  };
+
+  test('answers in one round when the model needs no Search', async () => {
+    serve(ndjson({ type: 'delta', text: 'Ye' }, { type: 'delta', text: 's.' }, { type: 'answer', answer: 'Yes.' }));
+    const views: AskView[] = [];
+    expect(await runAsk('/api/ask', { question: 'q' }, async () => [], (v) => views.push(v))).toBe('Yes.');
+    expect(views.map((v) => v.text)).toEqual(['Ye', 'Yes.', 'Yes.']);
+    expect(views.at(-1)?.done).toBe(true);
+  });
+
+  test('runs the requested Searches and asks again with the history and their matches', async () => {
+    const history = [{ role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'searchReviews', input: { query: 'dog OR Hund' } }] }];
+    const bodies = serve(
+      ndjson({ type: 'delta', text: 'Let me check' }, { type: 'search', searches: [{ id: 'c1', query: 'dog OR Hund' }], history }),
+      ndjson({ type: 'delta', text: 'Yes' }, { type: 'answer', answer: 'Yes, dogs are welcome.' }),
+    );
+    const matches = ['[2024-01-01] dog friendly', '[2024-02-01] Hunde willkommen'];
+    const views: AskView[] = [];
+    const answer = await runAsk('/api/ask', { question: 'Dogs?' }, async (_q, onFound) => { onFound(1); return matches; }, (v) => views.push(v));
+
+    expect(answer).toBe('Yes, dogs are welcome.');
+    expect(bodies[1]).toEqual({ question: 'Dogs?', history, results: [{ id: 'c1', texts: matches }] });
+    // The draft written before searching gave way; the row climbed, then settled.
+    expect(views.find((v) => v.searches.length)?.text).toBe('');
+    expect(views.map((v) => v.searches[0]?.found)).toContain(1);
+    expect(views.at(-1)).toEqual({ searches: [{ query: 'dog OR Hund', found: 2, done: true }], text: 'Yes, dogs are welcome.', done: true });
+  });
+
+  test('a Search the client cannot run goes back as null', async () => {
+    const bodies = serve(
+      ndjson({ type: 'search', searches: [{ id: 'c1', query: 'wifi' }], history: [] }),
+      ndjson({ type: 'answer', answer: 'Only part of the reviews could be checked.' }),
+    );
+    const views: AskView[] = [];
+    await runAsk('/api/ask', { question: 'Wifi?' }, async () => { throw new Error('no session'); }, (v) => views.push(v));
+    expect(bodies[1].results).toEqual([{ id: 'c1', texts: null }]);
+    expect(views.at(-1)?.searches).toEqual([{ query: 'wifi', found: null, done: true }]);
+  });
+
+  test('a delta keeps the searches array, so a painter can skip rebuilding its rows', async () => {
+    serve(
+      ndjson({ type: 'search', searches: [{ id: 'c1', query: 'wifi' }], history: [] }),
+      ndjson({ type: 'delta', text: 'a' }, { type: 'delta', text: 'b' }, { type: 'answer', answer: 'ab' }),
+    );
+    const views: AskView[] = [];
+    await runAsk('/api/ask', { question: 'Wifi?' }, async () => ['[2024-01-01] fast wifi'], (v) => views.push(v));
+    const [a, b] = views.filter((v) => v.text === 'a' || v.text === 'ab');
+    expect(b?.searches).toBe(a?.searches);
+  });
+
+  test('a stream that ends with neither an answer nor a Search is an error', async () => {
+    serve(ndjson({ type: 'delta', text: 'half' }));
+    await expect(runAsk('/api/ask', { question: 'q' }, async () => [], () => {})).rejects.toThrow('cut off');
+  });
+});

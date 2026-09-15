@@ -428,6 +428,64 @@
   color: rgba(255, 255, 255, 0.85);
 }
 
+/* An Ask as it runs: a row per Search the model had us run (pulsing while it
+   pages, then kept as the Answer's provenance — click to open it as a label
+   search), and a reading pulse until the Answer's first words land. */
+.rc-ask-searches { display: flex; flex-direction: column; gap: 5px; }
+.rc-ask-searches:not(:empty) { margin-bottom: 10px; }
+.rc-ask-search {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  font-family: 'Sora', system-ui, sans-serif;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.rc-ask-search:hover:not(:disabled) { border-color: rgba(255, 255, 255, 0.2); }
+.rc-ask-search:disabled { cursor: default; }
+.rc-ask-search-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+}
+.rc-ask-search-terms {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rc-ask-search-count {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.88);
+}
+.rc-ask-search.live .rc-ask-search-label,
+.rc-ask-search.live .rc-ask-search-count { animation: rc-pulse 1.5s ease-in-out infinite; }
+.rc-answer.rc-reading:empty::before {
+  content: 'Reading reviews…';
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  animation: rc-pulse 1.8s ease-in-out infinite;
+}
+
 /* Highlights chip section */
 .rc-highlights-section {
   margin-top: 12px;

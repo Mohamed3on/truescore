@@ -1,8 +1,8 @@
 import {
   statsForReviews,
   textReviewsFor,
+  type AskEvent,
   type AskRequest,
-  type AskResponse,
   type CachedResponse,
   type Chip,
   type ChipMeta,
@@ -26,6 +26,7 @@ import {
 import { resolvePlace } from './resolve';
 import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
+import type { ModelMessage } from 'ai';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, harvestQuick, scoreHighlight } from './highlights';
@@ -76,7 +77,7 @@ const mapsUrlFor = (featureId: string) => `https://www.google.com/maps?q=&ftid=$
 // `write`; if it throws, we emit a final `{type:'error'}` event so the client
 // always gets a defined terminus. The `closed` flag silently swallows writes
 // after the consumer aborts so partial sends never throw downstream.
-function ndjsonStream<E extends { type: string }>(producer: (write: (event: E) => void) => Promise<void>): Response {
+function ndjsonStream<E extends { type: string }>(producer: (write: (event: E) => void) => Promise<void>, headers?: Record<string, string>): Response {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const enc = new TextEncoder();
@@ -98,7 +99,7 @@ function ndjsonStream<E extends { type: string }>(producer: (write: (event: E) =
       if (!closed) controller.close();
     },
   });
-  return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson' } });
+  return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson', ...headers } });
 }
 
 const PORT = Number(process.env.PORT || 3000);
@@ -699,6 +700,10 @@ Bun.serve({
     // entry.score.reviews from cache; the extension passes `{ name, reviews,
     // question }` directly so the answer comes from the maps-tab's local
     // review scrape, no need to round-trip the place through /api/lookup.
+    // Streams one round of AskEvents. When the model wants Searches, the client
+    // runs them its own way and asks again with the round's history and their
+    // matches (see llm.ask) — the server keeps nothing between rounds, and a
+    // client leaving mid-answer stops the model.
     '/api/ask': {
       POST: async (req) => {
         try {
@@ -711,9 +716,19 @@ Bun.serve({
             entry, name: body.name, reviewTexts: body.reviewTexts, reviews: entry?.score?.reviews, removedReviews: body.removedReviews,
             hint: 'look up the place first or pass reviewTexts in the body',
           });
+          // `history` is the model's own messages echoed back; streamText
+          // validates them (and refuses system messages) before they reach it.
+          const round = { question, history: (body.history ?? []) as ModelMessage[], results: body.results ?? [] };
 
-          const answer = await ask(subject, question, body.filter?.trim() || undefined, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
-          return corsJson({ answer } satisfies AskResponse);
+          return ndjsonStream<AskEvent>(
+            (write) => ask(subject, round, write, {
+              filterQuery: body.filter?.trim() || undefined,
+              provider: parseProvider(body.provider),
+              reasoningEffort: parseReasoningEffort(body.reasoningEffort),
+              abortSignal: req.signal,
+            }),
+            { 'Access-Control-Allow-Origin': '*' },
+          );
         } catch (e) {
           console.error('[ask]', e);
           return corsJson(errBody(e), errStatus(e));

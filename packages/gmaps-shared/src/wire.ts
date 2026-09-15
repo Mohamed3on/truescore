@@ -98,11 +98,22 @@ export type SearchEvent =
   | { type: 'search-summary'; summary: Summary }
   | { type: 'error'; error: string };
 
+// ---- /api/ask (NDJSON stream) ----
+// One round of an Ask. The Answer streams as `delta`s and settles with
+// `answer`, the stream's normal terminus. Or the model wants Searches: `search`
+// names them and ends the round — the client runs them (see ask.ts) and asks
+// again with `history` echoed back verbatim plus their matches as `results`.
+// The server keeps nothing between rounds.
+export type AskEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'search'; searches: { id: string; query: string }[]; history: unknown[] }
+  | { type: 'answer'; answer: string }
+  | { type: 'error'; error: string };
+
 // ---- JSON responses ----
 export type SummarizeResponse = { summary?: Summary; cached?: boolean; error?: string };
 export type HighlightSummaryResponse = { summary?: Summary; label?: string; cached?: boolean; error?: string };
 export type HistogramResponse = { histogram?: number[]; overallPct?: number; cached?: boolean; error?: string };
-export type AskResponse = { answer?: string; error?: string };
 // `scorePct` is the DISPLAY score — the removal penalty already applied, so a
 // tile and the detail page it opens can never show two different numbers.
 export type PlaceItem = { featureId: string; name: string; scorePct: number; adjusted?: boolean; resolvedUrl: string; lastAccessTs: number };
@@ -135,7 +146,11 @@ export type HistogramRequest = { featureId: string };
 export type HighlightsRequest = { featureId: string; force?: boolean };
 export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean } & LlmOverrides;
 export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean } & LlmOverrides;
-export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string; removedReviews?: RemovedReviews | null } & LlmOverrides;
+// `history` + `results` carry a later round (see AskEvent): the model's own
+// messages so far, opaque to clients, and each requested Search's matches as
+// review texts — `texts: null` when the client couldn't search.
+export type AskSearchResult = { id: string; texts: string[] | null };
+export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string; removedReviews?: RemovedReviews | null; history?: unknown[]; results?: AskSearchResult[] } & LlmOverrides;
 // `score` omits the per-review array — the web only needs the numbers to paint,
 // and a place's reviews run to megabytes. It is the extension's RAW score: the
 // removal penalty is applied by whoever renders, off their own preview meta, so

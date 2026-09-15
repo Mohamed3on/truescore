@@ -13,7 +13,7 @@ export async function fetchWithRetry(input: RequestInfo, init?: RequestInit, ret
       const resp = await fetch(input, init);
       if (!RETRY_STATUSES.has(resp.status) || attempt >= retries) return resp;
     } catch (e) {
-      if (attempt >= retries) throw e;
+      if (attempt >= retries || init?.signal?.aborted) throw e;
     }
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt + Math.random() * 200));
   }
@@ -59,11 +59,12 @@ export async function* readNdjson<T>(body: ReadableStream<Uint8Array>): AsyncGen
   }
 }
 
-export async function postNdjson(url: string, body: unknown): Promise<Response> {
+export async function postNdjson(url: string, body: unknown, signal?: AbortSignal): Promise<Response> {
   const resp = await fetchWithRetry(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
   const ct = resp.headers.get('content-type') ?? '';
   if (!resp.ok && ct.includes('json') && !ct.includes('ndjson')) {
@@ -77,8 +78,8 @@ export async function postNdjson(url: string, body: unknown): Promise<Response> 
 
 // Open an NDJSON POST stream and yield its events, throwing on a server-sent
 // `error` event so callers only branch on their own event types.
-export async function* streamNdjson<T extends { type: string }>(url: string, body: unknown): AsyncGenerator<T> {
-  const resp = await postNdjson(url, body);
+export async function* streamNdjson<T extends { type: string }>(url: string, body: unknown, signal?: AbortSignal): AsyncGenerator<T> {
+  const resp = await postNdjson(url, body, signal);
   for await (const evt of readNdjson<T>(resp.body!)) {
     if (evt.type === 'error') throw new Error((evt as { error?: string }).error || 'request failed');
     yield evt;

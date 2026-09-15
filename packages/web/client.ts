@@ -2,7 +2,8 @@ import { renderMarkdown, renderMarkdownInline } from './markdown';
 import { beginPlace, currentPlace, endPlace, type PlaceEpoch } from './place-session';
 import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz, slotsOf } from './hours';
 import {
-  fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, streamNdjson,
+  fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
+  type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
@@ -259,23 +260,60 @@ async function askChipPanel() {
   const reviewTexts = textReviewsFor(reviews);
   if (!reviewTexts.length) { setStatus('No review text available', true); return; }
   chipAskBtn.disabled = true;
-  setStatus(`Asking about "${filter}"…`);
-  chipBody.replaceChildren(el('div', 'chip-loading', 'asking…'));
+  setStatus('');
+  const answer = el('div', 'answer');
+  chipBody.replaceChildren(answer);
   try {
-    const data = await postJson<{ answer?: string }>('/api/ask', {
-      featureId: epoch.featureId, question: q, filter, reviewTexts,
-    } satisfies AskRequest);
-    if (!epoch.alive) return;
-    const answer = el('div', 'answer');
-    renderMarkdown(answer, data.answer ?? '');
-    chipBody.replaceChildren(answer);
-    chipQuestionInput.value = '';
-    setStatus('');
+    await streamAsk(answer, { featureId: epoch.featureId, question: q, filter, reviewTexts }, epoch);
+    if (epoch.alive) chipQuestionInput.value = '';
   } catch (e) {
-    setStatus(e instanceof Error ? e.message : String(e), true);
+    if (epoch.alive) setStatus(e instanceof Error ? e.message : String(e), true);
   } finally {
     chipAskBtn.disabled = false;
   }
+}
+
+// Paint an Ask into `box` (an .answer element) as it runs: a row per Search the
+// model had us run — count climbing, then kept, and clicking opens its reviews —
+// a reading pulse while the model works, and the Answer's markdown as it's
+// written. Searches go through /api/search, the cached Search the search box runs.
+async function streamAsk(box: HTMLElement, body: AskRequest, epoch: PlaceEpoch) {
+  const rows = el('div', 'ask-searches');
+  const text = el('div', 'ask-text reading');
+  box.replaceChildren(rows, text);
+  const ctrl = new AbortController();
+  const search: SearchReviews = async (query, onFound) => {
+    for await (const e of streamNdjson<SearchEvent>('/api/search', { featureId: epoch.featureId, query } satisfies SearchRequest, ctrl.signal)) {
+      if (e.type === 'search-progress') onFound(e.totalReviews);
+      else if (e.type === 'search') return textReviewsFor(e.result.reviews);
+    }
+    return null;
+  };
+  let shown: AskView | undefined;
+  await runAsk('/api/ask', body, search, (v) => {
+    if (!epoch.alive) return ctrl.abort();
+    if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map(askSearchRow));
+    if (v.text !== shown?.text) renderMarkdown(text, v.text);
+    text.classList.toggle('reading', !v.done && !v.text && v.searches.every((s) => s.done));
+    shown = v;
+  }, ctrl.signal);
+}
+
+function askSearchRow(s: AskSearch): HTMLButtonElement {
+  const row = el('button', s.done ? 'ask-search' : 'ask-search live');
+  row.type = 'button';
+  row.disabled = !s.done || !s.found;
+  row.title = s.found == null ? "Couldn't search right now" : `${s.query} — open these reviews`;
+  row.append(
+    el('span', 'micro', s.done ? 'SEARCHED ALL REVIEWS' : 'SEARCHING ALL REVIEWS'),
+    el('span', 'ask-search-terms', parseOrQuery(s.query).join(' · ')),
+    el('span', 'ask-search-count', s.found == null ? '—' : String(s.found)),
+  );
+  row.addEventListener('click', () => {
+    searchInput.value = s.query;
+    runSearch(s.query);
+  });
+  return row;
 }
 
 function showSearchPanel(r: SearchResult) {
@@ -1200,18 +1238,12 @@ askForm.addEventListener('submit', async (e) => {
   const epoch = currentPlace();
   if (!q || !epoch) return;
   askBtn.disabled = true;
-  answerEl.textContent = '';
-  setStatus('Asking…');
+  setStatus('');
   try {
-    const data = await postJson<{ answer?: string }>('/api/ask', {
-      featureId: epoch.featureId, question: q,
-    } satisfies AskRequest);
-    if (!epoch.alive) return;
-    renderMarkdown(answerEl, data.answer ?? '');
-    questionInput.value = '';
-    setStatus('');
+    await streamAsk(answerEl, { featureId: epoch.featureId, question: q }, epoch);
+    if (epoch.alive) questionInput.value = '';
   } catch (e) {
-    setStatus(e instanceof Error ? e.message : String(e), true);
+    if (epoch.alive) setStatus(e instanceof Error ? e.message : String(e), true);
   } finally {
     askBtn.disabled = false;
   }

@@ -5,7 +5,10 @@ import { createScoreStore, type Period } from '../shared/score-store';
 import { getReasoningEffort, getProviderChoice } from '../shared/config';
 import {
   type SummarizeRequest,
-  type AskRequest,
+  type AskSearch,
+  type AskView,
+  type SearchReviews,
+  runAsk,
   buildSearchReq,
   chipPolarity,
   chipsFromPreview,
@@ -740,10 +743,11 @@ const fetchAllForToken = (featureId: string, token: string, creds: MapsCapturedC
 // term in parallel and merges by reviewId, so the count is the union. Needs the
 // captured bgkey like every other review fetch — null means creds are missing,
 // distinct from a genuine empty result: callers must not score/cache it as zero.
-const fetchAllForSearch = async (featureId: string, query: string): Promise<Review[] | null> => {
+// `onFound` gets the running match count as pages land.
+const fetchAllForSearch = async (featureId: string, query: string, onFound?: (found: number) => void): Promise<Review[] | null> => {
   const creds = await ensureCreds();
   if (!creds) return null;
-  return collectSearchTerms(expandSearchTerms(query), (term, c) => buildSearchReq(featureId, term, creds, c), tabTransport);
+  return collectSearchTerms(expandSearchTerms(query), (term, c) => buildSearchReq(featureId, term, creds, c), tabTransport, onFound && ((merged) => onFound(merged.length)));
 };
 
 (window as any).__truescoreGmaps = {
@@ -846,52 +850,78 @@ const computeHighlights = async (force = false) => {
 // and schema live in one place. The extension just ships the date-prefixed
 // review texts (already produced by textReviewsFor) plus place identity, and
 // the server runs the same summarize()/ask() the web SPA does.
-const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null, customQuestion: string | null): Promise<SummaryResult | string> => {
+const llmContext = async () => {
   const featureId = getFeatureId();
   if (!featureId) throw new Error('No Google Maps place detected');
-  const { name } = getPlaceInfo();
   // Server-side summaries run on the server's key, but honor the popup's model
   // + reasoning-effort knobs. provider is the popup's explicit pick (omitted
   // when unset, so the server keeps its own default); reasoning-effort is
   // gpt-5.6-luna only (the server ignores it on Gemini/DeepSeek).
   const [reasoningEffort, provider] = await Promise.all([getReasoningEffort(), getProviderChoice()]);
+  // removedReviews: Google's takedown notice for this place, so the model knows
+  // it's reading the survivors and couches its words (see summary-subject.removalNote).
+  return { featureId, name: getPlaceInfo().name, removedReviews: activeRemovedReviews, reasoningEffort, provider };
+};
 
-  const post = async <T>(path: string, body: object): Promise<T> => {
-    const resp = await fetch(`${TRUESCORE_API_BASE}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await resp.json().catch(() => null) as (T & { error?: string }) | null;
-    if (!resp.ok || !data || data.error) {
-      throw new Error(data?.error || `${path} failed (${resp.status})`);
-    }
-    return data;
-  };
-
-  if (customQuestion) {
-    const data = await post<{ answer: string }>('/api/ask', {
-      featureId, name, reviewTexts, question: customQuestion,
-      filter: filterQuery ?? undefined,
-      removedReviews: activeRemovedReviews,
-      reasoningEffort, provider,
-    } satisfies AskRequest);
-    return data.answer;
-  }
-  const data = await post<{ summary: SummaryResult }>('/api/summarize', {
-    featureId, name, reviewTexts,
+const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null): Promise<SummaryResult> => {
+  const body = {
+    ...await llmContext(), reviewTexts,
     filter: filterQuery ?? undefined,
-    // Google's takedown notice for this place, so the model knows it's reading
-    // the survivors and couches the verdict (see summary-subject.removalNote).
-    removedReviews: activeRemovedReviews,
     // Extension manages its own client-side cache (summaryCache.all,
     // h.summary, search.summary). When it calls summarizeReviews, intent is
     // always "compute fresh" — Resummarize/refresh-search/highlight-summarize
     // all flow here. Server-side cache is for the web SPA.
     force: true,
-    reasoningEffort, provider,
-  } satisfies SummarizeRequest);
+  } satisfies SummarizeRequest;
+  const resp = await fetch(`${TRUESCORE_API_BASE}/api/summarize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await resp.json().catch(() => null) as { summary?: SummaryResult; error?: string } | null;
+  if (!resp.ok || !data?.summary) throw new Error(data?.error || `/api/summarize failed (${resp.status})`);
   return data.summary;
+};
+
+// Paint an Ask into `panel` as it runs: a row per Search the model had us run
+// through this tab's own Maps session — count climbing, then kept, and clicking
+// opens it as a label search — a reading pulse while the model works, and the
+// Answer's markdown as it's written. `live` false (the user moved on) stops it.
+const askReviews = async (panel: HTMLElement, reviewTexts: string[], filterQuery: string | null, question: string, live: () => boolean) => {
+  const context = await llmContext();
+  panel.textContent = '';
+  panel.className = 'rc-summary-panel';
+  panel.style.display = 'block';
+  const rows = el('div', 'rc-ask-searches');
+  const text = el('div', 'rc-answer rc-reading');
+  panel.append(rows, text);
+  const ctrl = new AbortController();
+  const search: SearchReviews = async (query, onFound) => {
+    const reviews = await fetchAllForSearch(context.featureId, query, onFound);
+    return reviews && textReviewsFor(reviews);
+  };
+  let shown: AskView | undefined;
+  await runAsk(`${TRUESCORE_API_BASE}/api/ask`, { ...context, reviewTexts, question, filter: filterQuery ?? undefined }, search, (v) => {
+    if (!live()) return ctrl.abort();
+    if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map(askSearchRow));
+    if (v.text !== shown?.text) renderMarkdown(text, v.text);
+    text.classList.toggle('rc-reading', !v.done && !v.text && v.searches.every((s) => s.done));
+    shown = v;
+  }, ctrl.signal);
+};
+
+const askSearchRow = (s: AskSearch) => {
+  const row = el('button', s.done ? 'rc-ask-search' : 'rc-ask-search live') as HTMLButtonElement;
+  row.type = 'button';
+  row.disabled = !s.done || !s.found;
+  row.title = s.found == null ? "Couldn't search right now" : `${s.query} — open these reviews`;
+  row.append(
+    el('span', 'rc-ask-search-label', s.done ? 'Searched all reviews' : 'Searching all reviews'),
+    el('span', 'rc-ask-search-terms', parseOrQuery(s.query).join(' · ')),
+    el('span', 'rc-ask-search-count', s.found == null ? '—' : addCommas(s.found)),
+  );
+  row.onclick = () => triggerLabelSearchFor(s.query);
+  return row;
 };
 
 const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
@@ -1218,16 +1248,14 @@ const summarizeActiveChip = async () => {
   }
   const place = currentPlace();
   try {
-    const result = await summarizeReviews(texts, h.label, null);
-    if (typeof result === 'object') {
-      h.summary = result;
-      saveHighlightsCache();
-      body.className = 'rc-chip-body';
-      renderSummary(body, result);
-      sumBtn.textContent = 'Show Reviews';
-      chipViewMode = 'summary';
-      pushContribution({ highlightSummaries: { [h.token]: result } }, place);
-    }
+    const result = await summarizeReviews(texts, h.label);
+    h.summary = result;
+    saveHighlightsCache();
+    body.className = 'rc-chip-body';
+    renderSummary(body, result);
+    sumBtn.textContent = 'Show Reviews';
+    chipViewMode = 'summary';
+    pushContribution({ highlightSummaries: { [h.token]: result } }, place);
   } catch (e) {
     console.error('[highlights] summary failed', e);
     body.textContent = 'Summarization failed';
@@ -1246,14 +1274,11 @@ const askActiveChip = async () => {
   if (!h || !body || !q || !input) return;
   const texts = textReviewsFor(h.reviews ?? []);
   if (!texts.length) { body.textContent = 'No review text available'; return; }
-  body.textContent = 'Asking…';
-  body.className = 'rc-chip-body loading';
   try {
-    const result = await summarizeReviews(texts, h.label, q);
-    body.className = 'rc-chip-body';
-    renderSummary(body, result);
+    await askReviews(body, texts, h.label, q, () => activeHighlight === h);
     input.value = '';
   } catch (e) {
+    if (activeHighlight !== h) return;
     console.error('[chip] ask failed', e);
     body.textContent = 'Ask failed';
     body.className = 'rc-chip-body';
@@ -1368,16 +1393,14 @@ const summarizeLabelSearch = async (btn?: HTMLButtonElement) => {
   if (btn) { btn.disabled = true; btn.textContent = 'Summarizing…'; }
   const featureId = getFeatureId();
   try {
-    const result = await summarizeReviews(texts, search.query, null);
-    if (typeof result === 'object') {
-      search.summary = result;
-      cacheSearchSummary(featureId, search.query, result);
-      // Paint only while this search is still the one showing (a nav or a newer
-      // search resets activeLabelSearch).
-      if (activeLabelSearch === search) {
-        panel.className = 'rc-summary-panel';
-        renderSummary(panel, result);
-      }
+    const result = await summarizeReviews(texts, search.query);
+    search.summary = result;
+    cacheSearchSummary(featureId, search.query, result);
+    // Paint only while this search is still the one showing (a nav or a newer
+    // search resets activeLabelSearch).
+    if (activeLabelSearch === search) {
+      panel.className = 'rc-summary-panel';
+      renderSummary(panel, result);
     }
   } catch (e) {
     console.error('[label search] summary failed', e);
@@ -1395,15 +1418,12 @@ const askLabelSearch = async () => {
   if (!search || !panel || !q) return;
   const texts = textReviewsFor(search.reviews);
   panel.style.display = 'block';
-  panel.textContent = 'Asking…';
-  panel.className = 'rc-summary-panel loading';
   if (!texts.length) { panel.textContent = 'No review text available'; panel.className = 'rc-summary-panel'; return; }
   try {
-    const result = await summarizeReviews(texts, search.query, q);
-    panel.className = 'rc-summary-panel';
-    renderSummary(panel, result);
+    await askReviews(panel, texts, search.query, q, () => activeLabelSearch === search);
     if (cardEls.searchQuestionInput) cardEls.searchQuestionInput.value = '';
   } catch (e) {
+    if (activeLabelSearch !== search) return;
     console.error('[label search] ask failed', e);
     panel.textContent = 'Ask failed';
     panel.className = 'rc-summary-panel';
@@ -1891,16 +1911,10 @@ const refreshStaleScores = () => {
   }
 };
 
-const renderSummary = (panel: HTMLElement, result: SummaryResult | string) => {
+const renderSummary = (panel: HTMLElement, result: SummaryResult) => {
   panel.textContent = '';
   panel.className = 'rc-summary-panel';
   panel.style.display = 'block';
-  if (typeof result === 'string') {
-    const answer = el('div', 'rc-answer');
-    renderMarkdown(answer, result);
-    panel.appendChild(answer);
-    return;
-  }
   if (result.verdict) {
     const verdict = el('div', 'rc-verdict');
     renderMarkdown(verdict, result.verdict);
@@ -1973,19 +1987,22 @@ const triggerSummarize = async () => {
   const customQuestion = cardEls.questionInput?.value?.trim() || null;
   const place = currentPlace();
   try {
-    const result = await summarizeReviews(texts, null, customQuestion);
+    if (customQuestion) {
+      await askReviews(panel, texts, null, customQuestion, () => place.featureId === lastFeatureId);
+      return;
+    }
+    const result = await summarizeReviews(texts, null);
     // Filed and uploaded under the place it was asked about; the in-memory cache
     // and panel only if that's still the place open (see currentPlace).
     const current = place.featureId === lastFeatureId;
-    if (!customQuestion && typeof result !== 'string') {
-      if (current) summaryCache.all = result;
-      saveSummaryCache(place.featureId, { all: result });
-      pushContribution({ summary: result }, place);
-    }
+    if (current) summaryCache.all = result;
+    saveSummaryCache(place.featureId, { all: result });
+    pushContribution({ summary: result }, place);
     if (current && cardEls.sumPanel) renderSummary(cardEls.sumPanel, result);
   } catch (e) {
+    if (place.featureId !== lastFeatureId) return;
     console.error('[Reviews] Summarize error:', e);
-    panel.textContent = 'Summarization failed';
+    panel.textContent = customQuestion ? 'Ask failed' : 'Summarization failed';
     panel.className = 'rc-summary-panel';
   } finally {
     refreshSumBtnState();

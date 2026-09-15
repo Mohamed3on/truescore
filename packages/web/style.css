@@ -886,6 +886,56 @@ section#result::before {
   color: var(--t1);
 }
 
+/* An Ask as it runs: a row per Search the model had us run (pulsing while it
+   pages, then kept as the Answer's provenance — click to read those reviews),
+   and a reading pulse until the Answer's first words land. */
+.ask-searches { display: flex; flex-direction: column; gap: 6px; }
+.ask-searches:not(:empty) { margin-bottom: 12px; }
+.ask-search {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font: inherit;
+  color: var(--t2);
+  background: var(--t5);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 200ms var(--ease);
+}
+.ask-search:hover:not(:disabled) { border-color: var(--t4); }
+.ask-search:disabled { cursor: default; }
+.ask-search.live .micro,
+.ask-search.live .ask-search-count { animation: chip-pulse 1.4s ease-in-out infinite; }
+.ask-search-terms {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask-search-count {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--t1);
+}
+.ask-text > :first-child { margin-top: 0; }
+.ask-text.reading:empty::before {
+  content: 'READING REVIEWS…';
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 500;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--t3);
+  animation: chip-pulse 1.4s ease-in-out infinite;
+}
+
 .status {
   margin-top: 16px;
   font-family: 'IBM Plex Mono', monospace;

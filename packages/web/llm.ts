@@ -1,9 +1,9 @@
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject, generateText, NoObjectGeneratedError } from 'ai';
+import { generateObject, generateText, NoObjectGeneratedError, streamText, tool, type ModelMessage, type ToolResultPart } from 'ai';
 import { z } from 'zod';
-import { LLM_PROVIDERS, REASONING_EFFORTS, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
+import { LLM_PROVIDERS, REASONING_EFFORTS, type AskEvent, type AskSearchResult, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
 import { cleanItems, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
 
@@ -147,15 +147,73 @@ ${NOTES}${removal ? `\n\n${removal} If they do, add one negative highlight for i
   return { verdict: verdict.trim(), ...structured };
 }
 
-export async function ask({ placeName, reviewTexts, removedReviews }: Subject, question: string, filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<string> {
+// A Search's matches beyond the Sample, capped so a common word on a big place
+// can't flood the context (texts arrive longest-first, the most substantive).
+const SEARCH_HITS_MAX = 100;
+// Rounds of Searches before the model must answer.
+const SEARCH_ROUNDS_MAX = 2;
+
+const SEARCH_NOTE = `The reviews above are a sample. When they don't settle the question, call searchReviews before answering: it searches every review of this place. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde). When the sample settles it, just answer.`;
+const SEARCH_FAILED = `Search is unavailable right now. Answer from the sample, and say you could only check part of the reviews.`;
+
+// No `execute`: calling it ends the round, and the call goes to the client,
+// which runs the Search its own way and answers with the next request.
+const searchReviews = tool({
+  description: 'Search every review of this place, not just the sample, for any of the terms. Returns how many reviews match and the matches not already in the sample.',
+  inputSchema: z.object({ query: z.string().describe('Terms joined with " OR "') }),
+});
+
+export type AskRound = { question: string; history: ModelMessage[]; results: AskSearchResult[] };
+export type AskOptions = { filterQuery?: string; provider?: Provider; reasoningEffort?: ReasoningEffort; abortSignal?: AbortSignal };
+
+// One round of an Ask. The model either writes the Answer — streamed as deltas,
+// then settled — or calls for Searches: `search` hands the client the calls and
+// the round's messages, which come back verbatim as `history` with the matches
+// as `results`, appended here as tool results. Nothing is kept between rounds.
+export async function ask({ placeName, reviewTexts, removedReviews }: Subject, { question, history, results }: AskRound, emit: (e: AskEvent) => void, { filterQuery, provider = active(), reasoningEffort, abortSignal }: AskOptions = {}): Promise<void> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const removal = removalNote(removedReviews);
   const prompt = `${reviewBlock(reviewTexts)}\n\n---\n\nAnswer about ${subjectOf(placeName, filterQuery)} using the reviews. Be concise. Name specifics (prices, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree or don't cover it, say so.
 
 ${NOTES}${removal ? `\n\n${removal}` : ''}
 
+${SEARCH_NOTE}
+
 Question: ${question}`;
-  const r = await generateText({ model, providerOptions, maxOutputTokens: 32768, prompt });
-  report(provider, 'ask', r.usage);
-  return r.text;
+  const seen = new Set(reviewTexts);
+  const matches = (texts: string[]) => {
+    const fresh = texts.filter((t) => !seen.has(t)).slice(0, SEARCH_HITS_MAX);
+    return `${texts.length} matching reviews found.${fresh.length ? ` Those not already above:\n\n${reviewBlock(fresh)}` : ''}`;
+  };
+  const past: ModelMessage[] = results.length
+    ? [...history, {
+      role: 'tool',
+      content: results.map(({ id, texts }): ToolResultPart => ({
+        type: 'tool-result', toolCallId: id, toolName: 'searchReviews',
+        output: texts ? { type: 'text', value: matches(texts) } : { type: 'error-text', value: SEARCH_FAILED },
+      })),
+    }]
+    : history;
+  const searched = past.filter((m) => m.role === 'tool').length;
+
+  const result = streamText({
+    model, providerOptions, maxOutputTokens: 32768, abortSignal,
+    messages: [{ role: 'user', content: prompt }, ...past],
+    tools: { searchReviews },
+    toolChoice: searched < SEARCH_ROUNDS_MAX ? 'auto' : 'none',
+  });
+  for await (const part of result.stream) {
+    if (part.type === 'text-delta') emit({ type: 'delta', text: part.text });
+    else if (part.type === 'error') throw part.error;
+  }
+  report(provider, 'ask', await result.usage);
+
+  const calls = (await result.toolCalls).filter((c) => !c.dynamic);
+  if (calls.length) {
+    emit({ type: 'search', searches: calls.map((c) => ({ id: c.toolCallId, query: c.input.query })), history: [...past, ...await result.responseMessages] });
+    return;
+  }
+  const answer = (await result.text).trim();
+  if (!answer) throw new Error('No answer came back — try again');
+  emit({ type: 'answer', answer });
 }
