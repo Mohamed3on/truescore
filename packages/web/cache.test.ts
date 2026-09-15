@@ -1,5 +1,5 @@
 import { test, expect } from 'bun:test';
-import { cache, type CacheEntry } from './cache';
+import { answerKey, cache, type CacheEntry } from './cache';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './llm';
 
@@ -121,6 +121,22 @@ test('searches: an empty result is never cached, and a cached one expires', asyn
   expect(cache.searchServable(cache.get('search-1')?.searches?.pho)).toBe(true);
   expect(cache.searchServable(search(4, Date.now() - 25 * 3600_000))).toBe(false);
   expect(cache.searchServable(search(0))).toBe(false); // a legacy cached empty
+});
+
+test('answers: keyed by scope + normalized question, served for a day, the newest 30 kept', async () => {
+  await cache.putScore('ans-1', 'A', scrape('ans-1', 10, 10), 20);
+  const answer = (text: string, ts = Date.now()) => ({ answer: text, searches: [{ query: 'dog', found: 3, done: true }], ts });
+  await cache.putAnswer('ans-1', answerKey(undefined, 'Dogs allowed?'), answer('Yes.'));
+  const hit = cache.get('ans-1')?.answers?.[answerKey('', '  dogs   ALLOWED ')];
+  expect(hit?.answer).toBe('Yes.');
+  expect(cache.answerServable(hit)).toBe(true);
+  expect(cache.get('ans-1')?.answers?.[answerKey('wifi', 'Dogs allowed?')]).toBeUndefined(); // another scope
+  expect(cache.answerServable(answer('old', Date.now() - 25 * 3600_000))).toBe(false);
+
+  for (let i = 0; i < 35; i++) await cache.putAnswer('ans-1', answerKey(undefined, `q${i}`), answer(`a${i}`));
+  const kept = Object.keys(cache.get('ans-1')?.answers ?? {});
+  expect(kept).toHaveLength(30);
+  expect(kept.at(-1)).toBe(answerKey(undefined, 'q34'));
 });
 
 test('a preview with no place data keeps the good meta, and a readable one re-stamps the histogram', async () => {

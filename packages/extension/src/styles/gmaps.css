@@ -518,6 +518,60 @@
 }
 .rc-ask-search.live .rc-ask-search-label,
 .rc-ask-search.live .rc-ask-search-count { animation: rc-pulse 1.5s ease-in-out infinite; }
+/* A replayed Answer: when it was written, and a way to ask afresh. */
+.rc-ask-note {
+  margin-top: 8px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+.rc-ask-note:empty { display: none; }
+.rc-ask-again {
+  padding: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: rgba(255, 255, 255, 0.7);
+  background: none;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+}
+.rc-ask-again:hover { color: rgba(255, 255, 255, 0.88); }
+
+/* Recent questions under the main ask box: one-click replays; × forgets one. */
+.rc-qa-history { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 8px; }
+.rc-qa-label {
+  width: 100%;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+.rc-qa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 6px 4px 9px;
+  font-family: 'Sora', system-ui, sans-serif;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.rc-qa-chip:hover { border-color: rgba(255, 255, 255, 0.2); }
+.rc-qa-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-qa-remove { color: rgba(255, 255, 255, 0.3); font-size: 12px; line-height: 1; }
+.rc-qa-remove:hover { color: rgba(255, 255, 255, 0.88); }
+
 .rc-answer.rc-reading:empty::before {
   content: 'Reading reviews…';
   font-family: 'IBM Plex Mono', monospace;

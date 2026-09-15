@@ -30,7 +30,7 @@ import type { ModelMessage } from 'ai';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, harvestQuick, scoreHighlight } from './highlights';
-import { cache, type CacheEntry } from './cache';
+import { answerKey, cache, type CacheEntry } from './cache';
 import { logEvent } from './events';
 import { createInflight } from './inflight';
 import index from './index.html';
@@ -719,14 +719,30 @@ Bun.serve({
           // `history` is the model's own messages echoed back; streamText
           // validates them (and refuses system messages) before they reach it.
           const round = { question, history: (body.history ?? []) as ModelMessage[], results: body.results ?? [] };
+          const key = answerKey(body.filter, question);
+
+          // The same question of the same scope within a day replays its Answer.
+          const replay = entry && !body.force && !round.history.length ? entry.answers?.[key] : undefined;
+          if (cache.answerServable(replay)) {
+            return ndjsonStream<AskEvent>(
+              async (write) => write({ type: 'answer', answer: replay.answer, searches: replay.searches, answeredAt: replay.ts }),
+              { 'Access-Control-Allow-Origin': '*' },
+            );
+          }
 
           return ndjsonStream<AskEvent>(
-            (write) => ask(subject, round, write, {
-              filterQuery: body.filter?.trim() || undefined,
-              provider: parseProvider(body.provider),
-              reasoningEffort: parseReasoningEffort(body.reasoningEffort),
-              abortSignal: req.signal,
-            }),
+            async (write) => {
+              const settled = await ask(subject, round, write, {
+                filterQuery: body.filter?.trim() || undefined,
+                provider: parseProvider(body.provider),
+                reasoningEffort: parseReasoningEffort(body.reasoningEffort),
+                abortSignal: req.signal,
+              });
+              // Only a clean Answer is worth replaying: every Search it asked for ran.
+              if (entry && featureId && settled?.searches.every((s) => s.found != null)) {
+                await cache.putAnswer(featureId, key, { ...settled, ts: Date.now() });
+              }
+            },
             { 'Access-Control-Allow-Origin': '*' },
           );
         } catch (e) {

@@ -3,7 +3,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject, generateText, NoObjectGeneratedError, streamText, tool, type ModelMessage, type ToolResultPart } from 'ai';
 import { z } from 'zod';
-import { LLM_PROVIDERS, REASONING_EFFORTS, type AskEvent, type AskSearchResult, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
+import { LLM_PROVIDERS, REASONING_EFFORTS, type AskEvent, type AskSearch, type AskSearchResult, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
 import { cleanItems, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
 
@@ -186,11 +186,33 @@ const searchReviews = tool({
 export type AskRound = { question: string; history: ModelMessage[]; results: AskSearchResult[] };
 export type AskOptions = { filterQuery?: string; provider?: Provider; reasoningEffort?: ReasoningEffort; abortSignal?: AbortSignal };
 
+// The Searches that reached an Answer, in the order they ran: each tool call's
+// query paired with the result it got back (the JSON ask() wrote, or null for
+// a Search the client couldn't run).
+const searchesIn = (messages: ModelMessage[]): AskSearch[] => {
+  const queries = new Map<string, string>();
+  const searches: AskSearch[] = [];
+  for (const m of messages) {
+    if (m.role === 'assistant' && Array.isArray(m.content)) {
+      for (const p of m.content) if (p.type === 'tool-call') queries.set(p.toolCallId, String((p.input as { query?: unknown }).query ?? ''));
+    } else if (m.role === 'tool') {
+      for (const p of m.content) {
+        if (p.type !== 'tool-result') continue;
+        const r = p.output.type === 'json' ? p.output.value as { found: number; scorePct: number; trustedReviews: number } : null;
+        searches.push({ query: queries.get(p.toolCallId) ?? '', done: true, found: r?.found ?? null, ...(r && { scorePct: r.scorePct, trustedReviews: r.trustedReviews }) });
+      }
+    }
+  }
+  return searches;
+};
+
 // One round of an Ask. The model either writes the Answer — streamed as deltas,
 // then settled — or calls for Searches: `search` hands the client the calls and
 // the round's messages, which come back verbatim as `history` with the matches
 // as `results`, appended here as tool results. Nothing is kept between rounds.
-export async function ask({ placeName, reviewTexts, removedReviews }: Subject, { question, history, results }: AskRound, emit: (e: AskEvent) => void, { filterQuery, provider = active(), reasoningEffort, abortSignal }: AskOptions = {}): Promise<void> {
+// Resolves to the settled Answer and the Searches behind it (for caching), or
+// undefined when the round ended in Searches instead.
+export async function ask({ placeName, reviewTexts, removedReviews }: Subject, { question, history, results }: AskRound, emit: (e: AskEvent) => void, { filterQuery, provider = active(), reasoningEffort, abortSignal }: AskOptions = {}): Promise<{ answer: string; searches: AskSearch[] } | undefined> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const removal = removalNote(removedReviews);
   const seen = new Set(reviewTexts);
@@ -234,4 +256,5 @@ export async function ask({ placeName, reviewTexts, removedReviews }: Subject, {
   const answer = (await result.text).trim();
   if (!answer) throw new Error('No answer came back — try again');
   emit({ type: 'answer', answer });
+  return { answer, searches: searchesIn(past) };
 }

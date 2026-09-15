@@ -103,11 +103,17 @@ export type SearchEvent =
 // `answer`, the stream's normal terminus. Or the model wants Searches: `search`
 // names them and ends the round — the client runs them (see ask.ts) and asks
 // again with `history` echoed back verbatim plus their matches as `results`.
-// The server keeps nothing between rounds.
+// The server keeps nothing between rounds. A question asked of the place in the
+// last day comes back at once as a replayed `answer`, carrying the Searches
+// that reached it and when it was written (`answeredAt`).
+//
+// AskSearch is one of those Searches as a row: its query, matches found so far,
+// and once settled their TrueScore — `found: null` if it couldn't run.
+export type AskSearch = { query: string; found: number | null; done: boolean; scorePct?: number; trustedReviews?: number };
 export type AskEvent =
   | { type: 'delta'; text: string }
   | { type: 'search'; searches: { id: string; query: string }[]; history: unknown[] }
-  | { type: 'answer'; answer: string }
+  | { type: 'answer'; answer: string; searches?: AskSearch[]; answeredAt?: number }
   | { type: 'error'; error: string };
 
 // ---- JSON responses ----
@@ -151,7 +157,8 @@ export type SearchRequest = { featureId: string; query: string; force?: boolean;
 // review texts plus their TrueScore — or `null` when the client couldn't search.
 export type SearchMatches = { texts: string[]; scorePct: number; trustedReviews: number };
 export type AskSearchResult = { id: string; matches: SearchMatches | null };
-export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string; removedReviews?: RemovedReviews | null; history?: unknown[]; results?: AskSearchResult[] } & LlmOverrides;
+// `force`: skip a replayed Answer and ask afresh.
+export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string; removedReviews?: RemovedReviews | null; history?: unknown[]; results?: AskSearchResult[]; force?: boolean } & LlmOverrides;
 // `score` omits the per-review array — the web only needs the numbers to paint,
 // and a place's reviews run to megabytes. It is the extension's RAW score: the
 // removal penalty is applied by whoever renders, off their own preview meta, so

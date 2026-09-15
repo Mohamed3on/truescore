@@ -3,6 +3,7 @@ import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import { getReasoningEffort, getProviderChoice } from '../shared/config';
+import { findQA, loadQAs, removeQA, saveQA } from '../shared/qa-history';
 import {
   type SummarizeRequest,
   type AskSearch,
@@ -74,6 +75,7 @@ type CardEls = {
   chipCloseBtn?: HTMLButtonElement;
   chipQuestionInput?: HTMLInputElement;
   searchQuestionInput?: HTMLInputElement;
+  qaHistory?: HTMLElement;
 };
 
 type HighlightStats = SortStats;
@@ -893,18 +895,46 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
   return data.summary;
 };
 
-// Paint an Ask into `panel` as it runs: a row per Search the model had us run
-// through this tab's own Maps session — count climbing, then kept, and clicking
-// opens it as a label search — a reading pulse while the model works, and the
-// Answer's markdown as it's written. `live` false (the user moved on) stops it.
-const askReviews = async (panel: HTMLElement, reviewTexts: string[], filterQuery: string | null, question: string, live: () => boolean) => {
-  const context = await llmContext();
+// One Ask: its Sample, scope and question; `live` false (the user moved on)
+// stops it, and `onSettled` gets its final view.
+type AskJob = { reviewTexts: string[]; filter: string | null; question: string; live: () => boolean; onSettled?: (v: AskView) => void };
+
+// An Ask's DOM in `panel`, returning its painter: a row per Search the model
+// had us run — count climbing, then kept, and clicking opens it as a label
+// search — a reading pulse while the model works, the Answer's markdown as
+// it's written, and for a replayed Answer when it was written + Ask again.
+const mountAsk = (panel: HTMLElement, job: AskJob) => {
   panel.textContent = '';
   panel.className = 'rc-summary-panel';
   panel.style.display = 'block';
   const rows = el('div', 'rc-ask-searches');
   const text = el('div', 'rc-answer rc-reading');
-  panel.append(rows, text);
+  const note = el('div', 'rc-ask-note');
+  panel.append(rows, text, note);
+  let shown: AskView | undefined;
+  return (v: AskView) => {
+    if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map(askSearchRow));
+    if (v.text !== shown?.text) renderMarkdown(text, v.text);
+    text.classList.toggle('rc-reading', !v.done && !v.text && v.searches.every((s) => s.done));
+    if (v.answeredAt && !shown?.answeredAt) {
+      const again = el('button', 'rc-ask-again', 'Ask again') as HTMLButtonElement;
+      again.type = 'button';
+      again.onclick = () => askReviews(panel, job, true).catch((e) => {
+        if (!job.live()) return;
+        console.error('[ask] re-ask failed', e);
+        panel.textContent = 'Ask failed';
+      });
+      note.replaceChildren(document.createTextNode(`Answered ${timeAgo(v.answeredAt)} · `), again);
+    }
+    shown = v;
+  };
+};
+
+// Run an Ask into `panel`, its Searches going through this tab's own Maps
+// session. `force` skips a replayed Answer (the server's day-long cache).
+const askReviews = async (panel: HTMLElement, job: AskJob, force = false) => {
+  const context = await llmContext();
+  const paint = mountAsk(panel, job);
   const ctrl = new AbortController();
   const search: SearchReviews = async (query, onFound) => {
     const reviews = await fetchAllForSearch(context.featureId, query, onFound);
@@ -912,14 +942,40 @@ const askReviews = async (panel: HTMLElement, reviewTexts: string[], filterQuery
     const { scorePct, trustedReviews } = statsForReviews(reviews);
     return { texts: textReviewsFor(reviews), scorePct, trustedReviews };
   };
-  let shown: AskView | undefined;
-  await runAsk(`${TRUESCORE_API_BASE}/api/ask`, { ...context, reviewTexts, question, filter: filterQuery ?? undefined }, search, (v) => {
-    if (!live()) return ctrl.abort();
-    if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map(askSearchRow));
-    if (v.text !== shown?.text) renderMarkdown(text, v.text);
-    text.classList.toggle('rc-reading', !v.done && !v.text && v.searches.every((s) => s.done));
-    shown = v;
+  let last: AskView | undefined;
+  await runAsk(`${TRUESCORE_API_BASE}/api/ask`, { ...context, reviewTexts: job.reviewTexts, question: job.question, filter: job.filter ?? undefined, force }, search, (v) => {
+    if (!job.live()) return ctrl.abort();
+    paint((last = v));
   }, ctrl.signal);
+  if (last && job.live()) job.onSettled?.(last);
+};
+
+// The main ask's Recent questions, as one-click replays under the ask box like
+// the product widget; × forgets one. Stored per place with the Searches behind
+// each Answer, so a replay paints them too.
+const renderRecentQuestions = () => {
+  const row = cardEls.qaHistory;
+  if (!row) return;
+  const key = getSummaryCacheKey();
+  const items = loadQAs(key);
+  row.replaceChildren();
+  row.style.display = items.length ? '' : 'none';
+  if (!items.length) return;
+  row.append(el('span', 'rc-qa-label', 'Recent questions'));
+  for (const qa of items) {
+    const chip = el('button', 'rc-qa-chip') as HTMLButtonElement;
+    chip.type = 'button';
+    chip.title = qa.q;
+    const forget = el('span', 'rc-qa-remove', '×');
+    forget.title = 'Forget';
+    forget.onclick = (e) => { e.stopPropagation(); removeQA(key, qa.q); renderRecentQuestions(); };
+    chip.append(el('span', 'rc-qa-text', qa.q), forget);
+    chip.onclick = () => {
+      if (cardEls.questionInput) cardEls.questionInput.value = qa.q;
+      triggerSummarize(); // finds it in the Recent questions and replays it
+    };
+    row.append(chip);
+  }
 };
 
 const askSearchRow = (s: AskSearch) => {
@@ -1292,7 +1348,7 @@ const askActiveChip = async () => {
   const texts = textReviewsFor(h.reviews ?? []);
   if (!texts.length) { body.textContent = 'No review text available'; return; }
   try {
-    await askReviews(body, texts, h.label, q, () => activeHighlight === h);
+    await askReviews(body, { reviewTexts: texts, filter: h.label, question: q, live: () => activeHighlight === h });
     input.value = '';
   } catch (e) {
     if (activeHighlight !== h) return;
@@ -1437,7 +1493,7 @@ const askLabelSearch = async () => {
   panel.style.display = 'block';
   if (!texts.length) { panel.textContent = 'No review text available'; panel.className = 'rc-summary-panel'; return; }
   try {
-    await askReviews(panel, texts, search.query, q, () => activeLabelSearch === search);
+    await askReviews(panel, { reviewTexts: texts, filter: search.query, question: q, live: () => activeLabelSearch === search });
     if (cardEls.searchQuestionInput) cardEls.searchQuestionInput.value = '';
   } catch (e) {
     if (activeLabelSearch !== search) return;
@@ -1598,6 +1654,10 @@ const createUIElements = () => {
   c.appendChild(questionInput);
   cardEls.questionInput = questionInput;
   refreshSumBtnState();
+  const qaHistory = el('div', 'rc-qa-history');
+  c.appendChild(qaHistory);
+  cardEls.qaHistory = qaHistory;
+  renderRecentQuestions();
 
   const chipPanel = el('div', 'rc-chip-panel');
   chipPanel.style.display = 'none';
@@ -2020,7 +2080,19 @@ const triggerSummarize = async () => {
   const place = currentPlace();
   try {
     if (customQuestion) {
-      await askReviews(panel, texts, null, customQuestion, () => place.featureId === lastFeatureId);
+      // A Recent question replays from here; anything else asks, and is kept.
+      const key = getSummaryCacheKey(place.featureId);
+      const job: AskJob = {
+        reviewTexts: texts, filter: null, question: customQuestion,
+        live: () => place.featureId === lastFeatureId,
+        onSettled: (v) => {
+          saveQA(key, { q: customQuestion, a: v.text, ts: v.answeredAt ?? Date.now(), searches: v.searches });
+          renderRecentQuestions();
+        },
+      };
+      const recent = findQA(key, customQuestion);
+      if (recent) mountAsk(panel, job)({ searches: recent.searches ?? [], text: recent.a, done: true, answeredAt: recent.ts });
+      else await askReviews(panel, job);
       return;
     }
     const result = await summarizeReviews(texts, null);
@@ -2085,6 +2157,7 @@ const handleDomMutation = () => {
     lastFeatureId = featureId;
     resetScores();
     loadSummaryCache();
+    renderRecentQuestions();
     loadHighlightsCache();
     loadSearchSummaryCache();
     loadScoredCache();

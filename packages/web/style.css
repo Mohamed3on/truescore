@@ -967,6 +967,8 @@ section#result::before {
   color: var(--t3);
 }
 .ask-text > :first-child { margin-top: 0; }
+.ask-note { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.ask-note:empty { display: none; }
 .ask-text.reading:empty::before {
   content: 'READING REVIEWS…';
   font-family: 'IBM Plex Mono', monospace;

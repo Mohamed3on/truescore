@@ -1,12 +1,14 @@
 import { streamNdjson } from './http';
-import type { AskEvent, AskRequest, AskSearchResult, SearchMatches } from './wire';
+import type { AskEvent, AskRequest, AskSearch, AskSearchResult, SearchMatches } from './wire';
 
-// One Search an Ask ran for the model: its query, the matches found so far,
-// and once settled their TrueScore — `found: null` if the client couldn't search.
-export type AskSearch = { query: string; found: number | null; done: boolean; scorePct?: number; trustedReviews?: number };
 // What a client paints while an Ask runs: its Searches, then the Answer text so
-// far; `done` once that text is final.
-export type AskView = { searches: AskSearch[]; text: string; done: boolean };
+// far; `done` once that text is final, and `answeredAt` when it's a replay.
+export type AskView = { searches: AskSearch[]; text: string; done: boolean; answeredAt?: number };
+
+// A question as a cache key: case, spacing and trailing punctuation don't make
+// it a different question ("Dogs allowed?" asks what "dogs allowed" does).
+export const normalizeQuestion = (q: string): string =>
+  q.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[\s?!.。？！]+$/u, '');
 // A client's own way to Search every review of the Place — the extension's tab
 // session, the web's /api/search. Resolves to the matches as review texts
 // (textReviewsFor) with their stats, or null when it can't search.
@@ -27,7 +29,7 @@ export async function runAsk(url: string, body: AskRequest, search: SearchReview
       if (e.type === 'delta') paint({ text: view.text + e.text });
       else if (e.type === 'search') wanted = e;
       else if (e.type === 'answer') {
-        paint({ text: e.answer, done: true });
+        paint({ text: e.answer, done: true, ...(e.searches && { searches: e.searches }), answeredAt: e.answeredAt });
         return e.answer;
       }
     }

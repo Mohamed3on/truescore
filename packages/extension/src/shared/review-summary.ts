@@ -2,6 +2,7 @@ import { getActiveLLM, geminiEndpoint, OPENAI_ENDPOINT, OPENAI_MODEL, DEEPSEEK_E
 import { el, renderMarkdown, renderMarkdownInline } from './utils';
 import { cacheGet, cacheSet } from './cache';
 import { buildLlmCall, PROVIDER_LABEL, readLlmResult } from './llm-wire';
+import { findQA, loadQAs, removeQA, saveQA } from './qa-history';
 
 // Shared default summary prompt for retail product pages (Amazon, Decathlon, dm…).
 // Domain-specific pages (hotels, films, BJJ courses) keep their own prompts.
@@ -127,31 +128,6 @@ const bumpRateLimit = () => {
   const rl = checkRateLimit();
   rl.count++;
   localStorage.setItem(RL_KEY, JSON.stringify(rl));
-};
-
-const QA_CACHE_LIMIT = 10;
-const qaCacheKey = (cacheKey: string) => `${cacheKey}-qa`;
-
-interface QAEntry { q: string; a: string; ts: number }
-
-const loadQAs = (cacheKey: string): QAEntry[] => {
-  try {
-    const raw = localStorage.getItem(qaCacheKey(cacheKey));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch { return []; }
-};
-
-const saveQA = (cacheKey: string, entry: QAEntry) => {
-  const existing = loadQAs(cacheKey).filter((e) => e.q !== entry.q);
-  const next = [entry, ...existing].slice(0, QA_CACHE_LIMIT);
-  try { localStorage.setItem(qaCacheKey(cacheKey), JSON.stringify(next)); } catch {}
-};
-
-const removeQA = (cacheKey: string, q: string) => {
-  const existing = loadQAs(cacheKey).filter((e) => e.q !== q);
-  try { localStorage.setItem(qaCacheKey(cacheKey), JSON.stringify(existing)); } catch {}
 };
 
 interface AlternateEntry { key: string; meta: any; ts: number }
@@ -299,7 +275,7 @@ export const buildSummarizeWidget = ({
   };
 
   const runAsk = async (btn: HTMLButtonElement, question: string) => {
-    const hit = loadQAs(cacheKey).find((e) => e.q.toLowerCase() === question.toLowerCase());
+    const hit = findQA(cacheKey, question);
     if (hit) {
       renderFreeFormAnswer(summaryPanel, hit.a);
       summaryPanel.style.display = 'block';
@@ -552,8 +528,7 @@ export const buildMediaSummary = ({
 
   const runAsk = async (question: string) => {
     if (!ask) return;
-    const cachedQAs = ask.qaCacheKey ? loadQAs(ask.qaCacheKey) : [];
-    const hit = cachedQAs.find((e) => e.q.toLowerCase() === question.toLowerCase());
+    const hit = ask.qaCacheKey ? findQA(ask.qaCacheKey, question) : undefined;
     if (hit) { renderAnswer(hit.a); showingSummary = false; syncBtn(); return; }
     btn.disabled = true;
     note(`${p}-progress`, '⏳ Reading reviews…');

@@ -1,11 +1,12 @@
 import { db, DB_PATH, LEGACY_JSON_PATH } from './db';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './llm';
-import { displayScore, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews, type SortStats } from '@truescore/gmaps-shared';
+import { displayScore, normalizeQuestion, type AskSearch, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews, type SortStats } from '@truescore/gmaps-shared';
 
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
-// How long a cached review search is served before it's re-run.
+// How long a cached review search — or Ask Answer — is served before it's re-run.
 const SEARCH_TTL_MS = 24 * 60 * 60 * 1000;
+const ANSWERS_MAX = 30;
 // How long a background chip-warm that came back empty is trusted as "this place
 // genuinely has no topic chips" before we bother harvesting again.
 const CHIP_WARM_TTL_MS = 6 * 60 * 60 * 1000;
@@ -44,9 +45,18 @@ export type CacheEntry = {
   // scrape runs.
   contributedScore?: PartialScore;
   contributedScoreTs?: number;
+  // Ask Answers replayed to anyone who asks the same question of the same scope
+  // within a day. Keyed by answerKey; the most recent ANSWERS_MAX kept.
+  answers?: Record<string, CachedAnswer>;
   lastAccessTs?: number;
   accessCount?: number;
 };
+
+export type CachedAnswer = { answer: string; searches: AskSearch[]; ts: number };
+// An Answer's key: its scope (a chip/search filter, or '' for the whole place)
+// and the question, normalized so "Dogs allowed?" finds "dogs allowed".
+export const answerKey = (filter: string | undefined, question: string) =>
+  `${(filter ?? '').trim().toLowerCase()}|${normalizeQuestion(question)}`;
 
 export type SearchResult = {
   query: string;
@@ -361,6 +371,18 @@ export const cache = {
     if (!existing || !result.totalReviews) return;
     const searches = { ...(existing.searches ?? {}), [query.toLowerCase()]: result };
     persist(featureId, { ...existing, searches });
+  },
+  answerServable(a: CachedAnswer | undefined): a is CachedAnswer {
+    return !!a && Date.now() - a.ts < SEARCH_TTL_MS;
+  },
+  // Re-inserted so the most recent stays last, and the oldest past ANSWERS_MAX
+  // drop off — a place asked a lot can't grow its row without bound.
+  async putAnswer(featureId: string, key: string, answer: CachedAnswer) {
+    const existing = read(featureId);
+    if (!existing) return;
+    const { [key]: _prior, ...rest } = existing.answers ?? {};
+    const answers = Object.fromEntries([...Object.entries(rest), [key, answer]].slice(-ANSWERS_MAX));
+    persist(featureId, { ...existing, answers });
   },
   async putContribution(featureId: string, name: string, patch: {
     summary?: Summary;

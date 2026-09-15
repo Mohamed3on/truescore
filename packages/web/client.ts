@@ -275,12 +275,14 @@ async function askChipPanel() {
 
 // Paint an Ask into `box` (an .answer element) as it runs: a row per Search the
 // model had us run — count climbing, then kept, and clicking opens its reviews —
-// a reading pulse while the model works, and the Answer's markdown as it's
-// written. Searches go through /api/search, the cached Search the search box runs.
+// a reading pulse while the model works, the Answer's markdown as it's written,
+// and for a replayed Answer when it was written + Ask again. Searches go through
+// /api/search, the cached Search the search box runs.
 async function streamAsk(box: HTMLElement, body: AskRequest, epoch: PlaceEpoch) {
   const rows = el('div', 'ask-searches');
   const text = el('div', 'ask-text reading');
-  box.replaceChildren(rows, text);
+  const note = el('div', 'ask-note');
+  box.replaceChildren(rows, text, note);
   const ctrl = new AbortController();
   const search: SearchReviews = async (query, onFound) => {
     for await (const e of streamNdjson<SearchEvent>('/api/search', { featureId: epoch.featureId, query } satisfies SearchRequest, ctrl.signal)) {
@@ -295,6 +297,16 @@ async function streamAsk(box: HTMLElement, body: AskRequest, epoch: PlaceEpoch) 
     if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map(askSearchRow));
     if (v.text !== shown?.text) renderMarkdown(text, v.text);
     text.classList.toggle('reading', !v.done && !v.text && v.searches.every((s) => s.done));
+    if (v.answeredAt && !shown?.answeredAt) {
+      const again = el('button', 'ghost-btn', 'ASK AGAIN');
+      again.type = 'button';
+      again.addEventListener('click', () => {
+        streamAsk(box, { ...body, force: true }, epoch).catch((e) => {
+          if (epoch.alive) setStatus(e instanceof Error ? e.message : String(e), true);
+        });
+      });
+      note.replaceChildren(el('span', 'micro', `ANSWERED ${timeAgo(v.answeredAt).toUpperCase()}`), again);
+    }
     shown = v;
   }, ctrl.signal);
 }

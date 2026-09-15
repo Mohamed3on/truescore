@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach } from 'bun:test';
-import { runAsk, type AskView } from './index';
+import { normalizeQuestion, runAsk, type AskView } from './index';
 
 const ndjson = (...events: object[]) =>
   new Response(events.map((e) => JSON.stringify(e) + '\n').join(''), { headers: { 'content-type': 'application/x-ndjson' } });
@@ -64,6 +64,20 @@ describe('runAsk', () => {
     await runAsk('/api/ask', { question: 'Wifi?' }, async () => ({ texts: ['[2024-01-01] fast wifi'], scorePct: 100, trustedReviews: 1 }), (v) => views.push(v));
     const [a, b] = views.filter((v) => v.text === 'a' || v.text === 'ab');
     expect(b?.searches).toBe(a?.searches);
+  });
+
+  test('a replayed Answer paints the Searches behind it and when it was written', async () => {
+    const searches = [{ query: 'dog', found: 3, done: true, scorePct: 90, trustedReviews: 3 }];
+    serve(ndjson({ type: 'answer', answer: 'Yes.', searches, answeredAt: 1234 }));
+    const views: AskView[] = [];
+    await runAsk('/api/ask', { question: 'Dogs?' }, async () => null, (v) => views.push(v));
+    expect(views.at(-1)).toEqual({ searches, text: 'Yes.', done: true, answeredAt: 1234 });
+  });
+
+  test('normalizeQuestion ignores case, spacing and trailing punctuation', () => {
+    expect(normalizeQuestion('  Dogs   ALLOWED?! ')).toBe('dogs allowed');
+    expect(normalizeQuestion('Is it loud？')).toBe('is it loud');
+    expect(normalizeQuestion('Wi-Fi speed.')).toBe('wi-fi speed');
   });
 
   test('a stream that ends with neither an answer nor a Search is an error', async () => {
