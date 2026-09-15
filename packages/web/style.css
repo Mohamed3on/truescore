@@ -899,6 +899,7 @@ section#result::before {
   padding: 8px 10px;
   text-align: left;
   font: inherit;
+  letter-spacing: normal;
   color: var(--t2);
   background: var(--t5);
   border: 1px solid var(--hairline);
@@ -907,7 +908,9 @@ section#result::before {
   transition: border-color 200ms var(--ease);
 }
 .ask-search:hover:not(:disabled) { border-color: var(--t4); }
-.ask-search:disabled { cursor: default; }
+/* Disabled only means nothing to open yet (still paging, or no matches) — the
+   row is still the Answer's provenance, so it keeps full strength. */
+.ask-search:disabled { opacity: 1; cursor: default; }
 .ask-search.live .micro,
 .ask-search.live .ask-search-count { animation: chip-pulse 1.4s ease-in-out infinite; }
 .ask-search-terms {
