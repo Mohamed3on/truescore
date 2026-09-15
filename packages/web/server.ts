@@ -663,7 +663,7 @@ Bun.serve({
                 const reviews = await fetchAllForSearch(featureId, term, (_, rs) => {
                   const stats = statsForReviews(rs);
                   write({ type: 'search-progress', query: term, ...stats });
-                });
+                }, force);
                 result = { query: term, ...statsForReviews(reviews), reviews, ts: Date.now() };
               }
               write({ type: 'search', result, cached: false });

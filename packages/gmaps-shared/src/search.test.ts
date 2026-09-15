@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { parseOrQuery, spellingVariants, expandSearchTerms, stripAccents, mergeByReviewId, collectSearchTerms, type Review } from './index';
+import { parseOrQuery, spellingVariants, expandSearchTerms, stripAccents, mergeByReviewId, collectSearchTerms, createTermCache, type Review } from './index';
 
 const review = (id: string, stars = 5, count = 9): Review =>
   ({ reviewId: id, stars, reviewerReviewCount: count, timestamp: 1_700_000_000_000, text: `text-${id}` });
@@ -149,5 +149,48 @@ describe('collectSearchTerms', () => {
     const transport = async () => { calls++; return page([], null); };
     expect(await collectSearchTerms([], urlFor, transport)).toEqual([]);
     expect(calls).toBe(0);
+  });
+
+  test('a cached term is served from the cache; only new terms hit the transport', async () => {
+    const searched: string[] = [];
+    const transport = async (url: string) => {
+      searched.push(url);
+      return page([mkWrapper(`${url.split('|')[0]}-hit`, 5, 9)], null);
+    };
+    const cache = createTermCache(60_000, 10).forPlace('place');
+    await collectSearchTerms(['dog'], urlFor, transport, undefined, cache);
+    const merged = await collectSearchTerms(['DOG', 'hund'], urlFor, transport, undefined, cache);
+    expect(searched).toEqual(['dog|', 'hund|']); // `DOG` reused `dog`'s matches
+    expect(merged.map((r) => r.reviewId).sort()).toEqual(['dog-hit', 'hund-hit']);
+  });
+});
+
+describe('createTermCache', () => {
+  test('keeps matches per place, never an empty result', () => {
+    const cache = createTermCache(60_000, 10);
+    cache.forPlace('a').set('dog', [review('r1')]);
+    cache.forPlace('a').set('cat', []);
+    expect(cache.forPlace('a').get('dog')).toEqual([review('r1')]);
+    expect(cache.forPlace('b').get('dog')).toBeUndefined();
+    expect(cache.forPlace('a').get('cat')).toBeUndefined();
+  });
+
+  test('evicts the least recently used past `max`, and a place can be dropped', () => {
+    const cache = createTermCache(60_000, 2);
+    const a = cache.forPlace('a');
+    a.set('one', [review('1')]);
+    a.set('two', [review('2')]);
+    a.get('one'); // touch: `two` is now the oldest
+    a.set('three', [review('3')]);
+    expect(a.get('two')).toBeUndefined();
+    expect(a.get('one')).toBeDefined();
+    cache.dropPlace('a');
+    expect(a.get('one')).toBeUndefined();
+  });
+
+  test('an entry ages out after ttl', () => {
+    const cache = createTermCache(-1, 10).forPlace('a');
+    cache.set('dog', [review('r1')]);
+    expect(cache.get('dog')).toBeUndefined();
   });
 });

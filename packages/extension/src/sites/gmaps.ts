@@ -14,6 +14,7 @@ import {
   chipsFromPreview,
   collectSearchTerms,
   collectSort,
+  createTermCache,
   collectToken,
   compileMatchRegex,
   expandSearchTerms,
@@ -107,6 +108,11 @@ const standoutScoreTransient = new Set<string>();
 // reuses them instead of re-running the same label search. Not persisted —
 // reviews are heavy; after a reload the first click refetches.
 const standoutReviewsCache = new Map<string, Review[]>();
+// Each label-search term's matches (in-memory, per place), so a query sharing
+// terms with an earlier one — an Ask's `dog OR Hund` after a typed `dog`, a
+// standout chip re-scored — only searches its new terms. Dropped with the
+// standout caches when new reviews land.
+const searchTermCache = createTermCache(60 * 60 * 1000, 300);
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -748,7 +754,10 @@ const fetchAllForToken = (featureId: string, token: string, creds: MapsCapturedC
 const fetchAllForSearch = async (featureId: string, query: string, onFound?: (found: number) => void): Promise<Review[] | null> => {
   const creds = await ensureCreds();
   if (!creds) return null;
-  return collectSearchTerms(expandSearchTerms(query), (term, c) => buildSearchReq(featureId, term, creds, c), tabTransport, onFound && ((merged) => onFound(merged.length)));
+  return collectSearchTerms(
+    expandSearchTerms(query), (term, c) => buildSearchReq(featureId, term, creds, c), tabTransport,
+    onFound && ((merged) => onFound(merged.length)), searchTermCache.forPlace(featureId),
+  );
 };
 
 (window as any).__truescoreGmaps = {
@@ -1905,6 +1914,7 @@ const refreshStaleScores = () => {
   const prefix = `${featureId}|`;
   for (const k of [...standoutScoreCache.keys()]) if (k.startsWith(prefix)) standoutScoreCache.delete(k);
   for (const k of [...standoutReviewsCache.keys()]) if (k.startsWith(prefix)) standoutReviewsCache.delete(k);
+  searchTermCache.dropPlace(featureId);
   scoredCacheHeadId = live;
   for (const kind of Object.keys(scoredCtx) as ScoredKind[]) {
     const ctx = scoredCtx[kind];

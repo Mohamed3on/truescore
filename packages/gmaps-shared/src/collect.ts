@@ -95,11 +95,46 @@ export async function collectToken(featureId: string, token: string, transport: 
 // As many chains as the old 6-term cap ever allowed at once, so no query is slower.
 const SEARCH_CONCURRENCY = 6;
 
+// One place's per-term matches, so a query sharing terms with an earlier one —
+// an Ask's `dog OR Hund` after a typed `dog` — only searches its new terms.
+export type TermCache = { get(term: string): Review[] | undefined; set(term: string, reviews: Review[]): void };
+
+// The store behind TermCache: an LRU keyed by place + term, entries aging out
+// after `ttlMs`. `keep` vetoes a write — by default an empty result, which a
+// credless or stale session returns as readily as a genuine miss.
+export function createTermCache(ttlMs: number, max: number, keep: (reviews: Review[]) => boolean = (rs) => rs.length > 0) {
+  const entries = new Map<string, { reviews: Review[]; ts: number }>();
+  return {
+    forPlace: (featureId: string): TermCache => ({
+      get(term) {
+        const key = `${featureId}|${term.toLowerCase()}`;
+        const hit = entries.get(key);
+        entries.delete(key);
+        if (!hit || Date.now() - hit.ts > ttlMs) return undefined;
+        entries.set(key, hit); // re-insert: most recently used last
+        return hit.reviews;
+      },
+      set(term, reviews) {
+        if (!keep(reviews)) return;
+        entries.set(`${featureId}|${term.toLowerCase()}`, { reviews, ts: Date.now() });
+        for (const oldest of entries.keys()) {
+          if (entries.size <= max) break;
+          entries.delete(oldest);
+        }
+      },
+    }),
+    dropPlace(featureId: string) {
+      for (const key of entries.keys()) if (key.startsWith(`${featureId}|`)) entries.delete(key);
+    },
+  };
+}
+
 export async function collectSearchTerms(
   terms: string[],
   reqFor: (term: string, cursor: string) => MapsReq,
   transport: Transport,
   onMerged?: (merged: Review[]) => void,
+  cache?: TermCache,
 ): Promise<Review[]> {
   const union = new Map<string, Review>();
   // Every term is searched — none is dropped — but only a few paging chains run
@@ -108,7 +143,13 @@ export async function collectSearchTerms(
   const worker = async () => {
     for (let term = queue.shift(); term !== undefined; term = queue.shift()) {
       const t = term;
-      await collectPaged((c) => reqFor(t, c), transport, {
+      const cached = cache?.get(t);
+      if (cached) {
+        for (const r of cached) union.set(r.reviewId, r);
+        onMerged?.([...union.values()]);
+        continue;
+      }
+      const { reviews } = await collectPaged((c) => reqFor(t, c), transport, {
         maxPages: 30,
         stabilize: true,
         onPage: (_running, { pageReviews }) => {
@@ -116,6 +157,7 @@ export async function collectSearchTerms(
           onMerged?.([...union.values()]);
         },
       });
+      cache?.set(t, reviews);
     }
   };
   await Promise.all(Array.from({ length: Math.min(SEARCH_CONCURRENCY, terms.length) }, worker));

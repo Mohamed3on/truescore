@@ -7,13 +7,14 @@ import {
   collectSort,
   collectToken,
   collectSearchTerms,
+  createTermCache,
   type Review,
   type SortKey,
   type SortStats,
   type Transport,
 } from '@truescore/gmaps-shared';
 import { googleFetch } from './browser';
-import { getMapsCreds, onStaleRpc, onFreshRpc } from './maps-creds';
+import { getMapsCreds, mapsSessionHealthy, onStaleRpc, onFreshRpc } from './maps-creds';
 import { logEvent } from './events';
 
 export type { Review, SortKey, SortStats };
@@ -93,23 +94,32 @@ export type PartialScore = Omit<ScoreResult, 'reviews'>;
 // every page from either sort. Suitable for streaming `score-progress` events.
 export type ScoreProgressCallback = (partial: PartialScore) => void;
 
+// Each search term's matches, kept for a day like /api/search's results, so a
+// query sharing terms with an earlier one (an Ask's `dog OR Hund` after a typed
+// `dog`) searches only its new terms. Only a healthy session's non-empty
+// results are kept: a stale page cuts a search short without failing it.
+const termCache = createTermCache(24 * 60 * 60 * 1000, 500, (rs) => rs.length > 0 && mapsSessionHealthy());
+
 // `query` may use the Gmail-style ` OR ` operator, and each term expands to its
 // accent/hyphen/space spellings: every term becomes its own Google search,
 // fanned out + merged by reviewId in collectSearchTerms so the score reflects
 // reviews matching ANY spelling. `onPage` streams the merged running set so the
-// count climbs across terms.
+// count climbs across terms. `force` re-searches every term, refreshing the cache.
 export function fetchAllForSearch(
   featureId: string,
   query: string,
   onPage?: SortPageCallback,
+  force = false,
 ): Promise<Review[]> {
   const creds = getMapsCreds();
   if (!creds) { warnNoCreds('search'); return Promise.resolve([]); }
+  const cache = termCache.forPlace(featureId);
   return collectSearchTerms(
     expandSearchTerms(query),
     (term, c) => buildSearchReq(featureId, term, creds, c),
     transport,
     onPage ? (merged) => onPage('relevant', merged) : undefined,
+    force ? { get: () => undefined, set: cache.set } : cache,
   );
 }
 
