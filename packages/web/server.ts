@@ -376,6 +376,11 @@ startMintTimer();
 
 Bun.serve({
   port: PORT,
+  // Bun drops a connection that sits silent for 10s by default, and an LLM call
+  // routinely thinks longer than that before its first byte — prod logged the
+  // drop a few times a month. Cloudflare's 100s origin read timeout is the real
+  // ceiling, so outlast it rather than cut in first.
+  idleTimeout: 120,
   routes: {
     '/': index,
     '/api/lookup': {
