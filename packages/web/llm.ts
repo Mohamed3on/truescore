@@ -32,8 +32,14 @@ export const PROVIDERS = {
     // high/xhigh burn 20-60x the reasoning tokens for 2-8x the latency (82s and
     // 156s on a 44K-token payload vs 18s at low) — so keep the cheapest
     // thinking level. Beats nano:low on quality (4.7 vs 4.0) at ~2x its latency.
+    //
+    // Explicit prompt caching: GPT-5.6's default (implicit) mode bills a cache
+    // write at 1.25x input on every request, at the end of the prompt, which
+    // a call with a different ending never reads — so summaries and varied
+    // questions paid 25% more for nothing. Explicit mode writes only at a
+    // `promptCacheBreakpoint` we place (ask() puts one after the Sample).
     model: openai('gpt-5.6-luna'),
-    providerOptions: { openai: { reasoningEffort: 'low' } },
+    providerOptions: { openai: { reasoningEffort: 'low', promptCacheOptions: { mode: 'explicit' as const } } },
   },
   deepseek: {
     // V4 Flash, non-thinking: ties nano/flash on latency+quality at a fraction
@@ -57,7 +63,7 @@ export const parseProvider = (v: unknown): Provider | undefined =>
 
 const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
   effort && provider === 'openai'
-    ? { model: PROVIDERS[provider].model, providerOptions: { openai: { reasoningEffort: effort } } }
+    ? { model: PROVIDERS.openai.model, providerOptions: { openai: { ...PROVIDERS.openai.providerOptions.openai, reasoningEffort: effort } } }
     : PROVIDERS[provider];
 
 const active = (): Provider => {
@@ -67,11 +73,14 @@ const active = (): Provider => {
 
 // evals/compare.ts hooks this to collect per-call token usage; the server
 // never sets it.
-type UsageEvent = { provider: Provider; call: string; inputTokens: number; outputTokens: number };
+type UsageEvent = { provider: Provider; call: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number };
 let onUsage: ((u: UsageEvent) => void) | undefined;
 export const setOnUsage = (fn: typeof onUsage) => { onUsage = fn; };
-const report = (provider: Provider, call: string, u: { inputTokens?: number; outputTokens?: number }) =>
-  onUsage?.({ provider, call, inputTokens: u.inputTokens ?? 0, outputTokens: u.outputTokens ?? 0 });
+const report = (provider: Provider, call: string, u: { inputTokens?: number; outputTokens?: number; inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number } }) =>
+  onUsage?.({
+    provider, call, inputTokens: u.inputTokens ?? 0, outputTokens: u.outputTokens ?? 0,
+    cacheReadTokens: u.inputTokenDetails?.cacheReadTokens ?? 0, cacheWriteTokens: u.inputTokenDetails?.cacheWriteTokens ?? 0,
+  });
 
 const NOTES = `On factual disagreements (price, hours), trust the more recent review. Reviews come first; fold in general knowledge where they're silent.`;
 
@@ -153,8 +162,19 @@ const SEARCH_HITS_MAX = 100;
 // Rounds of Searches before the model must answer.
 const SEARCH_ROUNDS_MAX = 2;
 
-const SEARCH_NOTE = `The reviews above are a sample. When they don't settle the question, call searchReviews before answering: it searches every review of this place. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde). When the sample settles it, just answer.`;
+const SEARCH_NOTE = `The reviews given are a sample. When they don't settle the question, call searchReviews before answering: it searches every review of this place. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde). When the sample settles it, just answer.`;
 const SEARCH_FAILED = `Search is unavailable right now. Answer from the sample, and say you could only check part of the reviews.`;
+
+// What every Ask shares leads the prompt — these instructions and the tool —
+// then the place's Sample, closed by a cache breakpoint; only the scope and
+// question vary after it. Each round and each new question on a place then
+// reads everything up to the Sample back from the provider's prompt cache.
+const ASK_INSTRUCTIONS = `Answer the question about the place using its reviews. Be concise. Name specifics (prices, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree or don't cover it, say so.
+
+${NOTES}
+
+${SEARCH_NOTE}`;
+const CACHE_BREAKPOINT = { openai: { promptCacheBreakpoint: { mode: 'explicit' as const } } };
 
 // No `execute`: calling it ends the round, and the call goes to the client,
 // which runs the Search its own way and answers with the next request.
@@ -173,13 +193,6 @@ export type AskOptions = { filterQuery?: string; provider?: Provider; reasoningE
 export async function ask({ placeName, reviewTexts, removedReviews }: Subject, { question, history, results }: AskRound, emit: (e: AskEvent) => void, { filterQuery, provider = active(), reasoningEffort, abortSignal }: AskOptions = {}): Promise<void> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const removal = removalNote(removedReviews);
-  const prompt = `${reviewBlock(reviewTexts)}\n\n---\n\nAnswer about ${subjectOf(placeName, filterQuery)} using the reviews. Be concise. Name specifics (prices, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree or don't cover it, say so.
-
-${NOTES}${removal ? `\n\n${removal}` : ''}
-
-${SEARCH_NOTE}
-
-Question: ${question}`;
   const seen = new Set(reviewTexts);
   const matches = (texts: string[]) => {
     const fresh = texts.filter((t) => !seen.has(t)).slice(0, SEARCH_HITS_MAX);
@@ -198,7 +211,14 @@ Question: ${question}`;
 
   const result = streamText({
     model, providerOptions, maxOutputTokens: 32768, abortSignal,
-    messages: [{ role: 'user', content: prompt }, ...past],
+    instructions: ASK_INSTRUCTIONS,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: reviewBlock(reviewTexts), providerOptions: CACHE_BREAKPOINT },
+        { type: 'text', text: `\n\n---\n\n${removal ? `${removal}\n\n` : ''}About: ${subjectOf(placeName, filterQuery)}\n\nQuestion: ${question}` },
+      ],
+    }, ...past],
     tools: { searchReviews },
     toolChoice: searched < SEARCH_ROUNDS_MAX ? 'auto' : 'none',
   });
