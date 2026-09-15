@@ -18,6 +18,7 @@ const CONFIG = {
   MAX_SIMILAR_PAGES: 3,
   RECENT_RATING_PAGES: 15, // reviews/by/added pages tallied for the recent %
   RECENT_REVIEW_PAGES: 8, // reviews/by/added pages scanned for AI summary text
+  RECENT_MARGIN: 5, // points a better pick's recent % may trail this film's and still be highlighted (~180 ratings are that noisy)
   MAX_CONCURRENCY: 10,
   DEBUG: false,
 };
@@ -69,18 +70,18 @@ const emptyTally = (): RecentTally => ({ total: 0, net: 0, ratio: null });
 const pctText = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
 /**
- * Row meta: the year to tell films apart, and the adjusted score — the only
- * number the comparison turns on. Everything that fed into it (runtime, raw
- * score, recent %) lives in the row's tooltip instead of on screen.
+ * Row meta: the year to tell films apart, the adjusted score the comparison
+ * turns on, and the recent % behind it — marked ≤/≥ when its check stopped at a
+ * bound. Runtime and raw score live in the row's tooltip instead of on screen.
  */
-function filmMeta(film: any, adjustedText = '…') {
-  return film.year ? `${film.year} · ${adjustedText}` : adjustedText;
+function filmMeta(film: any, adjustedText = '…', recent?: { ratio: number | null; ceiling?: boolean; floor?: boolean } | null) {
+  const parts = [film.year, adjustedText];
+  if (recent?.ratio != null) parts.push(`recent ${recent.ceiling ? '≤' : recent.floor ? '≥' : ''}${pctText(recent.ratio)}`);
+  return parts.filter(Boolean).join(' · ');
 }
 
-function filmTooltip(film: any, recent?: { ratio: number | null; ceiling?: boolean; floor?: boolean } | null) {
-  const parts = [`${film.runtime}m`, film.fetchFailed ? 'score unavailable' : `score ${addCommas(film.score)}`];
-  if (recent?.ratio != null) parts.push(`recent ${recent.ceiling ? '≤' : recent.floor ? '≥' : ''}${pctText(recent.ratio)}`);
-  return parts.join(' · ');
+function filmTooltip(film: any) {
+  return `${film.runtime}m · ${film.fetchFailed ? 'score unavailable' : `score ${addCommas(film.score)}`}`;
 }
 
 function debugDetails(stats: any) {
@@ -668,7 +669,8 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
  * adjusted score (score × recent %) is equal or higher. Recent ratings are
  * fetched lazily, only for candidates whose score could reach the threshold,
  * and only as far as needed to settle each one. Each row is judged as soon as
- * its own ratings land, so a long list checks off film by film.
+ * its own ratings land, so a long list checks off film by film. A better pick
+ * whose recent % also holds up against the current film's is highlighted.
  * Films the user has ignored move to a collapsed drawer and stop counting
  * towards the winner check; restoring one from the drawer undoes that.
  */
@@ -802,10 +804,8 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   });
   paint();
 
-  const check = async (film: any) => {
-    const recent = film.fetchFailed
-      ? null
-      : await getCandidateRecentRatings(film.slug, film.score, threshold).catch(() => null);
+  const refPct = Math.round(current.ratio! * 100);
+  const judge = (film: any, recent: { ratio: number | null; ceiling: boolean; floor?: boolean } | null) => {
     // One verdict, shared with Goodreads (shared/better-picks.ts). A film with no
     // tally at all — unscored, or its fetch out of retries — was never measured, so
     // it keeps the benefit of the doubt instead of counting as one that didn't reach.
@@ -818,12 +818,33 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     entry.passes = pick.passes;
     entry.settled = true;
     const adjustedText = pick.adjusted == null || pick.unresolved ? '?' : `${recent?.ceiling ? '≤' : recent?.floor ? '≥' : ''}${addCommas(pick.adjusted)}`;
-    entry.meta.textContent = filmMeta(film, adjustedText);
-    entry.element.title = filmTooltip(film, recent);
+    entry.meta.textContent = filmMeta(film, adjustedText, recent);
+    // A pick's ratio is exact or a floor (a ceiling only ever fails), so clearing it proves the real % does too.
+    if (pick.passes && recent?.ratio != null && Math.round(recent.ratio * 100) >= refPct - CONFIG.RECENT_MARGIN) {
+      entry.element.classList.add('lbx-hot');
+      entry.element.title = `${filmTooltip(film)} · recent on par with this film’s ${refPct}% or better`;
+    }
     if (!entry.passes) entry.element.classList.add('lbx-excluded');
     paint();
   };
+
+  const bounded: any[] = [];
+  const check = async (film: any) => {
+    const recent = film.fetchFailed
+      ? null
+      : await getCandidateRecentRatings(film.slug, film.score, threshold).catch(() => null);
+    if (recent?.floor) bounded.push(film);
+    judge(film, recent);
+  };
   await Promise.all(films.map(check));
+
+  // A pick that won on a floor knows only a lower bound on its recent %. Its whole
+  // run is fetched now, once no verdict is left to wait behind it, so every better
+  // pick ends on its real recent % — and its highlight, if it earns one.
+  await Promise.all(bounded.map(async (film) => {
+    const full = await getRecentRatingsSummary(film.slug).catch(() => null);
+    if (full?.ratio != null) judge(film, { ratio: full.ratio, ceiling: false });
+  }));
 
   if (stats) similarSection.append(debugDetails(stats));
 }
