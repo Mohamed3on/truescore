@@ -1,5 +1,5 @@
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, MAPS_CREDS_VERIFIED, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, MAPS_CREDS_VERIFIED, SERVER_SCORE_GET, SERVER_SCORE_RESULT, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import { getReasoningEffort, getProviderChoice } from '../shared/config';
@@ -24,7 +24,6 @@ import {
   overallPctFromHistogram,
   overallScoreFromHistogram,
   parseOrQuery,
-  readNdjson,
   removedCountEstimate,
   removedReviewsFromPreview,
   reviewAge,
@@ -38,7 +37,6 @@ import {
   textReviewsFor,
   timeAgo,
   type Locale,
-  type LookupEvent,
   type PartialScore,
   type RemovedReviews,
   type Review,
@@ -445,33 +443,32 @@ const hydrateFromCloud = (featureId: string) => {
 // server scrapes on its own session, so ask it for the number rather than
 // leaving the panel dead — the same lookup the web app runs.
 let serverScore: PartialScore | null = null;
-const fetchServerScore = async (featureId: string) => {
-  try {
-    const res = await fetch(`${TRUESCORE_API_BASE}/api/lookup`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: location.href }),
-    });
-    if (!res.ok || !res.body) return;
-    for await (const ev of readNdjson<LookupEvent>(res.body)) {
-      if (getFeatureId() !== featureId) return;
-      // `throttled` means the server's own scrape came back empty for a place
-      // that has reviews — its wire comment says never to paint that.
-      const score = ev.type === 'lookup' || ev.type === 'refreshed' ? ev.score
-        : ev.type === 'provisional' || ev.type === 'score-progress' ? ev.score
-        : ev.type === 'score' && !ev.throttled ? ev.score
-        : null;
-      // The aggregate, never score.reviews: a cache hit ships only a handful of
-      // review bodies for display, so scoring those would paint a number
-      // computed from ten reviews in place of the server's real one.
-      if (!score) continue;
-      serverScore = score;
-      scoringFailed = false;
-      updateUI();
-    }
-  } catch (e) {
-    console.warn('[gmaps] server score fallback failed', e);
-  }
+// Asked of the background worker, not fetched here: /api/lookup is same-origin
+// only (it triggers a real scrape), so a content-script POST is refused by CORS.
+// The worker holds the host permission and returns the aggregate — never
+// score.reviews, since a cache hit ships only a handful of review bodies for
+// display and scoring those would paint a number computed from ten reviews.
+// A scrape can outrun the storage bridge's 5s budget, so this waits longer.
+const SERVER_SCORE_TIMEOUT_MS = 120_000;
+let serverScoreId = 0;
+const fetchServerScore = (featureId: string): void => {
+  const id = `s${++serverScoreId}`;
+  const cleanup = () => {
+    document.removeEventListener(SERVER_SCORE_RESULT, handler);
+    clearTimeout(timer);
+  };
+  const handler = (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.id !== id) return;
+    cleanup();
+    if (!detail.value || getFeatureId() !== featureId) return;
+    serverScore = detail.value as PartialScore;
+    scoringFailed = false;
+    updateUI();
+  };
+  const timer = setTimeout(cleanup, SERVER_SCORE_TIMEOUT_MS);
+  document.addEventListener(SERVER_SCORE_RESULT, handler);
+  document.dispatchEvent(new CustomEvent(SERVER_SCORE_GET, { detail: { id, url: location.href } }));
 };
 
 // Strip review bodies before persisting — they balloon to MBs per place and
@@ -1151,7 +1148,7 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
         scoringFailed = true;
         credsRefused = true;
         updateUI();
-        void fetchServerScore(getFeatureId()!);
+        fetchServerScore(getFeatureId()!);
         return;
       }
     }
@@ -2270,7 +2267,7 @@ const handleDomMutation = () => {
     // Already known to be refused, so skip straight to the server. Flag it up
     // front too: the panel then says so immediately instead of sitting blank for
     // the length of the server's scrape, and the score replaces it when it lands.
-    if (credsRefused) { scoringFailed = true; void fetchServerScore(featureId); }
+    if (credsRefused) { scoringFailed = true; fetchServerScore(featureId); }
     else startFetching();
     hydrateFromCloud(featureId);
     // Skip if live data already arrived — a stale disk read must not clobber a

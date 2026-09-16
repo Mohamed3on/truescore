@@ -1,4 +1,4 @@
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, MAPS_CREDS_VERIFIED } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, MAPS_CREDS_VERIFIED, SERVER_SCORE_GET, SERVER_SCORE_RESULT } from '../shared/gmaps-bridge-protocol';
 
 // ISOLATED world, document_start. Bridges chrome.storage.local, which
 // MAIN-world gmaps.ts can't reach itself (request/response via CustomEvents).
@@ -35,4 +35,16 @@ document.addEventListener(MAPS_CREDS_VERIFIED, (e) => {
   const creds = (e as CustomEvent).detail;
   if (!creds?.bgkey) return;
   try { chrome.runtime.sendMessage({ type: 'seedMapsCreds', creds }); } catch {}
+});
+
+document.addEventListener(SERVER_SCORE_GET, (e) => {
+  const { id, url } = (e as CustomEvent).detail || {};
+  if (!id || !url) return;
+  const reply = (value: unknown) => document.dispatchEvent(
+    new CustomEvent(SERVER_SCORE_RESULT, { detail: { id, value } }));
+  try {
+    chrome.runtime.sendMessage({ type: 'serverScore', url }, (res) => reply(res?.score ?? null));
+  } catch {
+    reply(null); // context invalidated (extension reloaded)
+  }
 });

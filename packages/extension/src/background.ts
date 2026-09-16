@@ -1,7 +1,7 @@
 // Combined background service worker
 import { SCORE_CACHE_PREFIX } from './shared/cache-keys';
 import { createThrottledFetcher } from './shared/throttled-fetch';
-import type { MapsCreds } from '@truescore/gmaps-shared';
+import { readNdjson, type LookupEvent, type MapsCreds, type PartialScore } from '@truescore/gmaps-shared';
 
 // Drop rc_score_* entries older than 30 days. Registered on install/update
 // only — top-level chrome.alarms.create on every SW wake would reset the
@@ -90,7 +90,40 @@ const imdbHistogram = async (id: string): Promise<number[] | null> => {
   }
 };
 
+// Score a place through truescore's own Google session, for a browser whose
+// session Google refuses. /api/lookup is same-origin only, so the content script
+// can't call it — we hold the host permission and no page CORS applies. The
+// stream's last usable score wins; `throttled` means the server's own scrape
+// came back empty and must never be painted.
+const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
+const serverScore = async (url: string): Promise<PartialScore | null> => {
+  try {
+    const res = await fetch(`${TRUESCORE_API_BASE}/api/lookup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok || !res.body) return null;
+    let best: PartialScore | null = null;
+    for await (const ev of readNdjson<LookupEvent>(res.body)) {
+      const score = ev.type === 'lookup' || ev.type === 'refreshed' ? ev.score
+        : ev.type === 'provisional' || ev.type === 'score-progress' ? ev.score
+        : ev.type === 'score' && !ev.throttled ? ev.score
+        : null;
+      if (score) best = score;
+    }
+    return best;
+  } catch (e) {
+    console.warn('[truescore] server score failed', e);
+    return null;
+  }
+};
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === 'serverScore' && typeof msg.url === 'string') {
+    serverScore(msg.url).then((score) => sendResponse({ score }));
+    return true; // answered asynchronously
+  }
   if (msg?.type === 'seedMapsCreds' && msg.creds) seedMapsCreds(msg.creds as SeedCreds);
   if (msg?.type === 'imdbHistogram' && typeof msg.id === 'string') {
     imdbHistogram(msg.id).then(sendResponse);

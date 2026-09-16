@@ -14,6 +14,12 @@ export const MAPS_CREDS_CAPTURED = 'truescore-maps-creds-captured';
 // browser session takes scoring down for every web visitor until the server's
 // own self-mint notices — which is exactly what happened on 2026-09-16.
 export const MAPS_CREDS_VERIFIED = 'truescore-maps-creds-verified';
+// Ask the background worker to score a place server-side. /api/lookup is
+// deliberately same-origin only (it triggers a real scrape), so a content-script
+// fetch is refused by CORS; the worker holds the host permission and isn't
+// subject to it.
+export const SERVER_SCORE_GET = 'truescore-server-score-get';
+export const SERVER_SCORE_RESULT = 'truescore-server-score-result';
 
 export type MapsCapturedCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; ts: number };
 
