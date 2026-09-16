@@ -418,7 +418,8 @@ const SUMMARY_SCHEMA = {
     dislikes: { type: 'string' as const, description: "What people most commonly didn't enjoy. Empty string if there is no shared complaint." },
     audience: { type: 'string' as const, description: "Who it's for and who it's not for." },
   },
-  required: ['summary', 'recommendation', 'audience'],
+  required: ['summary', 'recommendation', 'dislikes', 'audience'],
+  additionalProperties: false,
 };
 
 const SUMMARY_PROMPT = `Summarize these recent Letterboxd reviews for someone deciding whether to watch this film. Be concise and specific to THIS film (performances, direction, writing, pacing, tone). Only use points raised by multiple reviewers; ignore Letterboxd in-jokes and contentless one-liners. You may use **bold** for emphasis. Each field is one or two short sentences, no preamble.`;

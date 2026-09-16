@@ -6,7 +6,12 @@
     "watch": "bun build.ts --watch"
   },
   "dependencies": {
-    "@truescore/gmaps-shared": "workspace:*"
+    "@ai-sdk/deepseek": "^3.0.44",
+    "@ai-sdk/google": "^4.0.70",
+    "@ai-sdk/openai": "^4.0.66",
+    "@truescore/gmaps-shared": "workspace:*",
+    "ai": "^7.0.101",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.43",

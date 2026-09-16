@@ -53,17 +53,8 @@ export async function getProviderChoice(): Promise<LLMProvider | undefined> {
 
 export const GEMINI_MODEL = 'gemini-3-flash-preview';
 
-export const geminiEndpoint = (apiKey: string) =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-
 export const OPENAI_MODEL = 'gpt-5.6-luna';
 
-export const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
-
-// DeepSeek V4 Flash via its OpenAI-compatible Chat Completions endpoint. Always
-// non-thinking (fastest, and its thinking ladder didn't improve summary quality
-// — see web evals/latency.ts); no native json_schema, so review-summary.ts asks
-// for json_object and pins the shape into the prompt.
+// DeepSeek V4 Flash, always non-thinking (fastest, and its thinking ladder didn't
+// improve summary quality — see web evals/latency.ts).
 export const DEEPSEEK_MODEL = 'deepseek-v4-flash';
-
-export const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';

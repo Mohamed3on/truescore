@@ -1,10 +1,47 @@
 import { addCommas, el, npsColor, npsStats } from './utils';
 import { llmSummarize, renderFreeFormAnswer } from './review-summary';
-import { parseOrQuery } from '@truescore/gmaps-shared';
+import { parseOrQuery, type SearchReviews } from '@truescore/gmaps-shared';
 
 // Gmail-style ` OR ` (any case) splits a query into lowercased terms; a review
 // matches if it contains ANY term. Shared by every panel's review search.
 export const queryTerms = (query: string) => parseOrQuery(query).map((t) => t.toLowerCase());
+
+// The net 5★-over-1★ share (nps) of the `rated` reviews among these ratings. An
+// unrated review (Goodreads lets one skip the stars; it arrives as 0) is no
+// evidence either way, so it stays out of the denominator.
+export const ratingStats = (ratings: number[]) => {
+  let five = 0, one = 0, rated = 0;
+  for (const r of ratings) {
+    if (r <= 0) continue;
+    rated++;
+    if (r === 5) five++;
+    else if (r === 1) one++;
+  }
+  return { nps: rated ? npsStats(five, one, rated).nps : 0, rated };
+};
+
+// A site's review search as an Ask's Search (see shared/review-ask.ts): `find`
+// returns every review matching any term, telling `onFound` how many so far;
+// the model reads their texts and TrueScore — here the net share of the rated
+// ones, resting on that many.
+export const searchWith = <T,>(
+  find: (terms: string[], onFound: (found: number) => void) => Promise<T[]>,
+  toText: (r: T) => string,
+  rating: (r: T) => number,
+): SearchReviews => async (query, onFound) => {
+  const matches = await find(queryTerms(query), onFound);
+  const { nps, rated } = ratingStats(matches.map(rating));
+  return { texts: matches.map(toText).filter(Boolean), scorePct: Math.round(nps), trustedReviews: rated };
+};
+
+// Run `query` in a search section's box as if typed, and bring it into view.
+export const runSearch = (section: Element, query: string) => {
+  const input = section.querySelector<HTMLInputElement>('.ars-search-input');
+  if (!input) return;
+  input.value = query;
+  input.dispatchEvent(new Event('input'));
+  input.scrollIntoView({ block: 'center', behavior: 'smooth' });
+};
 
 // Highlight every occurrence of ANY term. At each position take the
 // earliest-starting match (longest on ties) so overlapping terms don't double-wrap.
@@ -198,16 +235,8 @@ export const buildSearchSection = <T,>({
       document.createTextNode(` of ${addCommas(corpusSize)} reviews mention "${raw}"`),
     );
 
-    // An unrated review (Goodreads lets one skip the stars; it arrives as 0) is no
-    // evidence either way, so it stays out of the %-positive denominator.
-    const rated = matches.filter(({ f }) => f.rating > 0);
-    if (rated.length) {
-      let five = 0, one = 0;
-      for (const { f } of rated) {
-        if (f.rating === 5) five++;
-        else if (f.rating === 1) one++;
-      }
-      const { nps } = npsStats(five, one, rated.length);
+    const { nps, rated } = ratingStats(matches.map(({ f }) => f.rating));
+    if (rated) {
       scoreChip.textContent = `${Math.round(nps)}%`;
       scoreChip.style.color = npsColor(nps);
       scoreChip.style.display = '';

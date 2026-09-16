@@ -1,8 +1,11 @@
-import { getActiveLLM, geminiEndpoint, OPENAI_ENDPOINT, OPENAI_MODEL, DEEPSEEK_ENDPOINT, DEEPSEEK_MODEL } from './config';
+import { getActiveLLM } from './config';
 import { el, renderMarkdown, renderMarkdownInline } from './utils';
 import { cacheGet, cacheSet } from './cache';
-import { buildLlmCall, PROVIDER_LABEL, readLlmResult } from './llm-wire';
+import { loadLlm } from './llm';
 import { findQA, loadQAs, removeQA, saveQA } from './qa-history';
+import { askReviews, mountAskView, type SearchAsk } from './review-ask';
+import type { AskSearch } from '@truescore/gmaps-shared';
+import type { JSONSchema7 } from 'ai';
 
 // Shared default summary prompt for retail product pages (Amazon, Decathlon, dm…).
 // Domain-specific pages (hotels, films, BJJ courses) keep their own prompts.
@@ -80,30 +83,16 @@ const SUMMARY_SCHEMA = {
     complaints: { type: 'array' as const, items: { type: 'string' as const } },
     praised: { type: 'array' as const, items: { type: 'string' as const } },
     conclusion: { type: 'string' as const },
-    betterAlternative: { type: 'string' as const, nullable: true }
+    betterAlternative: { type: 'string' as const },
   },
-  required: ['complaints', 'praised', 'conclusion']
+  required: ['complaints', 'praised', 'conclusion', 'betterAlternative'],
+  additionalProperties: false,
 };
 
-
-// Provider comes from the popup toggle (getActiveLLM); same prompt either way.
-// The fetch is the only impure step — building the request and reading the reply
-// live in llm-wire, so both are testable without a key or a live model.
-export const llmSummarize = async (reviewTexts: string[], prompt: string, schema: any = SUMMARY_SCHEMA): Promise<any> => {
-  // Reviews arrive in the page's locale (amazon.es, booking.de, …), so without
-  // this the model answers in that language. Pin output to English for every site.
-  // toWellFormed: site APIs can truncate text mid-emoji (Decathlon cuts titles at
-  // 30 UTF-16 units), and the resulting lone surrogate survives JSON.stringify as
-  // a bare \ud83d escape that OpenAI rejects with "failed to parse JSON value".
-  const fullPrompt = (prompt + '\n\nAlways respond in English, even if the reviews are written in another language.\n\nReviews:\n\n' + reviewTexts.join('\n---\n')).toWellFormed();
-
-  const { provider, key, reasoningEffort } = await getActiveLLM();
-  if (!key) throw new Error(`No ${PROVIDER_LABEL[provider]} API key \u2014 set one in the TrueScore popup`);
-
-  const { url, init } = buildLlmCall(provider, key, fullPrompt, schema, reasoningEffort);
-  const res = await fetch(url, init);
-  return readLlmResult(provider, await res.json(), schema);
-};
+// One pass over the reviews on the popup's model: free-form text for a null
+// schema, else an object matching it (see src/llm.ts).
+export const llmSummarize = async (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null = SUMMARY_SCHEMA): Promise<any> =>
+  (await loadLlm()).summarize(reviewTexts, prompt, schema);
 
 export const renderFreeFormAnswer = (container: HTMLElement, text: string) => {
   container.textContent = '';
@@ -148,6 +137,9 @@ interface SummarizeWidgetOpts {
   cacheMeta?: any;
   alternates?: AlternatesConfig;
   autoSummarize?: boolean;
+  // Lets an Ask Search every review before it answers; without it an Ask is
+  // one pass over fetchReviews.
+  searchAsk?: SearchAsk;
 }
 
 const collectAlternates = (prefix: string, currentKey: string): AlternateEntry[] => {
@@ -192,6 +184,7 @@ export const buildSummarizeWidget = ({
   cacheMeta,
   alternates,
   autoSummarize,
+  searchAsk,
 }: SummarizeWidgetOpts) => {
   // Reference material (e.g. a course's volume/chapter breakdown) appended to
   // both the structured-summary prompt and every Ask, so questions can map vague
@@ -274,12 +267,17 @@ export const buildSummarizeWidget = ({
     }
   };
 
+  // An Answer in the panel, under the Searches that reached it.
+  const showAnswer = (text: string, searches: AskSearch[] = []) => {
+    mountAskView(summaryPanel, 'ars-answer', searchAsk?.open)({ searches, text, done: true });
+    summaryPanel.style.display = 'block';
+    panelMode = 'answer';
+  };
+
   const runAsk = async (btn: HTMLButtonElement, question: string) => {
     const hit = findQA(cacheKey, question);
     if (hit) {
-      renderFreeFormAnswer(summaryPanel, hit.a);
-      summaryPanel.style.display = 'block';
-      panelMode = 'answer';
+      showAnswer(hit.a, hit.searches);
       syncControls();
       return;
     }
@@ -288,12 +286,18 @@ export const buildSummarizeWidget = ({
     try {
       const reviews = await loadReviews();
       btn.textContent = '\u23F3 Asking\u2026';
-      const answer = await llmSummarize(reviews, `${withContext(questionPrompt)}\n\nQuestion: ${question}`, null);
+      const prompt = `${withContext(questionPrompt)}\n\nQuestion: ${question}`;
+      let answer: string, searches: AskSearch[] | undefined;
+      if (searchAsk) {
+        summaryPanel.style.display = 'block';
+        panelMode = 'answer';
+        ({ text: answer, searches } = await askReviews(summaryPanel, 'ars-answer', searchAsk, reviews, prompt));
+      } else {
+        answer = await llmSummarize(reviews, prompt, null);
+        showAnswer(answer);
+      }
       bumpRateLimit();
-      saveQA(cacheKey, { q: question, a: answer, ts: Date.now() });
-      renderFreeFormAnswer(summaryPanel, answer);
-      summaryPanel.style.display = 'block';
-      panelMode = 'answer';
+      saveQA(cacheKey, { q: question, a: answer, ts: Date.now(), searches });
       renderQAHistory();
     } catch (e: any) {
       summaryPanel.textContent = `Error: ${e.message}`;
@@ -330,9 +334,7 @@ export const buildSummarizeWidget = ({
       chip.appendChild(remove);
       chip.addEventListener('click', () => {
         questionInput.value = item.q;
-        renderFreeFormAnswer(summaryPanel, item.a);
-        summaryPanel.style.display = 'block';
-        panelMode = 'answer';
+        showAnswer(item.a, item.searches);
         syncControls();
       });
       qaHistoryRow.appendChild(chip);
@@ -395,6 +397,8 @@ interface MediaSummaryOpts {
   fetchReviews: () => Promise<string[]>;
   initialButtonLabel: string;
   ask?: { placeholder: string; questionPrompt: string; qaCacheKey: string | null };
+  // As on buildSummarizeWidget: lets the Ask Search every review first.
+  searchAsk?: SearchAsk;
 }
 
 // Shared summary + Q&A panel for media-review sites (Goodreads books, Letterboxd
@@ -417,6 +421,7 @@ export const buildMediaSummary = ({
   fetchReviews,
   initialButtonLabel,
   ask,
+  searchAsk,
 }: MediaSummaryOpts): HTMLElement => {
   const section = el('section', p);
   const head = el('div', `${p}-head`);
@@ -464,11 +469,8 @@ export const buildMediaSummary = ({
     body.style.display = 'block';
   };
 
-  const renderAnswer = (text: string) => {
-    body.textContent = '';
-    const div = el('div', `${p}-text`);
-    renderMarkdown(div, text);
-    body.append(div);
+  const renderAnswer = (text: string, searches: AskSearch[] = []) => {
+    mountAskView(body, `${p}-text`, searchAsk?.open)({ searches, text, done: true });
     body.style.display = 'block';
   };
 
@@ -518,7 +520,7 @@ export const buildMediaSummary = ({
       chip.title = item.q;
       chip.addEventListener('click', () => {
         if (input) input.value = item.q;
-        renderAnswer(item.a);
+        renderAnswer(item.a, item.searches);
         showingSummary = false;
         syncBtn();
       });
@@ -529,17 +531,22 @@ export const buildMediaSummary = ({
   const runAsk = async (question: string) => {
     if (!ask) return;
     const hit = ask.qaCacheKey ? findQA(ask.qaCacheKey, question) : undefined;
-    if (hit) { renderAnswer(hit.a); showingSummary = false; syncBtn(); return; }
+    if (hit) { renderAnswer(hit.a, hit.searches); showingSummary = false; syncBtn(); return; }
     btn.disabled = true;
     note(`${p}-progress`, '⏳ Reading reviews…');
     try {
       const texts = await fetchReviews();
       if (!texts.length) throw new Error('No written reviews found yet.');
-      note(`${p}-progress`, '⏳ Asking…');
-      const answer = (await llmSummarize(texts, `${ask.questionPrompt}\n\nQuestion: ${question}`, null)) as string;
+      const prompt = `${ask.questionPrompt}\n\nQuestion: ${question}`;
+      let answer: string, searches: AskSearch[] | undefined;
+      if (searchAsk) ({ text: answer, searches } = await askReviews(body, `${p}-text`, searchAsk, texts, prompt));
+      else {
+        note(`${p}-progress`, '⏳ Asking…');
+        answer = (await llmSummarize(texts, prompt, null)) as string;
+        renderAnswer(answer);
+      }
       bumpRateLimit();
-      if (ask.qaCacheKey) saveQA(ask.qaCacheKey, { q: question, a: answer, ts: Date.now() });
-      renderAnswer(answer);
+      if (ask.qaCacheKey) saveQA(ask.qaCacheKey, { q: question, a: answer, ts: Date.now(), searches });
       showingSummary = false;
       renderQA();
     } catch (e: any) {

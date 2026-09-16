@@ -5,7 +5,7 @@ import { adjust, recentRatio } from '../shared/recency';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 import { buildMediaSummary } from '../shared/review-summary';
-import { buildSearchSection } from '../shared/review-search';
+import { buildSearchSection, runSearch, searchWith } from '../shared/review-search';
 import { goodreadsViewerCacheScope, shelfScoreCacheTtl } from './goodreads-shelf-cache';
 
 const CONFIG = {
@@ -348,6 +348,40 @@ const STYLES = `
   .ars-search-hl { background: #fbeec2; color: #382110; padding: 0 2px; border-radius: 2px; }
   .ars-search-empty,
   .ars-search-truncated { font-size: 12px; color: #8b7355; font-style: italic; padding: 2px 0; }
+
+  /* An Ask's Searches over every review (see shared/review-ask.ts), in Goodreads' palette. */
+  .ars-ask-searches { display: flex; flex-direction: column; gap: 6px; }
+  .ars-ask-searches:not(:empty) { margin-bottom: 12px; }
+  .ars-ask-search {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    text-align: left;
+    font-family: inherit;
+    color: #382110;
+    background: #fff;
+    border: 1px solid #e4ddd0;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color .15s ease;
+  }
+  .ars-ask-search:hover:not(:disabled) { border-color: #00635d; }
+  .ars-ask-search:disabled { cursor: default; }
+  .ars-ask-search-label,
+  .ars-ask-reading:empty::before { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #8b7355; white-space: nowrap; }
+  .ars-ask-search-terms { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ars-ask-search-pct { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .ars-ask-search-count { font-size: 12px; color: #8b7355; font-variant-numeric: tabular-nums; }
+  .ars-ask-reading:empty::before { content: 'Reading reviews…'; }
+  .ars-ask-search.live .ars-ask-search-label,
+  .ars-ask-search.live .ars-ask-search-count,
+  .ars-ask-reading:empty::before { animation: gr-ask-pulse 1.5s ease-in-out infinite; }
+  @keyframes gr-ask-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .4; }
+  }
 `;
 
 function injectStyles() {
@@ -952,7 +986,8 @@ const SUMMARY_SCHEMA = {
     dislikes: { type: 'string' as const, description: "What readers most commonly didn't enjoy. Empty string if there is no shared complaint." },
     audience: { type: 'string' as const, description: "Who it's for and who it's not for." },
   },
-  required: ['summary', 'recommendation', 'audience'],
+  required: ['summary', 'recommendation', 'dislikes', 'audience'],
+  additionalProperties: false,
 };
 
 const SUMMARY_PROMPT = `Summarize these Goodreads reviews for someone deciding whether to read this book. Be concise and specific to THIS book (writing style, characters, pacing, plot, themes, ending). Only use points raised by multiple reviewers; ignore reading-challenge notes, shelving chatter, and contentless one-liners. Do not reveal plot spoilers. You may use **bold** for emphasis. Each field is one or two short sentences, no preamble.`;
@@ -1026,40 +1061,42 @@ const REVIEW_FIELDS = (r: GrReview) => ({ rating: r.rating, body: r.body, meta: 
  * A single term's count is exact, but only the newest REVIEW_PAGE_LIMIT hits come back,
  * so a term with more matches than that has its %-positive read off that newest sample.
  */
-const buildReviewSearch = (workId: string, jwtToken: string, total: number) => {
+const makeReviewSearch = (workId: string, jwtToken: string) => {
   const cache = new Map<string, { matches: GrReview[]; total: number }>();
-  return buildSearchSection<GrReview>({
-    reviews: [],
-    total,
-    search: async (terms) => {
-      const key = terms.join(' OR ');
-      let hit = cache.get(key);
-      if (!hit) {
-        const pages = await Promise.all(terms.map((t) =>
-          fetchReviewNodes(workId, jwtToken, { withText: true, searchText: phraseQuery(t) })));
-        const seen = new Set<string>();
-        const matches: GrReview[] = [];
-        for (const { nodes } of pages) {
-          for (const n of nodes) {
-            const r = toReview(n);
-            if (r.body && !seen.has(r.body)) { seen.add(r.body); matches.push(r); }
-          }
+  return async (terms: string[]) => {
+    const key = terms.join(' OR ');
+    let hit = cache.get(key);
+    if (!hit) {
+      const pages = await Promise.all(terms.map((t) =>
+        fetchReviewNodes(workId, jwtToken, { withText: true, searchText: phraseQuery(t) })));
+      const seen = new Set<string>();
+      const matches: GrReview[] = [];
+      for (const { nodes } of pages) {
+        for (const n of nodes) {
+          const r = toReview(n);
+          if (r.body && !seen.has(r.body)) { seen.add(r.body); matches.push(r); }
         }
-        // Concatenated pages lose the endpoint's newest-first order; one page keeps it.
-        if (pages.length > 1) matches.sort((a, b) => b.date.localeCompare(a.date));
-        // One term: the endpoint's own count spans every review, not just the page we
-        // pulled. Several: all we can honestly claim is what the union actually holds.
-        hit = { matches, total: pages.length === 1 ? pages[0].totalCount : matches.length };
-        cache.set(key, hit);
       }
-      return hit;
-    },
-    fields: REVIEW_FIELDS,
-    toText: (r) => r.body,
-    summaryPrompt: GR_SEARCH_SUMMARY_PROMPT,
-    exampleQuery: 'slow start OR pacing',
-  });
+      // Concatenated pages lose the endpoint's newest-first order; one page keeps it.
+      if (pages.length > 1) matches.sort((a, b) => b.date.localeCompare(a.date));
+      // One term: the endpoint's own count spans every review, not just the page we
+      // pulled. Several: all we can honestly claim is what the union actually holds.
+      hit = { matches, total: pages.length === 1 ? pages[0].totalCount : matches.length };
+      cache.set(key, hit);
+    }
+    return hit;
+  };
 };
+
+const buildReviewSearch = (search: ReturnType<typeof makeReviewSearch>, total: number) => buildSearchSection<GrReview>({
+  reviews: [],
+  total,
+  search,
+  fields: REVIEW_FIELDS,
+  toText: (r) => r.body,
+  summaryPrompt: GR_SEARCH_SUMMARY_PROMPT,
+  exampleQuery: 'slow start OR pacing',
+});
 
 // =============================================================================
 // Score display
@@ -1081,6 +1118,7 @@ const appendScore = async (bookTitle: Element) => {
   scoreElement.parentNode!.insertBefore(recentElement, scoreElement.nextSibling);
 
   const getReviews = makeGetReviews(stats.workId, stats.jwtToken);
+  const searchReviews = stats.jwtToken ? makeReviewSearch(stats.workId, stats.jwtToken) : null;
 
   // Mount the AI panel synchronously so a cached summary / Q&A restores instantly —
   // buildMediaSummary reads localStorage and never blocks on the network. Review
@@ -1097,6 +1135,11 @@ const appendScore = async (bookTitle: Element) => {
     initialButtonLabel: '✦ Summarize reviews',
     fetchReviews: () => getReviews().then(collectReviewTexts),
     ask: { placeholder: 'Ask about this book…', questionPrompt: GR_QUESTION_PROMPT, qaCacheKey: currentId ? `gr_summary_${currentId}` : null },
+    // With the endpoint, an Ask may Search every review; a row opens it in the search box.
+    searchAsk: searchReviews ? {
+      search: searchWith((terms) => searchReviews(terms).then((hit) => hit.matches), (r) => r.body, (r) => r.rating),
+      open: (query) => runSearch(summarySection, query),
+    } : undefined,
   });
 
   // Ratings-only fetch (fast) for the recent ratio + the picks' recent-% threshold.
@@ -1105,8 +1148,8 @@ const appendScore = async (bookTitle: Element) => {
     ? `Recent: ${Math.round(recentRatio * 100)}%`
     : 'Recent: N/A';
 
-  if (stats.jwtToken && reviewTotal) {
-    summarySection.appendChild(buildReviewSearch(stats.workId, stats.jwtToken, reviewTotal));
+  if (searchReviews && reviewTotal) {
+    summarySection.appendChild(buildReviewSearch(searchReviews, reviewTotal));
   } else {
     const reviews = await getReviews();
     if (reviews.length) {

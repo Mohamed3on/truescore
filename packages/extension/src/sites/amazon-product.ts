@@ -3,7 +3,8 @@ import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas, el } from '../shared/utils';
 import { adjust, ratioFromTally } from '../shared/recency';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
-import { buildSearchSection } from '../shared/review-search';
+import { buildSearchSection, runSearch, searchWith } from '../shared/review-search';
+import type { SearchAsk } from '../shared/review-ask';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 import { createIslandShell } from '../shared/score-island';
 
@@ -499,7 +500,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   // Amazon's review AJAX accepts filterByKeyword, so this spans EVERY review —
   // not just the pages we scored — mirroring the Google Maps label search. One
   // paged fetch per OR-term, unioned by review id (sharing one DOMParser).
-  const fetchKeywordTerm = async (term: string, seen: Set<string>): Promise<FilteredReview[]> => {
+  const fetchKeywordTerm = async (term: string, seen: Set<string>, onFound?: (found: number) => void): Promise<FilteredReview[]> => {
     const out: FilteredReview[] = [];
     await fetchReviewPages((doc) => {
       const reviews = doc.querySelectorAll('[data-hook="review"]');
@@ -513,14 +514,27 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         out.push(parseFilteredReview(review));
       }
       if (!added) return 'stop';
+      onFound?.(seen.size);
     }, { filterByKeyword: term });
     return out;
   };
 
-  const fetchReviewsByKeyword = async (terms: string[]): Promise<FilteredReview[]> => {
+  const fetchReviewsByKeyword = async (terms: string[], onFound?: (found: number) => void): Promise<FilteredReview[]> => {
     const seen = new Set<string>();
-    const groups = await Promise.all(terms.map((t) => fetchKeywordTerm(t, seen)));
+    const groups = await Promise.all(terms.map((t) => fetchKeywordTerm(t, seen, onFound)));
     return groups.flat();
+  };
+
+  const keywordText = (r: FilteredReview) => {
+    const t = [r.title, r.body].filter(Boolean).join('. ');
+    return t.length >= 20 ? t : '';
+  };
+
+  // An Ask of the product, or of a keyword's matches, may Search every review
+  // through the same keyword fetch; a Search's row opens it in the search box.
+  const searchAsk: SearchAsk = {
+    search: searchWith(fetchReviewsByKeyword, keywordText, (r) => r.rating),
+    open: (query) => runSearch(wrapper, query),
   };
 
   // The shared section (shared/review-search.ts) owns the box, the OR-term
@@ -541,10 +555,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         body: r.body,
         meta: [r.verified ? '\u2713 Verified' : '', r.meta].filter(Boolean).join(' \u00b7 '),
       }),
-      toText: (r) => {
-        const t = [r.title, r.body].filter(Boolean).join('. ');
-        return t.length >= 20 ? t : '';
-      },
+      toText: keywordText,
       summaryPrompt: keywordSummaryPrompt,
       exampleQuery: 'battery OR strap',
       mountSummarize: (host, query, texts) => buildSummarizeWidget({
@@ -553,6 +564,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         summaryPrompt: keywordSummaryPrompt(query),
         fetchReviews: async () => texts,
         questionPlaceholder: `Ask about \u201c${query}\u201d reviews\u2026`,
+        searchAsk,
       }),
     }));
   };
@@ -566,6 +578,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       cacheKey: `review-summary-${cacheASIN}`,
       summaryPrompt: PRODUCT_SUMMARY_PROMPT,
       fetchReviews: fetchFreshReviewTexts,
+      searchAsk,
     });
   }
 

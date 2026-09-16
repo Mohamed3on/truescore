@@ -548,6 +548,61 @@
   padding: 4px 0;
 }
 
+/* An Ask as it runs: a row per Search the model had the page run over every
+   review (pulsing while it pages, then kept as the Answer's provenance — click
+   to open it in the search box), and a reading pulse until the first words. */
+.ars-ask-searches { display: flex; flex-direction: column; gap: 5px; }
+.ars-ask-searches:not(:empty) { margin-bottom: 10px; }
+.ars-ask-search {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  font-family: inherit;
+  color: #57534E;
+  background: #FFFFFF;
+  border: 1px solid #E7E5E4;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.ars-ask-search:hover:not(:disabled) { border-color: #0F766E; }
+.ars-ask-search:disabled { cursor: default; }
+.ars-ask-search-label,
+.ars-ask-reading:empty::before {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #A8A29E;
+  white-space: nowrap;
+}
+.ars-ask-search-terms {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ars-ask-search-pct,
+.ars-ask-search-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.ars-ask-search-pct { font-size: 12px; font-weight: 700; }
+.ars-ask-search-count { font-size: 11px; color: #A8A29E; }
+.ars-ask-reading:empty::before { content: 'Reading reviews…'; }
+.ars-ask-search.live .ars-ask-search-label,
+.ars-ask-search.live .ars-ask-search-count,
+.ars-ask-reading:empty::before { animation: ars-ask-pulse 1.5s ease-in-out infinite; }
+@keyframes ars-ask-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 /* Topic breakdown (Etsy curated aspect tags) */
 .ars-topics { display: flex; flex-direction: column; }
 .ars-wrapper > .ars-topics { animation: ars-enter 0.35s cubic-bezier(0.25, 1, 0.5, 1) 0.2s both; }

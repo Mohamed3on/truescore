@@ -19,7 +19,7 @@ and `gmaps-shared`.
 - **SummaryHighlight** — one verdict bullet: `{ text, sentiment }`. Distinct from **Chip** — both used to be called "highlight".
 - **items** (dish chips) — short praised dish/menu terms from the Summary, rendered as their own chips below the topic chips and auto-scored via a **Search** each; clicking one opens that search.
 - **Search** — arbitrary review-text search within a place, run by the user or by the model during an **Ask**. A Gmail-style ` OR ` operator (`parseOrQuery`, any case) splits the query into terms; each is searched separately and the matches are unioned (dedup by `reviewId`). _Avoid_: label search (extension UI copy only).
-- **Ask** — a free-form question about a Place, or about a Chip's or Search's reviews, answered by the LLM from a **Sample**. When the Sample doesn't settle it, the model runs its own Searches over every review of the Place before answering. Its output is the **Answer**.
+- **Ask** — a free-form question about a Place, or about a Chip's or Search's reviews, answered by the LLM from a **Sample**. When the Sample doesn't settle it, the model runs its own Searches over every review of the Place before answering. Its output is the **Answer**. Amazon and Goodreads Asks work the same way in the extension, on the popup's model, with each Search going through that site's own review search.
 - **Sample** — the reviews an Ask starts from: whatever was collected before the score stabilized, or the Chip/Search subset being asked about. Never the Place's full review set.
 
 ## Architecture vocabulary
