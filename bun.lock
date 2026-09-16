@@ -35,6 +35,10 @@
     },
     "packages/gmaps-shared": {
       "name": "@truescore/gmaps-shared",
+      "dependencies": {
+        "ai": "^7.0.101",
+        "zod": "^4.4.3",
+      },
     },
     "packages/web": {
       "name": "@truescore/web",

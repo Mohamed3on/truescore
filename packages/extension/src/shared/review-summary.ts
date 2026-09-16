@@ -1,7 +1,7 @@
 import { getActiveLLM } from './config';
 import { el, renderMarkdown, renderMarkdownInline } from './utils';
 import { cacheGet, cacheSet } from './cache';
-import { loadLlm } from './llm';
+import { summarize } from './llm';
 import { findQA, loadQAs, removeQA, saveQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
 import type { AskSearch } from '@truescore/gmaps-shared';
@@ -90,9 +90,9 @@ const SUMMARY_SCHEMA = {
 };
 
 // One pass over the reviews on the popup's model: free-form text for a null
-// schema, else an object matching it (see src/llm.ts).
-export const llmSummarize = async (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null = SUMMARY_SCHEMA): Promise<any> =>
-  (await loadLlm()).summarize(reviewTexts, prompt, schema);
+// schema, else an object matching it (see llm.ts).
+export const llmSummarize = (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null = SUMMARY_SCHEMA): Promise<any> =>
+  summarize(reviewTexts, prompt, schema);
 
 export const renderFreeFormAnswer = (container: HTMLElement, text: string) => {
   container.textContent = '';
@@ -286,14 +286,13 @@ export const buildSummarizeWidget = ({
     try {
       const reviews = await loadReviews();
       btn.textContent = '\u23F3 Asking\u2026';
-      const prompt = `${withContext(questionPrompt)}\n\nQuestion: ${question}`;
       let answer: string, searches: AskSearch[] | undefined;
       if (searchAsk) {
         summaryPanel.style.display = 'block';
         panelMode = 'answer';
-        ({ text: answer, searches } = await askReviews(summaryPanel, 'ars-answer', searchAsk, reviews, prompt));
+        ({ text: answer, searches } = await askReviews(summaryPanel, 'ars-answer', searchAsk, reviews, withContext(questionPrompt), question));
       } else {
-        answer = await llmSummarize(reviews, prompt, null);
+        answer = await llmSummarize(reviews, `${withContext(questionPrompt)}\n\nQuestion: ${question}`, null);
         showAnswer(answer);
       }
       bumpRateLimit();
@@ -537,12 +536,11 @@ export const buildMediaSummary = ({
     try {
       const texts = await fetchReviews();
       if (!texts.length) throw new Error('No written reviews found yet.');
-      const prompt = `${ask.questionPrompt}\n\nQuestion: ${question}`;
       let answer: string, searches: AskSearch[] | undefined;
-      if (searchAsk) ({ text: answer, searches } = await askReviews(body, `${p}-text`, searchAsk, texts, prompt));
+      if (searchAsk) ({ text: answer, searches } = await askReviews(body, `${p}-text`, searchAsk, texts, ask.questionPrompt, question));
       else {
         note(`${p}-progress`, '⏳ Asking…');
-        answer = (await llmSummarize(texts, prompt, null)) as string;
+        answer = (await llmSummarize(texts, `${ask.questionPrompt}\n\nQuestion: ${question}`, null)) as string;
         renderAnswer(answer);
       }
       bumpRateLimit();

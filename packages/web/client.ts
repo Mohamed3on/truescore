@@ -1,9 +1,10 @@
 import { renderMarkdown, renderMarkdownInline } from './markdown';
 import { beginPlace, currentPlace, endPlace, type PlaceEpoch } from './place-session';
 import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz, slotsOf } from './hours';
+import { DefaultChatTransport } from 'ai';
 import {
   fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
-  type AskSearch, type AskView, type SearchReviews,
+  type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
@@ -264,7 +265,7 @@ async function askChipPanel() {
   const answer = el('div', 'answer');
   chipBody.replaceChildren(answer);
   try {
-    await streamAsk(answer, { featureId: epoch.featureId, question: q, filter, reviewTexts }, epoch);
+    await streamAsk(answer, q, { featureId: epoch.featureId, filter, reviewTexts }, epoch);
     if (epoch.alive) chipQuestionInput.value = '';
   } catch (e) {
     if (epoch.alive) setStatus(e instanceof Error ? e.message : String(e), true);
@@ -278,7 +279,7 @@ async function askChipPanel() {
 // a reading pulse while the model works, the Answer's markdown as it's written,
 // and for a replayed Answer when it was written + Ask again. Searches go through
 // /api/search, the cached Search the search box runs.
-async function streamAsk(box: HTMLElement, body: AskRequest, epoch: PlaceEpoch) {
+async function streamAsk(box: HTMLElement, question: string, body: Omit<AskRequest, 'messages'>, epoch: PlaceEpoch) {
   const rows = el('div', 'ask-searches');
   const text = el('div', 'ask-text reading');
   const note = el('div', 'ask-note');
@@ -292,7 +293,7 @@ async function streamAsk(box: HTMLElement, body: AskRequest, epoch: PlaceEpoch) 
     return null;
   };
   let shown: AskView | undefined;
-  await runAsk('/api/ask', body, search, (v) => {
+  await runAsk(new DefaultChatTransport<AskMessage>({ api: '/api/ask', body }), question, search, (v) => {
     if (!epoch.alive) return ctrl.abort();
     if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map(askSearchRow));
     if (v.text !== shown?.text) renderMarkdown(text, v.text);
@@ -301,7 +302,7 @@ async function streamAsk(box: HTMLElement, body: AskRequest, epoch: PlaceEpoch) 
       const again = el('button', 'ghost-btn', 'ASK AGAIN');
       again.type = 'button';
       again.addEventListener('click', () => {
-        streamAsk(box, { ...body, force: true }, epoch).catch((e) => {
+        streamAsk(box, question, { ...body, force: true }, epoch).catch((e) => {
           if (epoch.alive) setStatus(e instanceof Error ? e.message : String(e), true);
         });
       });
@@ -1269,7 +1270,7 @@ askForm.addEventListener('submit', async (e) => {
   askBtn.disabled = true;
   setStatus('');
   try {
-    await streamAsk(answerEl, { featureId: epoch.featureId, question: q }, epoch);
+    await streamAsk(answerEl, q, { featureId: epoch.featureId }, epoch);
     if (epoch.alive) questionInput.value = '';
   } catch (e) {
     if (epoch.alive) setStatus(e instanceof Error ? e.message : String(e), true);

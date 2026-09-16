@@ -54,17 +54,6 @@ await esbuild.build({
   minify: false,
 });
 
-// The extension's LLM calls (AI SDK): an ES module site scripts import on first
-// use (shared/llm.ts), so pages that never summarize or ask don't parse the SDK.
-await esbuild.build({
-  entryPoints: ['src/llm.ts'],
-  bundle: true,
-  outdir: OUT,
-  format: 'esm',
-  target: ['chrome120'],
-  minify: false,
-});
-
 // Bundle popup
 await esbuild.build({
   entryPoints: ['src/popup/popup.ts'],

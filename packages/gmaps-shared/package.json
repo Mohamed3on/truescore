@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "main": "src/index.ts",
+  "dependencies": {
+    "ai": "^7.0.101",
+    "zod": "^4.4.3"
+  },
   "exports": {
     ".": "./src/index.ts"
   }

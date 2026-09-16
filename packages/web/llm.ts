@@ -1,9 +1,9 @@
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject, generateText, NoObjectGeneratedError, streamText, tool, type ModelMessage, type ToolResultPart } from 'ai';
+import { convertToModelMessages, generateObject, generateText, NoObjectGeneratedError, streamText } from 'ai';
 import { z } from 'zod';
-import { LLM_PROVIDERS, REASONING_EFFORTS, type AskEvent, type AskSearch, type AskSearchResult, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
+import { LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, type AskMessage, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
 import { cleanItems, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
 
@@ -156,14 +156,7 @@ ${NOTES}${removal ? `\n\n${removal} If they do, add one negative highlight for i
   return { verdict: verdict.trim(), ...structured };
 }
 
-// A Search's matches beyond the Sample, capped so a common word on a big place
-// can't flood the context (texts arrive longest-first, the most substantive).
-const SEARCH_HITS_MAX = 100;
-// Rounds of Searches before the model must answer.
-const SEARCH_ROUNDS_MAX = 2;
-
 const SEARCH_NOTE = `The reviews given are a sample. When they don't settle the question, call searchReviews before answering: it searches every review of this place. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde). When the sample settles it, just answer.`;
-const SEARCH_FAILED = `Search is unavailable right now. Answer from the sample, and say you could only check part of the reviews.`;
 
 // What every Ask shares leads the prompt — these instructions and the tool —
 // then the place's Sample, closed by a cache breakpoint; only the scope and
@@ -176,85 +169,29 @@ ${NOTES}
 ${SEARCH_NOTE}`;
 const CACHE_BREAKPOINT = { openai: { promptCacheBreakpoint: { mode: 'explicit' as const } } };
 
-// No `execute`: calling it ends the round, and the call goes to the client,
-// which runs the Search its own way and answers with the next request.
-const searchReviews = tool({
-  description: 'Search every review of this place, not just the sample, for any of the terms. Returns how many reviews match (found); their TrueScore (scorePct: the net share of trusted reviewers rating 5★ over 1★, from -100 to 100, resting on trustedReviews of them — cite it when it helps); and the matches not already in the sample (reviews).',
-  inputSchema: z.object({ query: z.string().describe('Terms joined with " OR "') }),
-});
+const SEARCH_DESCRIPTION = 'Search every review of this place, not just the sample, for any of the terms. Returns how many reviews match (found); their TrueScore (scorePct: the net share of trusted reviewers rating 5★ over 1★, from -100 to 100, resting on trustedReviews of them — cite it when it helps); and the matches not already in the sample (reviews).';
 
-export type AskRound = { question: string; history: ModelMessage[]; results: AskSearchResult[] };
 export type AskOptions = { filterQuery?: string; provider?: Provider; reasoningEffort?: ReasoningEffort; abortSignal?: AbortSignal };
 
-// The Searches that reached an Answer, in the order they ran: each tool call's
-// query paired with the result it got back (the JSON ask() wrote, or null for
-// a Search the client couldn't run).
-const searchesIn = (messages: ModelMessage[]): AskSearch[] => {
-  const queries = new Map<string, string>();
-  const searches: AskSearch[] = [];
-  for (const m of messages) {
-    if (m.role === 'assistant' && Array.isArray(m.content)) {
-      for (const p of m.content) if (p.type === 'tool-call') queries.set(p.toolCallId, String((p.input as { query?: unknown }).query ?? ''));
-    } else if (m.role === 'tool') {
-      for (const p of m.content) {
-        if (p.type !== 'tool-result') continue;
-        const r = p.output.type === 'json' ? p.output.value as { found: number; scorePct: number; trustedReviews: number } : null;
-        searches.push({ query: queries.get(p.toolCallId) ?? '', done: true, found: r?.found ?? null, ...(r && { scorePct: r.scorePct, trustedReviews: r.trustedReviews }) });
-      }
-    }
-  }
-  return searches;
-};
-
-// One round of an Ask. The model either writes the Answer — streamed as deltas,
-// then settled — or calls for Searches: `search` hands the client the calls and
-// the round's messages, which come back verbatim as `history` with the matches
-// as `results`, appended here as tool results. Nothing is kept between rounds.
-// Resolves to the settled Answer and the Searches behind it (for caching), or
-// undefined when the round ended in Searches instead.
-export async function ask({ placeName, reviewTexts, removedReviews }: Subject, { question, history, results }: AskRound, emit: (e: AskEvent) => void, { filterQuery, provider = active(), reasoningEffort, abortSignal }: AskOptions = {}): Promise<{ answer: string; searches: AskSearch[] } | undefined> {
+// One round of an Ask (see AskMessage): the model streams the Answer, or calls
+// for Searches, which end the round.
+export async function ask({ placeName, reviewTexts, removedReviews }: Subject, messages: AskMessage[], { filterQuery, provider = active(), reasoningEffort, abortSignal }: AskOptions = {}) {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const removal = removalNote(removedReviews);
-  const seen = new Set(reviewTexts);
-  const past: ModelMessage[] = results.length
-    ? [...history, {
-      role: 'tool',
-      content: results.map(({ id, matches: m }): ToolResultPart => ({
-        type: 'tool-result', toolCallId: id, toolName: 'searchReviews',
-        output: m
-          ? { type: 'json', value: { found: m.texts.length, scorePct: m.scorePct, trustedReviews: m.trustedReviews, reviews: m.texts.filter((t) => !seen.has(t)).slice(0, SEARCH_HITS_MAX) } }
-          : { type: 'error-text', value: SEARCH_FAILED },
-      })),
-    }]
-    : history;
-  const searched = past.filter((m) => m.role === 'tool').length;
-
-  const result = streamText({
+  const tools = { searchReviews: searchReviewsTool(reviewTexts, SEARCH_DESCRIPTION) };
+  const history = await convertToModelMessages(messages.slice(1), { tools });
+  return streamText({
     model, providerOptions, maxOutputTokens: 32768, abortSignal,
     instructions: ASK_INSTRUCTIONS,
     messages: [{
       role: 'user',
       content: [
         { type: 'text', text: reviewBlock(reviewTexts), providerOptions: CACHE_BREAKPOINT },
-        { type: 'text', text: `\n\n---\n\n${removal ? `${removal}\n\n` : ''}About: ${subjectOf(placeName, filterQuery)}\n\nQuestion: ${question}` },
+        { type: 'text', text: `\n\n---\n\n${removal ? `${removal}\n\n` : ''}About: ${subjectOf(placeName, filterQuery)}\n\nQuestion: ${questionOf(messages)}` },
       ],
-    }, ...past],
-    tools: { searchReviews },
-    toolChoice: searched < SEARCH_ROUNDS_MAX ? 'auto' : 'none',
+    }, ...history],
+    tools,
+    toolChoice: searchesLeft(history) ? 'auto' : 'none',
+    onFinish: ({ usage }) => report(provider, 'ask', usage),
   });
-  for await (const part of result.stream) {
-    if (part.type === 'text-delta') emit({ type: 'delta', text: part.text });
-    else if (part.type === 'error') throw part.error;
-  }
-  report(provider, 'ask', await result.usage);
-
-  const calls = (await result.toolCalls).filter((c) => !c.dynamic);
-  if (calls.length) {
-    emit({ type: 'search', searches: calls.map((c) => ({ id: c.toolCallId, query: c.input.query })), history: [...past, ...await result.responseMessages] });
-    return;
-  }
-  const answer = (await result.text).trim();
-  if (!answer) throw new Error('No answer came back — try again');
-  emit({ type: 'answer', answer });
-  return { answer, searches: searchesIn(past) };
 }

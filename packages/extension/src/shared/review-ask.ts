@@ -1,5 +1,5 @@
-import { parseOrQuery, type AskSearch, type AskView, type SearchReviews } from '@truescore/gmaps-shared';
-import { loadLlm } from './llm';
+import { askViewOf, parseOrQuery, runAsk, type AskSearch, type AskView, type SearchReviews } from '@truescore/gmaps-shared';
+import { askTransport } from './llm';
 import { addCommas, el, npsColor, renderMarkdown } from './utils';
 
 // What lets a page's Ask Search every one of its reviews (see searchWith);
@@ -43,12 +43,11 @@ export const mountAskView = (panel: HTMLElement, answerClass: string, open?: (qu
   };
 };
 
-// Ask `prompt` of the `sample` reviews into `panel` (see src/llm.ts). Stops once
-// the panel leaves the page.
-export const askReviews = async (panel: HTMLElement, answerClass: string, ask: SearchAsk, sample: string[], prompt: string): Promise<AskView> => {
+// Ask `question` of the `sample` reviews into `panel`, on the popup's model with
+// the site's `prompt` (see llm.ts askTransport). Stops once the panel leaves the page.
+export const askReviews = async (panel: HTMLElement, answerClass: string, ask: SearchAsk, sample: string[], prompt: string, question: string): Promise<AskView> => {
   const draw = mountAskView(panel, answerClass, ask.open);
-  draw({ searches: [], text: '', done: false });
-  const { streamAsk } = await loadLlm();
+  draw(askViewOf(undefined));
   const ctrl = new AbortController();
-  return streamAsk(sample, prompt, ask.search, (v) => (panel.isConnected ? draw(v) : ctrl.abort()), ctrl.signal);
+  return runAsk(await askTransport(prompt, sample), question, ask.search, (v) => (panel.isConnected ? draw(v) : ctrl.abort()), ctrl.signal);
 };

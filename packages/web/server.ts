@@ -1,7 +1,9 @@
 import {
+  askViewOf,
+  questionOf,
   statsForReviews,
   textReviewsFor,
-  type AskEvent,
+  type AskMessage,
   type AskRequest,
   type CachedResponse,
   type Chip,
@@ -26,11 +28,11 @@ import {
 import { resolvePlace } from './resolve';
 import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
-import type { ModelMessage } from 'ai';
+import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, harvestQuick, scoreHighlight } from './highlights';
-import { answerKey, cache, type CacheEntry } from './cache';
+import { answerKey, cache, type CachedAnswer, type CacheEntry } from './cache';
 import { logEvent } from './events';
 import { createInflight } from './inflight';
 import index from './index.html';
@@ -71,6 +73,21 @@ function friendlyError(e: unknown): string {
   return m;
 }
 const errBody = (e: unknown) => ({ error: friendlyError(e) });
+
+// A kept Answer, streamed as a fresh one would be: its Searches, then its text,
+// with when it was written.
+const replayAnswer = ({ answer, searches, ts }: CachedAnswer) => createUIMessageStream<AskMessage>({
+  execute: ({ writer }) => {
+    writer.write({ type: 'start', messageMetadata: { answeredAt: ts } });
+    searches.forEach(({ query, found, scorePct = 0, trustedReviews = 0 }, i) => {
+      writer.write({ type: 'tool-input-available', toolCallId: `${i}`, toolName: 'searchReviews', input: { query } });
+      writer.write({ type: 'tool-output-available', toolCallId: `${i}`, output: { found: found ?? 0, scorePct, trustedReviews, texts: [] } });
+    });
+    writer.write({ type: 'text-start', id: 'answer' });
+    writer.write({ type: 'text-delta', id: 'answer', delta: answer });
+    writer.write({ type: 'text-end', id: 'answer' });
+  },
+});
 const mapsUrlFor = (featureId: string) => `https://www.google.com/maps?q=&ftid=${featureId}`;
 
 // NDJSON streaming response. The producer pushes one JSON object per line via
@@ -696,19 +713,20 @@ Bun.serve({
         }
       },
     },
-    // CORS-allowed. Web caller passes `{ featureId, question }` and we read
-    // entry.score.reviews from cache; the extension passes `{ name, reviews,
-    // question }` directly so the answer comes from the maps-tab's local
-    // review scrape, no need to round-trip the place through /api/lookup.
-    // Streams one round of AskEvents. When the model wants Searches, the client
-    // runs them its own way and asks again with the round's history and their
-    // matches (see llm.ask) — the server keeps nothing between rounds, and a
-    // client leaving mid-answer stops the model.
+    // CORS-allowed. Web caller passes `{ featureId, messages }` and we read
+    // entry.score.reviews from cache; the extension passes `{ name, reviewTexts,
+    // messages }` directly so the answer comes from the maps-tab's local review
+    // scrape, no need to round-trip the place through /api/lookup. Streams one
+    // round of the Ask (see AskMessage): when the model calls for Searches, the
+    // client runs them its own way and sends the Ask back with their matches —
+    // the server keeps nothing between rounds, and a client leaving mid-answer
+    // stops the model.
     '/api/ask': {
       POST: async (req) => {
         try {
           const body = await req.json() as AskRequest;
-          const { featureId, question } = body;
+          const { featureId, messages = [] } = body;
+          const question = questionOf(messages);
           if (!question) return corsJson({ error: 'missing question' }, 400);
 
           const entry = featureId ? cache.get(featureId) : undefined;
@@ -716,35 +734,30 @@ Bun.serve({
             entry, name: body.name, reviewTexts: body.reviewTexts, reviews: entry?.score?.reviews, removedReviews: body.removedReviews,
             hint: 'look up the place first or pass reviewTexts in the body',
           });
-          // `history` is the model's own messages echoed back; streamText
-          // validates them (and refuses system messages) before they reach it.
-          const round = { question, history: (body.history ?? []) as ModelMessage[], results: body.results ?? [] };
           const key = answerKey(body.filter, question);
+          const headers = { 'Access-Control-Allow-Origin': '*' };
 
           // The same question of the same scope within a day replays its Answer.
-          const replay = entry && !body.force && !round.history.length ? entry.answers?.[key] : undefined;
-          if (cache.answerServable(replay)) {
-            return ndjsonStream<AskEvent>(
-              async (write) => write({ type: 'answer', answer: replay.answer, searches: replay.searches, answeredAt: replay.ts }),
-              { 'Access-Control-Allow-Origin': '*' },
-            );
-          }
+          const replay = entry && !body.force && messages.length === 1 ? entry.answers?.[key] : undefined;
+          if (cache.answerServable(replay)) return createUIMessageStreamResponse({ headers, stream: replayAnswer(replay) });
 
-          return ndjsonStream<AskEvent>(
-            async (write) => {
-              const settled = await ask(subject, round, write, {
-                filterQuery: body.filter?.trim() || undefined,
-                provider: parseProvider(body.provider),
-                reasoningEffort: parseReasoningEffort(body.reasoningEffort),
-                abortSignal: req.signal,
-              });
-              // Only a clean Answer is worth replaying: every Search it asked for ran.
-              if (entry && featureId && settled?.searches.every((s) => s.found != null)) {
-                await cache.putAnswer(featureId, key, { ...settled, ts: Date.now() });
-              }
+          const result = await ask(subject, messages, {
+            filterQuery: body.filter?.trim() || undefined,
+            provider: parseProvider(body.provider),
+            reasoningEffort: parseReasoningEffort(body.reasoningEffort),
+            abortSignal: req.signal,
+          });
+          return result.toUIMessageStreamResponse({
+            headers,
+            originalMessages: messages,
+            onError: friendlyError,
+            // Only a clean Answer is worth replaying: every Search it asked for ran.
+            onFinish: async ({ responseMessage, finishReason, isAborted }) => {
+              const { text, searches } = askViewOf(responseMessage);
+              if (!entry || !featureId || isAborted || finishReason !== 'stop' || !text.trim() || !searches.every((s) => s.done && s.found != null)) return;
+              await cache.putAnswer(featureId, key, { answer: text.trim(), searches, ts: Date.now() });
             },
-            { 'Access-Control-Allow-Origin': '*' },
-          );
+          });
         } catch (e) {
           console.error('[ask]', e);
           return corsJson(errBody(e), errStatus(e));

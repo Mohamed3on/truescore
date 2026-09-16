@@ -21,12 +21,13 @@ LLM-only, as the extension's shipped-in Sample already assumed.
 
 ## Consequences
 
-- `/api/ask` is one round per request. The search tool has no `execute`, so the
-  model's call ends the round; the client runs it and posts again with `history`
-  (the model's messages, echoed back verbatim — streamText validates them) and
-  the matches, which the server appends as tool results. The server holds no
-  state between rounds.
+- `/api/ask` is one round per request, speaking AI SDK's UI message stream. The
+  search tool has no `execute`, so the model's call ends the round; the client
+  runs it and sends the Ask back with the matches as the call's output. The
+  server holds no state between rounds.
 - One extra round trip per Search, and the extension re-uploads its Sample each
   round.
-- The loop lives once in `gmaps-shared` (`runAsk`); each client supplies only
-  its own search.
+- The loop lives once in `gmaps-shared` (`runAsk`, over any AI SDK chat
+  transport). Each client supplies only its own search. Amazon and Goodreads
+  Asks run the same loop against a model in the extension (`DirectChatTransport`)
+  with the same searchReviews tool (`searchReviewsTool`).

@@ -4,8 +4,10 @@ import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEAR
 import { createScoreStore, type Period } from '../shared/score-store';
 import { getReasoningEffort, getProviderChoice } from '../shared/config';
 import { findQA, loadQAs, removeQA, saveQA } from '../shared/qa-history';
+import { DefaultChatTransport } from 'ai';
 import {
   type SummarizeRequest,
+  type AskMessage,
   type AskSearch,
   type AskView,
   type SearchReviews,
@@ -1016,12 +1018,9 @@ const askReviews = async (panel: HTMLElement, job: AskJob, force = false) => {
     const { scorePct, trustedReviews } = statsForReviews(reviews);
     return { texts: textReviewsFor(reviews), scorePct, trustedReviews };
   };
-  let last: AskView | undefined;
-  await runAsk(`${TRUESCORE_API_BASE}/api/ask`, { ...context, reviewTexts: job.reviewTexts, question: job.question, filter: job.filter ?? undefined, force }, search, (v) => {
-    if (!job.live()) return ctrl.abort();
-    paint((last = v));
-  }, ctrl.signal);
-  if (last && job.live()) job.onSettled?.(last);
+  const transport = new DefaultChatTransport<AskMessage>({ api: `${TRUESCORE_API_BASE}/api/ask`, body: { ...context, reviewTexts: job.reviewTexts, filter: job.filter ?? undefined, force } });
+  const settled = await runAsk(transport, job.question, search, (v) => (job.live() ? paint(v) : ctrl.abort()), ctrl.signal);
+  if (job.live()) job.onSettled?.(settled);
 };
 
 // The main ask's Recent questions, as one-click replays under the ask box like

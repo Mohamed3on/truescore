@@ -6,7 +6,11 @@ import { rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
+// Keep Bun's own streams: happy-dom's don't pipe into native ones, which breaks
+// AI SDK's stream readers (gmaps-shared runAsk).
+const { ReadableStream, WritableStream, TransformStream } = globalThis;
 GlobalRegistrator.register();
+Object.assign(globalThis, { ReadableStream, WritableStream, TransformStream });
 
 // db.ts resolves the sqlite path at import time, so it has to be redirected before
 // any test imports it — otherwise `bun test` opens, migrates and writes to the
