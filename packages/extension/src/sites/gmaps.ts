@@ -1,5 +1,5 @@
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, MAPS_CREDS_VERIFIED, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import { getReasoningEffort, getProviderChoice } from '../shared/config';
@@ -269,6 +269,19 @@ const invalidateCreds = () => {
   // timeout would re-serve the creds being declared dead here.
   window.__truescoreMapsCreds = undefined;
   bridgeStorage.set(MAPS_CREDS_KEY, null).catch(() => {});
+};
+
+// A capture proves only that Maps sent a bgkey, not that replaying it works — a
+// flagged session answers every replay with an empty payload. The bridge seeds
+// the server off the VERIFIED event, so announce a set exactly once, when it has
+// returned a real page.
+let verifiedBgkey: string | null = null;
+// Takes the creds the page was actually fetched with, not the current cache — a
+// capture landing mid-run must not be vouched for by someone else's page.
+const markCredsVerified = (creds: MapsCapturedCreds) => {
+  if (creds.bgkey === verifiedBgkey) return;
+  verifiedBgkey = creds.bgkey;
+  document.dispatchEvent(new CustomEvent(MAPS_CREDS_VERIFIED, { detail: creds }));
 };
 
 // Usable creds: the cached set, else ask the capture layer to nudge Maps into
@@ -1038,6 +1051,7 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
         // drop cached reviews that have since been removed.
         if (!nextCursor) store.dropUnseen(sortKey);
         state.pageCount = index + 1;
+        markCredsVerified(creds);
         if (nextCursor) state.cursor = nextCursor;
         scheduleUpdateUI();
 

@@ -1,4 +1,4 @@
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, MAPS_CREDS_CAPTURED } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, MAPS_CREDS_VERIFIED } from '../shared/gmaps-bridge-protocol';
 
 // ISOLATED world, document_start. Bridges chrome.storage.local, which
 // MAIN-world gmaps.ts can't reach itself (request/response via CustomEvents).
@@ -26,10 +26,12 @@ document.addEventListener(STORAGE_SET, (e) => {
   }
 });
 
-// Forward batchexecute creds captured in the MAIN world to the background worker,
-// which reads the matching google.com cookies (the "cookies" permission isn't
-// available to content scripts) and seeds the user's own truescore server.
-document.addEventListener(MAPS_CREDS_CAPTURED, (e) => {
+// Forward batchexecute creds to the background worker, which reads the matching
+// google.com cookies (the "cookies" permission isn't available to content
+// scripts) and seeds the user's own truescore server. Gated on the VERIFIED
+// event, not the raw capture: creds that Google refuses would otherwise be
+// handed to the server, where they break scoring for everyone.
+document.addEventListener(MAPS_CREDS_VERIFIED, (e) => {
   const creds = (e as CustomEvent).detail;
   if (!creds?.bgkey) return;
   try { chrome.runtime.sendMessage({ type: 'seedMapsCreds', creds }); } catch {}
