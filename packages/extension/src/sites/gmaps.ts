@@ -265,8 +265,8 @@ let credsRetried = false; // one fresh-set nudge per place; reset in resetScores
 // how a lifted block gets noticed.
 const REFUSED_KEY = 'rc_maps_refused_until';
 const REFUSED_TTL_MS = 6 * 60 * 60 * 1000;
-// Younger than this, a set can't have expired (they last about a day), so a refusal
-// is the only reason it returns nothing.
+// A set Maps minted this recently hasn't had time to expire, so a refusal is the only
+// reason it returns nothing.
 const FRESH_CREDS_MS = 10 * 60 * 1000;
 let refusedUntil: Record<string, number> = {};
 const isRefused = (account: string) => (refusedUntil[account] ?? 0) > Date.now();
