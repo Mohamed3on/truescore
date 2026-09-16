@@ -250,10 +250,20 @@ let mapsCreds: MapsCapturedCreds | null = window.__truescoreMapsCreds ?? null;
 let credsLoad: Promise<void> | undefined;
 let credsRetried = false; // one expiry-recovery per place; reset in resetScores
 // Google refuses this browser session's replays outright (see the finish block).
-// Deliberately NOT reset per place: the expiry self-heal ends in a Reviews-tab
-// nudge, which moves the UI, and re-learning the same refusal on every place the
-// user opens would move it every time. One nudge per page, then the server.
+// In practice the block sits on the Google account, so it outlives the page and
+// the profile. Learning it again costs a Reviews-tab nudge (the UI moving under
+// the user) plus more replays under the flagged account on every Maps page load,
+// so it is persisted and trusted for a while; the first page load after that
+// probes once more, which is how a lifted block gets noticed.
+const REFUSED_KEY = 'rc_maps_refused_until';
+const REFUSED_TTL_MS = 6 * 60 * 60 * 1000;
 let credsRefused = false;
+const refusalLoad = bridgeStorage.get<number>(REFUSED_KEY)
+  .then((until) => { if (until && until > Date.now()) credsRefused = true; });
+const markCredsRefused = () => {
+  credsRefused = true;
+  bridgeStorage.set(REFUSED_KEY, Date.now() + REFUSED_TTL_MS).catch(() => {});
+};
 // Both sorts finished without a single page on a place Google's own histogram
 // says has reviews — the replay was refused, not the place empty. Reset per place.
 let scoringFailed = false;
@@ -292,6 +302,8 @@ const markCredsVerified = (creds: MapsCapturedCreds) => {
 // Usable creds: the cached set, else ask the capture layer to nudge Maps into
 // emitting one and resolve on the next intercept.
 const ensureCreds = async (): Promise<MapsCapturedCreds | null> => {
+  await refusalLoad;
+  if (credsRefused) return null; // no nudge, no replay under a refused account
   await hydrateCreds();
   return mapsCreds ?? (await window.__truescoreRequestMapsCreds?.()) ?? null;
 };
@@ -1146,7 +1158,7 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
       const counts = readHistogramCounts();
       if (counts && histogramTotal(counts)) {
         scoringFailed = true;
-        credsRefused = true;
+        markCredsRefused();
         updateUI();
         fetchServerScore(getFeatureId()!);
         return;
@@ -1183,7 +1195,13 @@ const startFetching = async () => {
   const featureId = getFeatureId();
   try {
     const creds = await ensureCreds();
-    if (!creds || getFeatureId() !== featureId) return;
+    if (getFeatureId() !== featureId) return;
+    if (!creds) {
+      // A refusal remembered from an earlier page load: straight to the server,
+      // exactly as a later place in the same page would.
+      if (credsRefused && featureId) { scoringFailed = true; updateUI(); fetchServerScore(featureId); }
+      return;
+    }
     for (const key of SORT_KEYS) fetchAllReviews(key, creds);
   } finally {
     kickoffPending = false;
