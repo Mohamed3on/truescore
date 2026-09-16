@@ -34,11 +34,14 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 const SEED_MIN_INTERVAL_MS = 5 * 60 * 1000;
 let lastSeed = { bgkey: '', ts: 0 };
 
-type SeedCreds = Pick<MapsCreds, 'bgkey' | 'bgbind' | 'sessionId' | 'at'>;
+type SeedCreds = Pick<MapsCreds, 'bgkey' | 'bgbind' | 'sessionId' | 'at' | 'authuser'>;
 const seedMapsCreds = async (creds: SeedCreds) => {
   // bgbind may be '': Google stopped sending x-maps-bgbind on the review RPC
   // (gmaps-capture records it empty) and the replay works without it.
   if (!creds?.bgkey || !creds.sessionId || !creds.at) return;
+  // A secondary account's creds only replay with its authuser, which the server
+  // never sends — seeded, every server request would 400.
+  if (creds.authuser && creds.authuser !== '0') return;
   const now = Date.now();
   if (creds.bgkey === lastSeed.bgkey && now - lastSeed.ts < SEED_MIN_INTERVAL_MS) return;
   const { rc_seed_url: url, rc_seed_secret: secret } = await chrome.storage.local.get(['rc_seed_url', 'rc_seed_secret']);

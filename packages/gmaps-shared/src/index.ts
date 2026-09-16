@@ -182,7 +182,9 @@ export const expandSearchTerms = (query: string): string[] =>
 // web: headless browser) and replay them. One token is session-bound — reusable
 // across sorts, pages, highlight-tokens, AND different places, until it expires
 // (verified live), so callers cache a single set of creds globally.
-export type MapsCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; hl?: string };
+// `authuser`: which signed-in account Maps' own request ran as. The token and `at`
+// belong to that account, so a replay without it runs as account 0 and gets a 400.
+export type MapsCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; hl?: string; authuser?: string };
 export type MapsReq = { url: string; init?: { method?: string; headers?: Record<string, string>; body?: string } };
 
 // Lift the session-bound creds off a captured review batchexecute (the only request
@@ -225,7 +227,7 @@ const innerListReq = (featureId: string, sort: SortKey, token: string | null, qu
 const batchExecuteReq = (featureId: string, sort: SortKey, token: string | null, query: string | null, cursor: string, creds: MapsCreds): MapsReq => {
   const fReq = JSON.stringify([[['/MapsUgcPostService.ListUgcPosts', innerListReq(featureId, sort, token, query, cursor, creds.sessionId), null, 'generic']]]);
   return {
-    url: `https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=qv9Egd&hl=${creds.hl || 'en'}&_reqid=${(batchReqId += 100)}&rt=c`,
+    url: `https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=qv9Egd&hl=${creds.hl || 'en'}${creds.authuser ? `&authuser=${encodeURIComponent(creds.authuser)}` : ''}&_reqid=${(batchReqId += 100)}&rt=c`,
     init: {
       method: 'POST',
       headers: {

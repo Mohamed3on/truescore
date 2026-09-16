@@ -21,7 +21,7 @@ export const MAPS_CREDS_VERIFIED = 'truescore-maps-creds-verified';
 export const SERVER_SCORE_GET = 'truescore-server-score-get';
 export const SERVER_SCORE_RESULT = 'truescore-server-score-result';
 
-export type MapsCapturedCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; ts: number };
+export type MapsCapturedCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; authuser?: string; ts: number };
 
 declare global {
   interface Window {

@@ -136,7 +136,9 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
     const bodyStr = typeof body === 'string' ? body : '';
     const { sessionId, at } = credsFromBatchExecute(bgkey, bgbind, bodyStr);
     if (!sessionId) return;
-    const creds: MapsCapturedCreds = { bgkey, bgbind, sessionId, at, ts: Date.now() };
+    // The signed-in account Maps sent this as — the creds only replay as that account.
+    const authuser = new URL(urlStr, location.href).searchParams.get('authuser') ?? undefined;
+    const creds: MapsCapturedCreds = { bgkey, bgbind, sessionId, at, authuser, ts: Date.now() };
     window.__truescoreMapsCreds = creds;
     document.dispatchEvent(new CustomEvent(MAPS_CREDS_CAPTURED, { detail: creds }));
     settleCapture(creds);

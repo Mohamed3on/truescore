@@ -50,6 +50,10 @@ describe('batchexecute request builders', () => {
     expect(req.init!.headers!['x-maps-bgbind']).toBe('BB');
     expect(req.init!.body).toContain('at=AT%3A1'); // url-encoded
   });
+  test('a secondary account rides the url, and account 0 stays implicit', () => {
+    expect(buildListReq(FID, 'newest', { ...creds, authuser: '1' }).url).toContain('&authuser=1&');
+    expect(buildListReq(FID, 'newest', creds).url).not.toContain('authuser');
+  });
 });
 
 describe('credsFromBatchExecute', () => {
