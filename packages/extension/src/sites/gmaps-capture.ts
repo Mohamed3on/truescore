@@ -129,7 +129,10 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
   window.__truescoreRequestMapsCreds = requestCapture;
 
   const storeCreds = (urlStr: string, headers: Record<string, string>, body: unknown) => {
-    if (!urlStr.includes('batchexecute')) return;
+    // Maps' own review request only. Our replays send the same header but no
+    // source-path, and capturing them re-saved a set (and its capture time) on every
+    // replay, so a stale one never gave way to a fresh one.
+    if (!urlStr.includes('batchexecute') || !urlStr.includes('source-path')) return;
     const bgkey = headers['x-maps-bgkey'];
     if (!bgkey) return;
     const bgbind = headers['x-maps-bgbind'] || '';
