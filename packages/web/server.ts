@@ -27,7 +27,7 @@ import { resolvePlace } from './resolve';
 import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import type { ModelMessage } from 'ai';
-import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
+import { summarize, ask, parseAskKind, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, harvestQuick, scoreHighlight } from './highlights';
 import { answerKey, cache, type CacheEntry } from './cache';
@@ -734,6 +734,7 @@ Bun.serve({
             async (write) => {
               const settled = await ask(subject, round, write, {
                 filterQuery: body.filter?.trim() || undefined,
+                kind: parseAskKind(body.kind),
                 provider: parseProvider(body.provider),
                 reasoningEffort: parseReasoningEffort(body.reasoningEffort),
                 abortSignal: req.signal,
