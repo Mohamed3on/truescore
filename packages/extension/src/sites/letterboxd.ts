@@ -74,9 +74,8 @@ type CandidateRecent = { ratio: number | null; ceiling: boolean; floor?: boolean
 
 /**
  * Row meta: the year to tell films apart, and the adjusted score — the number the
- * comparison turns on, marked ≤/≥ when the check stopped at a bound. A pick that
- * reaches it has its recent % appended as its own span (see check); runtime and
- * raw score live in the row's tooltip.
+ * comparison turns on. A pick that reaches it has its recent % appended as its own
+ * span (see check); runtime and raw score live in the row's tooltip.
  */
 function filmMeta(film: any, adjustedText = '…') {
   return film.year ? `${film.year} · ${adjustedText}` : adjustedText;
@@ -354,9 +353,10 @@ async function getRecentRatingsSummary(slug: string | null = null): Promise<Rece
  * `threshold`, assured once even a run of ½★s couldn't drop it below — and, for a
  * pick, which shows its recent % and is marked against `bar`, once the tally is
  * also two standard errors clear of that bar. Verdicts match a full fetch exactly,
- * so every candidate can be checked — a settled film just reports a bound (≤ or ≥)
- * instead of its number. Only complete tallies enter the shared recent cache; a
- * stopped one is kept apart so a revisit can re-check it without refetching.
+ * so every candidate can be checked — that is what keeps a long list affordable.
+ * The bounds are the verdict's alone; the row shows the tally that came back.
+ * Only complete tallies enter the shared recent cache; a stopped one is kept apart
+ * so a revisit can re-check it without refetching.
  */
 async function getCandidateRecentRatings(slug: string, score: number, threshold: number | null, bar: number): Promise<CandidateRecent> {
   const full = await getCachedRecentRatings(slug);
@@ -831,17 +831,20 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
       [{ key: film.slug, item: film, score: film.score, ratio: recent?.ratio ?? null, unresolved: !recent }],
     ).ranked;
     const entry = items.get(film.slug)!;
-    entry.adjusted = pick.adjusted;
+    // Shown and sorted on what the reviews fetched actually ran at. The bound the
+    // verdict rests on assumes every unfetched page hates the film, so it ordered the
+    // list by how early each check stopped rather than by how good the pick is — and
+    // it never crosses the threshold, so this can't disagree with the verdict.
+    const observed = recent?.tally.ratio ?? null;
+    entry.adjusted = observed == null ? pick.adjusted : adjust(film.score, observed);
     entry.passes = pick.passes;
     entry.settled = true;
-    const adjustedText = pick.adjusted == null || pick.unresolved ? '?' : `${recent?.ceiling ? '≤' : recent?.floor ? '≥' : ''}${addCommas(pick.adjusted)}`;
-    entry.meta.textContent = filmMeta(film, adjustedText);
+    entry.meta.textContent = filmMeta(film, entry.adjusted == null || pick.unresolved ? '?' : addCommas(entry.adjusted));
     // Only a pick carries a recent %: a film that didn't reach the threshold is a
-    // receipt, and the ceiling its check stopped at says nothing about how it runs now.
+    // receipt, and what its check saw before giving up says little about how it runs now.
     // Amber marks the one thing worth a second look — a pick this film still beats
     // on its newest reviews, however big the score that got it here.
-    const observed = pick.passes ? recent?.tally.ratio ?? null : null;
-    if (observed != null) {
+    if (pick.passes && observed != null) {
       const trails = observed < bar;
       entry.meta.append(el('span', trails ? 'lbx-recent lbx-trails' : 'lbx-recent', ` · recent ${pctText(observed)}`));
       entry.element.title = `${filmTooltip(film)} · ${recent!.tally.total} recent ratings${trails ? `, short of this film’s ${refPct}%` : ''}`;
