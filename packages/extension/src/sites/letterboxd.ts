@@ -69,15 +69,17 @@ type RecentTally = { total: number; net: number; ratio: number | null };
 const emptyTally = (): RecentTally => ({ total: 0, net: 0, ratio: null });
 const pctText = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
+/** A candidate's recent run: the bound its verdict rests on, and the ratings actually tallied. */
+type CandidateRecent = { ratio: number | null; ceiling: boolean; floor?: boolean; tally: RecentTally };
+
 /**
- * Row meta: the year to tell films apart, the adjusted score the comparison
- * turns on, and the recent % behind it — marked ≤/≥ when its check stopped at a
- * bound. Runtime and raw score live in the row's tooltip instead of on screen.
+ * Row meta: the year to tell films apart, and the adjusted score — the number the
+ * comparison turns on, marked ≤/≥ when the check stopped at a bound. A pick that
+ * reaches it has its recent % appended as its own span (see check); runtime and
+ * raw score live in the row's tooltip.
  */
-function filmMeta(film: any, adjustedText = '…', recent?: { ratio: number | null; ceiling?: boolean; floor?: boolean } | null) {
-  const parts = [film.year, adjustedText];
-  if (recent?.ratio != null) parts.push(`recent ${recent.ceiling ? '≤' : recent.floor ? '≥' : ''}${pctText(recent.ratio)}`);
-  return parts.filter(Boolean).join(' · ');
+function filmMeta(film: any, adjustedText = '…') {
+  return film.year ? `${film.year} · ${adjustedText}` : adjustedText;
 }
 
 function filmTooltip(film: any) {
@@ -347,28 +349,36 @@ async function getRecentRatingsSummary(slug: string | null = null): Promise<Rece
 
 /**
  * Recent ratings for a similar-pick candidate, fetched a page at a time and
- * stopped as soon as the unfetched pages can no longer change the verdict:
+ * stopped as soon as the unfetched pages can no longer change what its row says:
  * hopeless once even a perfect run of 5★s couldn't lift `score` × recent % to
- * `threshold`, assured once even a run of ½★s couldn't drop it below. Verdicts
- * match a full fetch exactly, so every candidate can be checked — a settled film
- * just reports a bound (≤ or ≥) instead of its number. Only complete tallies
- * enter the shared recent cache; a stopped one is kept apart so a revisit can
- * re-check it against the threshold without refetching.
+ * `threshold`, assured once even a run of ½★s couldn't drop it below — and, for a
+ * pick, which shows its recent % and is marked against `bar`, once the tally is
+ * also two standard errors clear of that bar. Verdicts match a full fetch exactly,
+ * so every candidate can be checked — a settled film just reports a bound (≤ or ≥)
+ * instead of its number. Only complete tallies enter the shared recent cache; a
+ * stopped one is kept apart so a revisit can re-check it without refetching.
  */
-async function getCandidateRecentRatings(slug: string, score: number, threshold: number | null): Promise<{ ratio: number | null; ceiling: boolean; floor?: boolean }> {
+async function getCandidateRecentRatings(slug: string, score: number, threshold: number | null, bar: number): Promise<CandidateRecent> {
   const full = await getCachedRecentRatings(slug);
-  if (full) return { ratio: full.ratio, ceiling: false };
+  if (full) return { ratio: full.ratio, ceiling: false, tally: full };
+
+  // Far enough from the bar that the pages left can only move the tally within the
+  // noise CONFIG.RECENT_MARGIN already allows for — taking the widest spread a ±1
+  // tally can have (variance ≤ 1 − p²), so this never claims more than it knows.
+  const clearOfBar = ({ ratio, total }: RecentTally) =>
+    ratio != null && Math.abs(ratio - bar) > 2 * Math.sqrt((1 - ratio * ratio) / total);
 
   // `room` = the most ratings the unfetched pages could still add. With no
   // threshold there is nothing to settle, so every page is fetched.
-  const settle = (tally: { net: number; total: number }, room: number) => {
+  const settle = (tally: RecentTally, room: number): CandidateRecent | null => {
     if (threshold == null) return null;
     const ceiling = ratioFromTally(tally.net + room, tally.total + room);
     const best = adjust(score, ceiling);
-    if (best != null && best < threshold) return { ratio: ceiling, ceiling: true };
+    // A film that can't reach the threshold shows no recent % at all, so it needs no sample.
+    if (best != null && best < threshold) return { ratio: ceiling, ceiling: true, tally };
     const floor = ratioFromTally(tally.net - room, tally.total + room);
     const worst = adjust(score, floor);
-    return worst != null && worst >= threshold ? { ratio: floor, ceiling: false, floor: true } : null;
+    return worst != null && worst >= threshold && clearOfBar(tally) ? { ratio: floor, ceiling: false, floor: true, tally } : null;
   };
   const partial = await getCachedRecentPartial(slug);
   const known = partial && settle(partial, partial.room);
@@ -380,6 +390,7 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
   for (let page = 1; page <= CONFIG.RECENT_RATING_PAGES; page++) {
     const doc = parser.parseFromString(await fetchReviewPage(slug, page), 'text/html');
     tallyRatings(doc, tally);
+    tally.ratio = ratioFromTally(tally.net, tally.total); // kept current: the bar check and the row both read it
     const entries = doc.querySelectorAll('.js-review-body').length;
     if (page === 1) perPage = entries;
     if (!perPage) continue; // unrecognised markup: no bound, fetch every page as before
@@ -391,9 +402,8 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
       return verdict;
     }
   }
-  tally.ratio = ratioFromTally(tally.net, tally.total);
   if (tally.ratio !== null) setCachedRecentRatings(slug, tally);
-  return { ratio: tally.ratio, ceiling: false };
+  return { ratio: tally.ratio, ceiling: false, tally };
 }
 
 // =============================================================================
@@ -805,7 +815,14 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
   paint();
 
   const refPct = Math.round(current.ratio! * 100);
-  const judge = (film: any, recent: { ratio: number | null; ceiling: boolean; floor?: boolean } | null) => {
+  // What a pick's recent % has to clear to count as holding up against this film's:
+  // its own, less the margin a few hundred ratings can't resolve anyway.
+  const bar = current.ratio! - CONFIG.RECENT_MARGIN / 100;
+
+  const check = async (film: any) => {
+    const recent = film.fetchFailed
+      ? null
+      : await getCandidateRecentRatings(film.slug, film.score, threshold, bar).catch(() => null);
     // One verdict, shared with Goodreads (shared/better-picks.ts). A film with no
     // tally at all — unscored, or its fetch out of retries — was never measured, so
     // it keeps the benefit of the doubt instead of counting as one that didn't reach.
@@ -818,33 +835,21 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
     entry.passes = pick.passes;
     entry.settled = true;
     const adjustedText = pick.adjusted == null || pick.unresolved ? '?' : `${recent?.ceiling ? '≤' : recent?.floor ? '≥' : ''}${addCommas(pick.adjusted)}`;
-    entry.meta.textContent = filmMeta(film, adjustedText, recent);
-    // A pick's ratio is exact or a floor (a ceiling only ever fails), so clearing it proves the real % does too.
-    if (pick.passes && recent?.ratio != null && Math.round(recent.ratio * 100) >= refPct - CONFIG.RECENT_MARGIN) {
-      entry.element.classList.add('lbx-hot');
-      entry.element.title = `${filmTooltip(film)} · recent on par with this film’s ${refPct}% or better`;
+    entry.meta.textContent = filmMeta(film, adjustedText);
+    // Only a pick carries a recent %: a film that didn't reach the threshold is a
+    // receipt, and the ceiling its check stopped at says nothing about how it runs now.
+    // Amber marks the one thing worth a second look — a pick this film still beats
+    // on its newest reviews, however big the score that got it here.
+    const observed = pick.passes ? recent?.tally.ratio ?? null : null;
+    if (observed != null) {
+      const trails = observed < bar;
+      entry.meta.append(el('span', trails ? 'lbx-recent lbx-trails' : 'lbx-recent', ` · recent ${pctText(observed)}`));
+      entry.element.title = `${filmTooltip(film)} · ${recent!.tally.total} recent ratings${trails ? `, short of this film’s ${refPct}%` : ''}`;
     }
     if (!entry.passes) entry.element.classList.add('lbx-excluded');
     paint();
   };
-
-  const bounded: any[] = [];
-  const check = async (film: any) => {
-    const recent = film.fetchFailed
-      ? null
-      : await getCandidateRecentRatings(film.slug, film.score, threshold).catch(() => null);
-    if (recent?.floor) bounded.push(film);
-    judge(film, recent);
-  };
   await Promise.all(films.map(check));
-
-  // A pick that won on a floor knows only a lower bound on its recent %. Its whole
-  // run is fetched now, once no verdict is left to wait behind it, so every better
-  // pick ends on its real recent % — and its highlight, if it earns one.
-  await Promise.all(bounded.map(async (film) => {
-    const full = await getRecentRatingsSummary(film.slug).catch(() => null);
-    if (full?.ratio != null) judge(film, { ratio: full.ratio, ceiling: false });
-  }));
 
   if (stats) similarSection.append(debugDetails(stats));
 }

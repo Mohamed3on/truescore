@@ -249,6 +249,9 @@ const MAPS_CREDS_KEY = 'rc_maps_creds';
 let mapsCreds: MapsCapturedCreds | null = window.__truescoreMapsCreds ?? null;
 let credsLoad: Promise<void> | undefined;
 let credsRetried = false; // one expiry-recovery per place; reset in resetScores
+// Both sorts finished without a single page on a place Google's own histogram
+// says has reviews — the replay was refused, not the place empty. Reset per place.
+let scoringFailed = false;
 
 const currentCreds = (): MapsCapturedCreds | null => mapsCreds;
 
@@ -471,6 +474,7 @@ const resetScores = () => {
   removedNoticeCheckedFor = null;
   appStateTriedFor = null;
   credsRetried = false;
+  scoringFailed = false;
   store.reset();
   for (const key of SORT_KEYS) {
     fetchState[key] = makeFetchState();
@@ -1079,6 +1083,16 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
       for (const k of SORT_KEYS) fetchState[k] = makeFetchState(); // let the self-heal relaunch
       window.__truescoreRequestMapsCreds?.(); // nudge a fresh capture → listener relaunches
       return;
+    }
+    // Nothing came back even after that retry, yet the histogram lists reviews:
+    // Google refused the replay rather than the place being empty. (Seen in the
+    // wild: for some sessions the captured bgkey only validates the exact request
+    // body it was minted for, so our own paging params come back as an empty
+    // ListUgcPosts.) Flag it so the panel can say so — rendering nothing at all
+    // reads as a missing extension rather than a failed fetch.
+    if (!SORT_KEYS.some((k) => fetchState[k].pageCount)) {
+      const counts = readHistogramCounts();
+      if (counts && histogramTotal(counts)) { scoringFailed = true; updateUI(); return; }
     }
     const fid = getFeatureId();
     if (fid) store.persistIfReady(`${SCORE_CACHE_PREFIX}${fid}`).catch((e) => console.warn('[gmaps] persist score cache failed', e));
@@ -1725,7 +1739,7 @@ const updateUI = () => {
   // warning that never needed one. Build the panel for a notice alone; the
   // score below renders as '—' until it settles, the same as any other page.
   if (!document.querySelector('.jANrlb')) return;
-  if (!totalCount && !activeRemovedReviews) return;
+  if (!totalCount && !activeRemovedReviews && !scoringFailed) return;
   if (!document.querySelector('#reviews-container')) createUIElements();
 
   const els = cardEls.merged;
@@ -1751,9 +1765,15 @@ const updateUI = () => {
     els.pctEl.childNodes[0].textContent = '—';
     els.pctEl.style.color = '#888';
     els.pctEl.style.textShadow = 'none';
-    els.tooltip.textContent = totalCount === 0 ? 'Scoring…' : 'No reviews in this period';
+    els.tooltip.textContent = scoringFailed
+      ? 'Google refused the review fetch for this session — reload the page to retry'
+      : totalCount === 0 ? 'Scoring…' : 'No reviews in this period';
     els.barFill.style.width = '0%';
-    els.diffEl.style.display = 'none';
+    if (scoringFailed) {
+      els.diffEl.textContent = 'review fetch blocked';
+      els.diffEl.style.color = '#f87171';
+      els.diffEl.style.display = '';
+    } else els.diffEl.style.display = 'none';
   } else {
     const mergedRound = displayRounded;
     els.pctEl.childNodes[0].textContent = `${mergedRound}%`;

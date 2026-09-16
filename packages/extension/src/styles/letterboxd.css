@@ -52,8 +52,6 @@
   display: flex;
   align-items: center;
   gap: .5rem;
-  border-radius: 2px;
-  transition: background-color .5s cubic-bezier(0.16, 1, 0.3, 1), box-shadow .5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .lbx-similar-link {
   color: #40bcf4;
@@ -89,13 +87,9 @@
 .lbx-similar-item.lbx-excluded .lbx-similar-link {
   color: #9ab;
 }
-/* A better pick whose recent % holds up against this film's: a green wash, spread
-   by a shadow so the row keeps its size and its text stays put. */
-.lbx-similar-item.lbx-hot {
-  background: rgba(0, 224, 84, .1);
-  box-shadow: 0 0 0 3px rgba(0, 224, 84, .1);
-}
-.lbx-similar-item.lbx-hot .lbx-similar-meta { color: #00e054; }
+/* A pick's recent %, amber when it trails this film's own — the list's only mark,
+   so the picks that hold up stay plain. */
+.lbx-recent.lbx-trails { color: #e8b86d; }
 .lbx-debug-toggle {
   color: #567;
   font-size: .75rem;
