@@ -24,6 +24,7 @@ import {
   overallPctFromHistogram,
   overallScoreFromHistogram,
   parseOrQuery,
+  readNdjson,
   removedCountEstimate,
   removedReviewsFromPreview,
   reviewAge,
@@ -37,6 +38,7 @@ import {
   textReviewsFor,
   timeAgo,
   type Locale,
+  type LookupEvent,
   type PartialScore,
   type RemovedReviews,
   type Review,
@@ -434,6 +436,39 @@ const hydrateFromCloud = (featureId: string) => {
   }).catch((e) => console.warn('[gmaps] cloud hydrate failed', e));
 };
 
+// Our own replays are refused when Google has flagged this browser session. The
+// server scrapes on its own session, so ask it for the number rather than
+// leaving the panel dead — the same lookup the web app runs.
+let serverScore: PartialScore | null = null;
+const fetchServerScore = async (featureId: string) => {
+  try {
+    const res = await fetch(`${TRUESCORE_API_BASE}/api/lookup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: location.href }),
+    });
+    if (!res.ok || !res.body) return;
+    for await (const ev of readNdjson<LookupEvent>(res.body)) {
+      if (getFeatureId() !== featureId) return;
+      // `throttled` means the server's own scrape came back empty for a place
+      // that has reviews — its wire comment says never to paint that.
+      const score = ev.type === 'lookup' || ev.type === 'refreshed' ? ev.score
+        : ev.type === 'provisional' || ev.type === 'score-progress' ? ev.score
+        : ev.type === 'score' && !ev.throttled ? ev.score
+        : null;
+      // The aggregate, never score.reviews: a cache hit ships only a handful of
+      // review bodies for display, so scoring those would paint a number
+      // computed from ten reviews in place of the server's real one.
+      if (!score) continue;
+      serverScore = score;
+      scoringFailed = false;
+      updateUI();
+    }
+  } catch (e) {
+    console.warn('[gmaps] server score fallback failed', e);
+  }
+};
+
 // Strip review bodies before persisting — they balloon to MBs per place and
 // exhaust the 5MB localStorage quota, silently dropping summaries. Reviews
 // refetch on demand when a chip opens.
@@ -488,6 +523,7 @@ const resetScores = () => {
   appStateTriedFor = null;
   credsRetried = false;
   scoringFailed = false;
+  serverScore = null;
   store.reset();
   for (const key of SORT_KEYS) {
     fetchState[key] = makeFetchState();
@@ -1106,7 +1142,12 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
     // reads as a missing extension rather than a failed fetch.
     if (!SORT_KEYS.some((k) => fetchState[k].pageCount)) {
       const counts = readHistogramCounts();
-      if (counts && histogramTotal(counts)) { scoringFailed = true; updateUI(); return; }
+      if (counts && histogramTotal(counts)) {
+        scoringFailed = true;
+        updateUI();
+        void fetchServerScore(getFeatureId()!);
+        return;
+      }
     }
     const fid = getFeatureId();
     if (fid) store.persistIfReady(`${SCORE_CACHE_PREFIX}${fid}`).catch((e) => console.warn('[gmaps] persist score cache failed', e));
@@ -1741,7 +1782,16 @@ const scheduleUpdateUI = () => {
 };
 
 const updateUI = () => {
-  const { totalCount, totalAll, totalTrusted, mergedPct } = store.mergedStats(currentOption);
+  let { totalCount, totalAll, totalTrusted, mergedPct } = store.mergedStats(currentOption);
+  // Nothing of our own and the server scored it for us. Its number is all-time,
+  // so the period tabs keep their own (empty) view rather than relabelling an
+  // all-time score as this month's.
+  const usingServer = !totalCount && !!serverScore && currentOption === 'total';
+  if (usingServer) {
+    totalCount = totalAll = serverScore!.totalReviews;
+    totalTrusted = serverScore!.trustedReviews;
+    mergedPct = serverScore!.ratio ?? serverScore!.scorePct / 100;
+  }
   let anyFetching = false, allDone = true;
   for (const k of SORT_KEYS) {
     if (fetchState[k].isFetching) anyFetching = true;
@@ -1794,9 +1844,11 @@ const updateUI = () => {
     const sortTotal = (k: SortKey) => store.sortTotal(k, currentOption);
     const relLabel = sortTotal('relevant') ? `${toPct(store.scorePct('relevant', currentOption))}%` : '—';
     const newLabel = sortTotal('newest') ? `${toPct(store.scorePct('newest', currentOption))}%` : '—';
-    els.tooltip.textContent = adjusted
-      ? `Raw: ${toPct(mergedPct)}% · Relevant: ${relLabel} · Newest: ${newLabel}`
-      : `Relevant: ${relLabel} · Newest: ${newLabel}`;
+    els.tooltip.textContent = usingServer
+      ? "Scored by truescore.mohamed3on.com — this browser's Google session is refusing review fetches"
+      : adjusted
+        ? `Raw: ${toPct(mergedPct)}% · Relevant: ${relLabel} · Newest: ${newLabel}`
+        : `Relevant: ${relLabel} · Newest: ${newLabel}`;
 
     if (fullPct !== null) {
       const diff = mergedRound - fullPct;
@@ -1852,6 +1904,9 @@ const updateUI = () => {
     // the banner says how many were removed, this says what it cost.
     adjusted ? `from ${toPct(mergedPct)}% · ${addCommas(removedCount)} removed of ${addCommas(placeTotal)}` : '',
     headReview?.timestamp ? `newest review ${timeAgo(headReview.timestamp / 1000)}` : '',
+    // Not this browser's own scrape — say so rather than passing off the
+    // server's session as a local result.
+    usingServer ? 'via truescore' : '',
   ].filter(Boolean);
   const detailText = parts.join(' · ');
   if (detailText !== els.detailEl.textContent) els.detailEl.textContent = detailText;
