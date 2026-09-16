@@ -70,7 +70,7 @@ const emptyTally = (): RecentTally => ({ total: 0, net: 0, ratio: null });
 const pctText = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
 /** A candidate's recent run: the bound its verdict rests on, and the ratings actually tallied. */
-type CandidateRecent = { ratio: number | null; ceiling: boolean; floor?: boolean; tally: RecentTally };
+type CandidateRecent = { ratio: number | null; tally: RecentTally };
 
 /**
  * Row meta: the year to tell films apart, and the adjusted score — the number the
@@ -360,7 +360,7 @@ async function getRecentRatingsSummary(slug: string | null = null): Promise<Rece
  */
 async function getCandidateRecentRatings(slug: string, score: number, threshold: number | null, bar: number): Promise<CandidateRecent> {
   const full = await getCachedRecentRatings(slug);
-  if (full) return { ratio: full.ratio, ceiling: false, tally: full };
+  if (full) return { ratio: full.ratio, tally: full };
 
   // Far enough from the bar that the pages left can only move the tally within the
   // noise CONFIG.RECENT_MARGIN already allows for — taking the widest spread a ±1
@@ -375,10 +375,10 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
     const ceiling = ratioFromTally(tally.net + room, tally.total + room);
     const best = adjust(score, ceiling);
     // A film that can't reach the threshold shows no recent % at all, so it needs no sample.
-    if (best != null && best < threshold) return { ratio: ceiling, ceiling: true, tally };
+    if (best != null && best < threshold) return { ratio: ceiling, tally };
     const floor = ratioFromTally(tally.net - room, tally.total + room);
     const worst = adjust(score, floor);
-    return worst != null && worst >= threshold && clearOfBar(tally) ? { ratio: floor, ceiling: false, floor: true, tally } : null;
+    return worst != null && worst >= threshold && clearOfBar(tally) ? { ratio: floor, tally } : null;
   };
   const partial = await getCachedRecentPartial(slug);
   const known = partial && settle(partial, partial.room);
@@ -403,7 +403,7 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
     }
   }
   if (tally.ratio !== null) setCachedRecentRatings(slug, tally);
-  return { ratio: tally.ratio, ceiling: false, tally };
+  return { ratio: tally.ratio, tally };
 }
 
 // =============================================================================
