@@ -251,6 +251,11 @@ const MAPS_CREDS_KEY = 'rc_maps_creds';
 let mapsCreds: MapsCapturedCreds | null = window.__truescoreMapsCreds ?? null;
 let credsLoad: Promise<void> | undefined;
 let credsRetried = false; // one expiry-recovery per place; reset in resetScores
+// Google refuses this browser session's replays outright (see the finish block).
+// Deliberately NOT reset per place: the expiry self-heal ends in a Reviews-tab
+// nudge, which moves the UI, and re-learning the same refusal on every place the
+// user opens would move it every time. One nudge per page, then the server.
+let credsRefused = false;
 // Both sorts finished without a single page on a place Google's own histogram
 // says has reviews — the replay was refused, not the place empty. Reset per place.
 let scoringFailed = false;
@@ -1144,6 +1149,7 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
       const counts = readHistogramCounts();
       if (counts && histogramTotal(counts)) {
         scoringFailed = true;
+        credsRefused = true;
         updateUI();
         void fetchServerScore(getFeatureId()!);
         return;
@@ -1169,7 +1175,7 @@ let kickoffPending = false;
 // otherwise relaunch the sorts mid-pause.)
 const shouldStartScoring = (): boolean => {
   const featureId = getFeatureId();
-  return !!featureId && featureId !== highlightsComputingFor && !kickoffPending &&
+  return !!featureId && !credsRefused && featureId !== highlightsComputingFor && !kickoffPending &&
     !fetchState.relevant.isFetching && !fetchState.newest.isFetching &&
     !fetchState.relevant.done && !fetchState.newest.done;
 };
@@ -2261,7 +2267,11 @@ const handleDomMutation = () => {
     labelSearchSeq++;
     document.querySelector('#reviews-container')?.remove();
     clearCardEls();
-    startFetching();
+    // Already known to be refused, so skip straight to the server. Flag it up
+    // front too: the panel then says so immediately instead of sitting blank for
+    // the length of the server's scrape, and the score replaces it when it lands.
+    if (credsRefused) { scoringFailed = true; void fetchServerScore(featureId); }
+    else startFetching();
     hydrateFromCloud(featureId);
     // Skip if live data already arrived — a stale disk read must not clobber a
     // fresh in-memory result. store.loadCache applies that guard, the still-
