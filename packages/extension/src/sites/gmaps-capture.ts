@@ -87,17 +87,36 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
     }
     return null;
   };
+  // Google's own visual-element id for the Reviews tab (jslog "145620") is the
+  // same in every language; the English aria-label match we used to rely on
+  // silently missed every non-English UI (German "Rezensionen zu …"), so the tab
+  // never opened, Maps never fired a review batchexecute and no bgkey was ever
+  // captured — leaving the panel unbuilt. Keep the label match as a fallback in
+  // case the id is renamed.
+  const reviewsTab = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('button[role="tab"][jslog^="145620"]')
+    ?? document.querySelector<HTMLElement>('button[role="tab"][aria-label*="eview" i]');
   const requestCapture = (): Promise<MapsCapturedCreds | null> => {
     if (captureInFlight) return captureInFlight;
     const requestedAt = Date.now();
     captureInFlight = new Promise((resolve) => { captureResolve = resolve; });
     // Open the Reviews tab if needed, then scroll — Maps fires the bgkey-bearing
     // batchexecute when the list loads or paginates; a no-op click on an already-
-    // open tab won't refetch, but a scroll forces the next page.
-    document.querySelector<HTMLElement>('button[role="tab"][aria-label*="eview" i]')?.click();
-    const scrollOnce = () => findReviewsScroll()?.scrollBy({ top: 1e6 });
-    scrollOnce();
-    setTimeout(scrollOnce, 1200);
+    // open tab won't refetch, but a scroll forces the next page. Both are retried
+    // because on a cold load the first nudge lands before Maps has rendered the
+    // tabs at all: only the scroll used to repeat, so the click was lost and
+    // nothing re-nudges once the page goes quiet (the observer's retry needs a
+    // mutation).
+    // Scrolling the Overview pane lazy-loads its own reviews section and usually
+    // yields creds without leaving the tab the user is on, so the click is a
+    // fallback: skipped once anything has been captured.
+    const nudgeOnce = () => {
+      if (!window.__truescoreMapsCreds) reviewsTab()?.click();
+      findReviewsScroll()?.scrollBy({ top: 1e6 });
+    };
+    nudgeOnce();
+    setTimeout(nudgeOnce, 1200);
+    setTimeout(nudgeOnce, 3000);
     // On timeout, settle only with creds captured after this request — the
     // caller asked precisely because anything older is suspect. settleCapture
     // clears the timer, so it can never fire into a later request.

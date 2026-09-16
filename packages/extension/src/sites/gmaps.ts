@@ -507,9 +507,16 @@ const getAbsoluteScoreColor = (raw: number) => lerpStops(ABSOLUTE_STOPS, raw);
 const readHistogramCounts = () => {
   const reviewRows = document.querySelectorAll('tr[role="img"]');
   if (reviewRows.length < 5) return null;
+  // Every row reads "<stars> stars, <count> reviews" in the UI language, so take
+  // the last number rather than anchoring on the English word: German
+  // "5 Sterne,365 Rezensionen" matched neither `reviews?` nor `$` and parsed as
+  // 0, which zeroed the whole histogram (no inline score, no "vs overall").
+  // Grouping separators are stripped; a label with a single number carries no
+  // count, so it stays 0.
   const extractNumber = (str: string) => {
-    const match = str.match(/(\d+(?:[.,]\d+)*)\s*(?:reviews?|$)/);
-    return match ? parseInt(match[1].replace(/[.,]/g, ''), 10) : 0;
+    const nums = str.match(/\d+(?:[.,\s\u00a0\u202f]\d{3})*/g);
+    if (!nums || nums.length < 2) return 0;
+    return parseInt(nums[nums.length - 1].replace(/[.,\s\u00a0\u202f]/g, ''), 10);
   };
   return Array.from(reviewRows).map((r) => extractNumber(r.getAttribute('aria-label') || ''));
 };
