@@ -1,5 +1,5 @@
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, MAPS_CREDS_VERIFIED, SERVER_SCORE_GET, SERVER_SCORE_RESULT, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, MAPS_CREDS_VERIFIED, SERVER_SCORE_GET, SERVER_SCORE_RESULT, type MapsCapturedCreds, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import { getReasoningEffort, getProviderChoice } from '../shared/config';
@@ -488,26 +488,56 @@ const hydrateFromCloud = (featureId: string) => {
 let serverScore: PartialScore | null = null;
 // Asked of the background worker, not fetched here: /api/lookup is same-origin
 // only (it triggers a real scrape), so a content-script POST is refused by CORS.
-// The worker holds the host permission and returns the aggregate — never
-// score.reviews, since a cache hit ships only a handful of review bodies for
-// display and scoring those would paint a number computed from ten reviews.
-// A scrape can outrun the storage bridge's 5s budget, so this waits longer.
-const SERVER_SCORE_TIMEOUT_MS = 120_000;
+// The worker holds the host permission and posts back the server's aggregate score
+// as each update lands, then the place's topic chips one by one — reviews included,
+// so a chip opens without a Google session. A cold place's scrape and chip harvest
+// take minutes, far past the storage bridge's 5s budget.
+const SERVER_SCORE_TIMEOUT_MS = 300_000;
 let serverScoreId = 0;
 const fetchServerScore = (featureId: string): void => {
   const id = `s${++serverScoreId}`;
+  // Whether the server's chips are filling the panel: not when it already had some
+  // (the cloud cache, a run of our own).
+  let chipsHere = false;
   const cleanup = () => {
     document.removeEventListener(SERVER_SCORE_RESULT, handler);
     clearTimeout(timer);
+    if (!chipsHere) return;
+    if (highlightsComputingFor === featureId) highlightsComputingFor = null;
+    highlightCandidates = [];
+    if (getFeatureId() !== featureId) return;
+    renderHighlights();
+    if (!highlightsState?.items.length && cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'No highlights';
   };
   const handler = (e: Event) => {
     const detail = (e as CustomEvent).detail;
     if (detail?.id !== id) return;
-    cleanup();
-    if (!detail.value || getFeatureId() !== featureId) return;
-    serverScore = detail.value as PartialScore;
-    scoringFailed = false;
-    updateUI();
+    const msg = detail.msg as ServerScoreMessage;
+    if (msg.kind === 'end') return cleanup();
+    if (getFeatureId() !== featureId) return;
+    if (msg.kind === 'score') {
+      serverScore = msg.score;
+      scoringFailed = false;
+      updateUI();
+      return;
+    }
+    if (!chipsHere) {
+      if (highlightsState?.items.length || highlightsComputingFor === featureId) return;
+      chipsHere = true;
+      highlightsComputingFor = featureId;
+      highlightsState = { items: [], ts: Date.now() };
+      if (cardEls.highlightsBtn) {
+        cardEls.highlightsBtn.disabled = true;
+        cardEls.highlightsBtn.textContent = 'Computing…';
+      }
+    }
+    if (msg.kind === 'candidates') highlightCandidates = msg.chips;
+    if (msg.kind === 'chip' && !chipFetchFailed(msg.chip)) {
+      const items = (highlightsState?.items ?? []).filter((h) => h.token !== msg.chip.token);
+      highlightsState = { items: [...items, msg.chip], ts: Date.now() };
+      saveHighlightsCache();
+    }
+    renderHighlights();
   };
   const timer = setTimeout(cleanup, SERVER_SCORE_TIMEOUT_MS);
   document.addEventListener(SERVER_SCORE_RESULT, handler);
@@ -884,6 +914,8 @@ const computeHighlights = async (force = false) => {
     renderHighlights();
     return;
   }
+  // Google refuses this browser's review fetches; truescore scores the chips instead.
+  if (credsRefused()) { fetchServerScore(featureId); return; }
   highlightsComputingFor = featureId;
   // True only while the user is still on the place this run started for — an
   // SPA navigation mid-fetch must not write this place's highlights into the
@@ -1270,7 +1302,9 @@ const renderHighlights = () => {
     btn.disabled = false;
     btn.textContent = 'Refresh';
   }
-  const overall = toPct(store.mergedStats(currentOption).mergedPct);
+  // Graded against the card's headline, which is the server's when it scored the place.
+  const merged = store.mergedStats(currentOption);
+  const overall = toPct(!merged.totalCount && serverScore && currentOption === 'total' ? serverScore.ratio ?? serverScore.scorePct / 100 : merged.mergedPct);
   const sorted = sortChipsByImpact(items, overall);
   for (const h of sorted) {
     const chip = el('button', 'rc-chip') as HTMLButtonElement;

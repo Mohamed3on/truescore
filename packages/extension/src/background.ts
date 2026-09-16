@@ -1,7 +1,8 @@
 // Combined background service worker
 import { SCORE_CACHE_PREFIX } from './shared/cache-keys';
 import { createThrottledFetcher } from './shared/throttled-fetch';
-import { readNdjson, type LookupEvent, type MapsCreds, type PartialScore } from '@truescore/gmaps-shared';
+import { SERVER_SCORE_PORT, type ServerScoreMessage } from './shared/gmaps-bridge-protocol';
+import { readNdjson, type HighlightEvent, type HighlightsRequest, type HighlightsResponse, type LookupEvent, type MapsCreds, type Score } from '@truescore/gmaps-shared';
 
 // Drop rc_score_* entries older than 30 days. Registered on install/update
 // only — top-level chrome.alarms.create on every SW wake would reset the
@@ -94,46 +95,95 @@ const imdbHistogram = async (id: string): Promise<number[] | null> => {
 };
 
 // Score a place through truescore's own Google session, for a browser whose
-// session Google refuses. /api/lookup is same-origin only, so the content script
-// can't call it — we hold the host permission and no page CORS applies. The
-// stream's last usable score wins; `throttled` means the server's own scrape
-// came back empty and must never be painted.
+// session Google refuses, then fetch its topic chips. /api/lookup is same-origin
+// only, so the content script can't call it — we hold the host permission and no
+// page CORS applies. Everything is posted back as it lands, so the panel fills in
+// as the server works.
 const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
-const serverScore = async (url: string): Promise<PartialScore | null> => {
+type Post = (msg: ServerScoreMessage) => void;
+
+// Chips carry their reviews, so a chip opens without a Google session. A place
+// whose chips the server hasn't harvested yet answers 202 while it warms them, so
+// poll on the web client's schedule; each `pending` post also keeps this worker
+// from idling out mid-wait.
+const HIGHLIGHTS_MAX_POLLS = 34;
+const HIGHLIGHTS_POLL_MS = 3500;
+const serverHighlights = async (featureId: string, post: Post): Promise<void> => {
+  for (let poll = 0; poll < HIGHLIGHTS_MAX_POLLS; poll++) {
+    const res = await fetch(`${TRUESCORE_API_BASE}/api/highlights`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ featureId } satisfies HighlightsRequest),
+    });
+    if (res.status === 202) {
+      post({ kind: 'pending' });
+      await new Promise((r) => setTimeout(r, HIGHLIGHTS_POLL_MS));
+      continue;
+    }
+    if (!res.ok || !res.body) return;
+    if (!res.headers.get('content-type')?.includes('ndjson')) {
+      for (const chip of ((await res.json()) as HighlightsResponse).highlights ?? []) post({ kind: 'chip', chip });
+      return;
+    }
+    for await (const ev of readNdjson<HighlightEvent>(res.body)) {
+      if (ev.type === 'chips') post({ kind: 'candidates', chips: ev.chips });
+      else if (ev.type === 'chip') post({ kind: 'chip', chip: ev.highlight });
+    }
+    return;
+  }
+};
+
+const serverScore = async (url: string, post: Post): Promise<void> => {
   // Defence in depth behind the bridge: only a Maps place page is ever scored.
   try {
     const u = new URL(url);
-    if (u.protocol !== 'https:' || u.hostname !== 'www.google.com' || !u.pathname.startsWith('/maps/place/')) return null;
+    if (u.protocol !== 'https:' || u.hostname !== 'www.google.com' || !u.pathname.startsWith('/maps/place/')) return;
   } catch {
-    return null;
+    return;
   }
+  let chips: Promise<void> | undefined;
   try {
     const res = await fetch(`${TRUESCORE_API_BASE}/api/lookup`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ url }),
     });
-    if (!res.ok || !res.body) return null;
-    let best: PartialScore | null = null;
+    if (!res.ok || !res.body) return;
     for await (const ev of readNdjson<LookupEvent>(res.body)) {
+      // `throttled` means the server's own scrape came back empty: never paint it.
       const score = ev.type === 'lookup' || ev.type === 'refreshed' ? ev.score
         : ev.type === 'provisional' || ev.type === 'score-progress' ? ev.score
         : ev.type === 'score' && !ev.throttled ? ev.score
         : null;
-      if (score) best = score;
+      if (!score) continue;
+      // The panel paints the aggregate; the review bodies run to megabytes.
+      const { reviews: _bodies, ...aggregate } = score as Score;
+      post({ kind: 'score', score: aggregate });
+      // Chips once the server has the place's row and isn't scraping it: at once for
+      // a cached lookup, when the scrape settles for a fresh one. Scored during the
+      // scrape, they'd compete with it for the server's one Google session.
+      if (!chips && (ev.type === 'lookup' || ev.type === 'score')) {
+        chips = serverHighlights(score.featureId, post).catch((e) => console.warn('[truescore] server highlights failed', e));
+      }
     }
-    return best;
   } catch (e) {
     console.warn('[truescore] server score failed', e);
-    return null;
   }
+  await chips;
 };
 
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== SERVER_SCORE_PORT) return;
+  let open = true;
+  port.onDisconnect.addListener(() => { open = false; });
+  port.onMessage.addListener((msg) => {
+    if (typeof msg?.url !== 'string') return;
+    void serverScore(msg.url, (m) => { if (open) port.postMessage(m); })
+      .finally(() => { if (open) port.disconnect(); });
+  });
+});
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === 'serverScore' && typeof msg.url === 'string') {
-    serverScore(msg.url).then((score) => sendResponse({ score }));
-    return true; // answered asynchronously
-  }
   if (msg?.type === 'seedMapsCreds' && msg.creds) seedMapsCreds(msg.creds as SeedCreds);
   if (msg?.type === 'imdbHistogram' && typeof msg.id === 'string') {
     imdbHistogram(msg.id).then(sendResponse);
