@@ -97,6 +97,13 @@ const imdbHistogram = async (id: string): Promise<number[] | null> => {
 // came back empty and must never be painted.
 const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
 const serverScore = async (url: string): Promise<PartialScore | null> => {
+  // Defence in depth behind the bridge: only a Maps place page is ever scored.
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:' || u.hostname !== 'www.google.com' || !u.pathname.startsWith('/maps/place/')) return null;
+  } catch {
+    return null;
+  }
   try {
     const res = await fetch(`${TRUESCORE_API_BASE}/api/lookup`, {
       method: 'POST',

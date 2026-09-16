@@ -468,7 +468,7 @@ const fetchServerScore = (featureId: string): void => {
   };
   const timer = setTimeout(cleanup, SERVER_SCORE_TIMEOUT_MS);
   document.addEventListener(SERVER_SCORE_RESULT, handler);
-  document.dispatchEvent(new CustomEvent(SERVER_SCORE_GET, { detail: { id, url: location.href } }));
+  document.dispatchEvent(new CustomEvent(SERVER_SCORE_GET, { detail: { id } }));
 };
 
 // Strip review bodies before persisting — they balloon to MBs per place and
