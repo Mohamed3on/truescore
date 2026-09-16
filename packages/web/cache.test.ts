@@ -106,15 +106,21 @@ test('a scrape with one sort empty is a throttle, not a score', async () => {
   expect(await cache.putScore('part-1', 'P', scrape('part-1', 200, 150), 5000)).toBe(true);
 });
 
+test('a sort short of a full page on a place with more is a capped session, not a score', async () => {
+  expect(await cache.putScore('cap-1', 'C', scrape('cap-1', 5, 5), 4254)).toBe(false);
+  expect(cache.scoreUsable({ score: scrape('x', 5, 5) } as CacheEntry, 4254)).toBe(false);
+  expect(await cache.putScore('cap-1', 'C', scrape('cap-1', 12, 12), 12)).toBe(true); // a small place, fully read
+});
+
 test('putScore never blanks a stored name', async () => {
-  await cache.putScore('name-1', 'Kept Name', scrape('name-1', 10, 10), 20);
-  await cache.putScore('name-1', '', scrape('name-1', 10, 10), 20); // a bare ?q=&ftid= link
+  await cache.putScore('name-1', 'Kept Name', scrape('name-1', 10, 10), 10);
+  await cache.putScore('name-1', '', scrape('name-1', 10, 10), 10); // a bare ?q=&ftid= link
   expect(cache.get('name-1')?.name).toBe('Kept Name');
 });
 
 test('searches: an empty result is never cached, and a cached one expires', async () => {
   const search = (n: number, ts = Date.now()) => ({ query: 'pho', totalReviews: n, trustedReviews: n, scorePct: 50, reviews: [], ts });
-  await cache.putScore('search-1', 'S', scrape('search-1', 10, 10), 20);
+  await cache.putScore('search-1', 'S', scrape('search-1', 10, 10), 10);
   await cache.putSearch('search-1', 'Pho', search(0)); // what a credless / stale session returns
   expect(cache.get('search-1')?.searches?.pho).toBeUndefined();
   await cache.putSearch('search-1', 'Pho', search(4));
@@ -134,7 +140,7 @@ test('search terms: kept per place in sqlite, any case, never empty', () => {
 });
 
 test('answers: keyed by scope + normalized question, served for a day, the newest 30 kept', async () => {
-  await cache.putScore('ans-1', 'A', scrape('ans-1', 10, 10), 20);
+  await cache.putScore('ans-1', 'A', scrape('ans-1', 10, 10), 10);
   const answer = (text: string, ts = Date.now()) => ({ answer: text, searches: [{ query: 'dog', found: 3, done: true }], ts });
   await cache.putAnswer('ans-1', answerKey(undefined, 'Dogs allowed?'), answer('Yes.'));
   const hit = cache.get('ans-1')?.answers?.[answerKey('', '  dogs   ALLOWED ')];
@@ -151,7 +157,7 @@ test('answers: keyed by scope + normalized question, served for a day, the newes
 
 test('a preview with no place data keeps the good meta, and a readable one re-stamps the histogram', async () => {
   const fid = 'preview-1';
-  await cache.putScore(fid, 'P', scrape(fid, 10, 10), 300);
+  await cache.putScore(fid, 'P', scrape(fid, 150, 150), 300);
   const meta = { canonicalName: 'P', removedReviews: { text: '21 to 50 reviews removed', min: 21, max: 50 } };
   await cache.putPreviewBundle(fid, { histogram: [200, 40, 20, 10, 30], meta, chips: [] });
   const stamped = cache.get(fid)!.histogramTs!;
@@ -170,7 +176,7 @@ test('a preview with no place data keeps the good meta, and a readable one re-st
 
 test('a set missing a known chip is short, and never replaces a complete one', async () => {
   const fid = 'chips-1';
-  await cache.putScore(fid, 'C', scrape(fid, 10, 10), 20);
+  await cache.putScore(fid, 'C', scrape(fid, 10, 10), 10);
   const metas = ['a', 'b', 'c', 'd', 'e'].map((l) => ({ token: `t-${l}`, label: l, count: 5 }));
   await cache.recordChipWarm(fid, metas);
   // Two chips threw, so only three were scored: short, not served.

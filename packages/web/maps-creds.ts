@@ -145,11 +145,12 @@ export function getMapsCreds(): MapsCreds | null {
 // no human. A good reply doesn't itself flip the banner; renewSession owns that.
 export function onStaleRpc(): void { void renewSession('stale-detected'); }
 export function onFreshRpc(): void { setRenewOk(true, 'fresh-rpc'); }
-// A whole scrape the cache refused: no reviews (or one sort empty) for a place
-// that has them. Its replies can parse as valid-but-empty, which the stale check
-// above passes as fresh — so without this the banner stayed hidden while every
-// lookup read zero. The next good reply clears it.
-export function onThrottledScrape(): void { setRenewOk(false, 'throttled-scrape'); }
+// A whole scrape the cache refused: no reviews (or one sort empty, or short of a
+// page) for a place that has them. Its replies can parse as valid, which the stale
+// check above passes as fresh — so without this the banner stayed hidden while every
+// lookup read zero. The next good reply clears it. Mint too: a capped session never
+// looks stale, so nothing else would replace it.
+export function onThrottledScrape(): void { setRenewOk(false, 'throttled-scrape'); void renewSession('throttled-scrape'); }
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
 
 // --- self-mint: refresh the bgkey via a stealth-cloaked headless browser ---

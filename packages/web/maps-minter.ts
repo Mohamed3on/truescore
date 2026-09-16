@@ -10,7 +10,7 @@
 import { addExtra } from 'puppeteer-extra';
 import puppeteerCore, { type Browser, type HTTPRequest } from 'puppeteer-core';
 import Stealth from 'puppeteer-extra-plugin-stealth';
-import { credsFromBatchExecute } from '@truescore/gmaps-shared';
+import { credsFromBatchExecute, PAGE_SIZE } from '@truescore/gmaps-shared';
 import { verifyReviewsLoad, proxyConfig, SEED_COOKIES, REVIEW_PROBE_FID } from './browser';
 import type { Seed } from './maps-creds';
 import { logEvent } from './events';
@@ -49,8 +49,10 @@ async function runMint(): Promise<Seed | null> {
     if (!seed) { console.warn(`[maps-minter] no bgkey captured in ${Date.now() - t0}ms`); logEvent('mint', { result: 'fail', reason: 'no-bgkey', ms: Date.now() - t0 }); return null; }
     // Verify the minted creds actually serve reviews before we trust them — via a
     // cookie override so a bad mint can't clobber the live session's global jar.
+    // The probe place always fills a page, so a short one is a session Google caps:
+    // 5 reviews a page and no next page, which scored every place from 10 reviews.
     const verify = await verifyReviewsLoad({ ...seed, hl: 'en' }, seed.cookies);
-    if (!verify) { console.warn('[maps-minter] minted bgkey verified empty — discarding'); logEvent('mint', { result: 'fail', reason: 'verify-empty', ms: Date.now() - t0, bgkey: seed.bgkey.slice(-6) }); return null; }
+    if (verify < PAGE_SIZE) { console.warn(`[maps-minter] minted bgkey verified ${verify} reviews — discarding`); logEvent('mint', { result: 'fail', reason: verify ? 'verify-capped' : 'verify-empty', ms: Date.now() - t0, bgkey: seed.bgkey.slice(-6) }); return null; }
     console.log(`[maps-minter] minted bgkey …${seed.bgkey.slice(-6)} in ${Date.now() - t0}ms (verify: ${verify} reviews)`);
     logEvent('mint', { result: 'ok', ms: Date.now() - t0, bgkey: seed.bgkey.slice(-6), verify });
     return seed;

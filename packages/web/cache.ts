@@ -1,7 +1,7 @@
 import { db, DB_PATH, LEGACY_JSON_PATH } from './db';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './llm';
-import { displayScore, normalizeQuestion, type AskSearch, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews, type Review, type SortStats, type TermCache } from '@truescore/gmaps-shared';
+import { displayScore, normalizeQuestion, PAGE_SIZE, type AskSearch, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews, type Review, type SortStats, type TermCache } from '@truescore/gmaps-shared';
 
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
 // How long a cached review search — a whole query, or a single term — is served
@@ -263,11 +263,16 @@ const ensureEntry = (featureId: string, name: string): void => {
 // the 0 — never persist or serve it — so a transient preview failure can't poison the
 // cache with a false 0. A scrape with reviews but one sort empty is the same
 // throttle hitting that sort — both sorts page the same reviews — and caching it
-// served "Newest 0%" as authoritative. (Legacy rows may lack the sorts.)
+// served "Newest 0%" as authoritative. So is a sort short of one full page on a
+// place with at least a page of reviews: a session Google caps serves 5 reviews and
+// no next page, and those 10-review scores overwrote real ones. (Legacy rows may
+// lack the sorts.)
 const isThrottledScrape = (score: Pick<ScoreResult, 'totalReviews' | 'relevant' | 'newest'>, liveTotal: number | null | undefined): boolean =>
   score.totalReviews === 0
     ? liveTotal !== 0
-    : score.relevant?.totalReviews === 0 || score.newest?.totalReviews === 0;
+    : score.relevant?.totalReviews === 0 || score.newest?.totalReviews === 0 ||
+      (liveTotal != null && liveTotal >= PAGE_SIZE &&
+        Math.min(score.relevant?.totalReviews ?? PAGE_SIZE, score.newest?.totalReviews ?? PAGE_SIZE) < PAGE_SIZE);
 
 // A chip Google said carries reviews (count > 0) that came back with none is the
 // same 200-with-empty-body throttle putScore refuses to trust — scoreHighlight
