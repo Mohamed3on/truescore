@@ -3,7 +3,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject, generateText, NoObjectGeneratedError, streamText, tool, type ModelMessage, type ToolResultPart } from 'ai';
 import { z } from 'zod';
-import { ASK_KINDS, LLM_PROVIDERS, REASONING_EFFORTS, type AskEvent, type AskKind, type AskSearch, type AskSearchResult, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
+import { LLM_PROVIDERS, REASONING_EFFORTS, type AskEvent, type AskSearch, type AskSearchResult, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
 import { cleanItems, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
 
@@ -60,8 +60,6 @@ export const parseReasoningEffort = (v: unknown): ReasoningEffort | undefined =>
   typeof v === 'string' && (REASONING_EFFORTS as readonly string[]).includes(v) ? (v as ReasoningEffort) : undefined;
 export const parseProvider = (v: unknown): Provider | undefined =>
   typeof v === 'string' && (LLM_PROVIDERS as readonly string[]).includes(v) ? (v as Provider) : undefined;
-export const parseAskKind = (v: unknown): AskKind | undefined =>
-  typeof v === 'string' && (ASK_KINDS as readonly string[]).includes(v) ? (v as AskKind) : undefined;
 
 const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
   effort && provider === 'openai'
@@ -106,9 +104,9 @@ const HIGHLIGHTS_SCHEMA = z.object({
 
 const reviewBlock = (texts: string[]) => texts.join('\n\n');
 
-const subjectOf = (place: string, filter?: string, kind: AskKind = 'place') => {
-  const p = place || `this ${kind}`;
-  return filter ? `"${filter}" ${kind === 'place' ? 'at' : 'in'} ${p}` : p;
+const subjectOf = (place: string, filter?: string) => {
+  const p = place || 'this place';
+  return filter ? `"${filter}" at ${p}` : p;
 };
 
 // Structured-output mode mangles markdown prose (Gemini strips \n\n inside
@@ -164,30 +162,29 @@ const SEARCH_HITS_MAX = 100;
 // Rounds of Searches before the model must answer.
 const SEARCH_ROUNDS_MAX = 2;
 
-const searchNote = (kind: AskKind) => `The reviews given are a sample. When they don't settle the question, call searchReviews before answering: it searches every review of this ${kind}. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde). When the sample settles it, just answer.`;
+const SEARCH_NOTE = `The reviews given are a sample. When they don't settle the question, call searchReviews before answering: it searches every review of this place. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde). When the sample settles it, just answer.`;
 const SEARCH_FAILED = `Search is unavailable right now. Answer from the sample, and say you could only check part of the reviews.`;
 
-// What every Ask of a kind shares leads the prompt — these instructions and the
-// tool — then the Sample, closed by a cache breakpoint; only the scope and
+// What every Ask shares leads the prompt — these instructions and the tool —
+// then the place's Sample, closed by a cache breakpoint; only the scope and
 // question vary after it. Each round and each new question on a place then
 // reads everything up to the Sample back from the provider's prompt cache.
-const askInstructions = (kind: AskKind) => `Answer the question about the ${kind} using its reviews. Be concise. Name specifics (prices, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree or don't cover it, say so.
+const ASK_INSTRUCTIONS = `Answer the question about the place using its reviews. Be concise. Name specifics (prices, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree or don't cover it, say so.
 
 ${NOTES}
 
-${searchNote(kind)}`;
+${SEARCH_NOTE}`;
 const CACHE_BREAKPOINT = { openai: { promptCacheBreakpoint: { mode: 'explicit' as const } } };
 
 // No `execute`: calling it ends the round, and the call goes to the client,
-// which runs the Search its own way and answers with the next request. Only a
-// Place's reviews are trust-filtered; a site's search rates every review.
-const searchReviews = (kind: AskKind) => tool({
-  description: `Search every review of this ${kind}, not just the sample, for any of the terms. Returns how many reviews match (found); their TrueScore (scorePct: the net share of ${kind === 'place' ? 'trusted ' : ''}reviewers rating 5★ over 1★, from -100 to 100, resting on trustedReviews of them — cite it when it helps); and the matches not already in the sample (reviews).`,
+// which runs the Search its own way and answers with the next request.
+const searchReviews = tool({
+  description: 'Search every review of this place, not just the sample, for any of the terms. Returns how many reviews match (found); their TrueScore (scorePct: the net share of trusted reviewers rating 5★ over 1★, from -100 to 100, resting on trustedReviews of them — cite it when it helps); and the matches not already in the sample (reviews).',
   inputSchema: z.object({ query: z.string().describe('Terms joined with " OR "') }),
 });
 
 export type AskRound = { question: string; history: ModelMessage[]; results: AskSearchResult[] };
-export type AskOptions = { filterQuery?: string; kind?: AskKind; provider?: Provider; reasoningEffort?: ReasoningEffort; abortSignal?: AbortSignal };
+export type AskOptions = { filterQuery?: string; provider?: Provider; reasoningEffort?: ReasoningEffort; abortSignal?: AbortSignal };
 
 // The Searches that reached an Answer, in the order they ran: each tool call's
 // query paired with the result it got back (the JSON ask() wrote, or null for
@@ -215,7 +212,7 @@ const searchesIn = (messages: ModelMessage[]): AskSearch[] => {
 // as `results`, appended here as tool results. Nothing is kept between rounds.
 // Resolves to the settled Answer and the Searches behind it (for caching), or
 // undefined when the round ended in Searches instead.
-export async function ask({ placeName, reviewTexts, removedReviews }: Subject, { question, history, results }: AskRound, emit: (e: AskEvent) => void, { filterQuery, kind = 'place', provider = active(), reasoningEffort, abortSignal }: AskOptions = {}): Promise<{ answer: string; searches: AskSearch[] } | undefined> {
+export async function ask({ placeName, reviewTexts, removedReviews }: Subject, { question, history, results }: AskRound, emit: (e: AskEvent) => void, { filterQuery, provider = active(), reasoningEffort, abortSignal }: AskOptions = {}): Promise<{ answer: string; searches: AskSearch[] } | undefined> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const removal = removalNote(removedReviews);
   const seen = new Set(reviewTexts);
@@ -234,15 +231,15 @@ export async function ask({ placeName, reviewTexts, removedReviews }: Subject, {
 
   const result = streamText({
     model, providerOptions, maxOutputTokens: 32768, abortSignal,
-    instructions: askInstructions(kind),
+    instructions: ASK_INSTRUCTIONS,
     messages: [{
       role: 'user',
       content: [
         { type: 'text', text: reviewBlock(reviewTexts), providerOptions: CACHE_BREAKPOINT },
-        { type: 'text', text: `\n\n---\n\n${removal ? `${removal}\n\n` : ''}About: ${subjectOf(placeName, filterQuery, kind)}\n\nQuestion: ${question}` },
+        { type: 'text', text: `\n\n---\n\n${removal ? `${removal}\n\n` : ''}About: ${subjectOf(placeName, filterQuery)}\n\nQuestion: ${question}` },
       ],
     }, ...past],
-    tools: { searchReviews: searchReviews(kind) },
+    tools: { searchReviews },
     toolChoice: searched < SEARCH_ROUNDS_MAX ? 'auto' : 'none',
   });
   for await (const part of result.stream) {

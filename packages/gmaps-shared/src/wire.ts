@@ -157,12 +157,8 @@ export type SearchRequest = { featureId: string; query: string; force?: boolean;
 // review texts plus their TrueScore — or `null` when the client couldn't search.
 export type SearchMatches = { texts: string[]; scorePct: number; trustedReviews: number };
 export type AskSearchResult = { id: string; matches: SearchMatches | null };
-// What an Ask is about: a Place unless the extension asks of a product or book
-// page, whose Searches go through that site's own review search.
-export const ASK_KINDS = ['place', 'product', 'book'] as const;
-export type AskKind = (typeof ASK_KINDS)[number];
 // `force`: skip a replayed Answer and ask afresh.
-export type AskRequest = { featureId?: string; name?: string; kind?: AskKind; reviewTexts?: string[]; question: string; filter?: string; removedReviews?: RemovedReviews | null; history?: unknown[]; results?: AskSearchResult[]; force?: boolean } & LlmOverrides;
+export type AskRequest = { featureId?: string; name?: string; reviewTexts?: string[]; question: string; filter?: string; removedReviews?: RemovedReviews | null; history?: unknown[]; results?: AskSearchResult[]; force?: boolean } & LlmOverrides;
 // `score` omits the per-review array — the web only needs the numbers to paint,
 // and a place's reviews run to megabytes. It is the extension's RAW score: the
 // removal penalty is applied by whoever renders, off their own preview meta, so
