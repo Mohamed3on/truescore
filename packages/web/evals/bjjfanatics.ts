@@ -88,7 +88,7 @@ const toStrictSchema = (s: any): any => {
 // ── Providers (endpoints/models from packages/extension/src/shared/config.ts).
 const OPENAI_MODEL = 'gpt-5.6-luna';
 const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
-const DEEPSEEK_MODEL = 'deepseek-v4-flash';
+const DEEPSEEK_MODEL = 'deepseek-flash';
 const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
 const GEMINI_MODEL = 'gemini-3-flash-preview';
 const geminiEndpoint = (key: string) =>

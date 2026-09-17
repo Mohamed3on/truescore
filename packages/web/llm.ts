@@ -42,12 +42,12 @@ export const PROVIDERS = {
     providerOptions: { openai: { reasoningEffort: 'low', promptCacheOptions: { mode: 'explicit' as const } } },
   },
   deepseek: {
-    // V4 Flash, non-thinking: ties nano/flash on latency+quality at a fraction
-    // of the cost (evals/latency.ts). Its thinking ladder runs 2.5-7x slower
-    // for no quality gain, so it stays disabled. No native JSON-schema output —
-    // the SDK injects the schema into the prompt (compat mode), which the
-    // summarize() salvage path already tolerates.
-    model: deepseek('deepseek-v4-flash'),
+    // V4.1 Flash, non-thinking. V4 Flash tied nano/flash on latency+quality at
+    // a fraction of the cost (evals/latency.ts) and its thinking ladder ran
+    // 2.5-7x slower for no quality gain, so it stays disabled. No native
+    // JSON-schema output — the SDK injects the schema into the prompt (compat
+    // mode), which the summarize() salvage path already tolerates.
+    model: deepseek('deepseek-flash'),
     providerOptions: { deepseek: { thinking: { type: 'disabled' as const } } },
   },
 };

@@ -55,6 +55,6 @@ export const GEMINI_MODEL = 'gemini-3-flash-preview';
 
 export const OPENAI_MODEL = 'gpt-5.6-luna';
 
-// DeepSeek V4 Flash, always non-thinking (fastest, and its thinking ladder didn't
+// DeepSeek V4.1 Flash, always non-thinking (fastest, and its thinking ladder didn't
 // improve summary quality — see web evals/latency.ts).
-export const DEEPSEEK_MODEL = 'deepseek-v4-flash';
+export const DEEPSEEK_MODEL = 'deepseek-flash';

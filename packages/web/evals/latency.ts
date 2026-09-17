@@ -5,7 +5,7 @@
 // a realistic review set, so the spread reflects what users actually wait for.
 // Variants: luna effort ladder (none|low|medium|high|xhigh), Gemini Flash at the
 // production thinkingLevel, the newer Gemini 3.5 Flash-Lite (minimal) and 3.8
-// Flash (low, its floor), and DeepSeek V4 Flash non-thinking + its thinking
+// Flash (low, its floor), and DeepSeek V4.1 Flash non-thinking + its thinking
 // effort ladder (low|medium|high|xhigh|max). Reasoning/thought tokens explain
 // the latency. --judge adds a blind gpt-5.4 quality score (grounded/specific/
 // useful, 1-5) of each variant's structured output, scored after timing so it
@@ -23,7 +23,7 @@ const luna = openai('gpt-5.6-luna');
 const flash = google('gemini-3-flash-preview');
 const lite = google('gemini-3.5-flash-lite');
 const flash38 = google('gemini-3.8-flash');
-const ds = deepseek('deepseek-v4-flash');
+const ds = deepseek('deepseek-flash');
 
 // DeepSeek has no native JSON-schema response format, so the SDK injects the
 // schema into the system prompt and logs a warning on every call — hush it.
@@ -119,7 +119,7 @@ const variants: Variant[] = [
     label: 'f3.8:low',
     run: () => generateObject({ model: flash38, providerOptions: { google: { thinkingConfig: { thinkingLevel: 'low' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
   },
-  // DeepSeek V4 Flash: non-thinking (fastest) then the thinking effort ladder.
+  // DeepSeek V4.1 Flash: non-thinking (fastest) then the thinking effort ladder.
   {
     label: 'ds:off',
     run: () => generateObject({ model: ds, providerOptions: { deepseek: { thinking: { type: 'disabled' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
