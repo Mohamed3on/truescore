@@ -8,6 +8,8 @@ const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 // Definitive zero-parses are cached too, short-lived, so no-review products
 // don't refetch on every sort pass; transport failures throw and stay uncached.
 const NEG_TTL = 6 * 60 * 60 * 1000;
+// Result grids: search (current and legacy), browse/promo pages, brand stores.
+const RESULT_LISTS = '.s-result-list.s-search-results, #mainResults .s-result-list, .dcl-html-grid, [data-testid="product-grid-container"] > ul';
 
 // The score grids' three bands: loved (≥ 0, best first), then the unknown — no
 // rating on the card, or a failed popover fetch — in page order, then the hated.
@@ -99,9 +101,9 @@ const resumeObs = () => {
 };
 
 const sortAmazonResults = async () => {
-  // Browse/promo pages list the same product cards in a `.dcl-html-grid`, with the
-  // ASIN only in `data-csa-c-item-id`.
-  const items = document.querySelectorAll('.s-result-item[data-asin]:not([data-asin=""]):not(.AdHolder), .dcl-html-grid > [data-csa-c-item-id^="amzn1.asin."]');
+  // Browse/promo pages and brand stores list the same product cards in their own
+  // grids, with the ASIN in `data-csa-c-item-id` or on an inner `[data-asin]`.
+  const items = document.querySelectorAll('.s-result-item[data-asin]:not([data-asin=""]):not(.AdHolder), .dcl-html-grid > [data-csa-c-item-id^="amzn1.asin."], [data-testid="product-grid-container"] > ul > li');
   const seenASINs = new Set<string>();
   const seenKeys = new Set<string>();
   const fetchPromises: Promise<[number | null, Element]>[] = [];
@@ -113,10 +115,13 @@ const sortAmazonResults = async () => {
   for (const item of items) {
     // A sponsored carousel is one result slot whose cards are result items too.
     // Only the slots are results: a carousel card that claimed an ASIN or a
-    // variant family first would get its organic twin skipped or removed.
+    // variant family first would get its organic twin removed.
     if (item.parentElement?.closest('.s-result-item') || item.querySelector('.s-shopping-adviser')) continue;
-    const productSIN = item.getAttribute('data-asin') || item.getAttribute('data-csa-c-item-id')?.match(/asin\.([A-Z0-9]{10})/)?.[1];
-    if (!productSIN || seenASINs.has(productSIN)) continue;
+    const productSIN = item.getAttribute('data-asin') || item.querySelector('[data-asin]')?.getAttribute('data-asin') ||
+      item.getAttribute('data-csa-c-item-id')?.match(/asin\.([A-Z0-9]{10})/)?.[1];
+    if (!productSIN) continue;
+    // Already covered by an earlier card: the same listing, or a variant in its swatches.
+    if (seenASINs.has(productSIN)) { item.remove(); continue; }
 
     const swatchASINs = [...item.querySelectorAll('[data-csa-c-swatch-url]')]
       .map(el => (el.getAttribute('data-csa-c-swatch-url')?.match(/\/dp\/([A-Z0-9]{10})/) || [])[1])
@@ -164,7 +169,7 @@ const sortAmazonResults = async () => {
 
   itemsArr.sort(sortFunction);
 
-  const searchResults = document.querySelector('.s-result-list.s-search-results') || document.querySelector('#mainResults .s-result-list') || document.querySelector('.dcl-html-grid');
+  const searchResults = document.querySelector(RESULT_LISTS);
   if (searchResults && itemsArr.length > 0) {
     // Rank by CSS `order`, never by moving cards: Amazon doesn't refill an emptied
     // card once it has been moved, so a re-sort after infinite scroll left every
@@ -176,7 +181,7 @@ const sortAmazonResults = async () => {
 };
 
 (async function main() {
-  const isSearchPage = () => /s\?k|s\?i|s\?|\/b\/|browse\.html/.test(location.href);
+  const isSearchPage = () => /s\?k|s\?i|s\?|\/b\/|browse\.html|\/stores\//.test(location.href);
 
   let sorting = false, pendingSort = false;
   const debouncedSort = (() => {
@@ -194,7 +199,7 @@ const sortAmazonResults = async () => {
   })();
 
   const watchResults = () => {
-    const container = document.querySelector('.s-result-list.s-search-results, #mainResults .s-result-list, .dcl-html-grid');
+    const container = document.querySelector(RESULT_LISTS);
     if (!container || container === observedContainer) return;
     pauseObs();
     observedContainer = container;
@@ -211,7 +216,7 @@ const sortAmazonResults = async () => {
     debouncedSort();
     navObs?.disconnect(); // one live slot — pushState bursts must not stack 10s body observers
     const bodyObs = new MutationObserver(() => {
-      const container = document.querySelector('.s-result-list.s-search-results, #mainResults .s-result-list, .dcl-html-grid');
+      const container = document.querySelector(RESULT_LISTS);
       if (container && container !== observedContainer) {
         bodyObs.disconnect();
         watchResults();
