@@ -4,11 +4,12 @@
 // Times the heavy *structured* extraction call (the production bottleneck) on
 // a realistic review set, so the spread reflects what users actually wait for.
 // Variants: luna effort ladder (none|low|medium|high|xhigh), Gemini Flash at the
-// production thinkingLevel, and DeepSeek V4 Flash non-thinking + its thinking
+// production thinkingLevel, the newer Gemini 3.5 Flash-Lite (minimal) and 3.8
+// Flash (low, its floor), and DeepSeek V4 Flash non-thinking + its thinking
 // effort ladder (low|medium|high|xhigh|max). Reasoning/thought tokens explain
 // the latency. --judge adds a blind gpt-5.4 quality score (grounded/specific/
 // useful, 1-5) of each variant's structured output, scored after timing so it
-// never pollutes the latency numbers.
+// never pollutes the latency numbers. --only=a,b runs just those variants.
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -20,6 +21,8 @@ const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
 const deepseek = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY });
 const luna = openai('gpt-5.6-luna');
 const flash = google('gemini-3-flash-preview');
+const lite = google('gemini-3.5-flash-lite');
+const flash38 = google('gemini-3.8-flash');
 const ds = deepseek('deepseek-v4-flash');
 
 // DeepSeek has no native JSON-schema response format, so the SDK injects the
@@ -29,6 +32,7 @@ const ds = deepseek('deepseek-v4-flash');
 const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const RUNS = Number(args[0]) || 3;
 const JUDGE = process.argv.includes('--judge');
+const ONLY = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length).split(',');
 
 const SCHEMA = z.object({
   highlights: z.array(z.object({ text: z.string(), sentiment: z.enum(['positive', 'negative', 'neutral']) })),
@@ -107,6 +111,14 @@ const variants: Variant[] = [
     label: 'flash:min',
     run: () => generateObject({ model: flash, providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
   },
+  {
+    label: 'lite:min',
+    run: () => generateObject({ model: lite, providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
+  },
+  {
+    label: 'f3.8:low',
+    run: () => generateObject({ model: flash38, providerOptions: { google: { thinkingConfig: { thinkingLevel: 'low' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
+  },
   // DeepSeek V4 Flash: non-thinking (fastest) then the thinking effort ladder.
   {
     label: 'ds:off',
@@ -116,7 +128,7 @@ const variants: Variant[] = [
     label: `ds:${e}`,
     run: () => generateObject({ model: ds, providerOptions: { deepseek: { thinking: { type: 'enabled' }, reasoningEffort: e } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
   })),
-];
+].filter((v) => !ONLY || ONLY.includes(v.label));
 
 type Row = { label: string; med: number; mean: number; lats: number[]; reason: number; out: number; q?: Q };
 type Sample = { label: string; ms: number; reason: number; out: number; q?: Q };
@@ -132,7 +144,7 @@ const settled = await Promise.all(
       try {
         const r = await v.run();
         // Stop the clock before judging so the judge's own call never counts.
-        const s: Sample = { label: v.label, ms: performance.now() - t0, reason: (r.usage as any).reasoningTokens ?? 0, out: r.usage.outputTokens ?? 0 };
+        const s: Sample = { label: v.label, ms: performance.now() - t0, reason: r.usage.outputTokenDetails.reasoningTokens ?? 0, out: r.usage.outputTokens ?? 0 };
         if (JUDGE) s.q = await scoreQuality(r.object).catch((e: any) => (console.log(`  judge ${v.label}: ERROR ${e.message?.slice(0, 70)}`), undefined));
         return s;
       } catch (e: any) {
