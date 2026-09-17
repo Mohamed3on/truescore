@@ -31,7 +31,6 @@
   padding: 14px 16px;
   background: #FAFAF9;
   border: 1px solid #E7E5E4;
-  border-left: 3px solid #0F766E;
   border-radius: 8px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   animation: ars-enter 0.4s cubic-bezier(0.25, 1, 0.5, 1);
@@ -292,18 +291,13 @@
 .ars-section {
   padding: 8px 12px;
   border-radius: 6px;
-  border-left: 3px solid;
 }
+.ars-conclusion + .ars-section,
 .ars-section + .ars-section { margin-top: 8px; }
 
-.ars-section--praised {
-  background: #F0FDF4;
-  border-left-color: #16A34A;
-}
-.ars-section--complaints {
-  background: #FFF7ED;
-  border-left-color: #EA580C;
-}
+.ars-section--praised { background: #F0FDF4; }
+.ars-section--complaints { background: #FFF7ED; }
+.ars-section--alt { background: #F0FDFA; }
 .ars-section-title {
   font-size: 10.5px;
   font-weight: 700;
@@ -314,6 +308,7 @@
 }
 .ars-section--praised .ars-section-title { color: #15803D; }
 .ars-section--complaints .ars-section-title { color: #C2410C; }
+.ars-section--alt .ars-section-title { color: #0F766E; }
 
 .ars-section-item {
   font-size: 12.5px;
@@ -332,6 +327,7 @@
 }
 .ars-section--praised .ars-section-item::before { color: #16A34A; }
 .ars-section--complaints .ars-section-item::before { color: #EA580C; }
+.ars-section--alt .ars-section-item::before { color: #0D9488; }
 
 /* Conclusion */
 .ars-conclusion {
