@@ -1,8 +1,8 @@
-import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { DirectChatTransport, generateObject, generateText, jsonSchema, NoObjectGeneratedError, ToolLoopAgent, type ChatTransport, type JSONSchema7, type LanguageModel } from 'ai';
 import { salvageString, salvageStringArray, searchesLeft, searchReviewsTool, type AskMessage } from '@truescore/gmaps-shared';
+import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
 import { DEEPSEEK_MODEL, GEMINI_MODEL, getActiveLLM, OPENAI_MODEL } from './config';
 
 // Every LLM call the extension makes itself (retail and book pages; Google Maps
@@ -16,7 +16,7 @@ const activeModel = async (): Promise<{ model: LanguageModel; providerOptions: R
   const { provider, key: apiKey, reasoningEffort } = await getActiveLLM();
   if (!apiKey) throw new Error(`No ${PROVIDER_LABEL[provider]} API key — set one in the TrueScore popup`);
   if (provider === 'gemini') return { model: createGoogleGenerativeAI({ apiKey })(GEMINI_MODEL), providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 32768 };
-  if (provider === 'deepseek') return { model: createDeepSeek({ apiKey })(DEEPSEEK_MODEL), providerOptions: { deepseek: { thinking: { type: 'disabled' } } }, maxOutputTokens: 8192 };
+  if (provider === 'deepseek') return { model: deepseekModel(apiKey, DEEPSEEK_MODEL), providerOptions: { deepseek: { thinking: { type: 'disabled' } } }, maxOutputTokens: 8192 };
   return { model: createOpenAI({ apiKey })(OPENAI_MODEL), providerOptions: { openai: { reasoningEffort } }, maxOutputTokens: 32768 };
 };
 

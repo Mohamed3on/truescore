@@ -1,9 +1,9 @@
-import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { convertToModelMessages, generateObject, generateText, NoObjectGeneratedError, streamText } from 'ai';
 import { z } from 'zod';
 import { LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, type AskMessage, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
+import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
 import { cleanItems, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
 
@@ -18,7 +18,6 @@ const google = createGoogleGenerativeAI({
   apiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY,
 });
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const deepseek = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY });
 
 export const PROVIDERS = {
   gemini: {
@@ -44,10 +43,9 @@ export const PROVIDERS = {
   deepseek: {
     // V4.1 Flash, non-thinking. V4 Flash tied nano/flash on latency+quality at
     // a fraction of the cost (evals/latency.ts) and its thinking ladder ran
-    // 2.5-7x slower for no quality gain, so it stays disabled. No native
-    // JSON-schema output — the SDK injects the schema into the prompt (compat
-    // mode), which the summarize() salvage path already tolerates.
-    model: deepseek('deepseek-flash'),
+    // 2.5-7x slower for no quality gain, so it stays disabled. Structured
+    // output goes through a strict tool call (gmaps-shared/deepseek.ts).
+    model: deepseekModel(process.env.DEEPSEEK_API_KEY, 'deepseek-flash'),
     providerOptions: { deepseek: { thinking: { type: 'disabled' as const } } },
   },
 };
