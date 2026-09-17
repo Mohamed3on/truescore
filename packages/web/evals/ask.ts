@@ -6,6 +6,7 @@
 // TrueScore. Review sets: fixtures/ask-corpora.json (make-ask-fixtures.ts).
 //   bun evals/ask.ts            # answers, searches, latency, tokens
 //   bun evals/ask.ts --judge    # + blind gpt-5.6-sol scores and ranking per question
+//   bun evals/ask.ts --only=a,b # just those candidates.ts labels
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject, type ChatTransport } from 'ai';
 import { z } from 'zod';
@@ -133,7 +134,7 @@ if (JUDGE) {
     });
     const { object } = await generateObject({
       model: judgeModel,
-      providerOptions: { openai: { reasoningEffort: 'high' } },
+      providerOptions: { openai: { reasoningEffort: 'medium' } },
       schema: judgeSchema,
       prompt: `Reviews of ${question.place}. SAMPLE is the ${sampleTexts.length} reviews every assistant was given. SEARCHABLE is reviews beyond the sample a search could reach: those mentioning ${question.terms} (${bearing.length} in all, TrueScore ${scorePct}% on ${trustedReviews} trusted reviewers), then whatever the assistants' own searches turned up — ${searchable.length} shown, out of ${reviews.length} reviews in all.\n\nSAMPLE:\n\n${sampleTexts.join('\n\n')}\n\nSEARCHABLE:\n\n${searchable.join('\n\n') || '(none)'}\n\n---\n\nQuestion: "${question.q}"\n\nEach anonymous assistant below answered from the sample, after optionally searching every review. A search returns how many reviews match, their TrueScore (net share of trusted reviewers rating 5★ over 1★, from -100 to 100) and the matching texts beyond the sample. Each answer lists the searches it ran.\n\nScore every answer 1-5 on: correct (its conclusion matches what the reviews as a whole say), complete (it gives the specifics and weight of evidence a reader needs, including what only a search would surface), grounded (nothing invented or contradicted by the reviews; numbers it cites match its searches). A failed answer scores 1 on all three. Then rank every answer from best to worst by id.\n\n${answers.join('\n\n')}`,
     });
@@ -143,14 +144,11 @@ if (JUDGE) {
       ranking: object.ranking.flatMap((id) => runOf(id)?.label ?? []),
     };
   };
-  const entries = [...runs];
-  for (let i = 0; i < entries.length; i += 3) {
-    await Promise.all(entries.slice(i, i + 3).map(async ([question, rs], k) => {
-      const order = shuffled(rs, i + k);
-      const passes = await Promise.all([order, [...order].reverse()].map((o) => judge(question, rs, o).catch((e) => (console.log(`judge failed: ${question.q}: ${e.message?.slice(0, 100)}`), undefined))));
-      judged.set(question, passes.flatMap((p) => p ?? []));
-    }));
-  }
+  await Promise.all([...runs].map(async ([question, rs], i) => {
+    const order = shuffled(rs, i);
+    const passes = await Promise.all([order, [...order].reverse()].map((o) => judge(question, rs, o).catch((e) => (console.log(`judge failed: ${question.q}: ${e.message?.slice(0, 100)}`), undefined))));
+    judged.set(question, passes.flatMap((p) => p ?? []));
+  }));
 }
 
 // ── Standings

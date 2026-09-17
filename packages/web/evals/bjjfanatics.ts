@@ -288,7 +288,7 @@ if (JUDGE && KEYS.openai) {
         const [a, b] = flip ? [r1, r0] : [r0, r1];
         const { object } = await generateObject({
           model: judgeModel,
-          providerOptions: { openai: { reasoningEffort: 'high' } },
+          providerOptions: { openai: { reasoningEffort: 'medium' } },
           schema: judgeSchema,
           prompt: `${reviewBlock}\n\n---\n\nTwo anonymous models summarized the source above (reviews, plus official course contents when present). Score each 1-5 on: grounded (every claim traceable to the reviews OR the official contents — a volume/chapter citation that matches the contents is grounded, NOT invented), specific (named techniques/volumes over vague adjectives), useful (helps someone decide buy/skip). Then pick the overall winner.\n\nOutput A:\n${out(a.parsed)}\n\nOutput B:\n${out(b.parsed)}`,
         });

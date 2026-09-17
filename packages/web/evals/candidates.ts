@@ -16,5 +16,7 @@ export const registerCandidates = () => {
     'deepseek-flash:off': PROVIDERS.deepseek,
   };
   Object.assign(PROVIDERS, candidates);
-  return Object.keys(candidates).map((label) => ({ label, provider: label as Provider }));
+  // --only=a,b keeps just those labels.
+  const only = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length).split(',');
+  return Object.keys(candidates).filter((label) => !only || only.includes(label)).map((label) => ({ label, provider: label as Provider }));
 };

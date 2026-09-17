@@ -2,7 +2,7 @@
 //   bun evals/compare.ts            # outputs + latency + tokens
 //   bun evals/compare.ts --judge    # adds blind LLM-judge scoring (gpt-5.6-sol)
 //   bun evals/compare.ts --judge --luna   # compare gpt-5.6-luna effort ladder
-//   bun evals/compare.ts --judge --candidates   # shipped models vs newer ones (candidates.ts)
+//   bun evals/compare.ts --judge --candidates [--only=a,b]   # shipped models vs newer ones (candidates.ts)
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject } from 'ai';
 import { z } from 'zod';
@@ -78,7 +78,7 @@ const judgeSchema = z.object({
   reason: z.string(),
 });
 
-// GPT-5.6 Sol, OpenAI's flagship, at high reasoning effort — a proper thinking
+// GPT-5.6 Sol, OpenAI's flagship, at medium reasoning effort — a proper thinking
 // model as the blind judge. Effort is set on the generateObject call below.
 const judgeModel = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-5.6-sol');
 
@@ -86,7 +86,7 @@ const judgeRuns = async (f: (typeof fixtures)[number], r0: Run, r1: Run, flip: b
   const [a, b] = flip ? [r1, r0] : [r0, r1];
   const { object } = await generateObject({
     model: judgeModel,
-    providerOptions: { openai: { reasoningEffort: 'high' } },
+    providerOptions: { openai: { reasoningEffort: 'medium' } },
     schema: judgeSchema,
     prompt: `${f.reviewTexts.join('\n\n')}\n\n---\n\nTwo anonymous models summarized the reviews above for ${f.place}${f.filter ? ` (topic: "${f.filter}")` : ''}. Score each output 1-5 on: grounded (claims traceable to the reviews, nothing invented), specific (concrete details over vague adjectives), useful (helps someone decide). Then pick the overall winner.\n\nOutput A:\n${JSON.stringify(a.summary, null, 1)}\n\nOutput B:\n${JSON.stringify(b.summary, null, 1)}`,
   });

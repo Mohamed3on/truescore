@@ -97,7 +97,7 @@ const QUALITY_SCHEMA = z.object({ grounded: z.number().int(), specific: z.number
 const scoreQuality = async (summary: unknown): Promise<Q> => {
   const { object } = await generateObject({
     model: judge,
-    providerOptions: { openai: { reasoningEffort: 'high' } },
+    providerOptions: { openai: { reasoningEffort: 'medium' } },
     schema: QUALITY_SCHEMA,
     prompt: `${REVIEWS.join('\n\n')}\n\n---\n\nA model extracted the structured summary below from the reviews above. Score it 1-5 on grounded (every claim traceable to the reviews, nothing invented), specific (concrete details over vague adjectives), and useful (helps someone decide).\n\n${JSON.stringify(summary, null, 1)}`,
   });
