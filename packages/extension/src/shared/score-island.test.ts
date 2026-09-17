@@ -41,6 +41,31 @@ describe('buildGauge', () => {
     const fill = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
     expect(fill.style.cssText).toContain('scaleX(0)');
   });
+
+  test('without a recent ratio there is no trend', () => {
+    const [gauge] = buildGauge({ score: 1, nps: 50, total: 2 }, null);
+    expect(gauge.querySelector('.ars-gauge-trend')).toBeNull();
+  });
+
+  test('a recent ratio within 5 points reads as steady, with no tick', () => {
+    const [gauge] = buildGauge({ score: 171, nps: 97, total: 181 }, 0.93);
+    const trend = gauge.querySelector('.ars-gauge-trend') as HTMLElement;
+    expect(trend.textContent).toBe('steady recently');
+    expect(trend.title).toBe('93% positive in the newest reviews');
+    expect(gauge.querySelector('.ars-gauge-tick')).toBeNull();
+  });
+
+  test('a diverging recent ratio shows its percent and ticks the bar where it lands', () => {
+    const [gauge] = buildGauge({ score: 327, nps: 82, total: 484 }, 0.76);
+    expect((gauge.querySelector('.ars-gauge-trend') as HTMLElement).textContent).toBe('76% recently');
+    expect((gauge.querySelector('.ars-gauge-tick') as HTMLElement).style.left).toBe('76%');
+  });
+
+  test('a negative recent ratio ticks at the start of the bar', () => {
+    const [gauge] = buildGauge({ score: 40, nps: 20, total: 200 }, -0.3);
+    expect((gauge.querySelector('.ars-gauge-trend') as HTMLElement).textContent).toBe('-30% recently');
+    expect((gauge.querySelector('.ars-gauge-tick') as HTMLElement).style.left).toBe('0%');
+  });
 });
 
 describe('buildRecentGauge', () => {

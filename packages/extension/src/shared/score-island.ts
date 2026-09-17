@@ -26,10 +26,16 @@ export const createIslandShell = (): HTMLElement => {
   return wrapper;
 };
 
+// Within this many points the newest reviews say what all of them do — closer
+// than a ~100-review sample can tell apart.
+const STEADY_POINTS = 5;
+
 // The headline gauge — a "% positive on this item" bar tinted by sentiment — and
 // the truescore / item-reviews stats row beneath it. Returned as [gauge, stats]
-// for the caller to append into the island.
-export const buildGauge = ({ score, nps, total }: IslandScore): [HTMLElement, HTMLElement] => {
+// for the caller to append into the island. Given the newest reviews' ratio, the
+// same gauge carries the trend rather than stacking a second bar: "steady
+// recently" while the two agree, else the recent percent and a tick where it lands.
+export const buildGauge = ({ score, nps, total }: IslandScore, recent?: number | null): [HTMLElement, HTMLElement] => {
   const gauge = document.createElement('div');
   gauge.className = 'ars-gauge';
   gauge.style.cursor = 'default';
@@ -43,6 +49,21 @@ export const buildGauge = ({ score, nps, total }: IslandScore): [HTMLElement, HT
   pct.style.color = tone;
   const fill = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
   fill.style.cssText = `width:100%;background:${tone};transform:scaleX(${Math.max(0, nps) / 100})`;
+
+  if (recent != null) {
+    const recentPct = Math.round(recent * 100);
+    const trend = el('span', 'ars-gauge-trend', 'steady recently');
+    trend.title = `${recentPct}% positive in the newest reviews`;
+    if (Math.abs(recentPct - Math.round(nps)) >= STEADY_POINTS) {
+      const val = el('span', 'ars-gauge-trend-pct', `${recentPct}%`);
+      val.style.color = npsColor(recentPct);
+      trend.replaceChildren(val, ' recently');
+      const tick = el('i', 'ars-gauge-tick');
+      tick.style.left = `${Math.max(0, Math.min(100, recentPct))}%`;
+      gauge.appendChild(tick);
+    }
+    gauge.querySelector('.ars-gauge-label')!.appendChild(trend);
+  }
 
   const stats = document.createElement('div');
   stats.className = 'ars-stats';

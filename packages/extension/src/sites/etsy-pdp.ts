@@ -274,17 +274,11 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
 
   const wrapper = createIslandShell();
 
-  // Overall gauge, then the Amazon-style recent-positive one — `reviews` are the
+  // One gauge: the overall percent, carrying the recent trend — `reviews` are the
   // newest ~104, so their ratings are the trend the histogram can't show.
   const ratio = recentRatio(reviews.map((r) => r.rating));
-  if (score) {
-    const [gauge, gaugeStats] = buildGauge(score);
-    wrapper.append(gauge);
-    if (ratio != null) wrapper.append(buildRecentGauge(ratio));
-    wrapper.append(gaugeStats);
-  } else if (ratio != null) {
-    wrapper.append(buildRecentGauge(ratio));
-  }
+  if (score) wrapper.append(...buildGauge(score, ratio));
+  else if (ratio != null) wrapper.append(buildRecentGauge(ratio));
 
   // Postage rides in the stats row: it belongs to the buying decision the panel
   // is already answering, and the row exists even when there is no score.
