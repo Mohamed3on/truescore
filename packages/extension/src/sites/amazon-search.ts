@@ -99,7 +99,9 @@ const resumeObs = () => {
 };
 
 const sortAmazonResults = async () => {
-  const items = document.querySelectorAll('.s-result-item[data-asin]:not([data-asin=""]):not(.AdHolder)');
+  // Browse/promo pages list the same product cards in a `.dcl-html-grid`, with the
+  // ASIN only in `data-csa-c-item-id`.
+  const items = document.querySelectorAll('.s-result-item[data-asin]:not([data-asin=""]):not(.AdHolder), .dcl-html-grid > [data-csa-c-item-id^="amzn1.asin."]');
   const seenASINs = new Set<string>();
   const seenKeys = new Set<string>();
   const fetchPromises: Promise<[number | null, Element]>[] = [];
@@ -113,7 +115,7 @@ const sortAmazonResults = async () => {
     // Only the slots are results: a carousel card that claimed an ASIN or a
     // variant family first would get its organic twin skipped or removed.
     if (item.parentElement?.closest('.s-result-item') || item.querySelector('.s-shopping-adviser')) continue;
-    const productSIN = item.getAttribute('data-asin');
+    const productSIN = item.getAttribute('data-asin') || item.getAttribute('data-csa-c-item-id')?.match(/asin\.([A-Z0-9]{10})/)?.[1];
     if (!productSIN || seenASINs.has(productSIN)) continue;
 
     const swatchASINs = [...item.querySelectorAll('[data-csa-c-swatch-url]')]
@@ -127,6 +129,7 @@ const sortAmazonResults = async () => {
       item.querySelector('[data-cy="reviews-block"] a span.a-size-mini') ||
       item.querySelector('[data-cy="reviews-block"] .a-row.a-size-small a span.a-size-small') ||
       item.querySelector('.sg-row .a-spacing-top-micro .a-link-normal span.a-size-base') ||
+      item.querySelector('a[href*="#customerReviews"] span.a-size-mini') ||
       ratingEls.get(item);
 
     if (!numberOfRatingsElement) { fetchPromises.push(Promise.resolve([null, item])); continue; }
@@ -161,7 +164,7 @@ const sortAmazonResults = async () => {
 
   itemsArr.sort(sortFunction);
 
-  const searchResults = document.querySelector('.s-result-list.s-search-results') || document.querySelector('#mainResults .s-result-list');
+  const searchResults = document.querySelector('.s-result-list.s-search-results') || document.querySelector('#mainResults .s-result-list') || document.querySelector('.dcl-html-grid');
   if (searchResults && itemsArr.length > 0) {
     // Rank by CSS `order`, never by moving cards: Amazon doesn't refill an emptied
     // card once it has been moved, so a re-sort after infinite scroll left every
@@ -173,7 +176,7 @@ const sortAmazonResults = async () => {
 };
 
 (async function main() {
-  const isSearchPage = () => /s\?k|s\?i|s\?|\/b\//.test(location.href);
+  const isSearchPage = () => /s\?k|s\?i|s\?|\/b\/|browse\.html/.test(location.href);
 
   let sorting = false, pendingSort = false;
   const debouncedSort = (() => {
@@ -191,7 +194,7 @@ const sortAmazonResults = async () => {
   })();
 
   const watchResults = () => {
-    const container = document.querySelector('.s-result-list.s-search-results, #mainResults .s-result-list');
+    const container = document.querySelector('.s-result-list.s-search-results, #mainResults .s-result-list, .dcl-html-grid');
     if (!container || container === observedContainer) return;
     pauseObs();
     observedContainer = container;
@@ -208,7 +211,7 @@ const sortAmazonResults = async () => {
     debouncedSort();
     navObs?.disconnect(); // one live slot — pushState bursts must not stack 10s body observers
     const bodyObs = new MutationObserver(() => {
-      const container = document.querySelector('.s-result-list.s-search-results, #mainResults .s-result-list');
+      const container = document.querySelector('.s-result-list.s-search-results, #mainResults .s-result-list, .dcl-html-grid');
       if (container && container !== observedContainer) {
         bodyObs.disconnect();
         watchResults();
