@@ -7,7 +7,7 @@
 // numbers reflect production requests.
 //
 //   bun evals/bjjfanatics.ts                 # 3 models + nano thinking ladder, on the shipped prompt
-//   bun evals/bjjfanatics.ts --judge         # + blind gpt-5.4 pairwise quality scoring
+//   bun evals/bjjfanatics.ts --judge         # + blind gpt-5.6-sol pairwise quality scoring
 //   bun evals/bjjfanatics.ts --ab            # A/B current shipped prompt vs the grounded candidate
 //   bun evals/bjjfanatics.ts --grounded      # run only the grounded candidate
 //
@@ -255,10 +255,10 @@ for (const fx of fixtures) {
   }
 }
 
-// ── Blind quality judge (gpt-5.4 thinking), pairwise within each prompt variant,
+// ── Blind quality judge (gpt-5.6-sol thinking), pairwise within each prompt variant,
 // A/B order flipped per pair to cancel position bias. Mirrors evals/compare.ts.
 if (JUDGE && KEYS.openai) {
-  const judgeModel = createOpenAI({ apiKey: KEYS.openai })('gpt-5.4');
+  const judgeModel = createOpenAI({ apiKey: KEYS.openai })('gpt-5.6-sol');
   const judgeSchema = z.object({
     a: z.object({ grounded: z.number().int(), specific: z.number().int(), useful: z.number().int() }),
     b: z.object({ grounded: z.number().int(), specific: z.number().int(), useful: z.number().int() }),
@@ -279,7 +279,7 @@ if (JUDGE && KEYS.openai) {
     const reviewBlock = (fx.context ? `OFFICIAL COURSE CONTENTS (citations matching these volumes/chapters are grounded, not invented):\n${fx.context}\n\n---\n\n` : '') + `REVIEWS:\n${fx.reviews}`;
     const pairs: [Row, Row][] = [];
     for (let a = 0; a < ok.length; a++) for (let b = a + 1; b < ok.length; b++) pairs.push([ok[a]!, ok[b]!]);
-    console.log(`\n${'='.repeat(74)}\n## judge (gpt-5.4 thinking, blind) — ${g.replace('::', ' · prompt=')}\n`);
+    console.log(`\n${'='.repeat(74)}\n## judge (gpt-5.6-sol thinking, blind) — ${g.replace('::', ' · prompt=')}\n`);
     // Judge every pair concurrently; fold the verdicts into the tally after, so
     // the shared counters stay deterministic regardless of completion order.
     const judged = await Promise.all(
@@ -307,7 +307,7 @@ if (JUDGE && KEYS.openai) {
       else { acc(winner).w++; acc(winner === r0.label ? r1.label : r0.label).l++; }
     }
   }
-  console.log(`\n${'='.repeat(74)}\n## standings — gpt-5.4 thinking, blind\n`);
+  console.log(`\n${'='.repeat(74)}\n## standings — gpt-5.6-sol thinking, blind\n`);
   const ranked = Object.entries(tally).map(([label, x]) => ({ label, x, avg: x.n ? (x.g + x.s + x.u) / x.n : 0 })).sort((m, n) => n.x.w - m.x.w || n.avg - m.avg);
   for (const { label, x, avg } of ranked) {
     const a = (v: number) => (x.n ? (v / x.n).toFixed(2) : '—');

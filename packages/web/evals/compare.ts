@@ -1,6 +1,6 @@
 // Side-by-side eval of summarize() across providers on real cached review sets.
 //   bun evals/compare.ts            # outputs + latency + tokens
-//   bun evals/compare.ts --judge    # adds blind LLM-judge scoring (gpt-5.4)
+//   bun evals/compare.ts --judge    # adds blind LLM-judge scoring (gpt-5.6-sol)
 //   bun evals/compare.ts --judge --luna   # compare gpt-5.6-luna effort ladder
 //   bun evals/compare.ts --judge --candidates   # shipped models vs newer ones (candidates.ts)
 import { createOpenAI } from '@ai-sdk/openai';
@@ -78,9 +78,9 @@ const judgeSchema = z.object({
   reason: z.string(),
 });
 
-// Full gpt-5.4 (not nano/mini) run at high reasoning effort — a proper thinking
+// GPT-5.6 Sol, OpenAI's flagship, at high reasoning effort — a proper thinking
 // model as the blind judge. Effort is set on the generateObject call below.
-const judgeModel = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-5.4');
+const judgeModel = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-5.6-sol');
 
 const judgeRuns = async (f: (typeof fixtures)[number], r0: Run, r1: Run, flip: boolean) => {
   const [a, b] = flip ? [r1, r0] : [r0, r1];
@@ -130,7 +130,7 @@ for (const [i, f] of RUN_FIXTURES.entries()) {
     const line = Object.entries(scores)
       .map(([p, s]) => `${p}: grounded ${s.grounded}, specific ${s.specific}, useful ${s.useful}`)
       .join(' | ');
-    console.log(`### judge: ${r0.label} vs ${r1.label} (gpt-5.4 thinking, blind)\n\n${line}\n\n**Winner:** ${winner} — ${reason}\n`);
+    console.log(`### judge: ${r0.label} vs ${r1.label} (gpt-5.6-sol thinking, blind)\n\n${line}\n\n**Winner:** ${winner} — ${reason}\n`);
     for (const [p, s] of Object.entries(scores)) {
       const x = acc(p);
       x.g += s.grounded;
@@ -149,7 +149,7 @@ for (const [i, f] of RUN_FIXTURES.entries()) {
 }
 
 if (JUDGE) {
-  console.log(`\n${'='.repeat(72)}\n## standings — gpt-5.4 thinking, blind, all pairs across ${RUN_FIXTURES.length} review sets\n`);
+  console.log(`\n${'='.repeat(72)}\n## standings — gpt-5.6-sol thinking, blind, all pairs across ${RUN_FIXTURES.length} review sets\n`);
   const ranked = CONTESTANTS.map((c) => {
     const x = acc(c.label);
     return { label: c.label, x, avg: x.n ? (x.g + x.s + x.u) / x.n : 0 };

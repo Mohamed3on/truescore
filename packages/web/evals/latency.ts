@@ -5,15 +5,16 @@
 // a realistic review set, so the spread reflects what users actually wait for.
 // Variants: luna effort ladder (none|low|medium|high|xhigh), Gemini Flash at the
 // production thinkingLevel, the newer Gemini 3.5 Flash-Lite (minimal) and 3.8
-// Flash (low, its floor), and DeepSeek V4.1 Flash non-thinking + its thinking
-// effort ladder (low|medium|high|xhigh|max). Reasoning/thought tokens explain
-// the latency. --judge adds a blind gpt-5.4 quality score (grounded/specific/
+// Flash (low, its floor), and DeepSeek V4.1 Flash non-thinking, its thinking
+// effort ladder (low|medium|high|xhigh|max) and strict tool calls
+// (ds:strict:off|low). Reasoning/thought tokens explain
+// the latency. --judge adds a blind gpt-5.6-sol quality score (grounded/specific/
 // useful, 1-5) of each variant's structured output, scored after timing so it
 // never pollutes the latency numbers. --only=a,b runs just those variants.
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject } from 'ai';
+import { generateObject, generateText, tool } from 'ai';
 import { z } from 'zod';
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -24,6 +25,9 @@ const flash = google('gemini-3-flash-preview');
 const lite = google('gemini-3.5-flash-lite');
 const flash38 = google('gemini-3.8-flash');
 const ds = deepseek('deepseek-flash');
+// DeepSeek's JSON mode only promises valid JSON; strict tool calls on its beta
+// endpoint hold the arguments to the schema.
+const dsBeta = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com/beta' })('deepseek-flash');
 
 // DeepSeek has no native JSON-schema response format, so the SDK injects the
 // schema into the system prompt and logs a warning on every call — hush it.
@@ -84,15 +88,16 @@ const median = (xs: number[]): number => {
 };
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
-// --judge: a blind gpt-5.4 scorer for each structured output (same rubric as
+// --judge: a blind gpt-5.6-sol scorer for each structured output (same rubric as
 // evals/compare.ts). Absolute 1-5 per dimension; a call's clock stops before
 // its output is judged, so judge time never counts toward latency.
 type Q = { g: number; s: number; u: number };
-const judge = openai('gpt-5.4');
+const judge = openai('gpt-5.6-sol');
 const QUALITY_SCHEMA = z.object({ grounded: z.number().int(), specific: z.number().int(), useful: z.number().int() });
 const scoreQuality = async (summary: unknown): Promise<Q> => {
   const { object } = await generateObject({
     model: judge,
+    providerOptions: { openai: { reasoningEffort: 'high' } },
     schema: QUALITY_SCHEMA,
     prompt: `${REVIEWS.join('\n\n')}\n\n---\n\nA model extracted the structured summary below from the reviews above. Score it 1-5 on grounded (every claim traceable to the reviews, nothing invented), specific (concrete details over vague adjectives), and useful (helps someone decide).\n\n${JSON.stringify(summary, null, 1)}`,
   });
@@ -127,6 +132,21 @@ const variants: Variant[] = [
   ...DS_EFFORTS.map((e) => ({
     label: `ds:${e}`,
     run: () => generateObject({ model: ds, providerOptions: { deepseek: { thinking: { type: 'enabled' }, reasoningEffort: e } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
+  })),
+  // The same extraction as a forced strict tool call, non-thinking and at low effort.
+  ...(['off', 'low'] as const).map((e) => ({
+    label: `ds:strict:${e}`,
+    run: async () => {
+      const r = await generateText({
+        model: dsBeta, maxOutputTokens: 16384, prompt: PROMPT,
+        providerOptions: { deepseek: e === 'off' ? { thinking: { type: 'disabled' } } : { thinking: { type: 'enabled' }, reasoningEffort: e } },
+        tools: { extract: tool({ inputSchema: SCHEMA, strict: true }) },
+        // Thinking mode rejects a forced tool_choice; auto still calls the only tool.
+        toolChoice: e === 'off' ? { type: 'tool', toolName: 'extract' } : 'auto',
+      });
+      if (r.finishReason === 'length') throw new Error('hit the output token cap');
+      return { object: SCHEMA.parse(r.toolCalls[0]?.input), usage: r.usage };
+    },
   })),
 ].filter((v) => !ONLY || ONLY.includes(v.label));
 

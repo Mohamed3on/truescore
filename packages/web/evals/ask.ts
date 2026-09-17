@@ -5,7 +5,7 @@
 // way the extension answers it on Maps: reviews matching any term, and their
 // TrueScore. Review sets: fixtures/ask-corpora.json (make-ask-fixtures.ts).
 //   bun evals/ask.ts            # answers, searches, latency, tokens
-//   bun evals/ask.ts --judge    # + blind gpt-5.4 scores and ranking per question
+//   bun evals/ask.ts --judge    # + blind gpt-5.6-sol scores and ranking per question
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject, type ChatTransport } from 'ai';
 import { z } from 'zod';
@@ -109,13 +109,13 @@ for (const [question, rs] of runs) {
   }
 }
 
-// ── Blind judge: one gpt-5.4 call sees every answer to a question at once, with
+// ── Blind judge: one gpt-5.6-sol call sees every answer to a question at once, with
 // the sample and every review the answers could have reached. Two passes in
 // opposite orders cancel position bias.
 type Scores = { correct: number; complete: number; grounded: number };
 const judged = new Map<Question, { scores: Record<string, Scores>; ranking: string[] }[]>();
 if (JUDGE) {
-  const judgeModel = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-5.4');
+  const judgeModel = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-5.6-sol');
   const judgeSchema = z.object({
     answers: z.array(z.object({ id: z.string(), correct: z.number().int(), complete: z.number().int(), grounded: z.number().int() })),
     ranking: z.array(z.string()),
@@ -156,7 +156,7 @@ if (JUDGE) {
 // ── Standings
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? NaN;
-console.log(`\n${'='.repeat(72)}\n## standings — ${QUESTIONS.length} questions over ${Object.keys(places).length} places, ${SAMPLE_SIZE}-review sample${JUDGE ? ', gpt-5.4 judge (2 orders)' : ''}\n`);
+console.log(`\n${'='.repeat(72)}\n## standings — ${QUESTIONS.length} questions over ${Object.keys(places).length} places, ${SAMPLE_SIZE}-review sample${JUDGE ? ', gpt-5.6-sol judge (2 orders)' : ''}\n`);
 const rows = CONTESTANTS.map(({ label }) => {
   const mine = [...runs].map(([q, rs]) => [q, rs.find((r) => r.label === label)!] as const);
   const searchedWhen = (expect: Question['expect']) => {
