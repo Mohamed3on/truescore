@@ -65,30 +65,37 @@ const seedMapsCreds = async (creds: SeedCreds) => {
   }
 };
 
-// IMDb's per-rating vote counts (index 0 = 1★ … 9 = 10★), from the GraphQL API
-// IMDb's own site uses. IMDb walls off page scrapers — the CORS proxy Letterboxd
-// used now only ever gets its empty 202 — and a content script can't make this
-// cross-origin call, so it lives here, throttled across every tab. Null on
-// failure; an id IMDb doesn't know has no ratings, so it's all zeros.
+// IMDb's per-rating vote counts (index 0 = 1★ … 9 = 10★) per title id, from the
+// GraphQL API IMDb's own site uses. IMDb walls off page scrapers — the CORS proxy
+// Letterboxd used now only ever gets its empty 202 — and a content script can't
+// make this cross-origin call, so it lives here, throttled across every tab. One
+// query answers a whole list of ids, so a title page's recommendation strip costs
+// a single request. Null on failure; an id IMDb doesn't know has no ratings, so
+// it's all zeros.
 const imdbFetch = createThrottledFetcher(10);
-const imdbHistogram = async (id: string): Promise<number[] | null> => {
+const imdbHistograms = async (ids: string[]): Promise<Record<string, number[]> | null> => {
   try {
     const r = await imdbFetch('https://caching.graphql.imdb.com/', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-imdb-client-name': 'imdb-web-next-localized' },
       body: JSON.stringify({
-        query: 'query($id: ID!) { title(id: $id) { aggregateRatingsBreakdown { histogram { histogramValues { rating voteCount } } } } }',
-        variables: { id },
+        query: 'query($ids: [ID!]!) { titles(ids: $ids) { id aggregateRatingsBreakdown { histogram { histogramValues { rating voteCount } } } } }',
+        variables: { ids },
       }),
     });
     if (!r.ok) return null;
-    const data = (await r.json())?.data;
-    if (!data) return null;
-    const counts: number[] = Array(10).fill(0);
-    for (const { rating, voteCount } of data.title?.aggregateRatingsBreakdown?.histogram?.histogramValues ?? []) {
-      if (rating >= 1 && rating <= 10) counts[rating - 1] = voteCount || 0;
+    const titles = (await r.json())?.data?.titles;
+    if (!Array.isArray(titles)) return null;
+    const histograms: Record<string, number[]> = {};
+    for (const title of titles) {
+      if (typeof title?.id !== 'string') continue;
+      const counts: number[] = Array(10).fill(0);
+      for (const { rating, voteCount } of title.aggregateRatingsBreakdown?.histogram?.histogramValues ?? []) {
+        if (rating >= 1 && rating <= 10) counts[rating - 1] = voteCount || 0;
+      }
+      histograms[title.id] = counts;
     }
-    return counts;
+    return histograms;
   } catch {
     return null;
   }
@@ -186,8 +193,12 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'seedMapsCreds' && msg.creds) seedMapsCreds(msg.creds as SeedCreds);
   if (msg?.type === 'imdbHistogram' && typeof msg.id === 'string') {
-    imdbHistogram(msg.id).then(sendResponse);
+    imdbHistograms([msg.id]).then((histograms) => sendResponse(histograms?.[msg.id] ?? null));
     return true; // answered asynchronously
+  }
+  if (msg?.type === 'imdbHistograms' && Array.isArray(msg.ids)) {
+    imdbHistograms(msg.ids.filter((id: unknown) => typeof id === 'string')).then(sendResponse);
+    return true;
   }
 });
 

@@ -1,5 +1,7 @@
 import { netScore } from '@truescore/gmaps-shared';
-import { addCommas } from '../shared/utils';
+import { cacheGetMaybe, cacheSetMaybe } from '../shared/cache';
+import { setupScoreGrid } from '../shared/score-grid';
+import { addCommas, npsStats } from '../shared/utils';
 
 // Exact vote counts per rating (index 0 = 1★ … 9 = 10★) from IMDb's Next.js page
 // data. The ratings chart itself only carries rounded labels ("1.8M Ratings"), and
@@ -42,3 +44,51 @@ async function calculateRatings() {
 }
 
 calculateRatings().catch(() => {});
+
+// --- "More like this" -------------------------------------------------------
+// Badge each recommended title with its score and re-rank the strip by it.
+// IMDb's GraphQL answers a whole list of ids in one query, so the cards that ask
+// in the same tick share one background call rather than one each.
+const CARD_CACHE_TTL = 24 * 60 * 60 * 1000;
+let batch: { id: string; resolve: (counts: number[] | null) => void }[] = [];
+const flush = async () => {
+  const waiting = batch;
+  batch = [];
+  const histograms: Record<string, number[]> | null = await chrome.runtime
+    .sendMessage({ type: 'imdbHistograms', ids: [...new Set(waiting.map((w) => w.id))] })
+    .catch(() => null);
+  for (const { id, resolve } of waiting) resolve(histograms?.[id] ?? null);
+};
+const histogram = (id: string) =>
+  new Promise<number[] | null>((resolve) => {
+    if (!batch.length) setTimeout(flush);
+    batch.push({ id, resolve });
+  });
+
+const idOf = (card: Element) =>
+  card.querySelector('a[href*="/title/tt"]')?.getAttribute('href')?.match(/\/title\/(tt\d+)/)?.[1];
+
+setupScoreGrid({
+  cardSelector: '[data-testid="MoreLikeThis"] .ipc-poster-card',
+  idOf,
+  scoreForCard: async (card) => {
+    const id = idOf(card);
+    if (!id) return null;
+    const key = `nps_imdb_${id}`;
+    const cached = cacheGetMaybe(key, CARD_CACHE_TTL);
+    if (cached) return cached.value;
+    const counts = await histogram(id);
+    if (!counts) return null; // transport failure: left uncached so the grid's retry asks again
+    const total = counts.reduce((sum, c) => sum + c, 0);
+    const score = total ? npsStats(counts[8] + counts[9], counts[0] + counts[1], total) : null;
+    cacheSetMaybe(key, score);
+    return score;
+  },
+  // The star row is `nowrap` and overflows on narrow cards, so the badge takes
+  // its own line under it, aligned to the row's 8px gutter.
+  placeBadge: (card, badge) => {
+    badge.style.margin = '0 8px 4px';
+    badge.style.alignSelf = 'flex-start';
+    card.querySelector('.ipc-poster-card__rating-star-group')?.after(badge);
+  },
+});
