@@ -1,89 +1,128 @@
-import { netScore } from '@truescore/gmaps-shared';
-import { cacheGetMaybe, cacheSetMaybe } from '../shared/cache';
+import { cacheGet, cacheSet } from '../shared/cache';
 import { setupScoreGrid } from '../shared/score-grid';
-import { addCommas, npsStats } from '../shared/utils';
+import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 
-// Exact vote counts per rating (index 0 = 1★ … 9 = 10★) from IMDb's Next.js page
-// data. The ratings chart itself only carries rounded labels ("1.8M Ratings"), and
-// the old per-bar test ids are gone. Null when the page doesn't ship a histogram.
-const histogramFrom = (doc: Document): number[] | null => {
+// The "More like this" strip as the page renders it, from its Next.js data. The
+// API's own list for a title differs (a signed-in page gets a filtered strip),
+// and the picks panel has to judge the titles the user can see.
+type Similar = { id: string; name: string; type: string; year: number | null; poster: string | null; rating: number | null };
+const similarFromPage = (): Similar[] => {
   try {
-    const values = JSON.parse(doc.querySelector('#__NEXT_DATA__')?.textContent || '')
-      ?.props?.pageProps?.contentData?.histogramData?.histogramValues;
-    if (!Array.isArray(values)) return null;
-    const counts: number[] = Array(10).fill(0);
-    for (const { rating, voteCount } of values) if (rating >= 1 && rating <= 10) counts[rating - 1] = voteCount || 0;
-    return counts;
+    const edges = JSON.parse(document.querySelector('#__NEXT_DATA__')?.textContent || '')
+      ?.props?.pageProps?.mainColumnData?.moreLikeThisTitles?.edges;
+    if (!Array.isArray(edges)) return [];
+    return edges
+      .map(({ node }: any) => ({
+        id: node?.id,
+        name: node?.titleText?.text ?? node?.id,
+        type: node?.titleType?.text ?? '',
+        year: node?.releaseYear?.year ?? null,
+        poster: node?.primaryImage?.url ?? null,
+        rating: node?.ratingsSummary?.aggregateRating ?? null,
+      }))
+      .filter((s: Similar) => typeof s.id === 'string');
   } catch {
-    return null;
+    return [];
   }
 };
 
-async function calculateRatings() {
-  const id = window.location.pathname.match(/\/title\/(tt\d+)\/(?:ratings\/?)?$/)?.[1];
-  if (!id) return;
-
-  // The title page has no histogram in its data; its ratings page does.
-  const ratings = histogramFrom(document)
-    ?? histogramFrom(new DOMParser().parseFromString(await (await fetch(`/title/${id}/ratings/`)).text(), 'text/html'));
-  const totalRatings = ratings?.reduce((sum, c) => sum + c, 0) ?? 0;
-  if (!ratings || totalRatings === 0) return;
-
-  const absoluteScore = ratings[9] + ratings[8] - ratings[0] - ratings[1];
-  const ratio = absoluteScore / totalRatings;
-  const calculatedScore = netScore(absoluteScore, totalRatings);
-
-  const scoreElement = document.createElement('div');
-  scoreElement.textContent = `${addCommas(calculatedScore)} (${Math.round(ratio * 100)}%)`;
-  scoreElement.style.fontWeight = 'bold';
-  scoreElement.style.fontSize = '1.2rem';
-  scoreElement.style.color = '#f5c518';
-
-  const headline = document.querySelector('h1');
-  if (headline) headline.parentNode!.insertBefore(scoreElement, headline.nextSibling);
-}
-
-calculateRatings().catch(() => {});
-
-// --- "More like this" -------------------------------------------------------
-// Badge each recommended title with its score and re-rank the strip by it.
-// IMDb's GraphQL answers a whole list of ids in one query, so the cards that ask
-// in the same tick share one background call rather than one each.
-const CARD_CACHE_TTL = 24 * 60 * 60 * 1000;
-let batch: { id: string; resolve: (counts: number[] | null) => void }[] = [];
-const flush = async () => {
-  const waiting = batch;
-  batch = [];
-  const histograms: Record<string, number[]> | null = await chrome.runtime
-    .sendMessage({ type: 'imdbHistograms', ids: [...new Set(waiting.map((w) => w.id))] })
-    .catch(() => null);
-  for (const { id, resolve } of waiting) resolve(histograms?.[id] ?? null);
+// Per-rating vote counts for a set of titles: one background request for
+// whatever the day's cache lacks (ratings drift slowly, and neighbouring
+// titles share most of their strips). A title the request didn't answer is
+// left out, so a failed fetch stays uncached and a reload asks again.
+const CACHE_TTL = 24 * 60 * 60 * 1000;
+const histograms = async (ids: string[]): Promise<Record<string, number[]>> => {
+  const found: Record<string, number[]> = {};
+  const missing: string[] = [];
+  for (const id of new Set(ids)) {
+    const cached = cacheGet(`nps_imdb_h_${id}`, CACHE_TTL);
+    if (cached) found[id] = cached;
+    else missing.push(id);
+  }
+  if (missing.length) {
+    const fetched: Record<string, number[]> | null =
+      await chrome.runtime.sendMessage({ type: 'imdbHistograms', ids: missing }).catch(() => null);
+    for (const id of missing) {
+      if (!fetched?.[id]) continue;
+      found[id] = fetched[id];
+      cacheSet(`nps_imdb_h_${id}`, fetched[id]);
+    }
+  }
+  return found;
 };
-const histogram = (id: string) =>
-  new Promise<number[] | null>((resolve) => {
-    if (!batch.length) setTimeout(flush);
-    batch.push({ id, resolve });
-  });
+
+// 9★ and 10★ against 1★ and 2★, over every rating. Null with none.
+const scoreOf = (histogram: number[] | undefined) => {
+  const total = histogram?.reduce((sum, c) => sum + c, 0) ?? 0;
+  return total ? npsStats(histogram![8] + histogram![9], histogram![0] + histogram![1], total) : null;
+};
+type Score = NonNullable<ReturnType<typeof scoreOf>>;
+const scoreText = ({ score, nps }: Score) => `${addCommas(score)} (${Math.round(nps)}%)`;
 
 const idOf = (card: Element) =>
   card.querySelector('a[href*="/title/tt"]')?.getAttribute('href')?.match(/\/title\/(tt\d+)/)?.[1];
+const CARD = '[data-testid="MoreLikeThis"] .ipc-poster-card';
 
+// The title page and its ratings page both get the score under the name; only
+// the title page has a strip. One request covers the title and every card.
+const id = window.location.pathname.match(/\/title\/(tt\d+)\/(?:ratings\/?)?$/)?.[1];
+const similar = id ? similarFromPage() : [];
+const scores: Promise<Record<string, Score | null>> = id
+  ? histograms([id, ...similar.map((s) => s.id), ...[...document.querySelectorAll(CARD)].flatMap((c) => idOf(c) ?? [])])
+      .then((all) => Object.fromEntries(Object.entries(all).map(([tt, h]) => [tt, scoreOf(h)])))
+  : Promise.resolve({});
+
+// --- similar picks -----------------------------------------------------------
+// Is there something similar that scores as well? A pick has to match this
+// title on both the Score and its ratio, each with the slack a few hundred
+// ratings can't resolve: the Score may trail by SCORE_SLACK of this one's, the
+// ratio by RATIO_SLACK points. Best Score first.
+const SCORE_SLACK = 0.05;
+const RATIO_SLACK = 2;
+const posterThumb = (url: string) => url.replace(/_V1_[^.]*\./, '_V1_QL75_UX56_.');
+
+const renderSimilar = (current: Score, all: Record<string, Score | null>, anchor: Element) => {
+  const picks = similar
+    .flatMap((s) => { const score = all[s.id]; return score ? [{ ...s, ...score }] : []; })
+    .filter((s) => s.score >= current.score - Math.abs(current.score) * SCORE_SLACK && s.nps >= current.nps - RATIO_SLACK)
+    .sort((a, b) => b.score - a.score);
+  const panel = el('div', 'ts-similar');
+  if (!picks.length) {
+    panel.append(el('div', 'ts-similar-winner', '★ Nothing similar scores as well.'));
+  } else {
+    panel.append(el('div', 'ts-similar-header', picks.length === 1 ? '1 similar title scores as well or better' : `${picks.length} similar titles score as well or better`));
+    for (const pick of picks) {
+      const row = el('a', 'ts-similar-row') as HTMLAnchorElement;
+      row.href = `/title/${pick.id}/`;
+      const poster = el('img', 'ts-similar-poster') as HTMLImageElement;
+      if (pick.poster) poster.src = posterThumb(pick.poster);
+      poster.alt = '';
+      const name = el('span', 'ts-similar-name', pick.name);
+      name.append(el('span', 'ts-similar-meta', [pick.year, pick.type, pick.rating != null && `★ ${pick.rating}`].filter(Boolean).join(' · ')));
+      const score = el('span', 'ts-similar-score', scoreText(pick));
+      score.style.color = npsColor(pick.nps, 60);
+      row.append(poster, name, score);
+      panel.append(row);
+    }
+  }
+  anchor.after(panel);
+};
+
+scores.then((all) => {
+  const current = id && all[id];
+  const headline = document.querySelector('h1');
+  if (!current || !headline) return;
+  const scoreElement = el('div', 'ts-score', scoreText(current));
+  headline.after(scoreElement);
+  if (similar.length) renderSimilar(current, all, scoreElement);
+}).catch(() => {});
+
+// --- the "More like this" strip ----------------------------------------------
+// Badge each card with its title's score and re-rank the strip by it.
 setupScoreGrid({
-  cardSelector: '[data-testid="MoreLikeThis"] .ipc-poster-card',
+  cardSelector: CARD,
   idOf,
-  scoreForCard: async (card) => {
-    const id = idOf(card);
-    if (!id) return null;
-    const key = `nps_imdb_${id}`;
-    const cached = cacheGetMaybe(key, CARD_CACHE_TTL);
-    if (cached) return cached.value;
-    const counts = await histogram(id);
-    if (!counts) return null; // transport failure: left uncached so the grid's retry asks again
-    const total = counts.reduce((sum, c) => sum + c, 0);
-    const score = total ? npsStats(counts[8] + counts[9], counts[0] + counts[1], total) : null;
-    cacheSetMaybe(key, score);
-    return score;
-  },
+  scoreForCard: async (card) => (await scores)[idOf(card) ?? ''] ?? null,
   // The star row is `nowrap` and overflows on narrow cards, so the badge takes
   // its own line under it, aligned to the row's 8px gutter.
   placeBadge: (card, badge) => {

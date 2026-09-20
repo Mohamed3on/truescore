@@ -1,0 +1,54 @@
+/* The score under the title, and beneath it the similar-picks panel: which of
+   the "More like this" titles score as well or better. The hero is dark. */
+.ts-score {
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: #f5c518;
+}
+.ts-similar {
+  margin: .35rem 0 .5rem;
+  max-width: 40rem;
+  font-size: .875rem;
+  color: #bbb;
+}
+.ts-similar-winner { color: #999; }
+.ts-similar-header {
+  margin-bottom: .25rem;
+  font-weight: 600;
+  color: #f5c518;
+}
+.ts-similar-row {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .2rem 0;
+  color: inherit;
+  text-decoration: none;
+}
+.ts-similar-row:hover .ts-similar-name { text-decoration: underline; }
+.ts-similar-poster {
+  flex: none;
+  width: 28px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 3px;
+  background: #333;
+}
+.ts-similar-name {
+  flex: 1;
+  min-width: 0;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ts-similar-meta {
+  margin-left: .4em;
+  font-size: .8em;
+  color: #999;
+}
+.ts-similar-score {
+  font-weight: 600;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

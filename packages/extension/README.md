@@ -31,7 +31,7 @@ Each site adapts this formula to what data is available (star histograms, like/d
 - **Sorted lists** (Amazon search and every product grid above, plus Etsy and AliExpress) — a result whose % clearly beats everything ranked above it gets a green tint: less volume, better hit rate. Press `]` / `[` to jump between them.
 
 **Entertainment**
-- **IMDB** — Score from the full 1-10 rating histogram, weighting 9-10 stars against 1-2 stars. Scores and re-ranks the "More like this" strip by that score.
+- **IMDB** — Score from the full 1-10 rating histogram, weighting 9-10 stars against 1-2 stars. Scores and re-ranks the "More like this" strip by that score, and lists the similar titles that score as well or better under the title.
 - **Letterboxd** — Merges Letterboxd and IMDB ratings into one score. Shows an adjusted score from the past week's reviews, and finds similar-length films from popular lists that score higher.
 - **Goodreads** — Score from the rating distribution + a recent-positive % from the past year's reviews.
 

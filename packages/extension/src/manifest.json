@@ -236,6 +236,7 @@
     {
       "matches": ["*://*.imdb.com/title/*/*"],
       "js": ["sites/imdb.js"],
+      "css": ["sites/imdb.css"],
       "run_at": "document_end"
     },
     {

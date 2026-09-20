@@ -73,5 +73,6 @@ cpSync('src/styles/amazon-product.css', `${OUT}/sites/amazon-product.css`);
 cpSync('src/styles/gmaps.css', `${OUT}/sites/gmaps.css`);
 cpSync('src/styles/booking-hotel.css', `${OUT}/sites/booking-hotel.css`);
 cpSync('src/styles/letterboxd.css', `${OUT}/sites/letterboxd.css`);
+cpSync('src/styles/imdb.css', `${OUT}/sites/imdb.css`);
 
 console.log(`Build complete → ./${OUT}/`);

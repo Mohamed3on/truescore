@@ -3,9 +3,11 @@ import { mdInline, mdToHtml, netScore } from '@truescore/gmaps-shared';
 export const addCommas = (x: number | string): string =>
   String(x).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
-export const npsColor = (nps: number): string => {
+// Red through green by net-positive share. The default lightness reads on white;
+// pass a lighter one for a dark host.
+export const npsColor = (nps: number, lightness = 35): string => {
   const hue = Math.min(120, Math.max(0, (nps - 50) * 3));
-  return `hsl(${hue}, 70%, 35%)`;
+  return `hsl(${hue}, 70%, ${lightness}%)`;
 };
 
 // Net sentiment from 5★/1★ counts: `nps` is the net-positive share as a
