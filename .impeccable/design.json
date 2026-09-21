@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-21T17:30:00.000Z",
+  "title": "Design System: TrueScore",
+  "extensions": {
+    "colorMeta": {
+      "brass": { "role": "primary", "displayName": "Brass", "canonical": "oklch(81.0% 0.108 77.4)", "tonalRamp": ["oklch(15.0% 0.027 77.4)", "oklch(26.4% 0.048 77.4)", "oklch(37.9% 0.068 77.4)", "oklch(49.3% 0.089 77.4)", "oklch(60.7% 0.107 77.4)", "oklch(72.1% 0.086 77.4)", "oklch(83.6% 0.066 77.4)", "oklch(95.0% 0.045 77.4)"] },
+      "sea-glass": { "role": "primary", "displayName": "Sea Glass", "canonical": "oklch(80.4% 0.096 191.2)", "tonalRamp": ["oklch(15.0% 0.024 191.2)", "oklch(26.4% 0.042 191.2)", "oklch(37.9% 0.060 191.2)", "oklch(49.3% 0.079 191.2)", "oklch(60.7% 0.095 191.2)", "oklch(72.1% 0.076 191.2)", "oklch(83.6% 0.058 191.2)", "oklch(95.0% 0.040 191.2)"] },
+      "teal-ink": { "role": "primary", "displayName": "Teal Ink", "canonical": "oklch(51.1% 0.086 186.4)", "tonalRamp": ["oklch(15.0% 0.022 186.4)", "oklch(26.4% 0.038 186.4)", "oklch(37.9% 0.054 186.4)", "oklch(49.3% 0.071 186.4)", "oklch(60.7% 0.085 186.4)", "oklch(72.1% 0.069 186.4)", "oklch(83.6% 0.052 186.4)", "oklch(95.0% 0.036 186.4)"] },
+      "positive": { "role": "secondary", "displayName": "Positive", "canonical": "oklch(80.0% 0.182 151.7)", "tonalRamp": ["oklch(15.0% 0.040 151.7)", "oklch(26.4% 0.070 151.7)", "oklch(37.9% 0.101 151.7)", "oklch(49.3% 0.131 151.7)", "oklch(60.7% 0.158 151.7)", "oklch(72.1% 0.128 151.7)", "oklch(83.6% 0.097 151.7)", "oklch(95.0% 0.067 151.7)"] },
+      "negative": { "role": "secondary", "displayName": "Negative", "canonical": "oklch(71.1% 0.166 22.2)", "tonalRamp": ["oklch(15.0% 0.040 22.2)", "oklch(26.4% 0.070 22.2)", "oklch(37.9% 0.101 22.2)", "oklch(49.3% 0.131 22.2)", "oklch(60.7% 0.158 22.2)", "oklch(72.1% 0.128 22.2)", "oklch(83.6% 0.097 22.2)", "oklch(95.0% 0.067 22.2)"] },
+      "night-glass": { "role": "neutral", "displayName": "Night Glass", "canonical": "oklch(17.5% 0.017 273.6 / 0.9)", "tonalRamp": ["oklch(15.0% 0.004 273.6)", "oklch(26.4% 0.007 273.6)", "oklch(37.9% 0.011 273.6)", "oklch(49.3% 0.014 273.6)", "oklch(60.7% 0.017 273.6)", "oklch(72.1% 0.014 273.6)", "oklch(83.6% 0.010 273.6)", "oklch(95.0% 0.007 273.6)"] },
+      "night-ground": { "role": "neutral", "displayName": "Night Ground", "canonical": "#0a0c12" },
+      "night-ground-popup": { "role": "neutral", "displayName": "Night Ground (popup)", "canonical": "#0d0f17" },
+      "ink-1": { "role": "neutral", "displayName": "Ink 1 · primary text", "canonical": "rgba(255, 255, 255, 0.88)" },
+      "ink-2": { "role": "neutral", "displayName": "Ink 2 · secondary text", "canonical": "rgba(255, 255, 255, 0.7)" },
+      "ink-3": { "role": "neutral", "displayName": "Ink 3 · labels", "canonical": "rgba(255, 255, 255, 0.5)" },
+      "ink-4": { "role": "neutral", "displayName": "Ink 4 · tertiary marks", "canonical": "rgba(255, 255, 255, 0.3)" },
+      "ink-5": { "role": "neutral", "displayName": "Ink 5 · faintest rule", "canonical": "rgba(255, 255, 255, 0.06)" },
+      "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "rgba(255, 255, 255, 0.07)" },
+      "control": { "role": "neutral", "displayName": "Control ground", "canonical": "rgba(255, 255, 255, 0.04)" },
+      "control-line": { "role": "neutral", "displayName": "Control line", "canonical": "rgba(255, 255, 255, 0.08)" },
+      "control-hover": { "role": "neutral", "displayName": "Control hover", "canonical": "rgba(255, 255, 255, 0.08)" },
+      "card-glass": { "role": "neutral", "displayName": "Card glass", "canonical": "rgba(255, 255, 255, 0.03)" },
+      "paper": { "role": "neutral", "displayName": "Paper", "canonical": "oklch(98.5% 0.001 106.4)", "tonalRamp": ["oklch(15.0% 0.000 106.4)", "oklch(26.4% 0.001 106.4)", "oklch(37.9% 0.001 106.4)", "oklch(49.3% 0.001 106.4)", "oklch(60.7% 0.001 106.4)", "oklch(72.1% 0.001 106.4)", "oklch(83.6% 0.001 106.4)", "oklch(95.0% 0.001 106.4)"] },
+      "paper-tint": { "role": "neutral", "displayName": "Paper tint", "canonical": "#F5F5F4" },
+      "paper-line": { "role": "neutral", "displayName": "Paper line", "canonical": "#E7E5E4" },
+      "white": { "role": "neutral", "displayName": "White", "canonical": "#FFFFFF" },
+      "stone-ink": { "role": "neutral", "displayName": "Stone Ink", "canonical": "#1C1917", "tonalRamp": ["oklch(15.0% 0.003 58.1)", "oklch(26.4% 0.005 58.1)", "oklch(37.9% 0.007 58.1)", "oklch(49.3% 0.010 58.1)", "oklch(60.7% 0.011 58.1)", "oklch(72.1% 0.009 58.1)", "oklch(83.6% 0.007 58.1)", "oklch(95.0% 0.005 58.1)"] },
+      "stone-2": { "role": "neutral", "displayName": "Stone 2 · secondary", "canonical": "#57534E" },
+      "stone-3": { "role": "neutral", "displayName": "Stone 3 · labels", "canonical": "#78716C" },
+      "stone-4": { "role": "neutral", "displayName": "Stone 4 · placeholders", "canonical": "#A8A29E" },
+      "teal-wash": { "role": "tertiary", "displayName": "Teal wash", "canonical": "#F0FDFA" },
+      "teal-line": { "role": "tertiary", "displayName": "Teal line", "canonical": "#99F6E4" },
+      "sea-glass-wash": { "role": "tertiary", "displayName": "Sea Glass wash", "canonical": "rgba(109, 211, 206, 0.1)" },
+      "sea-glass-line": { "role": "tertiary", "displayName": "Sea Glass line", "canonical": "rgba(109, 211, 206, 0.5)" },
+      "praised-wash": { "role": "tertiary", "displayName": "Praised wash", "canonical": "#F0FDF4" },
+      "complaint-wash": { "role": "tertiary", "displayName": "Complaint wash", "canonical": "#FFF7ED" },
+      "mark": { "role": "tertiary", "displayName": "Mark", "canonical": "#FEF3C7" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "The web app's place score. Nothing on that page is larger." },
+      "headline": { "displayName": "Headline", "purpose": "The panel figure on Maps cards; dimmed to ink-4 while it counts up." },
+      "title": { "displayName": "Title", "purpose": "The panel title row on glass." },
+      "body": { "displayName": "Body", "purpose": "Verdicts, review text, answers on glass; 11px in panels, 13–15px on the web page." },
+      "label": { "displayName": "Label", "purpose": "Uppercase micro-labels that open every section on glass." },
+      "body-daylight": { "displayName": "Body (daylight)", "purpose": "The daylight island inherits the host's system sans." },
+      "label-daylight": { "displayName": "Label (daylight)", "purpose": "The island header and section titles on paper." }
+    },
+    "shadows": [
+      { "name": "panel-ambient", "value": "0 8px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06)", "purpose": "The floating night-glass panel. Booking uses 0 8px 32px rgba(0,0,0,0.28) with a 5% inset light." },
+      { "name": "daylight-button-hover", "value": "0 1px 3px rgba(15, 118, 110, 0.12)", "purpose": "The only stateful shadow: the teal button on paper." },
+      { "name": "bar-glow", "value": "0 0 8px rgba(200, 200, 160, 0.2)", "purpose": "Under the signature bar fill on Maps cards." }
+    ],
+    "motion": [
+      { "name": "ease-glass", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Every transition on the night skin: panel entrance (0.4–0.5s), bar growth (0.6s), control state (0.16–0.2s)." },
+      { "name": "ease-paper", "value": "cubic-bezier(0.25, 1, 0.5, 1)", "purpose": "Gauge fills and spinners on the daylight island (0.5s); control state at 0.15s." },
+      { "name": "panel-enter", "value": "opacity 0 → 1, translateY(-14px) scale(0.96) → none, 0.4s ease-glass", "purpose": "The Maps panel settling into place." },
+      { "name": "pulse", "value": "opacity 1 → 0.4 → 1, 1.4–1.8s ease-in-out infinite", "purpose": "Pending chips and 'Reading reviews…' states." }
+    ],
+    "breakpoints": [
+      { "name": "maps-panel", "value": "296px fixed" },
+      { "name": "popup", "value": "320px fixed" },
+      { "name": "web-phone", "value": "16px gutters, full-width controls, chips wrap" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Night-glass panel",
+      "kind": "card",
+      "refersTo": "panel-glass",
+      "description": "The floating slab every night-skin surface starts from: tinted black over blur, hairline border, one ambient shadow, and the single brass-to-sea-glass hairline across the top.",
+      "html": "<div class=\"ds-panel\"><div class=\"ds-panel-title\">Review Intelligence</div><div class=\"ds-panel-body\">Trusted reviews only. One figure, one bar, one verdict.</div></div>",
+      "css": ".ds-panel { position: relative; width: 296px; padding: 18px; background: rgba(14, 16, 24, 0.9); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 16px; box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.88); font-family: 'Sora', system-ui, sans-serif; } .ds-panel::before { content: ''; position: absolute; top: 0; left: 24px; right: 24px; height: 1px; border-radius: 1px; background: linear-gradient(90deg, #E8B86D 0%, rgba(255,255,255,0.06) 50%, #6DD3CE 100%); } .ds-panel-title { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: rgba(255, 255, 255, 0.7); margin-bottom: 12px; } .ds-panel-body { font-size: 11px; line-height: 1.5; color: rgba(255, 255, 255, 0.6); }"
+    },
+    {
+      "name": "Score figure and bar",
+      "kind": "custom",
+      "refersTo": "card-glass",
+      "description": "The signature component: micro-label, Plex Mono figure, a 2px track whose fill is the one gradient, and a mono count.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-label\">Trusted score</div><div class=\"ds-figure\">78%</div><div class=\"ds-bar\"><div class=\"ds-bar-fill\" style=\"width: 78%\"></div></div><div class=\"ds-count\">412 reviews</div></div>",
+      "css": ".ds-card { padding: 10px 12px; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; font-family: 'Sora', system-ui, sans-serif; } .ds-label { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: rgba(255, 255, 255, 0.5); margin-bottom: 6px; } .ds-figure { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 26px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.88); margin-bottom: 8px; } .ds-bar { height: 2px; background: rgba(255, 255, 255, 0.06); border-radius: 2px; overflow: hidden; margin-bottom: 6px; } .ds-bar-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, #E8B86D, #6DD3CE); box-shadow: 0 0 8px rgba(200, 200, 160, 0.2); transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1); } .ds-count { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; font-weight: 500; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.5); }"
+    },
+    {
+      "name": "Glass button",
+      "kind": "button",
+      "refersTo": "button-glass",
+      "description": "The default action on glass: a hairline-bordered 4% white surface that lifts to 8% on hover.",
+      "html": "<button class=\"ds-btn-glass\">✦ Summarize reviews</button>",
+      "css": ".ds-btn-glass { padding: 8px 12px; font-family: 'Sora', system-ui, sans-serif; font-size: 11px; font-weight: 500; color: rgba(255, 255, 255, 0.5); background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; cursor: pointer; transition: background 0.2s, color 0.2s, border-color 0.2s; } .ds-btn-glass:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.7); border-color: rgba(255, 255, 255, 0.14); } .ds-btn-glass:focus-visible { outline: none; border-color: rgba(255, 255, 255, 0.2); } .ds-btn-glass:disabled { opacity: 0.5; cursor: wait; }"
+    },
+    {
+      "name": "Signature button (web app)",
+      "kind": "button",
+      "refersTo": "button-glass",
+      "description": "The one filled button on the web page: the brass-to-sea-glass gradient at 135°, mono uppercase label, no radius.",
+      "html": "<button class=\"ds-btn-signature\">SCORE THIS PLACE</button>",
+      "css": ".ds-btn-signature { padding: 12px 18px; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; color: #0a0c12; background: linear-gradient(135deg, #E8B86D, #6DD3CE); border: none; border-radius: 0; cursor: pointer; transition: filter 0.2s cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-signature:hover { filter: brightness(1.06); } .ds-btn-signature:focus-visible { outline: 2px solid #6DD3CE; outline-offset: 2px; }"
+    },
+    {
+      "name": "Glass input",
+      "kind": "input",
+      "refersTo": "input-glass",
+      "description": "Ask and search fields on glass: same surface as a button, focus moves only the border.",
+      "html": "<input class=\"ds-input-glass\" placeholder=\"Ask anything about this place\">",
+      "css": ".ds-input-glass { width: 100%; box-sizing: border-box; padding: 7px 10px; font-family: 'Sora', system-ui, sans-serif; font-size: 11px; color: rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; outline: none; transition: border-color 0.2s; } .ds-input-glass::placeholder { color: rgba(255, 255, 255, 0.3); } .ds-input-glass:focus { border-color: rgba(255, 255, 255, 0.2); }"
+    },
+    {
+      "name": "Topic chip",
+      "kind": "chip",
+      "refersTo": "chip-glass",
+      "description": "A pill with a Sora label and a mono percent; active state is a sea-glass wash and line.",
+      "html": "<span class=\"ds-chip\"><span class=\"ds-chip-label\">parking</span><span class=\"ds-chip-pct ds-pos\">84%</span></span> <span class=\"ds-chip ds-chip-active\"><span class=\"ds-chip-label\">wifi</span><span class=\"ds-chip-pct ds-neg\">31%</span></span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 999px; font-family: 'Sora', system-ui, sans-serif; font-size: 11px; color: rgba(255, 255, 255, 0.85); cursor: pointer; transition: background 0.2s, border-color 0.2s; } .ds-chip:hover { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.18); } .ds-chip:focus-visible { outline: none; border-color: rgba(109, 211, 206, 0.5); } .ds-chip-active { background: rgba(109, 211, 206, 0.1); border-color: rgba(109, 211, 206, 0.5); } .ds-chip-pct { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-weight: 600; font-size: 10px; font-variant-numeric: tabular-nums; } .ds-pos { color: #4ADE80; } .ds-neg { color: #F87171; }"
+    },
+    {
+      "name": "Daylight island",
+      "kind": "card",
+      "refersTo": "island-daylight",
+      "description": "The paper skin for white retail pages: warm stone card in the host's system sans, uppercase header, dashed rules between sections.",
+      "html": "<div class=\"ds-island\"><div class=\"ds-island-header\">◈ Review Intelligence</div><div class=\"ds-island-gauge\"><span class=\"ds-island-gauge-label\">72% positive on this item</span><div class=\"ds-island-track\"><div class=\"ds-island-fill\" style=\"width: 72%; background: hsl(66, 70%, 35%)\"></div></div></div><div class=\"ds-island-rule\"></div><div class=\"ds-island-section-title\">△ Universally praised</div><div class=\"ds-island-item\">• Lasts far longer than the water-based range</div></div>",
+      "css": ".ds-island { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; background: #FAFAF9; border: 1px solid #E7E5E4; border-radius: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1C1917; font-size: 12px; line-height: 1.5; } .ds-island-header { font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #78716C; } .ds-island-gauge { display: flex; flex-direction: column; gap: 6px; } .ds-island-gauge-label { font-size: 13px; color: #57534E; } .ds-island-track { height: 6px; background: #E7E5E4; border-radius: 3px; overflow: hidden; } .ds-island-fill { height: 100%; border-radius: 3px; transition: width 0.5s cubic-bezier(0.25, 1, 0.5, 1); } .ds-island-rule { border-top: 1px dashed #E7E5E4; margin: 2px 0; } .ds-island-section-title { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #57534E; padding: 8px 12px 0; background: #F0FDF4; border-radius: 6px 6px 0 0; } .ds-island-item { padding: 4px 12px 8px; background: #F0FDF4; border-radius: 0 0 6px 6px; margin-top: -10px; }"
+    },
+    {
+      "name": "Daylight button",
+      "kind": "button",
+      "refersTo": "button-daylight",
+      "description": "The teal action on paper: pale wash, teal text and line, the only shadow in the system on hover.",
+      "html": "<button class=\"ds-btn-daylight\">✦ Summarize Reviews</button>",
+      "css": ".ds-btn-daylight { display: inline-flex; align-items: center; gap: 5px; padding: 7px 14px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 600; color: #0F766E; background: #F0FDFA; border: 1px solid #99F6E4; border-radius: 6px; cursor: pointer; transition: all 0.15s; } .ds-btn-daylight:hover { background: #CCFBF1; border-color: #5EEAD4; box-shadow: 0 1px 3px rgba(15, 118, 110, 0.12); } .ds-btn-daylight:focus-visible { outline: none; border-color: #0F766E; } .ds-btn-daylight:disabled { opacity: 0.5; cursor: wait; }"
+    },
+    {
+      "name": "Daylight input",
+      "kind": "input",
+      "refersTo": "input-daylight",
+      "description": "Search and Ask fields on paper: white, stone line, teal on focus.",
+      "html": "<input class=\"ds-input-daylight\" placeholder=\"Search 7,450 reviews… (e.g. battery OR strap)\">",
+      "css": ".ds-input-daylight { width: 100%; box-sizing: border-box; padding: 7px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1C1917; background: #fff; border: 1px solid #E7E5E4; border-radius: 6px; outline: none; transition: border-color 0.15s; } .ds-input-daylight::placeholder { color: #A8A29E; } .ds-input-daylight:focus { border-color: #0F766E; }"
+    },
+    {
+      "name": "Popup segmented control",
+      "kind": "nav",
+      "refersTo": "chip-glass",
+      "description": "Provider and reasoning pickers in the popup: hairline segments, the active one filled with sea glass.",
+      "html": "<div class=\"ds-seg\"><button class=\"ds-seg-btn ds-seg-active\">Gemini</button><button class=\"ds-seg-btn\">OpenAI</button><button class=\"ds-seg-btn\">DeepSeek</button></div>",
+      "css": ".ds-seg { display: flex; gap: 5px; } .ds-seg-btn { flex: 1; padding: 7px 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; font-size: 12px; white-space: nowrap; color: rgba(255, 255, 255, 0.6); background: rgba(255, 255, 255, 0.045); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 7px; cursor: pointer; transition: color 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.16s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.16s cubic-bezier(0.16, 1, 0.3, 1); } .ds-seg-btn:hover { color: rgba(255, 255, 255, 0.92); background: rgba(255, 255, 255, 0.08); } .ds-seg-btn:focus-visible { outline: none; border-color: rgba(255, 255, 255, 0.2); } .ds-seg-active { color: #0c1018; background: #6dd3ce; border-color: #6dd3ce; font-weight: 600; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Ledger",
+    "overview": "TrueScore is a ledger someone keeps beside the shop window: figures entered in a monospaced hand, ruled with hairlines, never decorated. It sits on other people's pages, so it never competes with them. It adds one calm instrument, states a number, and lets the number carry the argument. Everything else on the panel exists to make that figure legible and trustworthy: a nine-pixel label above it, a two-pixel bar under it, a one-line verdict beside it.\n\nThe ledger has two skins for two desks. On dark or busy hosts (Google Maps, Booking.com, the popup, the web app) it is night glass: a tinted near-black slab with backdrop blur, one signature hairline of brass fading to sea glass, and white ink stepped through a strict opacity ladder. On white retail pages (Amazon, Decathlon, Uniqlo, IKEA, dm, Etsy, AliExpress, BJJ Fanatics) it is daylight paper: a warm stone card in the host's own system font, teal for the one accent, and pale washes to sort praise from complaint. Both skins share the same grammar: mono, tabular numerals for every figure; uppercase micro-labels instead of headings; hairline rules instead of boxes; sentiment carried by green, amber, and red tints rather than fills. On Letterboxd, IMDb, and Goodreads the ledger borrows the host's palette and typeface outright and keeps only its grammar.\n\nIt is analytical, editorial, and quiet. It rejects the generic AI look (purple-to-blue gradients), gradient text, and blur used as decoration: blur is the material of the night-glass panel and nothing else.",
+    "keyCharacteristics": [
+      "Numbers lead: the figure is the largest element on any panel, set in IBM Plex Mono 600 with tabular numerals.",
+      "Micro-labels, not headings: 9–10.5px uppercase tracked labels introduce every section.",
+      "Hairlines over containers: 1px lines at 6–9% white (or a 1px dashed stone line on paper) separate groups; nested cards do not exist.",
+      "One signature per panel: the brass-to-sea-glass gradient appears once, as a hairline or a bar fill.",
+      "Sentiment is tinted, not filled: positive green, mid amber, negative red at 10–30% opacity behind text, full strength only on the figure itself.",
+      "Motion is one exponential ease-out; bars grow, panels settle, nothing bounces."
+    ],
+    "rules": [
+      { "name": "The One Signature Rule", "body": "The brass-to-sea-glass gradient appears once per panel, as the top hairline or a primary bar fill. A second use is a bug.", "section": "colors" },
+      { "name": "The Tint Rule", "body": "Sentiment colors sit behind text at 10–30% opacity or on a figure at full strength. They never fill a button, a chip, or a card.", "section": "colors" },
+      { "name": "The Ladder Rule", "body": "Ink is chosen by rank on the opacity ladder, never by eye. If two things share a step, they are peers on purpose.", "section": "colors" },
+      { "name": "The Tabular Rule", "body": "Every count, percent, and score is font-variant-numeric: tabular-nums in Plex Mono (night) or the host sans with tabular-nums (daylight), right-aligned when it sits in a column.", "section": "typography" },
+      { "name": "The No-Heading Rule", "body": "Sections open with a micro-label. There are no h2s inside a panel.", "section": "typography" },
+      { "name": "The Flat Inside Rule", "body": "Nothing inside a panel casts a shadow. Cards, chips, inputs, and buttons are hairline-bordered surfaces.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do set every figure in IBM Plex Mono 500–600 with tabular numerals on glass, and with tabular numerals in the host sans on paper.",
+      "Do open every section with an uppercase micro-label (9px 0.12em on glass, 10.5px 0.06em on paper) and separate sections with a hairline or a dashed paper-line rule, 12px each side.",
+      "Do use the brass-to-sea-glass gradient exactly once per panel, as a hairline or a bar fill.",
+      "Do choose ink by rank on the opacity ladder (ink-1 to ink-5) or the stone ladder (stone-ink to stone-4).",
+      "Do animate with cubic-bezier(0.16, 1, 0.3, 1) on glass and cubic-bezier(0.25, 1, 0.5, 1) on paper: 0.15–0.2s for state, 0.4–0.6s for bars and entrances.",
+      "Do keep glass panels at night-glass with blur(24px) saturate(180%), a hairline border, and one ambient shadow.",
+      "Do match the host's palette and typeface on Letterboxd, IMDb, and Goodreads while keeping the ledger's grammar."
+    ],
+    "donts": [
+      "Don't use purple-to-blue gradients or any gradient other than brass-to-sea-glass.",
+      "Don't set gradient text; emphasis comes from weight, size, and the ink ladder.",
+      "Don't use blur or glass as decoration; it is the panel's material only.",
+      "Don't fill a button, chip, or card with a sentiment color; tint at 10–30% or color the figure.",
+      "Don't put a shadow on anything inside a panel, or use a shadow to mark state beyond the daylight button's 1px hover.",
+      "Don't introduce a heading inside a panel; the micro-label is the heading.",
+      "Don't nest cards, or let the panel exceed its host's own rating in visual weight on a result list."
+    ]
+  }
+}
