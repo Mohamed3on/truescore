@@ -129,16 +129,15 @@ const STYLES = `
     flex-shrink: 0;
     font-variant-numeric: tabular-nums;
   }
-  .gr-similar-score { font-size: 15px; font-weight: 700; color: #00635d; line-height: 1; }
-  .gr-similar-score-pct { font-size: 11px; color: #8b7355; font-weight: 500; margin-left: 4px; }
+  /* The adjusted score leads — the one number the verdict rests on: teal when it reaches
+     the bar, red when it falls short. Under it the recent % is set against the
+     reference's own, teal when it holds up and amber when it trails. */
+  .gr-similar-adjusted { font-size: 15px; font-weight: 700; color: #8b7355; line-height: 1; }
+  .gr-similar-adjusted.-pass { color: #00635d; }
+  .gr-similar-adjusted.-fail { color: #c24a32; }
   .gr-similar-recent { font-size: 11px; color: #8b7355; font-weight: 500; }
-  /* Each figure is set against the reference's own: teal when it holds up, amber when it
-     trails. The verdict lives on the adjusted figure alone. */
-  .gr-similar-score.-ahead, .gr-similar-score-pct.-ahead, .gr-similar-recent.-ahead { color: #00635d; }
-  .gr-similar-score.-trails, .gr-similar-score-pct.-trails, .gr-similar-recent.-trails { color: #9a6700; }
-  .gr-similar-adjusted { font-size: 11px; color: #8b7355; font-weight: 500; }
-  .gr-similar-adjusted.-pass { color: #00635d; font-weight: 700; }
-  .gr-similar-adjusted.-fail { color: #c24a32; font-weight: 700; }
+  .gr-similar-recent.-ahead { color: #00635d; }
+  .gr-similar-recent.-trails { color: #9a6700; }
   .gr-similar-scores [title] { cursor: help; }
 
   /* A beaten pick fades except its figures, which stay legible enough to see why it lost. */
@@ -919,7 +918,7 @@ const compare = (span: HTMLElement, label: string, value: number | null, ref: nu
   return span;
 };
 
-const buildItem = (ranked: RankedPick<ScoredCandidate>, ref: BookStats, refRecentRatio: number | null, threshold: number | null) => {
+const buildItem = (ranked: RankedPick<ScoredCandidate>, refRecentRatio: number | null, threshold: number | null) => {
   const pick = ranked.item;
   const item = el('li', 'gr-similar-item');
   const img = document.createElement('img');
@@ -938,23 +937,26 @@ const buildItem = (ranked: RankedPick<ScoredCandidate>, ref: BookStats, refRecen
   item.append(body);
 
   const scores = el('div', 'gr-similar-scores');
-  const scoreLine = compare(el('span', 'gr-similar-score', addCommas(Math.round(pick.score))), 'Score', pick.score, ref.score, (n) => addCommas(Math.round(n)));
-  scoreLine.append(compare(el('span', 'gr-similar-score-pct', pct(pick.ratio)), 'Net positive', pick.ratio, ref.ratio, pct));
-  scores.append(scoreLine);
   const rr = ranked.ratio;
-  const recent = el('span', 'gr-similar-recent', rr === null ? 'Recent: N/A' : `Recent: ${pct(rr)}`);
+  // The adjusted score leads — the Score re-aimed by the recent run (see shared/recency),
+  // the one number the verdict rests on. The all-time Score is only the tooltip's working.
+  const adjusted = el('span', 'gr-similar-adjusted', ranked.adjusted === null ? '—' : addCommas(ranked.adjusted));
+  if (ranked.adjusted === null) {
+    adjusted.title = 'No rated reviews to adjust by';
+  } else {
+    const working = `${addCommas(Math.round(Math.abs(pick.score)))} × ${pct(rr!)} = ${addCommas(ranked.adjusted)} adjusted`;
+    if (threshold === null) {
+      adjusted.title = working;
+    } else {
+      adjusted.classList.add(ranked.passes ? '-pass' : '-fail');
+      adjusted.title = `${working} · ${ranked.passes ? 'reaches' : 'short of'} the ${addCommas(threshold)} to beat`;
+    }
+  }
+  scores.append(adjusted);
+  const recent = el('span', 'gr-similar-recent', rr === null ? 'recent N/A' : `recent ${pct(rr)}`);
   if (rr === null) recent.title = 'No rated reviews to judge it by';
   else compare(recent, 'Recent', rr, refRecentRatio, pct);
   scores.append(recent);
-  // The number the verdict rests on: the Score re-aimed by the recent run (see shared/recency).
-  if (ranked.adjusted !== null) {
-    const adjusted = el('span', 'gr-similar-adjusted', `Adjusted: ${addCommas(ranked.adjusted)}`);
-    if (threshold !== null) {
-      adjusted.classList.add(ranked.passes ? '-pass' : '-fail');
-      adjusted.title = `${addCommas(Math.round(Math.abs(pick.score)))} × ${pct(rr!)} = ${addCommas(ranked.adjusted)} · ${ranked.passes ? 'reaches' : 'short of'} the ${addCommas(threshold)} to beat`;
-    }
-    scores.append(adjusted);
-  }
   item.append(scores);
   if (threshold !== null && !ranked.passes) item.classList.add('-excluded');
   return item;
@@ -1021,9 +1023,12 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   sub.append(anchorLink(shelfURL(shelf), undefined, 'browse shelf →'));
   const refInfo = el('span', 'gr-similar-ref');
   const strong = (text: string) => el('strong', undefined, text);
-  refInfo.append('reference ', strong(addCommas(Math.round(currentStats.score))), ` (${pct(currentStats.ratio)})`);
   // The bar every pick is judged by: the reference's Score re-aimed by its own recent run.
-  if (threshold !== null) refInfo.append(' · recent ', strong(pct(refRecentRatio!)), ' · to beat ', strong(addCommas(threshold)), ' adjusted');
+  if (threshold !== null) {
+    refInfo.append('to beat ', strong(addCommas(threshold)), ' adjusted', ` · this book's ${addCommas(Math.round(Math.abs(currentStats.score)))} × recent `, strong(pct(refRecentRatio!)));
+  } else {
+    refInfo.append('this book ', strong(addCommas(Math.round(currentStats.score))), ' · recent unknown');
+  }
   sub.append(refInfo);
   section.append(sub);
 
@@ -1036,7 +1041,7 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   const list = el('ul', 'gr-similar-list');
   // Best adjusted first, the way Letterboxd already ordered its list — the raw
   // score order buried the book that actually wins.
-  for (const ranked of ranking.ranked) list.append(buildItem(ranked, currentStats, refRecentRatio, threshold));
+  for (const ranked of ranking.ranked) list.append(buildItem(ranked, refRecentRatio, threshold));
 
   // No recent % for this book means no verdict: the picks stay unjudged, not struck
   // through as if they had lost.
