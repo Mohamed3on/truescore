@@ -1146,7 +1146,7 @@ const SUMMARY_SCHEMA = {
   additionalProperties: false,
 };
 
-const SUMMARY_PROMPT = `Summarize these Goodreads reviews for someone deciding whether to read this book. Be concise and specific to THIS book (writing style, characters, pacing, plot, themes, ending). Only use points raised by multiple reviewers; ignore reading-challenge notes, shelving chatter, and contentless one-liners. Do not reveal plot spoilers. You may use **bold** for emphasis. Each field is one or two short sentences, no preamble.`;
+const SUMMARY_PROMPT = `Summarize these Goodreads reviews for someone deciding whether to read this book. Reviews run newest first, each prefixed with its date and star rating: if the newest ones read differently from older ones — content that has dated, a consensus that turned — say so, with the years. Be concise and specific to THIS book (writing style, characters, pacing, plot, themes, ending). Only use points raised by multiple reviewers; ignore reading-challenge notes, shelving chatter, and contentless one-liners. Do not reveal plot spoilers. You may use **bold** for emphasis. Each field is one or two short sentences, no preamble.`;
 
 const stripReviewHtml = (html: string): string =>
   (new DOMParser().parseFromString(html.replace(/<br\s*\/?>/gi, ' '), 'text/html').body.textContent || '')
@@ -1170,11 +1170,23 @@ const getEmbeddedReviews = (): GrReview[] => {
   } catch { return []; }
 };
 
-/** Dedupe into LLM-ready text, dropping contentless one-liners. */
-const collectReviewTexts = (reviews: GrReview[]): string[] =>
-  [...new Set(reviews.map((r) => r.body).filter((t) => t.length >= 20))];
+/**
+ * LLM-ready text, newest first, each review dated and starred so a drift in the newest
+ * ones (content that has aged, a consensus that turned) is visible to the model.
+ * Deduped, contentless one-liners dropped.
+ */
+const collectReviewTexts = (reviews: GrReview[]): string[] => {
+  const seen = new Set<string>();
+  const texts: string[] = [];
+  for (const r of reviews) {
+    if (r.body.length < 20 || seen.has(r.body)) continue;
+    seen.add(r.body);
+    texts.push(`[${r.date || 'undated'}${r.rating ? `, ${r.rating}★` : ''}] ${r.body}`);
+  }
+  return texts;
+};
 
-const GR_QUESTION_PROMPT = `Answer this question using ONLY evidence from the book reviews below. Quote or paraphrase the concrete details reviewers give. If reviewers disagree, surface the tension. Avoid plot spoilers. Be direct and practical.`;
+const GR_QUESTION_PROMPT = `Answer this question using ONLY evidence from the book reviews below. Reviews run newest first, each prefixed with its date and star rating; when the question is whether the book still holds up, weigh the newest. Quote or paraphrase the concrete details reviewers give. If reviewers disagree, surface the tension. Avoid plot spoilers. Be direct and practical.`;
 
 // Lazy + memoized review fetch for the summary widget: the newest reviews'
 // full text via GraphQL when logged in, else the reviews embedded in the page.
