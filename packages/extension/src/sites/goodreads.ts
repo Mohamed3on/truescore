@@ -8,13 +8,23 @@ import { buildMediaSummary } from '../shared/review-summary';
 import { buildSearchSection, runSearch, searchWith } from '../shared/review-search';
 import { goodreadsViewerCacheScope, shelfScoreCacheTtl } from './goodreads-shelf-cache';
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 const CONFIG = {
-  BOOK_CACHE_MS: 14 * 24 * 60 * 60 * 1000,
-  PICKS_CACHE_MS: 7 * 24 * 60 * 60 * 1000,
-  SUMMARY_CACHE_MS: 14 * 24 * 60 * 60 * 1000,
+  BOOK_CACHE_MS: 14 * DAY_MS,
+  /** A book page that can't be scored (gone, or served without stats) is left alone this long. */
+  DEAD_BOOK_CACHE_MS: 3 * DAY_MS,
+  /** The recent % moves with every new rating, so it is refreshed daily. */
+  RECENT_CACHE_MS: 1 * DAY_MS,
+  SHELVES_CACHE_MS: 7 * DAY_MS,
+  SHELF_PAGE_CACHE_MS: 7 * DAY_MS,
+  PICKS_CACHE_MS: 7 * DAY_MS,
+  SUMMARY_CACHE_MS: 14 * DAY_MS,
   MAX_CONCURRENCY: 15,
   PAGE_BATCH: 2,
   MAX_PAGES: 25,
+  /** How many candidate shelves are scored at once while picking one. */
+  SHELF_PROBE_BATCH: 3,
   AVG_RATING_TOLERANCE: 0.3,
   IGNORED_SHELF_THRESHOLD: -2,
   DEBUG: false,
@@ -95,6 +105,21 @@ const STYLES = `
   }
   .gr-similar-title:hover { color: #00635d !important; text-decoration: none; }
   .gr-similar-author { font-size: 12px; color: #8b7355; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The viewer's own shelf for a pick, read off the shelf row: Goodreads' words, its green. */
+  .gr-similar-shelf-tag {
+    align-self: flex-start;
+    margin-top: 2px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    line-height: 1.4;
+    color: #00635d;
+    border: 1px solid #a9cfca;
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+  }
 
   .gr-similar-scores {
     display: flex;
@@ -107,8 +132,9 @@ const STYLES = `
   .gr-similar-score { font-size: 15px; font-weight: 700; color: #00635d; line-height: 1; }
   .gr-similar-score-pct { font-size: 11px; color: #8b7355; font-weight: 500; margin-left: 4px; }
   .gr-similar-recent { font-size: 11px; color: #8b7355; font-weight: 500; }
-  /* A figure that trails the reference's own goes amber; the ones that hold up stay plain,
-     so a mark means something. The verdict lives on the adjusted figure alone. */
+  /* Each figure is set against the reference's own: teal when it holds up, amber when it
+     trails. The verdict lives on the adjusted figure alone. */
+  .gr-similar-score.-ahead, .gr-similar-score-pct.-ahead, .gr-similar-recent.-ahead { color: #00635d; }
   .gr-similar-score.-trails, .gr-similar-score-pct.-trails, .gr-similar-recent.-trails { color: #9a6700; }
   .gr-similar-adjusted { font-size: 11px; color: #8b7355; font-weight: 500; }
   .gr-similar-adjusted.-pass { color: #00635d; font-weight: 700; }
@@ -454,18 +480,34 @@ const getBookIdFromURL = (url: string): string | null =>
 // v2: v1 scores lost their sign (see netScore), so hated books read positive.
 const bookCacheKey = (id: string) => `gr_book_v2_${id}`;
 
+/** The token is the viewer's session, not the book's — only the live page's is ever used. */
+const cacheBookStats = (id: string, stats: BookStats) => idbSet(bookCacheKey(id), { ...stats, jwtToken: null });
+
+const deadBookKey = (id: string) => `gr_book_dead_v1_${id}`;
+
+/** A book page that can't be scored for good — gone, or served without stats — as opposed to a fetch that merely failed. */
+class DeadBookError extends Error {}
+
 const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
   const id = getBookIdFromURL(bookURL);
   if (id) {
     const cached = await idbGet(bookCacheKey(id), CONFIG.BOOK_CACHE_MS);
     if (cached) return cached;
+    if (await idbGet(deadBookKey(id), CONFIG.DEAD_BOOK_CACHE_MS)) throw new DeadBookError(bookURL);
   }
-  const doc = await fetchDoc(bookURL);
+  const dead = (why: string) => {
+    if (id) idbSet(deadBookKey(id), true);
+    return new DeadBookError(`${why} on ${bookURL}`);
+  };
+  const res = await throttledFetch(bookURL);
+  if (res.status === 404 || res.status === 410) throw dead(`HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} on ${bookURL}`);
+  const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
   const script = doc.querySelector('#__NEXT_DATA__');
-  if (!script?.textContent) throw new Error('no __NEXT_DATA__ on ' + bookURL);
+  if (!script?.textContent) throw dead('no __NEXT_DATA__');
   const stats = parseBookNextData(JSON.parse(script.textContent));
-  if (!stats) throw new Error('could not parse book stats ' + bookURL);
-  if (id) idbSet(bookCacheKey(id), stats);
+  if (!stats) throw dead('no book stats');
+  if (id) cacheBookStats(id, stats);
   return stats;
 };
 
@@ -520,75 +562,75 @@ const fetchReviewNodes = async (
   };
 };
 
-// The window is the Goodreads-specific part; the polarity and the null contract
-// come from shared/recency so every site answers "how recent-positive?" the same way.
-const recentRatioFromNodes = (nodes: ReviewNode[]): number | null => {
-  const oneYearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
-  return recentRatio(
-    nodes
-      .filter((n) => n.rating && n.createdAt != null && n.createdAt >= oneYearAgo)
-      .map((n) => n.rating as number),
-  );
+// The window is the Goodreads-specific part: the newest REVIEW_PAGE_LIMIT reviews, whatever
+// their dates. For a popular book that is a few weeks; for a niche one, much of its history —
+// and the old one-year cutoff only ever turned the niche book's small sample into no verdict.
+// The polarity and the null contract come from shared/recency so every site answers
+// "how recent-positive?" the same way.
+const recentRatioFromNodes = (nodes: ReviewNode[]): number | null =>
+  recentRatio(nodes.filter((n) => n.rating).map((n) => n.rating as number));
+
+type RecentStats = { ratio: number | null; total: number };
+
+/**
+ * Recent-positive ratio plus the size of the book's review corpus, cached a day per work
+ * so the reference and every pick it shares with other books pay for it once. Throws on
+ * a failed fetch: a null ratio means "no recent ratings", never "couldn't look".
+ */
+const fetchRecentStats = async (workId: string, jwtToken: string): Promise<RecentStats> => {
+  const cacheKey = `gr_recent_v1_${workId}`;
+  const cached = (await idbGet(cacheKey, CONFIG.RECENT_CACHE_MS)) as RecentStats | null;
+  if (cached) return cached;
+  const { nodes, totalCount } = await fetchReviewNodes(workId, jwtToken);
+  const stats: RecentStats = { ratio: recentRatioFromNodes(nodes), total: totalCount };
+  idbSet(cacheKey, stats);
+  return stats;
 };
 
-/** Recent-positive ratio plus the size of the book's text-review corpus (0 when unknown). */
-const getRecentStats = async (workId: string, jwtToken: string | null): Promise<{ ratio: number | null; total: number }> => {
+/** The reference's own recent stats; unknown (null, 0) without a token or on a failed fetch. */
+const getRecentStats = async (workId: string, jwtToken: string | null): Promise<RecentStats> => {
   if (!jwtToken) return { ratio: null, total: 0 };
-  try {
-    const { nodes, totalCount } = await fetchReviewNodes(workId, jwtToken);
-    return { ratio: recentRatioFromNodes(nodes), total: totalCount };
-  } catch { return { ratio: null, total: 0 }; }
+  try { return await fetchRecentStats(workId, jwtToken); } catch { return { ratio: null, total: 0 }; }
 };
 
 // =============================================================================
 // Shelf selection
 // =============================================================================
 
+/**
+ * The shelves the book page already carries: Goodreads' genres are its most-shelved
+ * content shelves, in the shelves page's order without the status ones — no fetch.
+ */
+const getEmbeddedShelves = (): string[] => {
+  const script = document.querySelector('#__NEXT_DATA__');
+  if (!script?.textContent) return [];
+  try {
+    const apollo = JSON.parse(script.textContent)?.props?.pageProps?.apolloState || {};
+    const id = getBookIdFromURL(window.location.href);
+    const books = (Object.values(apollo) as any[]).filter((e) => Array.isArray(e?.bookGenres) && e.bookGenres.length);
+    const book = books.find((e) => String(e.legacyId) === id) ?? books[0];
+    return (book?.bookGenres ?? [])
+      .map((g: any) => String(g?.genre?.webUrl || '').split('/').pop() || '')
+      .filter(Boolean);
+  } catch { return []; }
+};
+
+/** The shelves page, for a book whose own page carries no genres — kept a week. */
 const getBookShelves = async (bookURL: string): Promise<string[]> => {
+  const id = getBookIdFromURL(bookURL);
+  const cacheKey = id && `gr_shelves_v1_${id}`;
+  const cached = cacheKey && (await idbGet(cacheKey, CONFIG.SHELVES_CACHE_MS));
+  if (cached) return cached;
   const shelvesURL = bookURL.replace('/show/', '/shelves/').replace(/(?<=goodreads\.com)\/[a-z]{2}(?=\/book)/, '');
   const doc = await fetchDoc(shelvesURL);
-  return Array.from(doc.querySelectorAll('a.mediumText'))
+  const shelves = Array.from(doc.querySelectorAll('a.mediumText'))
     .map(el => el.textContent?.trim() || '')
     .filter(Boolean);
+  if (cacheKey && shelves.length) idbSet(cacheKey, shelves);
+  return shelves;
 };
 
-const getShelfScore = async (shelf: string, viewerScope: string): Promise<number> => {
-  const cacheKey = `gr_shelf_score_v2_${viewerScope}_${shelf}`;
-  const cached = await idbGet(
-    cacheKey,
-    (score) => shelfScoreCacheTtl(score, CONFIG.IGNORED_SHELF_THRESHOLD),
-  );
-  if (cached !== null) return cached;
-  const doc = await fetchDoc(`https://www.goodreads.com/shelf/show/${shelf}`);
-  const liked = doc.querySelectorAll('[data-rating="4"], [data-rating="5"]').length;
-  const disliked = doc.querySelectorAll('[data-rating="1"], [data-rating="2"]').length;
-  const score = liked - disliked;
-  idbSet(cacheKey, score);
-  return score;
-};
-
-/**
- * Shelves that say how a reader holds a book, not what it is: reading status, ownership,
- * format, favourites, the year it was read. They open every book's list (to-read,
- * currently-reading), so picks came from "to-read". Matched per hyphenated word —
- * "physical-tbr" and "books-i-own" go, "banned-books" stays.
- */
-const NON_CONTENT_SHELF = /(^|-)(tbr|read|reread|currently-reading|dnf|did-not-finish|default|wish-?list|to-buy|own(ed)?|library|(book)?shelf|fav(ou?rite|e)?s?|kindle|e-?books?|audio(-?books?)?|audible|arcs?|netgalley|(19|20)\d\d)(-|$)/;
-
-const pickShelf = async (shelves: string[], viewerScope: string): Promise<string | null> => {
-  for (const shelf of shelves) {
-    if (NON_CONTENT_SHELF.test(shelf)) continue;
-    try {
-      const score = await getShelfScore(shelf, viewerScope);
-      if (score >= CONFIG.IGNORED_SHELF_THRESHOLD) return shelf;
-    } catch (e: any) { debug(`shelf ${shelf} failed:`, e.message); }
-  }
-  return null;
-};
-
-// =============================================================================
-// Best-book search
-// =============================================================================
+type ShelfStatus = 'read' | 'to-read' | 'reading' | 'dnf' | 'other' | null;
 
 type Candidate = {
   bookId: string;
@@ -596,9 +638,20 @@ type Candidate = {
   title: string;
   author: string;
   cover: string;
-  isRead: boolean;
+  /** The viewer's own shelf for it, read off the row's Want-to-Read widget. */
+  status: ShelfStatus;
+  /** The viewer's own stars for it, 0 when unrated. */
+  myRating: number;
   bookRating: string | null;
 };
+
+/** Read, or given up on: nothing to recommend. Stars alone count too — rating a book shelves it as read. */
+const isRead = (c: Candidate) => c.status === 'read' || c.status === 'dnf' || c.myRating > 0;
+
+const SHELF_STATUS: Array<[string, ShelfStatus]> = [
+  ['wtrStatusRead', 'read'], ['wtrStatusToRead', 'to-read'], ['wtrStatusReadingNow', 'reading'],
+  ['wtrStatusDidNotFinish', 'dnf'], ['wtrStatusOtherShelf', 'other'],
+];
 
 const parseShelfPage = (doc: Document): Candidate[] =>
   Array.from(doc.querySelectorAll<HTMLElement>('.leftContainer > .elementList')).map(row => {
@@ -614,19 +667,94 @@ const parseShelfPage = (doc: Document): Candidate[] =>
     const ratingText = Array.from(row.querySelectorAll('.greyText.smallText'))
       .map(e => e.textContent || '')
       .join(' ');
+    const widget = row.querySelector('.wtrLeft');
     return {
       bookId,
       bookURL,
       title,
       author,
       cover,
-      isRead: !!row.querySelector('.hasRating'),
+      status: SHELF_STATUS.find(([cls]) => widget?.classList.contains(cls))?.[1] ?? null,
+      myRating: Number(row.querySelector('.stars')?.getAttribute('data-rating')) || 0,
       bookRating: ratingText.match(/\d(\.\d+)?(?=\s+—)/)?.[0] || null,
     };
   }).filter((x): x is Candidate => x !== null);
 
+const shelfPageURL = (shelf: string, page: number) => `https://www.goodreads.com/shelf/show/${shelf}?page=${page}`;
+
+// One fetch per shelf page per visit, however many steps want it: scoring a shelf reads
+// its first page and scanning it starts there. The pages are the viewer's (their stars
+// and shelves are on the rows), so they cache under the viewer, for a week.
+const shelfPages = new Map<string, Promise<Candidate[]>>();
+
+const getShelfPage = (shelf: string, page: number, viewerScope: string): Promise<Candidate[]> => {
+  const cacheKey = `gr_shelf_page_v1_${viewerScope}_${shelf}_${page}`;
+  let pending = shelfPages.get(cacheKey);
+  if (!pending) {
+    pending = (async () => {
+      const cached = (await idbGet(cacheKey, CONFIG.SHELF_PAGE_CACHE_MS)) as Candidate[] | null;
+      if (cached) return cached;
+      const rows = parseShelfPage(await fetchDoc(shelfPageURL(shelf, page)));
+      idbSet(cacheKey, rows);
+      return rows;
+    })();
+    shelfPages.set(cacheKey, pending);
+    // A failed fetch shouldn't pin its failure for the rest of the visit.
+    pending.catch(() => shelfPages.delete(cacheKey));
+  }
+  return pending;
+};
+
+/** How the viewer holds a shelf: their 4–5★ books on its first page, less their 1–2★ ones. */
+const getShelfScore = async (shelf: string, viewerScope: string): Promise<number> => {
+  const cacheKey = `gr_shelf_score_v2_${viewerScope}_${shelf}`;
+  const cached = await idbGet(
+    cacheKey,
+    (score) => shelfScoreCacheTtl(score, CONFIG.IGNORED_SHELF_THRESHOLD),
+  );
+  if (cached !== null) return cached;
+  const rows = await getShelfPage(shelf, 1, viewerScope);
+  const score = rows.filter(r => r.myRating >= 4).length - rows.filter(r => r.myRating >= 1 && r.myRating <= 2).length;
+  idbSet(cacheKey, score);
+  return score;
+};
+
+/**
+ * Shelves that say how a reader holds a book, not what it is: reading status, ownership,
+ * format, favourites, the year it was read. They open every book's list (to-read,
+ * currently-reading), so picks came from "to-read". Matched per hyphenated word —
+ * "physical-tbr" and "books-i-own" go, "banned-books" stays.
+ */
+const NON_CONTENT_SHELF = /(^|-)(tbr|read|reread|currently-reading|dnf|did-not-finish|default|wish-?list|to-buy|own(ed)?|library|(book)?shelf|fav(ou?rite|e)?s?|kindle|e-?books?|audio(-?books?)?|audible|arcs?|netgalley|(19|20)\d\d)(-|$)/;
+
+/**
+ * The first content shelf the viewer doesn't hold against the book. A few are scored at
+ * once, but each is answered in order: the first nearly always passes, so it returns the
+ * moment its own score lands while the runners-up finish warming their caches behind it.
+ */
+const pickShelf = async (shelves: string[], viewerScope: string): Promise<string | null> => {
+  const content = shelves.filter(s => !NON_CONTENT_SHELF.test(s));
+  for (let i = 0; i < content.length; i += CONFIG.SHELF_PROBE_BATCH) {
+    const batch = content.slice(i, i + CONFIG.SHELF_PROBE_BATCH);
+    const probes = batch.map((shelf) => getShelfScore(shelf, viewerScope).catch((e: any) => {
+      debug(`shelf ${shelf} failed:`, e.message);
+      return null;
+    }));
+    for (let j = 0; j < batch.length; j++) {
+      const score = await probes[j];
+      if (score !== null && score >= CONFIG.IGNORED_SHELF_THRESHOLD) return batch[j];
+    }
+  }
+  return null;
+};
+
+// =============================================================================
+// Best-book search
+// =============================================================================
+
 type ScoredCandidate = Candidate & BookStats;
-type FailedCandidate = Candidate & { failed: true };
+/** `permanent`: the page can't be scored at all (see DeadBookError) — a known gap, not a retry. */
+type FailedCandidate = Candidate & { failed: true; permanent: boolean };
 
 type SimilarResult = {
   qualifying: ScoredCandidate[];
@@ -639,8 +767,9 @@ type SimilarResult = {
 /**
  * A candidate whose book page failed is a gap, not a loser: a result with gaps is
  * still shown, but never cached, so the next visit retries instead of trusting it.
+ * A page that can't be scored for good is as complete as the scan will ever get.
  */
-const isComplete = (result: SimilarResult) => !result.allScored.some(b => 'failed' in b);
+const isComplete = (result: SimilarResult) => !result.allScored.some(b => 'failed' in b && !b.permanent);
 
 /**
  * What a shelf candidate must be able to reach to be worth its recency fetch: the
@@ -665,9 +794,10 @@ const findSimilarPicks = async (params: {
   const bar = pickBar(threshold, refScore);
   const originalId = getBookIdFromURL(originalBookURL);
   // v4: v3 could list the book's own other edition and keep scans cut short by failures.
+  // v5: v4 offered books marked Read without stars, and its rows carried no shelf status.
   // A scan bounded by the all-time Score is narrower than one bounded by the threshold,
   // so it keeps its own entry — one throttled reviews call can't stand in for a week.
-  const cacheKey = `gr_picks_v4_${viewerScope}_${originalId}_${shelf}${threshold === null ? '_alltime' : ''}`;
+  const cacheKey = `gr_picks_v5_${viewerScope}_${originalId}_${shelf}${threshold === null ? '_alltime' : ''}`;
   const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
   if (cached) return cached;
   const refAvg = parseFloat(refAvgRating);
@@ -686,22 +816,19 @@ const findSimilarPicks = async (params: {
     const pageResults = await Promise.all(
       Array.from({ length: end - start + 1 }, (_, i) => {
         const pageNum = start + i;
-        return fetchDoc(`https://www.goodreads.com/shelf/show/${shelf}?page=${pageNum}`)
-          .then(doc => ({ pageNum, doc }));
+        return getShelfPage(shelf, pageNum, viewerScope).then(rows => ({ pageNum, rows }));
       })
     );
 
     pagesSearched = end;
 
-    const rowsWithPage = pageResults.flatMap(({ pageNum, doc }) =>
-      parseShelfPage(doc).map(c => ({ ...c, pageNum }))
-    );
+    const rowsWithPage = pageResults.flatMap(({ pageNum, rows }) => rows.map(c => ({ ...c, pageNum })));
     if (!rowsWithPage.length) break;
 
-    const eligible = rowsWithPage.filter(({ bookId, isRead, bookRating }) => {
-      if (bookId === originalId) return false;
-      if (isRead) return false;
-      return refAvg - parseFloat(bookRating || '0') <= CONFIG.AVG_RATING_TOLERANCE;
+    const eligible = rowsWithPage.filter((c) => {
+      if (c.bookId === originalId) return false;
+      if (isRead(c)) return false;
+      return refAvg - parseFloat(c.bookRating || '0') <= CONFIG.AVG_RATING_TOLERANCE;
     });
     totalEligible += eligible.length;
 
@@ -709,8 +836,8 @@ const findSimilarPicks = async (params: {
       try {
         const stats = await getBookStatsFromURL(c.bookURL);
         return { ...c, ...stats } as ScoredCandidate;
-      } catch {
-        return { ...c, failed: true as const };
+      } catch (e) {
+        return { ...c, failed: true as const, permanent: e instanceof DeadBookError };
       }
     }));
 
@@ -781,14 +908,13 @@ const winnerBanner = (text: string, shelf: string | null) => {
 const pct = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
 /**
- * Sets a pick's figure beside the reference's own: amber when it trails, plain when it
- * holds up, so a mark means something (the rule Letterboxd's list follows). The tooltip
- * carries both numbers, so the comparison never rests on color alone.
+ * Sets a pick's figure beside the reference's own: teal when it holds up, amber when it
+ * trails. The tooltip carries both numbers, so the comparison never rests on color alone.
  */
 const compare = (span: HTMLElement, label: string, value: number | null, ref: number | null, format: (n: number) => string) => {
   if (value === null || ref === null) return span;
   const trails = value < ref;
-  span.classList.toggle('-trails', trails);
+  span.classList.add(trails ? '-trails' : '-ahead');
   span.title = `${label} ${format(value)} vs this book's ${format(ref)}${trails ? ' \u2014 trails it' : ''}`;
   return span;
 };
@@ -806,6 +932,9 @@ const buildItem = (ranked: RankedPick<ScoredCandidate>, ref: BookStats, refRecen
   const body = el('div', 'gr-similar-body');
   body.append(anchorLink(pick.bookURL, 'gr-similar-title', pick.title || `Book ${pick.bookId}`));
   if (pick.author) body.append(el('span', 'gr-similar-author', pick.author));
+  if (pick.status === 'to-read' || pick.status === 'reading') {
+    body.append(el('span', 'gr-similar-shelf-tag', pick.status === 'reading' ? 'Currently reading' : 'Want to Read'));
+  }
   item.append(body);
 
   const scores = el('div', 'gr-similar-scores');
@@ -814,7 +943,7 @@ const buildItem = (ranked: RankedPick<ScoredCandidate>, ref: BookStats, refRecen
   scores.append(scoreLine);
   const rr = ranked.ratio;
   const recent = el('span', 'gr-similar-recent', rr === null ? 'Recent: N/A' : `Recent: ${pct(rr)}`);
-  if (rr === null) recent.title = 'No ratings in the past year to judge it by';
+  if (rr === null) recent.title = 'No rated reviews to judge it by';
   else compare(recent, 'Recent', rr, refRecentRatio, pct);
   scores.append(recent);
   // The number the verdict rests on: the Score re-aimed by the recent run (see shared/recency).
@@ -848,7 +977,7 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
     lines.push('', 'All scored:');
     for (const b of result.allScored) {
       if ('failed' in b) {
-        lines.push(`  (failed) ${b.title || b.bookId}`);
+        lines.push(`  (${b.permanent ? 'unavailable' : 'failed'}) ${b.title || b.bookId}`);
       } else {
         const mark = couldReach(bar, b.score) ? '✓' : '✗';
         lines.push(`  ${mark} ${b.title} — ${addCommas(Math.round(b.score))} (${Math.round(b.ratio * 100)}%)`);
@@ -921,7 +1050,8 @@ const renderSimilarPicks = async (
   anchor: Element,
   currentBookURL: string,
   currentStats: BookStats,
-  currentRecentRatio: number | null,
+  /** Still in flight while the shelf is picked; only the scan's threshold waits for it. */
+  recentRatioPromise: Promise<number | null>,
 ) => {
   const section = el('section', 'gr-similar');
   anchor.parentNode!.insertBefore(section, anchor.nextSibling);
@@ -931,8 +1061,9 @@ const renderSimilarPicks = async (
   // v3: v2 views held unsigned scores and the old two-gate qualifying list.
   // v5: v4 views could come from "to-read", list the book's own other edition, rest on
   //     failed fetches, or bake in an unknown reference recency that struck every pick.
+  // v6: v5 rows carried no shelf status and counted unrated Read books as unread.
   const viewerScope = goodreadsViewerCacheScope(document);
-  const viewKey = `gr_picks_view5_${viewerScope}_${getBookIdFromURL(currentBookURL)}`;
+  const viewKey = `gr_picks_view6_${viewerScope}_${getBookIdFromURL(currentBookURL)}`;
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
   if (cachedView) { renderPicksView(section, cachedView, currentStats); return; }
 
@@ -940,9 +1071,11 @@ const renderSimilarPicks = async (
 
   let shelf: string;
   let result: SimilarResult;
+  let currentRecentRatio: number | null;
 
   try {
-    const shelves = await getBookShelves(currentBookURL);
+    const shelves = getEmbeddedShelves();
+    if (!shelves.length) shelves.push(...await getBookShelves(currentBookURL));
     if (!shelves.length) {
       section.textContent = '';
       section.append(winnerBanner('No shelves found for this book.', null));
@@ -958,6 +1091,7 @@ const renderSimilarPicks = async (
 
     renderProgress(section, 1, `Fetching books in "${shelf}"…`);
 
+    currentRecentRatio = await recentRatioPromise;
     result = await findSimilarPicks({
       originalBookURL: currentBookURL,
       refWorkId: currentStats.workId,
@@ -982,7 +1116,7 @@ const renderSimilarPicks = async (
   let recentFailed = !jwtToken;
   await Promise.all(result.qualifying.map(async (pick) => {
     if (!jwtToken) return;
-    try { recent[pick.bookId] = recentRatioFromNodes((await fetchReviewNodes(pick.workId, jwtToken)).nodes); }
+    try { recent[pick.bookId] = (await fetchRecentStats(pick.workId, jwtToken)).ratio; }
     catch { recentFailed = true; }
   }));
 
@@ -1130,7 +1264,7 @@ const appendScore = async (bookTitle: Element) => {
   if (!stats) return;
 
   const currentId = getBookIdFromURL(window.location.href);
-  if (currentId) idbSet(bookCacheKey(currentId), stats);
+  if (currentId) cacheBookStats(currentId, stats);
 
   const scoreElement = el('h1', undefined, `${addCommas(Math.round(stats.score))} (${Math.round(stats.ratio * 100)}%)`);
   bookTitle.parentNode!.insertBefore(scoreElement, bookTitle.nextSibling);
@@ -1164,8 +1298,12 @@ const appendScore = async (bookTitle: Element) => {
     } : undefined,
   });
 
-  // Ratings-only fetch (fast) for the recent ratio + the picks' recent-% threshold.
-  const { ratio: recentRatio, total: reviewTotal } = await getRecentStats(stats.workId, stats.jwtToken);
+  // Ratings-only fetch (fast) for the recent ratio + the picks' recent-% threshold. The
+  // picks start now rather than after it: a cached view needs nothing from it, and a
+  // shelf lookup outlasts it anyway.
+  const recentStats = getRecentStats(stats.workId, stats.jwtToken);
+  renderSimilarPicks(summarySection, window.location.href, stats, recentStats.then((r) => r.ratio));
+  const { ratio: recentRatio, total: reviewTotal } = await recentStats;
   recentElement.textContent = recentRatio !== null
     ? `Recent: ${Math.round(recentRatio * 100)}%`
     : 'Recent: N/A';
@@ -1184,8 +1322,6 @@ const appendScore = async (bookTitle: Element) => {
       }));
     }
   }
-
-  renderSimilarPicks(summarySection, window.location.href, stats, recentRatio);
 };
 
 const init = () => {

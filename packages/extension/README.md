@@ -33,7 +33,7 @@ Each site adapts this formula to what data is available (star histograms, like/d
 **Entertainment**
 - **IMDB** — Score from the full 1-10 rating histogram, weighting 9-10 stars against 1-2 stars. Scores and re-ranks the "More like this" strip by that score, and lists the similar titles that score as well or better under the title.
 - **Letterboxd** — Merges Letterboxd and IMDB ratings into one score. Shows an adjusted score from the past week's reviews, and finds similar-length films from popular lists that score higher.
-- **Goodreads** — Score from the rating distribution + a recent-positive % from the past year's reviews.
+- **Goodreads** — Score from the rating distribution + a recent-positive % from its newest 100 reviews.
 
 **Places & Travel**
 - **Airbnb** — Score on listing pages derived from the review histogram.

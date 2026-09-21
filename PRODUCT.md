@@ -45,7 +45,7 @@ A neighbouring product could show a number; it cannot truthfully claim the numbe
 - Extension, list pages: a score badge on every result card, the list re-ranked by score progressively as scores land, best-ratio picks tinted, `]` and `[` cycle through them.
 - Extension, product pages: a "Review Intelligence" island with a gauge (% positive), recent-positive adjustment, variation breakdowns (colour, size), topic chips, review search with OR terms (Cmd/Ctrl+Shift+F), a per-search summary and Ask, a structured summary (praised, complaints, better alternative, conclusion), and Ask with cached recent questions.
 - Google Maps: a floating review-analysis panel with time filtering, topic chips, search, summaries, and Ask; scores paginate until the trusted-review score stabilises.
-- Media sites: IMDb scores from the full 1–10 histogram and re-ranks the "More like this" strip; Letterboxd merges Letterboxd and IMDb ratings and finds higher-scoring similar-length films; Goodreads adds a recent-positive % from the past year.
+- Media sites: IMDb scores from the full 1–10 histogram and re-ranks the "More like this" strip; Letterboxd merges Letterboxd and IMDb ratings and finds higher-scoring similar-length films; Goodreads adds a recent-positive % from its newest 100 reviews.
 - Constraints: no build step for installers; no account; LLM keys never bundled; Google Maps sessions expire and are re-minted server-side; host bot walls (Cloudflare, DataDome) and rate limits bound what can be fetched; AI features are rate-limited per day in the extension; a keyword search renders at most 50 matches.
 - Undecided: Chrome Web Store distribution (not pursued; unpacked install is the path today). Firefox and Safari (not pursued).
 
