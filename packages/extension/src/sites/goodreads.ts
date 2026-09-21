@@ -1,6 +1,6 @@
 import { netScore } from '@truescore/gmaps-shared';
 import { idbGet, idbSet } from '../shared/idb-cache';
-import { couldReach, rankPicks } from '../shared/better-picks';
+import { couldReach, rankPicks, type RankedPick } from '../shared/better-picks';
 import { adjust, recentRatio } from '../shared/recency';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
@@ -107,12 +107,17 @@ const STYLES = `
   .gr-similar-score { font-size: 15px; font-weight: 700; color: #00635d; line-height: 1; }
   .gr-similar-score-pct { font-size: 11px; color: #8b7355; font-weight: 500; margin-left: 4px; }
   .gr-similar-recent { font-size: 11px; color: #8b7355; font-weight: 500; }
-  .gr-similar-recent.-pass { color: #00635d; }
-  .gr-similar-recent.-fail { color: #c24a32; }
+  /* A figure that trails the reference's own goes amber; the ones that hold up stay plain,
+     so a mark means something. The verdict lives on the adjusted figure alone. */
+  .gr-similar-score.-trails, .gr-similar-score-pct.-trails, .gr-similar-recent.-trails { color: #9a6700; }
+  .gr-similar-adjusted { font-size: 11px; color: #8b7355; font-weight: 500; }
+  .gr-similar-adjusted.-pass { color: #00635d; font-weight: 700; }
+  .gr-similar-adjusted.-fail { color: #c24a32; font-weight: 700; }
+  .gr-similar-scores [title] { cursor: help; }
 
-  .gr-similar-item.-excluded { opacity: .55; }
+  /* A beaten pick fades except its figures, which stay legible enough to see why it lost. */
+  .gr-similar-item.-excluded .gr-similar-cover, .gr-similar-item.-excluded .gr-similar-body { opacity: .55; }
   .gr-similar-item.-excluded .gr-similar-title { color: #8b7355 !important; text-decoration: line-through; }
-  .gr-similar-reason { font-size: 11px; color: #c24a32; white-space: nowrap; font-weight: 500; margin-left: 4px; }
 
   .gr-winner {
     display: flex;
@@ -773,7 +778,23 @@ const winnerBanner = (text: string, shelf: string | null) => {
   return wrap;
 };
 
-const buildItem = (pick: ScoredCandidate) => {
+const pct = (ratio: number) => `${Math.round(ratio * 100)}%`;
+
+/**
+ * Sets a pick's figure beside the reference's own: amber when it trails, plain when it
+ * holds up, so a mark means something (the rule Letterboxd's list follows). The tooltip
+ * carries both numbers, so the comparison never rests on color alone.
+ */
+const compare = (span: HTMLElement, label: string, value: number | null, ref: number | null, format: (n: number) => string) => {
+  if (value === null || ref === null) return span;
+  const trails = value < ref;
+  span.classList.toggle('-trails', trails);
+  span.title = `${label} ${format(value)} vs this book's ${format(ref)}${trails ? ' \u2014 trails it' : ''}`;
+  return span;
+};
+
+const buildItem = (ranked: RankedPick<ScoredCandidate>, ref: BookStats, refRecentRatio: number | null, threshold: number | null) => {
+  const pick = ranked.item;
   const item = el('li', 'gr-similar-item');
   const img = document.createElement('img');
   img.className = 'gr-similar-cover';
@@ -788,14 +809,26 @@ const buildItem = (pick: ScoredCandidate) => {
   item.append(body);
 
   const scores = el('div', 'gr-similar-scores');
-  const scoreLine = el('span', 'gr-similar-score', addCommas(Math.round(pick.score)));
-  scoreLine.append(el('span', 'gr-similar-score-pct', `${Math.round(pick.ratio * 100)}%`));
+  const scoreLine = compare(el('span', 'gr-similar-score', addCommas(Math.round(pick.score))), 'Score', pick.score, ref.score, (n) => addCommas(Math.round(n)));
+  scoreLine.append(compare(el('span', 'gr-similar-score-pct', pct(pick.ratio)), 'Net positive', pick.ratio, ref.ratio, pct));
   scores.append(scoreLine);
-  const recent = el('span', 'gr-similar-recent', 'Recent: …');
+  const rr = ranked.ratio;
+  const recent = el('span', 'gr-similar-recent', rr === null ? 'Recent: N/A' : `Recent: ${pct(rr)}`);
+  if (rr === null) recent.title = 'No ratings in the past year to judge it by';
+  else compare(recent, 'Recent', rr, refRecentRatio, pct);
   scores.append(recent);
+  // The number the verdict rests on: the Score re-aimed by the recent run (see shared/recency).
+  if (ranked.adjusted !== null) {
+    const adjusted = el('span', 'gr-similar-adjusted', `Adjusted: ${addCommas(ranked.adjusted)}`);
+    if (threshold !== null) {
+      adjusted.classList.add(ranked.passes ? '-pass' : '-fail');
+      adjusted.title = `${addCommas(Math.round(Math.abs(pick.score)))} × ${pct(rr!)} = ${addCommas(ranked.adjusted)} · ${ranked.passes ? 'reaches' : 'short of'} the ${addCommas(threshold)} to beat`;
+    }
+    scores.append(adjusted);
+  }
   item.append(scores);
-
-  return { item, recent };
+  if (threshold !== null && !ranked.passes) item.classList.add('-excluded');
+  return item;
 };
 
 const debugPane = (shelf: string, result: SimilarResult, threshold: number | null, refScore: number) => {
@@ -858,9 +891,10 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   const sub = el('p', 'gr-similar-sub');
   sub.append(anchorLink(shelfURL(shelf), undefined, 'browse shelf →'));
   const refInfo = el('span', 'gr-similar-ref');
-  refInfo.append(document.createTextNode('beat reference '));
-  refInfo.append(el('strong', undefined, addCommas(Math.round(currentStats.score))));
-  refInfo.append(document.createTextNode(` (${Math.round(currentStats.ratio * 100)}%)`));
+  const strong = (text: string) => el('strong', undefined, text);
+  refInfo.append('reference ', strong(addCommas(Math.round(currentStats.score))), ` (${pct(currentStats.ratio)})`);
+  // The bar every pick is judged by: the reference's Score re-aimed by its own recent run.
+  if (threshold !== null) refInfo.append(' · recent ', strong(pct(refRecentRatio!)), ' · to beat ', strong(addCommas(threshold)), ' adjusted');
   sub.append(refInfo);
   section.append(sub);
 
@@ -873,19 +907,7 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   const list = el('ul', 'gr-similar-list');
   // Best adjusted first, the way Letterboxd already ordered its list — the raw
   // score order buried the book that actually wins.
-  for (const ranked of ranking.ranked) {
-    const { item, recent: recentEl } = buildItem(ranked.item);
-    const rr = ranked.ratio;
-    recentEl.textContent = rr !== null ? `Recent: ${Math.round(rr * 100)}%` : 'Recent: N/A';
-    if (ranked.passes) {
-      if (rr !== null) recentEl.classList.add('-pass');
-    } else if (threshold !== null) {
-      item.classList.add('-excluded');
-      recentEl.classList.add('-fail');
-      item.append(el('span', 'gr-similar-reason', `need \u2265${addCommas(threshold)} adjusted`));
-    }
-    list.append(item);
-  }
+  for (const ranked of ranking.ranked) list.append(buildItem(ranked, currentStats, refRecentRatio, threshold));
 
   // No recent % for this book means no verdict: the picks stay unjudged, not struck
   // through as if they had lost.
