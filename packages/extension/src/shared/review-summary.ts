@@ -19,7 +19,7 @@ conclusion: 2–4 sentences — the overall verdict: what owners consistently sa
 
 // Free-form prompt for summarizing a searched subset of product reviews
 // (the review-search section's "Summarize <query>" pass).
-export const FILTERED_PRODUCT_SUMMARY_PROMPT = `Summarize what these product reviews say about the searched topic. Lead with the bottom line. Ignore shipping, delivery, packaging, or seller issues — focus only on the product itself. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
+export const FILTERED_PRODUCT_SUMMARY_PROMPT = `These are reviews of the product on this page, filtered to the ones that mention the searched term. Summarize what they say about this product where that term comes up. The product is always the subject: if the term is a competing product or brand, describe how reviewers compare this product to it instead of reviewing the competitor. Lead with the bottom line. Ignore shipping, delivery, packaging, or seller issues — focus only on the product itself. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
 
 // The model is told to leave betterAlternative empty when no competitor is named,
 // but it sometimes ignores that and writes a sentence explaining the absence instead

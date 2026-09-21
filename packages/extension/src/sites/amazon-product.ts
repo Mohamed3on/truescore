@@ -175,8 +175,16 @@ const parseFilteredReview = (review: Element): FilteredReview => {
   };
 };
 
+// The searched term is only a lens. Without this framing a brand-name search
+// ("Durex") on a competitor page came back as a review of Durex; the page title
+// goes along as context so the model knows which product is under review.
 const keywordSummaryPrompt = (kw: string) =>
-  `These are Amazon reviews that mention "${kw}". Focus ONLY on what reviewers say about ${kw} for this product — ignore shipping, delivery, packaging, and seller issues. List what reviewers praise and complain about regarding ${kw}, most-mentioned first; include a point only if 2+ reviewers make it. If reviewers disagree, surface the tension. End with a short verdict on ${kw}.`;
+  `These are Amazon reviews of the product on this page that mention "${kw}". This product is always the subject, never ${kw}: do not review, rate, or give a verdict on ${kw} itself. Cover what reviewers praise and complain about regarding this product where ${kw} comes up, most-mentioned first; include a point only if 2+ reviewers make it. If ${kw} is a competing product or brand, frame each point as how reviewers say this product compares to it. Ignore shipping, delivery, packaging, and seller issues. If reviewers disagree, surface the tension. End with a short verdict on this product in relation to ${kw}.`;
+
+const productContext = () => {
+  const title = document.getElementById('productTitle')?.textContent?.trim();
+  return title ? `The product on this page: ${title}` : undefined;
+};
 
 const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLElement, numOfRatings: any, cacheASIN: string) => {
   const recentRatingsURL = `/product-reviews/${productSIN}/?sortBy=recent`;
@@ -562,6 +570,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         wrapper: host,
         cacheKey: `review-summary-${cacheASIN}-kw-${query.toLowerCase()}`,
         summaryPrompt: keywordSummaryPrompt(query),
+        context: productContext(),
         fetchReviews: async () => texts,
         questionPlaceholder: `Ask about \u201c${query}\u201d reviews\u2026`,
         searchAsk,
