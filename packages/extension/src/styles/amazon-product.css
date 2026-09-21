@@ -253,6 +253,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Caption of the summary below it: sit closer to that than to the Ask box
+     above (the column gap is 10px, so this lands at 6px). */
+  margin-bottom: -4px;
 }
 .ars-summary-date {
   font-size: 10px;
@@ -521,6 +524,21 @@
   overflow-y: auto;
   padding-right: 4px;
 }
+/* The summarize widget mounted under the matches (Ask box, summary caption,
+   summary, recent questions). Dashed rules with 12px on each side bracket it:
+   synthesis apart from the evidence above and from the product-level Ask row
+   below, and the rows take the wrapper's 10px rhythm instead of stacking
+   flush. Empty between searches: nothing to rule. */
+.ars-search-summarize {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 2px;
+  padding: 12px 0;
+  border-top: 1px dashed #E7E5E4;
+  border-bottom: 1px dashed #E7E5E4;
+}
+.ars-search-summarize:empty { display: none; }
 .ars-search-review {
   padding: 8px 10px;
   background: #fff;

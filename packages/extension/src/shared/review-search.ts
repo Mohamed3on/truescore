@@ -134,7 +134,7 @@ export const buildSearchSection = <T,>({
 
   // Re-filled with a fresh widget on every settled search when the caller mounts
   // its own; empty otherwise.
-  const sumHost = el('div');
+  const sumHost = el('div', 'ars-search-summarize');
   if (mountSummarize) { sumBtn.style.display = 'none'; section.appendChild(sumHost); }
 
   const summaryCache = new Map<string, string>();

@@ -209,9 +209,10 @@ export const buildSummarizeWidget = ({
   const dateRow = el('div', 'ars-summary-meta');
   dateRow.style.display = 'none';
   const dateLabel = el('div', 'ars-summary-date');
+  const RESUMMARIZE_LABEL = '\u21BB Re-summarize';
   const reBtn = document.createElement('button');
   reBtn.className = 'ars-resummarize-btn';
-  reBtn.textContent = '\u21BB Re-summarize';
+  reBtn.textContent = RESUMMARIZE_LABEL;
   reBtn.addEventListener('click', () => runSummary(reBtn));
   dateRow.append(dateLabel, reBtn);
 
@@ -263,6 +264,9 @@ export const buildSummarizeWidget = ({
       summaryPanel.style.display = 'block';
     } finally {
       btn.disabled = false;
+      // syncControls relabels the Summarize button only; without this the
+      // Re-summarize button keeps the progress label it wore during the run.
+      if (btn === reBtn) btn.textContent = RESUMMARIZE_LABEL;
       syncControls();
     }
   };
