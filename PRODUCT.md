@@ -54,7 +54,7 @@ A neighbouring product could show a number; it cannot truthfully claim the numbe
 - Name: TrueScore. Popup tagline: "The real score, everywhere." Web hero: "Stop trusting 4.7★."
 - Voice: plain, direct, numbers first. The README explains the formula with worked examples and invites checking the math.
 - Icon set: `packages/extension/src/icons/` (SVG source plus 16, 32, 48, 128 px PNGs).
-- Visual authority: the shipped code (confirmed 2026-09-21). The "Design Context" sections in `packages/extension/.impeccable.md` and `packages/extension/CLAUDE.md` describe a dark-glass direction that the light retail panels do not follow; they are historical, not binding. No DESIGN.md exists yet.
+- Visual authority: the shipped code (confirmed 2026-09-21), recorded in the root `DESIGN.md` as one system with two skins (night glass, daylight paper) and a host-mirroring rule. The older dark-glass "Design Context" notes were retired the same day.
 
 ## Evidence on Hand
 
