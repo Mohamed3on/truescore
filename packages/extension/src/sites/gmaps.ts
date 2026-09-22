@@ -1005,7 +1005,7 @@ const llmContext = async () => {
   // Server-side summaries run on the server's key, but honor the popup's model
   // + reasoning-effort knobs. provider is the popup's explicit pick (omitted
   // when unset, so the server keeps its own default); reasoning-effort is
-  // gpt-5.6-luna only (the server ignores it on Gemini/DeepSeek).
+  // gpt-6-luna only (the server ignores it on Gemini/DeepSeek).
   const [reasoningEffort, provider] = await Promise.all([getReasoningEffort(), getProviderChoice()]);
   // removedReviews: Google's takedown notice for this place, so the model knows
   // it's reading the survivors and couches its words (see summary-subject.removalNote).

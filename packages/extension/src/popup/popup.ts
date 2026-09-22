@@ -1,3 +1,5 @@
+import { getReasoningEffort } from '../shared/config';
+
 const status = document.getElementById('status')!;
 
 const flashSaved = (msg: string) => {
@@ -13,7 +15,7 @@ const segBtns = [...seg.querySelectorAll<HTMLButtonElement>('button')];
 const markActive = (provider: string) =>
   segBtns.forEach((b) => b.classList.toggle('active', b.dataset.provider === provider));
 
-// Reasoning effort only applies to GPT-5.6 Luna; hide the field for Gemini /
+// Reasoning effort only applies to GPT-6 Luna; hide the field for Gemini /
 // DeepSeek. style.display (not [hidden]) so it beats `.field { display: flex }`.
 const reasoningField = document.getElementById('reasoning-field')!;
 const showReasoning = (provider: string) => { reasoningField.style.display = provider === 'openai' ? '' : 'none'; };
@@ -36,15 +38,14 @@ for (const btn of segBtns) {
   });
 }
 
-// Reasoning effort for gpt-5.6-luna (OpenAI path only); defaults to low.
+// Reasoning effort for gpt-6-luna (OpenAI path only); defaults to low.
 const reasoningSeg = document.getElementById('reasoning-seg')!;
 const reasoningBtns = [...reasoningSeg.querySelectorAll<HTMLButtonElement>('button')];
 const markEffort = (effort: string) =>
   reasoningBtns.forEach((b) => b.classList.toggle('active', b.dataset.effort === effort));
 
-chrome.storage.sync.get('openaiReasoningEffort', (items) => {
-  markEffort((items as Record<string, string>).openaiReasoningEffort || 'low');
-});
+// A saved level that's no longer offered (None) shows as the default it now runs at.
+getReasoningEffort().then(markEffort);
 
 for (const btn of reasoningBtns) {
   btn.addEventListener('click', () => {

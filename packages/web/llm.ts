@@ -25,19 +25,20 @@ export const PROVIDERS = {
     providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' as const } } },
   },
   openai: {
-    // GPT-5.6 Luna (the fast/cheap 5.6 tier), low reasoning effort. 2026-08-10
-    // ladder evals (latency.ts + the bjjfanatics pin-escapes payload): judged
-    // quality is identical from low through xhigh on both summary shapes, but
-    // high/xhigh burn 20-60x the reasoning tokens for 2-8x the latency (82s and
-    // 156s on a 44K-token payload vs 18s at low) — so keep the cheapest
-    // thinking level. Beats nano:low on quality (4.7 vs 4.0) at ~2x its latency.
+    // GPT-6 Luna (the fast/cheap GPT-6 tier), low reasoning effort. 2026-09-22
+    // evals against GPT-5.6 Luna at low (gpt-6-sol judge): its summaries are
+    // terser but beat 5.6's 26-6 once grounding counts the weight of evidence
+    // (5.6's extra detail overstated consensus), 1.5-3x faster at about half
+    // the cost; Ask quality matches. Medium effort brought back 5.6's
+    // latency for no gain, and 5.6's ladder showed high/xhigh burning 20-60x
+    // the reasoning tokens for no quality gain — so keep the cheapest level.
     //
-    // Explicit prompt caching: GPT-5.6's default (implicit) mode bills a cache
+    // Explicit prompt caching: Luna's default (implicit) mode bills a cache
     // write at 1.25x input on every request, at the end of the prompt, which
     // a call with a different ending never reads — so summaries and varied
     // questions paid 25% more for nothing. Explicit mode writes only at a
     // `promptCacheBreakpoint` we place (ask() puts one after the Sample).
-    model: openai('gpt-5.6-luna'),
+    model: openai('gpt-6-luna'),
     providerOptions: { openai: { reasoningEffort: 'low', promptCacheOptions: { mode: 'explicit' as const } } },
   },
   deepseek: {
@@ -53,7 +54,7 @@ export const PROVIDERS = {
 // Validate untrusted request-body overrides against the canonical wire lists
 // (gmaps-shared/wire.ts): the server only honors a configured provider/effort,
 // never one injected from the body. Unset → active() default. Gemini/DeepSeek
-// ignore reasoningEffort (it's gpt-5.6-luna only).
+// ignore reasoningEffort (it's gpt-6-luna only).
 export const parseReasoningEffort = (v: unknown): ReasoningEffort | undefined =>
   typeof v === 'string' && (REASONING_EFFORTS as readonly string[]).includes(v) ? (v as ReasoningEffort) : undefined;
 export const parseProvider = (v: unknown): Provider | undefined =>

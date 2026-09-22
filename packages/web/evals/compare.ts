@@ -1,7 +1,7 @@
 // Side-by-side eval of summarize() across providers on real cached review sets.
 //   bun evals/compare.ts            # outputs + latency + tokens
 //   bun evals/compare.ts --judge    # adds blind LLM-judge scoring (gpt-6-sol)
-//   bun evals/compare.ts --judge --luna   # compare gpt-5.6-luna effort ladder
+//   bun evals/compare.ts --judge --luna   # compare gpt-6-luna effort ladder
 //   bun evals/compare.ts --judge --candidates [--only=a,b]   # shipped models vs newer ones (candidates.ts)
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject } from 'ai';
@@ -21,7 +21,7 @@ const CANDIDATES = process.argv.includes('--candidates');
 const fixtures = [...baseFixtures, sukito];
 
 // A contestant is one summarize() configuration. Default: the three providers.
-// --luna: gpt-5.6-luna across its reasoning-effort ladder (wire.ts list).
+// --luna: gpt-6-luna across its reasoning-effort ladder (wire.ts list).
 type Contestant = { label: string; provider: Provider; effort?: ReasoningEffort };
 const CONTESTANTS: Contestant[] = LUNA
   ? (REASONING_EFFORTS as readonly ReasoningEffort[]).map((e) => ({ label: `luna:${e}`, provider: 'openai', effort: e }))

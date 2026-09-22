@@ -88,7 +88,7 @@ const toStrictSchema = (s: any): any => {
 };
 
 // ── Providers (endpoints/models from packages/extension/src/shared/config.ts).
-const OPENAI_MODEL = 'gpt-5.6-luna';
+const OPENAI_MODEL = 'gpt-6-luna';
 const OPENAI_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-flash';
 const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/v1/chat/completions';
@@ -106,7 +106,7 @@ const KEYS: Record<Provider, string | undefined> = {
 type Usage = { in: number; out: number; reasoning: number };
 type Call = { parsed: any; ms: number; usage: Usage };
 
-const callOpenAILike = async (provider: 'openai' | 'deepseek', fullPrompt: string, effort?: string, model = OPENAI_MODEL): Promise<Call> => {
+const callOpenAILike = async (provider: 'openai' | 'deepseek', fullPrompt: string, effort?: string): Promise<Call> => {
   const isDeepseek = provider === 'deepseek';
   const content = isDeepseek
     ? `${fullPrompt}\n\nReturn ONLY a JSON object matching this schema (no markdown, no extra keys):\n${JSON.stringify(SUMMARY_SCHEMA)}`
@@ -116,7 +116,7 @@ const callOpenAILike = async (provider: 'openai' | 'deepseek', fullPrompt: strin
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${KEYS[provider]}` },
     body: JSON.stringify({
-      model: isDeepseek ? DEEPSEEK_MODEL : model,
+      model: isDeepseek ? DEEPSEEK_MODEL : OPENAI_MODEL,
       messages: [{ role: 'user', content }],
       ...(isDeepseek
         ? { thinking: { type: 'disabled' }, max_tokens: 8192, response_format: { type: 'json_object' } }
@@ -153,21 +153,18 @@ const callGemini = async (fullPrompt: string): Promise<Call> => {
   return { parsed: JSON.parse(raw), ms, usage: { in: u.promptTokenCount ?? 0, out: u.candidatesTokenCount ?? 0, reasoning: u.thoughtsTokenCount ?? 0 } };
 };
 
-// The three configs we actually ship — each at its production thinking setting —
-// plus GPT-6 Luna challengers.
+// The three configs we actually ship — each at its production thinking setting.
 // (The nano effort ladder was dropped: higher effort cost latency without
 // improving summary quality in earlier runs.)
-type Contestant = { label: string; provider: Provider; effort?: string; model?: string };
+type Contestant = { label: string; provider: Provider; effort?: string };
 const CONTESTANTS: Contestant[] = [
   { label: 'gemini:minimal', provider: 'gemini' },
   { label: 'luna:low', provider: 'openai', effort: 'low' },
-  { label: 'luna-6:low', provider: 'openai', effort: 'low', model: 'gpt-6-luna' },
-  { label: 'luna-6:medium', provider: 'openai', effort: 'medium', model: 'gpt-6-luna' },
   { label: 'deepseek:off', provider: 'deepseek' },
 ];
 
 const call = (c: Contestant, fullPrompt: string) =>
-  c.provider === 'gemini' ? callGemini(fullPrompt) : callOpenAILike(c.provider, fullPrompt, c.effort, c.model);
+  c.provider === 'gemini' ? callGemini(fullPrompt) : callOpenAILike(c.provider, fullPrompt, c.effort);
 
 // ── Bold health: does **bold** mark specifics, or filler connectors?
 // A bold span is "filler" if it ends on an article/preposition or opens with a

@@ -131,11 +131,13 @@ export type ContributeResponse = { ok?: boolean; error?: string };
 // definition instead of each re-declaring the union + its validation list.
 export const LLM_PROVIDERS = ['gemini', 'openai', 'deepseek'] as const;
 export type Provider = (typeof LLM_PROVIDERS)[number];
-export const REASONING_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
+// No 'none': the AI SDK won't send it to GPT-6 models, which then run at the
+// API default (medium) instead.
+export const REASONING_EFFORTS = ['low', 'medium', 'high'] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 // Optional per-request overrides on the summarize/ask bodies. Unset leaves the
 // server on its own default (LLM_PROVIDER env, luna:low). reasoningEffort is
-// gpt-5.6-luna only; the server ignores it on Gemini/DeepSeek.
+// gpt-6-luna only; the server ignores it on Gemini/DeepSeek.
 export type LlmOverrides = { reasoningEffort?: ReasoningEffort; provider?: Provider };
 
 // ---- request bodies ----

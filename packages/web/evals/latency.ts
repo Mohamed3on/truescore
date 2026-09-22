@@ -3,7 +3,7 @@
 //   bun evals/latency.ts [runs] [reviews.json] [--judge]   (default 3 runs)
 // Times the heavy *structured* extraction call (the production bottleneck) on
 // a realistic review set, so the spread reflects what users actually wait for.
-// Variants: luna effort ladder (none|low|medium|high|xhigh), Gemini Flash at the
+// Variants: luna effort ladder (low|medium|high|xhigh), Gemini Flash at the
 // production thinkingLevel, the newer Gemini 3.5 Flash-Lite (minimal) and 3.8
 // Flash (low, its floor), and DeepSeek V4.1 Flash non-thinking, its thinking
 // effort ladder (low|medium|high|xhigh|max) and strict tool calls
@@ -20,7 +20,7 @@ import { z } from 'zod';
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
 const deepseek = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY });
-const luna = openai('gpt-5.6-luna');
+const luna = openai('gpt-6-luna');
 const flash = google('gemini-3-flash-preview');
 const lite = google('gemini-3.5-flash-lite');
 const flash38 = google('gemini-3.8-flash');
@@ -105,7 +105,7 @@ const scoreQuality = async (summary: unknown): Promise<Q> => {
 };
 
 type Variant = { label: string; run: () => Promise<any> };
-const LUNA_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const;
+const LUNA_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
 const DS_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 const variants: Variant[] = [
   ...LUNA_EFFORTS.map((e) => ({
