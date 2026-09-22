@@ -447,6 +447,7 @@ type BookStats = {
   ratio: number;
   workId: string;
   jwtToken: string | null;
+  apiKey: string | null;
 };
 
 const parseBookNextData = (nextData: any): BookStats | null => {
@@ -469,6 +470,7 @@ const parseBookNextData = (nextData: any): BookStats | null => {
     ratio,
     workId: workKey.replace('Work:', ''),
     jwtToken: nextData?.props?.pageProps?.jwtToken ?? null,
+    apiKey: nextData?.props?.pageProps?.apiKey ?? null,
   };
 };
 
@@ -484,8 +486,8 @@ const getBookIdFromURL = (url: string): string | null =>
 // v2: v1 scores lost their sign (see netScore), so hated books read positive.
 const bookCacheKey = (id: string) => `gr_book_v2_${id}`;
 
-/** The token is the viewer's session, not the book's — only the live page's is ever used. */
-const cacheBookStats = (id: string, stats: BookStats) => idbSet(bookCacheKey(id), { ...stats, jwtToken: null });
+/** The credentials are the page's, not the book's — only the live page's are ever used. */
+const cacheBookStats = (id: string, stats: BookStats) => idbSet(bookCacheKey(id), { ...stats, jwtToken: null, apiKey: null });
 
 const deadBookKey = (id: string) => `gr_book_dead_v1_${id}`;
 
@@ -529,9 +531,14 @@ const REVIEW_PAGE_LIMIT = 100;
 // The page's JWT (pageProps.jwtToken) lives five minutes, so a search typed after that
 // answered "Token has expired." Goodreads' own client re-mints one from GET /authenticate
 // (the bare token as text) on a 401; this mints a little early, once per expiry, and
-// retries a request the endpoint still rejects with a fresh one.
+// retries a request the endpoint still rejects with a fresh one. Signed out there is no
+// JWT, and the page's public API key (pageProps.apiKey) — what Goodreads itself sends
+// then — answers the same queries with the same data and the same headroom under a
+// 40-call burst, so the endpoint serves every viewer.
 const TOKEN_MARGIN_MS = 30_000;
+let signedIn = false;
 let sessionToken: string | null = null;
+let apiKey: string | null = null;
 let minting: Promise<string | null> | null = null;
 
 const tokenExpiry = (token: string): number => {
@@ -545,9 +552,15 @@ const mintToken = (): Promise<string | null> =>
     .then((text) => (sessionToken = text?.trim() || null))
     .finally(() => { minting = null; }));
 
-/** The page's token while it has time left, else a freshly minted one; null when signed out. */
+/** The page's token while it has time left, else a freshly minted one. */
 const getSessionToken = (): Promise<string | null> =>
   sessionToken && tokenExpiry(sessionToken) - Date.now() > TOKEN_MARGIN_MS ? Promise.resolve(sessionToken) : mintToken();
+
+/** The JWT while signed in, else the API key; null on a page that carries neither. */
+const authHeaders = async (): Promise<Record<string, string> | null> => {
+  const token = signedIn ? await getSessionToken() : null;
+  return token ? { authorization: token } : apiKey ? { 'x-api-key': apiKey } : null;
+};
 
 /**
  * One getReviews call (newest first). `withText` also pulls the review prose for the AI
@@ -572,21 +585,23 @@ const fetchReviewNodes = async (
         }
       }`,
   });
-  const request = async (token: string) => {
+  const request = async (auth: Record<string, string>) => {
     const res = await throttledFetch(GRAPHQL_ENDPOINT, {
       method: 'POST',
       credentials: 'omit',
-      headers: { 'content-type': 'application/json', authorization: token },
+      headers: { 'content-type': 'application/json', ...auth },
       body,
     });
     return { ok: res.ok, data: await res.json() };
   };
-  const token = await getSessionToken();
-  if (!token) throw new Error(`no session token for ${workId}`);
-  let { ok, data } = await request(token);
+  const auth = await authHeaders();
+  if (!auth) throw new Error(`no Goodreads credentials for ${workId}`);
+  let { ok, data } = await request(auth);
   if (data?.errors?.some((e: any) => e?.errorType === 'UnauthorizedException')) {
-    const fresh = await mintToken();
-    if (fresh) ({ ok, data } = await request(fresh));
+    // A fresh token first; failing that, the key if it wasn't what just failed.
+    const fresh = signedIn ? await mintToken() : null;
+    const retry: Record<string, string> | null = fresh ? { authorization: fresh } : apiKey && !('x-api-key' in auth) ? { 'x-api-key': apiKey } : null;
+    if (retry) ({ ok, data } = await request(retry));
   }
   const getReviews = data?.data?.getReviews;
   // Throw on a throttled/error response so callers can tell a real fetch failure from a
@@ -623,9 +638,8 @@ const fetchRecentStats = async (workId: string): Promise<RecentStats> => {
   return stats;
 };
 
-/** The reference's own recent stats; unknown (null, 0) when signed out or on a failed fetch. */
-const getRecentStats = async (workId: string, signedIn: boolean): Promise<RecentStats> => {
-  if (!signedIn) return { ratio: null, total: 0 };
+/** The reference's own recent stats; unknown (null, 0) on a failed fetch. */
+const getRecentStats = async (workId: string): Promise<RecentStats> => {
   try { return await fetchRecentStats(workId); } catch { return { ratio: null, total: 0 }; }
 };
 
@@ -1170,11 +1184,9 @@ const renderSimilarPicks = async (
   // Resolve each pick's recent ratio. A thrown fetch (rate limit / transient error) or a
   // missing token yields a null we must NOT bake into the cache as a permanent "Recent: N/A" —
   // only persist the view when every ratio resolved cleanly, so it self-heals on the next load.
-  const signedIn = !!currentStats.jwtToken;
   const recent: PickRecent = {};
-  let recentFailed = !signedIn;
+  let recentFailed = false;
   await Promise.all(result.qualifying.map(async (pick) => {
-    if (!signedIn) return;
     try { recent[pick.bookId] = (await fetchRecentStats(pick.workId)).ratio; }
     catch { recentFailed = true; }
   }));
@@ -1248,17 +1260,15 @@ const collectReviewTexts = (reviews: GrReview[]): string[] => {
 const GR_QUESTION_PROMPT = `Answer this question using ONLY evidence from the book reviews below. Reviews run newest first, each prefixed with its date and star rating; when the question is whether the book still holds up, weigh the newest. Quote or paraphrase the concrete details reviewers give. If reviewers disagree, surface the tension. Avoid plot spoilers. Be direct and practical.`;
 
 // Lazy + memoized review fetch for the summary widget: the newest reviews'
-// full text via GraphQL when logged in, else the reviews embedded in the page.
-const makeGetReviews = (workId: string, signedIn: boolean): (() => Promise<GrReview[]>) => {
+// full text via GraphQL, else the reviews embedded in the page.
+const makeGetReviews = (workId: string): (() => Promise<GrReview[]>) => {
   let reviewsPromise: Promise<GrReview[]> | null = null;
   return () =>
     (reviewsPromise ??= (async () => {
-      if (signedIn) {
-        try {
-          const { nodes } = await fetchReviewNodes(workId, { withText: true });
-          if (nodes.length) return nodes.map(toReview);
-        } catch {}
-      }
+      try {
+        const { nodes } = await fetchReviewNodes(workId, { withText: true });
+        if (nodes.length) return nodes.map(toReview);
+      } catch {}
       return getEmbeddedReviews();
     })());
 };
@@ -1282,8 +1292,8 @@ const REVIEW_FIELDS = (r: GrReview) => ({ rating: r.rating, body: r.body, meta: 
 
 /**
  * Search every review of the book through Goodreads' own endpoint — one request per
- * ` OR ` term, results cached so backspacing doesn't refire them. Without a token there
- * is no endpoint to call, so it falls back to filtering the reviews embedded in the page.
+ * ` OR ` term, results cached so backspacing doesn't refire them. A page with neither
+ * credential has no endpoint to call, and filters the reviews embedded in the page instead.
  *
  * A single term's count is exact, but only the newest REVIEW_PAGE_LIMIT hits come back,
  * so a term with more matches than that has its %-positive read off that newest sample.
@@ -1337,7 +1347,8 @@ const appendScore = async (bookTitle: Element) => {
   const currentId = getBookIdFromURL(window.location.href);
   if (currentId) cacheBookStats(currentId, stats);
   sessionToken = stats.jwtToken;
-  const signedIn = !!stats.jwtToken;
+  apiKey = stats.apiKey;
+  signedIn = !!stats.jwtToken;
 
   const scoreElement = el('h1', undefined, `${addCommas(Math.round(stats.score))} (${Math.round(stats.ratio * 100)}%)`);
   bookTitle.parentNode!.insertBefore(scoreElement, bookTitle.nextSibling);
@@ -1346,8 +1357,8 @@ const appendScore = async (bookTitle: Element) => {
   recentElement.style.cssText = 'font-size: 16px; margin-top: 4px; color: #666;';
   scoreElement.parentNode!.insertBefore(recentElement, scoreElement.nextSibling);
 
-  const getReviews = makeGetReviews(stats.workId, signedIn);
-  const searchReviews = signedIn ? makeReviewSearch(stats.workId) : null;
+  const getReviews = makeGetReviews(stats.workId);
+  const searchReviews = stats.jwtToken || stats.apiKey ? makeReviewSearch(stats.workId) : null;
 
   // Mount the AI panel synchronously so a cached summary / Q&A restores instantly —
   // buildMediaSummary reads localStorage and never blocks on the network. Review
@@ -1374,7 +1385,7 @@ const appendScore = async (bookTitle: Element) => {
   // Ratings-only fetch (fast) for the recent ratio + the picks' recent-% threshold. The
   // picks start now rather than after it: a cached view needs nothing from it, and a
   // shelf lookup outlasts it anyway.
-  const recentStats = getRecentStats(stats.workId, signedIn);
+  const recentStats = getRecentStats(stats.workId);
   renderSimilarPicks(summarySection, window.location.href, stats, recentStats.then((r) => r.ratio));
   const { ratio: recentRatio, total: reviewTotal } = await recentStats;
   recentElement.textContent = recentRatio !== null
