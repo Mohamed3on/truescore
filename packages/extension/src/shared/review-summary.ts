@@ -21,20 +21,6 @@ conclusion: 2–4 sentences — the overall verdict: what owners consistently sa
 // (the review-search section's "Summarize <query>" pass).
 export const FILTERED_PRODUCT_SUMMARY_PROMPT = `These are reviews of the product on this page, filtered to the ones that mention the searched term. Summarize what they say about this product where that term comes up. The product is always the subject: if the term is a competing product or brand, describe how reviewers compare this product to it instead of reviewing the competitor. Lead with the bottom line. Ignore shipping, delivery, packaging, or seller issues — focus only on the product itself. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
 
-// The model is told to leave betterAlternative empty when no competitor is endorsed
-// as better, but it sometimes ignores that and writes a sentence explaining the absence
-// instead ("no distinct competitor is named", "cannot be reliably inferred", "none
-// call it better"). Those aren't alternatives — drop them so the section only ever
-// shows a real recommendation.
-const isNonAlternative = (text: string): boolean => {
-  const t = text.toLowerCase();
-  return /\bno\s+(\w+\s+){0,3}(alternative|competitor|competing|other (product|brand))/.test(t)
-    || /\b(none|not)\s+(\w+\s+){0,3}(named|mentioned|inferred|identified|specified|found)/.test(t)
-    || /\bcan(?:not|['’]?t)\s+(\w+\s+){0,4}(inferred|determined|identified)/.test(t)
-    || /does\s?(?:n['’]?t|\snot)\s+appear/.test(t)
-    || /\b(no|none|nobody|no one|neither)\s+(\w+\s+){0,3}(better|prefer|recommend)/.test(t);
-};
-
 export const renderStructuredSummary = (
   container: HTMLElement,
   { complaints, praised, conclusion, betterAlternative }: any,
@@ -64,7 +50,7 @@ export const renderStructuredSummary = (
   };
   addSection('Universally praised', praised, 'praised');
   addSection('Common complaints', complaints, 'complaints');
-  if (betterAlternative && !isNonAlternative(betterAlternative)) {
+  if (betterAlternative) {
     const section = document.createElement('div');
     section.className = 'ars-section ars-section--alt';
     const heading = document.createElement('div');
