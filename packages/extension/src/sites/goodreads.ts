@@ -6,6 +6,7 @@ import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 import { buildMediaSummary } from '../shared/review-summary';
 import { buildSearchSection, runSearch, searchWith } from '../shared/review-search';
+import { shrunkAverage } from './goodreads-picks';
 import { goodreadsViewerCacheScope, shelfScoreCacheTtl } from './goodreads-shelf-cache';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -26,6 +27,8 @@ const CONFIG = {
   /** How many candidate shelves are scored at once while picking one. */
   SHELF_PROBE_BATCH: 3,
   AVG_RATING_TOLERANCE: 0.3,
+  /** How many shelf-typical ratings the book's own average is weighed against (see shrunkAverage). */
+  AVG_PRIOR_WEIGHT: 100,
   IGNORED_SHELF_THRESHOLD: -2,
   DEBUG: false,
 };
@@ -439,6 +442,7 @@ const fetchDoc = async (url: string): Promise<Document> => {
 
 type BookStats = {
   avgRating: string;
+  ratingsCount: number;
   score: number;
   ratio: number;
   workId: string;
@@ -460,6 +464,7 @@ const parseBookNextData = (nextData: any): BookStats | null => {
   const ratio = scoreAbsolute / total;
   return {
     avgRating: String(stats.averageRating),
+    ratingsCount: total,
     score: netScore(scoreAbsolute, total),
     ratio,
     workId: workKey.replace('Work:', ''),
@@ -647,6 +652,12 @@ type Candidate = {
 /** Read, or given up on: nothing to recommend. Stars alone count too — rating a book shelves it as read. */
 const isRead = (c: Candidate) => c.status === 'read' || c.status === 'dnf' || c.myRating > 0;
 
+/** The shelf's own average, over the rows that show one. */
+const meanRating = (rows: Candidate[]): number | null => {
+  const ratings = rows.map((r) => parseFloat(r.bookRating || '')).filter(Number.isFinite);
+  return ratings.length ? ratings.reduce((a, b) => a + b, 0) / ratings.length : null;
+};
+
 const SHELF_STATUS: Array<[string, ShelfStatus]> = [
   ['wtrStatusRead', 'read'], ['wtrStatusToRead', 'to-read'], ['wtrStatusReadingNow', 'reading'],
   ['wtrStatusDidNotFinish', 'dnf'], ['wtrStatusOtherShelf', 'other'],
@@ -756,6 +767,8 @@ type ScoredCandidate = Candidate & BookStats;
 type FailedCandidate = Candidate & { failed: true; permanent: boolean };
 
 type SimilarResult = {
+  /** The average a shelf row needed to be fetched at all. */
+  avgGate: number;
   qualifying: ScoredCandidate[];
   allScored: Array<ScoredCandidate | FailedCandidate>;
   totalEligible: number;
@@ -788,18 +801,22 @@ const findSimilarPicks = async (params: {
   threshold: number | null;
   refScore: number;
   refAvgRating: string;
+  refRatingsCount: number;
 }): Promise<SimilarResult> => {
-  const { originalBookURL, refWorkId, shelf, viewerScope, threshold, refScore, refAvgRating } = params;
+  const { originalBookURL, refWorkId, shelf, viewerScope, threshold, refScore, refAvgRating, refRatingsCount } = params;
   const bar = pickBar(threshold, refScore);
   const originalId = getBookIdFromURL(originalBookURL);
   // v4: v3 could list the book's own other edition and keep scans cut short by failures.
   // v5: v4 offered books marked Read without stars, and its rows carried no shelf status.
+  // v6: v5 gated rows on the book's raw average, so a new book's few fan ratings shut the shelf.
   // A scan bounded by the all-time Score is narrower than one bounded by the threshold,
   // so it keeps its own entry — one throttled reviews call can't stand in for a week.
-  const cacheKey = `gr_picks_v5_${viewerScope}_${originalId}_${shelf}${threshold === null ? '_alltime' : ''}`;
+  const cacheKey = `gr_picks_v6_${viewerScope}_${originalId}_${shelf}${threshold === null ? '_alltime' : ''}`;
   const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
   if (cached) return cached;
   const refAvg = parseFloat(refAvgRating);
+  /** Settled by the first shelf page, whose own average is the prior the book's is shrunk toward. */
+  let avgGate = Infinity;
 
   const allScored: Array<ScoredCandidate | FailedCandidate> = [];
   let totalEligible = 0;
@@ -823,11 +840,14 @@ const findSimilarPicks = async (params: {
 
     const rowsWithPage = pageResults.flatMap(({ pageNum, rows }) => rows.map(c => ({ ...c, pageNum })));
     if (!rowsWithPage.length) break;
+    if (start === 1) {
+      avgGate = shrunkAverage(refAvg, refRatingsCount, meanRating(rowsWithPage), CONFIG.AVG_PRIOR_WEIGHT) - CONFIG.AVG_RATING_TOLERANCE;
+    }
 
     const eligible = rowsWithPage.filter((c) => {
       if (c.bookId === originalId) return false;
       if (isRead(c)) return false;
-      return refAvg - parseFloat(c.bookRating || '0') <= CONFIG.AVG_RATING_TOLERANCE;
+      return parseFloat(c.bookRating || '0') >= avgGate;
     });
     totalEligible += eligible.length;
 
@@ -854,7 +874,7 @@ const findSimilarPicks = async (params: {
       .sort((a, b) => b.score - a.score);
 
     if (qualifying.length) {
-      const result: SimilarResult = { qualifying, allScored, totalEligible, pagesSearched, foundOnPage };
+      const result: SimilarResult = { avgGate, qualifying, allScored, totalEligible, pagesSearched, foundOnPage };
       if (isComplete(result)) idbSet(cacheKey, result);
       return result;
     }
@@ -863,7 +883,7 @@ const findSimilarPicks = async (params: {
     if (refRow) break;
   }
 
-  const result: SimilarResult = { qualifying: [], allScored, totalEligible, pagesSearched, foundOnPage };
+  const result: SimilarResult = { avgGate, qualifying: [], allScored, totalEligible, pagesSearched, foundOnPage };
   if (isComplete(result)) idbSet(cacheKey, result);
   return result;
 };
@@ -970,7 +990,7 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
   const lines = [
     `Shelf: ${shelf}`,
     `Pages searched: ${result.pagesSearched}${result.foundOnPage ? ` (reference on page ${result.foundOnPage})` : ''}`,
-    `Eligible candidates: ${result.totalEligible}`,
+    `Eligible candidates (avg ≥ ${result.avgGate.toFixed(2)}): ${result.totalEligible}`,
     `Scored: ${result.allScored.length}`,
     `Qualifying (score can reach ${addCommas(bar)}): ${result.qualifying.length}`,
   ];
@@ -1067,8 +1087,9 @@ const renderSimilarPicks = async (
   // v5: v4 views could come from "to-read", list the book's own other edition, rest on
   //     failed fetches, or bake in an unknown reference recency that struck every pick.
   // v6: v5 rows carried no shelf status and counted unrated Read books as unread.
+  // v7: v6 views gated the shelf on the book's raw average — one pick for a book rated seven times.
   const viewerScope = goodreadsViewerCacheScope(document);
-  const viewKey = `gr_picks_view6_${viewerScope}_${getBookIdFromURL(currentBookURL)}`;
+  const viewKey = `gr_picks_view7_${viewerScope}_${getBookIdFromURL(currentBookURL)}`;
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
   if (cachedView) { renderPicksView(section, cachedView, currentStats); return; }
 
@@ -1105,6 +1126,7 @@ const renderSimilarPicks = async (
       threshold: adjust(currentStats.score, currentRecentRatio),
       refScore: currentStats.score,
       refAvgRating: currentStats.avgRating,
+      refRatingsCount: currentStats.ratingsCount,
     });
   } catch (e: any) {
     debug('similar picks error:', e);
