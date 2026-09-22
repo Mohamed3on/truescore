@@ -9,9 +9,11 @@ import { PROVIDERS, type Provider } from '../llm';
 export const registerCandidates = () => {
   const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
   const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const luna6 = (reasoningEffort: string) => ({ model: openai('gpt-6-luna'), providerOptions: { openai: { ...PROVIDERS.openai.providerOptions.openai, reasoningEffort } } });
   const candidates = {
     'luna:low': PROVIDERS.openai,
-    'luna-6:low': { model: openai('gpt-6-luna'), providerOptions: PROVIDERS.openai.providerOptions },
+    'luna-6:low': luna6('low'),
+    'luna-6:medium': luna6('medium'),
     'flash-3:min': PROVIDERS.gemini,
     'flash-lite-3.5:min': { model: google('gemini-3.5-flash-lite'), providerOptions: PROVIDERS.gemini.providerOptions },
     // 3.8 has no minimal thinking level; low is its floor.

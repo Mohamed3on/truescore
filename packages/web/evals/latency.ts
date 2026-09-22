@@ -8,7 +8,7 @@
 // Flash (low, its floor), and DeepSeek V4.1 Flash non-thinking, its thinking
 // effort ladder (low|medium|high|xhigh|max) and strict tool calls
 // (ds:strict:off|low). Reasoning/thought tokens explain
-// the latency. --judge adds a blind gpt-5.6-sol quality score (grounded/specific/
+// the latency. --judge adds a blind gpt-6-sol quality score (grounded/specific/
 // useful, 1-5) of each variant's structured output, scored after timing so it
 // never pollutes the latency numbers. --only=a,b runs just those variants.
 import { createDeepSeek } from '@ai-sdk/deepseek';
@@ -88,11 +88,11 @@ const median = (xs: number[]): number => {
 };
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
-// --judge: a blind gpt-5.6-sol scorer for each structured output (same rubric as
+// --judge: a blind gpt-6-sol scorer for each structured output (same rubric as
 // evals/compare.ts). Absolute 1-5 per dimension; a call's clock stops before
 // its output is judged, so judge time never counts toward latency.
 type Q = { g: number; s: number; u: number };
-const judge = openai('gpt-5.6-sol');
+const judge = openai('gpt-6-sol');
 const QUALITY_SCHEMA = z.object({ grounded: z.number().int(), specific: z.number().int(), useful: z.number().int() });
 const scoreQuality = async (summary: unknown): Promise<Q> => {
   const { object } = await generateObject({
