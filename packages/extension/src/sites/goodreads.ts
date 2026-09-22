@@ -526,6 +526,29 @@ type ReviewNode = { rating?: number | null; createdAt?: number | null; text?: st
 // The endpoint's ceiling — asking for more returns a null connection, not a bigger page.
 const REVIEW_PAGE_LIMIT = 100;
 
+// The page's JWT (pageProps.jwtToken) lives five minutes, so a search typed after that
+// answered "Token has expired." Goodreads' own client re-mints one from GET /authenticate
+// (the bare token as text) on a 401; this mints a little early, once per expiry, and
+// retries a request the endpoint still rejects with a fresh one.
+const TOKEN_MARGIN_MS = 30_000;
+let sessionToken: string | null = null;
+let minting: Promise<string | null> | null = null;
+
+const tokenExpiry = (token: string): number => {
+  try { return JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).exp * 1000; }
+  catch { return 0; }
+};
+
+const mintToken = (): Promise<string | null> =>
+  (minting ??= fetch('https://www.goodreads.com/authenticate', { credentials: 'include' })
+    .then((res) => (res.ok ? res.text() : null), () => null)
+    .then((text) => (sessionToken = text?.trim() || null))
+    .finally(() => { minting = null; }));
+
+/** The page's token while it has time left, else a freshly minted one; null when signed out. */
+const getSessionToken = (): Promise<string | null> =>
+  sessionToken && tokenExpiry(sessionToken) - Date.now() > TOKEN_MARGIN_MS ? Promise.resolve(sessionToken) : mintToken();
+
 /**
  * One getReviews call (newest first). `withText` also pulls the review prose for the AI
  * summary; `searchText` runs Goodreads' own full-text search across the *whole* review
@@ -534,32 +557,41 @@ const REVIEW_PAGE_LIMIT = 100;
  */
 const fetchReviewNodes = async (
   workId: string,
-  jwtToken: string,
   { withText = false, searchText = '' }: { withText?: boolean; searchText?: string } = {},
 ): Promise<{ nodes: ReviewNode[]; totalCount: number }> => {
-  const res = await throttledFetch(GRAPHQL_ENDPOINT, {
-    method: 'POST',
-    credentials: 'omit',
-    headers: { 'content-type': 'application/json', authorization: jwtToken },
-    body: JSON.stringify({
-      operationName: 'getReviews',
-      variables: {
-        filters: { resourceType: 'WORK', resourceId: workId, sort: 'NEWEST', ...(searchText && { searchText }) },
-        pagination: { limit: REVIEW_PAGE_LIMIT },
-      },
-      query: `query getReviews($filters: BookReviewsFilterInput!, $pagination: PaginationInput) {
+  const body = JSON.stringify({
+    operationName: 'getReviews',
+    variables: {
+      filters: { resourceType: 'WORK', resourceId: workId, sort: 'NEWEST', ...(searchText && { searchText }) },
+      pagination: { limit: REVIEW_PAGE_LIMIT },
+    },
+    query: `query getReviews($filters: BookReviewsFilterInput!, $pagination: PaginationInput) {
         getReviews(filters: $filters, pagination: $pagination) {
           totalCount
           edges { node { rating createdAt${withText ? ' text' : ''} } }
         }
       }`,
-    }),
   });
-  const data = await res.json();
+  const request = async (token: string) => {
+    const res = await throttledFetch(GRAPHQL_ENDPOINT, {
+      method: 'POST',
+      credentials: 'omit',
+      headers: { 'content-type': 'application/json', authorization: token },
+      body,
+    });
+    return { ok: res.ok, data: await res.json() };
+  };
+  const token = await getSessionToken();
+  if (!token) throw new Error(`no session token for ${workId}`);
+  let { ok, data } = await request(token);
+  if (data?.errors?.some((e: any) => e?.errorType === 'UnauthorizedException')) {
+    const fresh = await mintToken();
+    if (fresh) ({ ok, data } = await request(fresh));
+  }
   const getReviews = data?.data?.getReviews;
   // Throw on a throttled/error response so callers can tell a real fetch failure from a
   // genuinely empty result — an error body (429, GraphQL errors) would otherwise read as [].
-  if (!res.ok || data?.errors || !getReviews) throw new Error(`getReviews failed on ${workId}`);
+  if (!ok || data?.errors || !getReviews) throw new Error(`getReviews failed on ${workId}`);
   return {
     nodes: (getReviews.edges?.map((e: any) => e.node).filter(Boolean) as ReviewNode[]) || [],
     totalCount: getReviews.totalCount ?? 0,
@@ -581,20 +613,20 @@ type RecentStats = { ratio: number | null; total: number };
  * so the reference and every pick it shares with other books pay for it once. Throws on
  * a failed fetch: a null ratio means "no recent ratings", never "couldn't look".
  */
-const fetchRecentStats = async (workId: string, jwtToken: string): Promise<RecentStats> => {
+const fetchRecentStats = async (workId: string): Promise<RecentStats> => {
   const cacheKey = `gr_recent_v1_${workId}`;
   const cached = (await idbGet(cacheKey, CONFIG.RECENT_CACHE_MS)) as RecentStats | null;
   if (cached) return cached;
-  const { nodes, totalCount } = await fetchReviewNodes(workId, jwtToken);
+  const { nodes, totalCount } = await fetchReviewNodes(workId);
   const stats: RecentStats = { ratio: recentRatioFromNodes(nodes), total: totalCount };
   idbSet(cacheKey, stats);
   return stats;
 };
 
-/** The reference's own recent stats; unknown (null, 0) without a token or on a failed fetch. */
-const getRecentStats = async (workId: string, jwtToken: string | null): Promise<RecentStats> => {
-  if (!jwtToken) return { ratio: null, total: 0 };
-  try { return await fetchRecentStats(workId, jwtToken); } catch { return { ratio: null, total: 0 }; }
+/** The reference's own recent stats; unknown (null, 0) when signed out or on a failed fetch. */
+const getRecentStats = async (workId: string, signedIn: boolean): Promise<RecentStats> => {
+  if (!signedIn) return { ratio: null, total: 0 };
+  try { return await fetchRecentStats(workId); } catch { return { ratio: null, total: 0 }; }
 };
 
 // =============================================================================
@@ -1138,12 +1170,12 @@ const renderSimilarPicks = async (
   // Resolve each pick's recent ratio. A thrown fetch (rate limit / transient error) or a
   // missing token yields a null we must NOT bake into the cache as a permanent "Recent: N/A" —
   // only persist the view when every ratio resolved cleanly, so it self-heals on the next load.
-  const { jwtToken } = currentStats;
+  const signedIn = !!currentStats.jwtToken;
   const recent: PickRecent = {};
-  let recentFailed = !jwtToken;
+  let recentFailed = !signedIn;
   await Promise.all(result.qualifying.map(async (pick) => {
-    if (!jwtToken) return;
-    try { recent[pick.bookId] = (await fetchRecentStats(pick.workId, jwtToken)).ratio; }
+    if (!signedIn) return;
+    try { recent[pick.bookId] = (await fetchRecentStats(pick.workId)).ratio; }
     catch { recentFailed = true; }
   }));
 
@@ -1217,13 +1249,13 @@ const GR_QUESTION_PROMPT = `Answer this question using ONLY evidence from the bo
 
 // Lazy + memoized review fetch for the summary widget: the newest reviews'
 // full text via GraphQL when logged in, else the reviews embedded in the page.
-const makeGetReviews = (workId: string, jwtToken: string | null): (() => Promise<GrReview[]>) => {
+const makeGetReviews = (workId: string, signedIn: boolean): (() => Promise<GrReview[]>) => {
   let reviewsPromise: Promise<GrReview[]> | null = null;
   return () =>
     (reviewsPromise ??= (async () => {
-      if (jwtToken) {
+      if (signedIn) {
         try {
-          const { nodes } = await fetchReviewNodes(workId, jwtToken, { withText: true });
+          const { nodes } = await fetchReviewNodes(workId, { withText: true });
           if (nodes.length) return nodes.map(toReview);
         } catch {}
       }
@@ -1256,14 +1288,14 @@ const REVIEW_FIELDS = (r: GrReview) => ({ rating: r.rating, body: r.body, meta: 
  * A single term's count is exact, but only the newest REVIEW_PAGE_LIMIT hits come back,
  * so a term with more matches than that has its %-positive read off that newest sample.
  */
-const makeReviewSearch = (workId: string, jwtToken: string) => {
+const makeReviewSearch = (workId: string) => {
   const cache = new Map<string, { matches: GrReview[]; total: number }>();
   return async (terms: string[]) => {
     const key = terms.join(' OR ');
     let hit = cache.get(key);
     if (!hit) {
       const pages = await Promise.all(terms.map((t) =>
-        fetchReviewNodes(workId, jwtToken, { withText: true, searchText: phraseQuery(t) })));
+        fetchReviewNodes(workId, { withText: true, searchText: phraseQuery(t) })));
       const seen = new Set<string>();
       const matches: GrReview[] = [];
       for (const { nodes } of pages) {
@@ -1304,6 +1336,8 @@ const appendScore = async (bookTitle: Element) => {
 
   const currentId = getBookIdFromURL(window.location.href);
   if (currentId) cacheBookStats(currentId, stats);
+  sessionToken = stats.jwtToken;
+  const signedIn = !!stats.jwtToken;
 
   const scoreElement = el('h1', undefined, `${addCommas(Math.round(stats.score))} (${Math.round(stats.ratio * 100)}%)`);
   bookTitle.parentNode!.insertBefore(scoreElement, bookTitle.nextSibling);
@@ -1312,8 +1346,8 @@ const appendScore = async (bookTitle: Element) => {
   recentElement.style.cssText = 'font-size: 16px; margin-top: 4px; color: #666;';
   scoreElement.parentNode!.insertBefore(recentElement, scoreElement.nextSibling);
 
-  const getReviews = makeGetReviews(stats.workId, stats.jwtToken);
-  const searchReviews = stats.jwtToken ? makeReviewSearch(stats.workId, stats.jwtToken) : null;
+  const getReviews = makeGetReviews(stats.workId, signedIn);
+  const searchReviews = signedIn ? makeReviewSearch(stats.workId) : null;
 
   // Mount the AI panel synchronously so a cached summary / Q&A restores instantly —
   // buildMediaSummary reads localStorage and never blocks on the network. Review
@@ -1340,7 +1374,7 @@ const appendScore = async (bookTitle: Element) => {
   // Ratings-only fetch (fast) for the recent ratio + the picks' recent-% threshold. The
   // picks start now rather than after it: a cached view needs nothing from it, and a
   // shelf lookup outlasts it anyway.
-  const recentStats = getRecentStats(stats.workId, stats.jwtToken);
+  const recentStats = getRecentStats(stats.workId, signedIn);
   renderSimilarPicks(summarySection, window.location.href, stats, recentStats.then((r) => r.ratio));
   const { ratio: recentRatio, total: reviewTotal } = await recentStats;
   recentElement.textContent = recentRatio !== null
