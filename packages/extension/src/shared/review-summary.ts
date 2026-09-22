@@ -13,7 +13,7 @@ export const PRODUCT_SUMMARY_PROMPT = `Analyze these product reviews. Ignore shi
 
 Cover the recurring themes mentioned by 3+ reviewers, ranked by how often they come up. Each bullet is one concrete, specific point with enough detail to be useful — e.g. "Adhesive lifts at the edges after a few hours", not just "doesn't stick". When reviewers disagree on a point, say so. Give the 4–6 strongest points for praised and for complaints; don't pad with weak or one-off mentions.
 
-betterAlternative: only if 2+ reviewers name a specific competing product, give its name and how they say it compares — nothing else. If no competing product is named, return an empty string for this field. Never write a sentence explaining that there's no alternative; absence must be silent.
+betterAlternative: only if 2+ reviewers say a specific competing product is better than this one — they prefer it, switched to it, or recommend buying it instead — give its name and why they prefer it, nothing else. Merely being mentioned or compared is not enough: leave out competitors reviewers call equal, only marginally different, or worse, and ones reviewers disagree about. If no competitor clears that bar, return an empty string for this field. Never write a sentence explaining that there's no alternative; absence must be silent.
 
 conclusion: 2–4 sentences — the overall verdict: what owners consistently say, who it suits best or the main thing to watch out for, and whether it's good value when reviewers mention price. Don't just restate the bullets, and don't mention what reviewers didn't say.`;
 
@@ -21,16 +21,18 @@ conclusion: 2–4 sentences — the overall verdict: what owners consistently sa
 // (the review-search section's "Summarize <query>" pass).
 export const FILTERED_PRODUCT_SUMMARY_PROMPT = `These are reviews of the product on this page, filtered to the ones that mention the searched term. Summarize what they say about this product where that term comes up. The product is always the subject: if the term is a competing product or brand, describe how reviewers compare this product to it instead of reviewing the competitor. Lead with the bottom line. Ignore shipping, delivery, packaging, or seller issues — focus only on the product itself. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
 
-// The model is told to leave betterAlternative empty when no competitor is named,
-// but it sometimes ignores that and writes a sentence explaining the absence instead
-// ("no distinct competitor is named", "cannot be reliably inferred"). Those aren't
-// alternatives — drop them so the section only ever shows a real recommendation.
+// The model is told to leave betterAlternative empty when no competitor is endorsed
+// as better, but it sometimes ignores that and writes a sentence explaining the absence
+// instead ("no distinct competitor is named", "cannot be reliably inferred", "none
+// call it better"). Those aren't alternatives — drop them so the section only ever
+// shows a real recommendation.
 const isNonAlternative = (text: string): boolean => {
   const t = text.toLowerCase();
   return /\bno\s+(\w+\s+){0,3}(alternative|competitor|competing|other (product|brand))/.test(t)
     || /\b(none|not)\s+(\w+\s+){0,3}(named|mentioned|inferred|identified|specified|found)/.test(t)
     || /\bcan(?:not|['’]?t)\s+(\w+\s+){0,4}(inferred|determined|identified)/.test(t)
-    || /does\s?(?:n['’]?t|\snot)\s+appear/.test(t);
+    || /does\s?(?:n['’]?t|\snot)\s+appear/.test(t)
+    || /\b(no|none|nobody|no one|neither)\s+(\w+\s+){0,3}(better|prefer|recommend)/.test(t);
 };
 
 export const renderStructuredSummary = (

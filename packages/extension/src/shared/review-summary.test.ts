@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'bun:test';
 
 const PARSED = { praised: ['Lasts long'], complaints: [], conclusion: 'Good.', betterAlternative: '' };
-mock.module('./llm', () => ({ summarize: async () => PARSED }));
+mock.module('./llm', () => ({ summarize: async () => PARSED, askTransport: async () => { throw new Error('unused'); } }));
 
 test('Re-summarize gets its label back once the new summary is on screen', async () => {
   const { buildSummarizeWidget } = await import('./review-summary');
