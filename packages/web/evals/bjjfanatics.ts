@@ -44,11 +44,13 @@ const slot = new AsyncLocalStorage<Slot>();
 (globalThis as any).chrome = { storage: { sync: { get: async (name: string) => ({ [name]: slot.getStore()?.storage[name] }) } } };
 setOnUsage((usage) => { slot.getStore()!.usage = usage; });
 
-// The providers the extension offers, each on its shipped settings.
-type Contestant = { label: string; provider: Provider };
+// The providers the extension offers, each on its shipped settings, plus Luna
+// at another popup effort (stored the way the popup stores it).
+type Contestant = { label: string; provider: Provider; effort?: string };
 const CONTESTANTS: Contestant[] = [
   { label: 'gemini:minimal', provider: 'gemini' },
   { label: 'luna:low', provider: 'openai' },
+  { label: 'luna:medium', provider: 'openai', effort: 'medium' },
   { label: 'deepseek:off', provider: 'deepseek' },
 ];
 
@@ -56,7 +58,7 @@ type Usage = { in: number; out: number; reasoning: number };
 // The panel's own summary call (buildSummarizeWidget): the prompt plus the
 // course-contents block, over the reviews.
 const call = (c: Contestant, reviewTexts: string[], contents: string) => {
-  const s: Slot = { storage: { llmProvider: c.provider, openaiApiKey: KEYS.openai, geminiApiKey: KEYS.gemini, deepseekApiKey: KEYS.deepseek } };
+  const s: Slot = { storage: { llmProvider: c.provider, openaiReasoningEffort: c.effort, openaiApiKey: KEYS.openai, geminiApiKey: KEYS.gemini, deepseekApiKey: KEYS.deepseek } };
   return slot.run(s, async () => {
     const t0 = performance.now();
     const parsed = await llmSummarize(reviewTexts, withContext(SUMMARY_PROMPT, contents ? courseContext(contents) : undefined));
@@ -154,7 +156,7 @@ for (const fx of fixtures) {
 }
 
 // ── Blind quality judge (gpt-6-sol thinking), pairwise within each fixture,
-// A/B order flipped per pair to cancel position bias. Mirrors evals/compare.ts.
+// A/B order alternating across pairs and fixtures to cancel position bias. Mirrors evals/compare.ts.
 if (JUDGE && KEYS.openai) {
   const judgeModel = createOpenAI({ apiKey: KEYS.openai })('gpt-6-sol');
   const judgeSchema = z.object({
@@ -168,7 +170,7 @@ if (JUDGE && KEYS.openai) {
   const out = (x: any) => JSON.stringify({ conclusion: x.conclusion, praised: x.praised, complaints: x.complaints, betterAlternative: x.betterAlternative }, null, 1);
 
   const groups = [...new Set(rows.filter((r) => r.parsed).map((r) => r.fixture))];
-  for (const g of groups) {
+  for (const [gi, g] of groups.entries()) {
     const ok = rows.filter((r) => r.parsed && r.fixture === g);
     const fx = fixtures.find((f) => f.name === ok[0]!.fixture)!;
     // The judge MUST see the same course contents the summary saw. Otherwise it
@@ -182,7 +184,7 @@ if (JUDGE && KEYS.openai) {
     // the shared counters stay deterministic regardless of completion order.
     const judged = await Promise.all(
       pairs.map(async ([r0, r1], k) => {
-        const flip = k % 2 === 1;
+        const flip = (gi + k) % 2 === 1;
         const [a, b] = flip ? [r1, r0] : [r0, r1];
         const { object } = await generateObject({
           model: judgeModel,
