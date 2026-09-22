@@ -43,7 +43,7 @@ export const cacheSet = (key: string, data: any): void => {
   entries.sort((a, b) => a.ts - b.ts);
   const batch = Math.max(1, Math.ceil(entries.length / 4));
   for (let i = 0; i < entries.length; i += batch) {
-    for (let j = i; j < i + batch && j < entries.length; j++) localStorage.removeItem(entries[j].key);
+    for (let j = i; j < i + batch && j < entries.length; j++) localStorage.removeItem(entries[j]!.key);
     try { localStorage.setItem(key, raw); return; } catch {}
   }
 };

@@ -3,25 +3,26 @@
 //   bun evals/latency.ts [runs] [reviews.json] [--judge]   (default 3 runs)
 // Times the heavy *structured* extraction call (the production bottleneck) on
 // a realistic review set, so the spread reflects what users actually wait for.
-// Variants: luna effort ladder (low|medium|high|xhigh), Gemini Flash at the
-// production thinkingLevel, the newer Gemini 3.5 Flash-Lite (minimal) and 3.8
-// Flash (low, its floor), and DeepSeek V4.1 Flash non-thinking, its thinking
-// effort ladder (low|medium|high|xhigh|max) and strict tool calls
-// (ds:strict:off|low). Reasoning/thought tokens explain
-// the latency. --judge adds a blind gpt-6-sol quality score (grounded/coverage/
+// Every variant sends the server's exact request (llm.ts structuredRequest:
+// prompt, schema, output cap). luna:*, flash:min and ds:off are the shipped
+// PROVIDERS configs (Luna across its effort ladder, low..xhigh); the rest are
+// candidates: Gemini 3.5 Flash-Lite (minimal), 3.8 Flash (low, its floor), and
+// DeepSeek V4.1 Flash's thinking ladder (low|medium|high|xhigh|max) in JSON mode
+// and as a strict tool call at low (ds:strict:low). Reasoning/thought tokens
+// explain the latency. --judge adds a blind gpt-6-sol quality score (grounded/coverage/
 // concise, 1-5) of each variant's structured output, scored after timing so it
 // never pollutes the latency numbers. --only=a,b runs just those variants.
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject, generateText, tool } from 'ai';
+import { generateObject, generateText, tool, type LanguageModel } from 'ai';
+import type { SharedV4ProviderOptions } from '@ai-sdk/provider';
 import { z } from 'zod';
+import { PROVIDERS, structuredRequest } from '../llm';
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
 const deepseek = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY });
-const luna = openai('gpt-6-luna');
-const flash = google('gemini-3-flash-preview');
 const lite = google('gemini-3.5-flash-lite');
 const flash38 = google('gemini-3.8-flash');
 const ds = deepseek('deepseek-flash');
@@ -37,13 +38,6 @@ const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const RUNS = Number(args[0]) || 3;
 const JUDGE = process.argv.includes('--judge');
 const ONLY = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length).split(',');
-
-const SCHEMA = z.object({
-  highlights: z.array(z.object({ text: z.string(), sentiment: z.enum(['positive', 'negative', 'neutral']) })),
-  items: z.array(z.string()),
-  alternatives: z.array(z.string()),
-  valueForMoney: z.number().int(),
-});
 
 // Optional path to a JSON array of review strings (e.g. a real place's
 // reviewTexts); falls back to the built-in sample set.
@@ -79,7 +73,8 @@ const SAMPLE_REVIEWS = [
   'Came for the hype, left unimpressed. Long wait, average coffee, tiny portions for the price. La Cabra does everything better and cheaper.',
 ];
 const REVIEWS: string[] = reviewsFile ? await Bun.file(reviewsFile).json() : SAMPLE_REVIEWS;
-const PROMPT = `${REVIEWS.join('\n\n')}\n\n---\n\nExtract highlights about this place and rate value for money 1-5 from pricing mentions. Each highlight: one concrete line, ≤20 words, with sentiment. Also list up to 6 short keyword items the place is known for, and any alternatives reviewers name as better. Empty arrays if nothing fits.`;
+const REQUEST = structuredRequest({ placeName: '', reviewTexts: REVIEWS });
+const extract = (model: LanguageModel, providerOptions: SharedV4ProviderOptions) => () => generateObject({ model, providerOptions, ...REQUEST });
 
 const median = (xs: number[]): number => {
   const s = [...xs].sort((a, b) => a - b);
@@ -108,46 +103,30 @@ type Variant = { label: string; run: () => Promise<any> };
 const LUNA_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
 const DS_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 const variants: Variant[] = [
-  ...LUNA_EFFORTS.map((e) => ({
-    label: `luna:${e}`,
-    run: () => generateObject({ model: luna, providerOptions: { openai: { reasoningEffort: e } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
-  })),
+  // Luna as shipped, with the effort swapped the way llm.ts providerFor does.
+  ...LUNA_EFFORTS.map((e) => ({ label: `luna:${e}`, run: extract(PROVIDERS.openai.model, { openai: { ...PROVIDERS.openai.providerOptions.openai, reasoningEffort: e } }) })),
+  { label: 'flash:min', run: extract(PROVIDERS.gemini.model, PROVIDERS.gemini.providerOptions) },
+  { label: 'lite:min', run: extract(lite, PROVIDERS.gemini.providerOptions) },
+  { label: 'f3.8:low', run: extract(flash38, { google: { thinkingConfig: { thinkingLevel: 'low' } } }) },
+  // DeepSeek V4.1 Flash as shipped (non-thinking, strict tool call), then its
+  // thinking ladder in JSON mode.
+  { label: 'ds:off', run: extract(PROVIDERS.deepseek.model, PROVIDERS.deepseek.providerOptions) },
+  ...DS_EFFORTS.map((e) => ({ label: `ds:${e}`, run: extract(ds, { deepseek: { thinking: { type: 'enabled' }, reasoningEffort: e } }) })),
+  // Thinking at low effort as a strict tool call: thinking mode rejects the
+  // forced tool_choice the shipped wrapper uses, so auto calls the only tool.
   {
-    label: 'flash:min',
-    run: () => generateObject({ model: flash, providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
-  },
-  {
-    label: 'lite:min',
-    run: () => generateObject({ model: lite, providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
-  },
-  {
-    label: 'f3.8:low',
-    run: () => generateObject({ model: flash38, providerOptions: { google: { thinkingConfig: { thinkingLevel: 'low' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
-  },
-  // DeepSeek V4.1 Flash: non-thinking (fastest) then the thinking effort ladder.
-  {
-    label: 'ds:off',
-    run: () => generateObject({ model: ds, providerOptions: { deepseek: { thinking: { type: 'disabled' } } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
-  },
-  ...DS_EFFORTS.map((e) => ({
-    label: `ds:${e}`,
-    run: () => generateObject({ model: ds, providerOptions: { deepseek: { thinking: { type: 'enabled' }, reasoningEffort: e } }, maxOutputTokens: 16384, schema: SCHEMA, prompt: PROMPT }),
-  })),
-  // The same extraction as a forced strict tool call, non-thinking and at low effort.
-  ...(['off', 'low'] as const).map((e) => ({
-    label: `ds:strict:${e}`,
+    label: 'ds:strict:low',
     run: async () => {
       const r = await generateText({
-        model: dsBeta, maxOutputTokens: 16384, prompt: PROMPT,
-        providerOptions: { deepseek: e === 'off' ? { thinking: { type: 'disabled' } } : { thinking: { type: 'enabled' }, reasoningEffort: e } },
-        tools: { extract: tool({ inputSchema: SCHEMA, strict: true }) },
-        // Thinking mode rejects a forced tool_choice; auto still calls the only tool.
-        toolChoice: e === 'off' ? { type: 'tool', toolName: 'extract' } : 'auto',
+        model: dsBeta, maxOutputTokens: REQUEST.maxOutputTokens, prompt: REQUEST.prompt,
+        providerOptions: { deepseek: { thinking: { type: 'enabled' }, reasoningEffort: 'low' } },
+        tools: { extract: tool({ inputSchema: REQUEST.schema, strict: true }) },
+        toolChoice: 'auto',
       });
       if (r.finishReason === 'length') throw new Error('hit the output token cap');
-      return { object: SCHEMA.parse(r.toolCalls[0]?.input), usage: r.usage };
+      return { object: REQUEST.schema.parse(r.toolCalls[0]?.input), usage: r.usage };
     },
-  })),
+  },
 ].filter((v) => !ONLY || ONLY.includes(v.label));
 
 type Row = { label: string; med: number; mean: number; lats: number[]; reason: number; out: number; q?: Q };

@@ -1,6 +1,6 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { DirectChatTransport, generateObject, generateText, jsonSchema, NoObjectGeneratedError, ToolLoopAgent, type ChatTransport, type JSONSchema7, type LanguageModel } from 'ai';
+import { DirectChatTransport, generateObject, generateText, jsonSchema, NoObjectGeneratedError, ToolLoopAgent, type ChatTransport, type JSONSchema7, type LanguageModel, type LanguageModelUsage } from 'ai';
 import { salvageString, salvageStringArray, searchesLeft, searchReviewsTool, type AskMessage } from '@truescore/gmaps-shared';
 import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
 import { DEEPSEEK_MODEL, GEMINI_MODEL, getActiveLLM, OPENAI_MODEL } from './config';
@@ -33,13 +33,24 @@ export const salvageObject = (text: string, schema: JSONSchema7) =>
   Object.fromEntries(Object.entries(schema.properties ?? {}).map(([field, p]) =>
     [field, (p as JSONSchema7).type === 'array' ? salvageStringArray(text, field) : salvageString(text, field) ?? '']));
 
+// web/evals/bjjfanatics.ts hooks this to collect token usage; the extension
+// never sets it.
+let onUsage: ((usage: LanguageModelUsage) => void) | undefined;
+export const setOnUsage = (fn: typeof onUsage) => { onUsage = fn; };
+
 // One pass over the reviews: free-form text, or an object matching `schema`
 // (authored strict: every property required, no extras).
 export const summarize = async (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null) => {
   const call = { ...await activeModel(), prompt: withReviews(prompt, reviewTexts) };
-  if (!schema) return (await generateText(call)).text;
+  if (!schema) {
+    const { text, usage } = await generateText(call);
+    onUsage?.(usage);
+    return text;
+  }
   try {
-    return (await generateObject({ ...call, schema: jsonSchema(schema) })).object;
+    const { object, usage } = await generateObject({ ...call, schema: jsonSchema(schema) });
+    onUsage?.(usage);
+    return object;
   } catch (e) {
     if (NoObjectGeneratedError.isInstance(e) && e.text) return salvageObject(e.text, schema);
     throw e;

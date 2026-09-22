@@ -88,7 +88,7 @@ const NOTES = `On factual disagreements (price, hours), trust the more recent re
 // providers — nano leaked reasoning into items and named cities as
 // alternatives, gemini's highlights shrank and valueForMoney came back
 // Infinity. Field semantics and content hygiene (no duplicates, no placeholder
-// entries) live in structuredPrompt; the code only caps the fan-out (capItems).
+// entries) live in structuredRequest's prompt; the code only caps the fan-out (capItems).
 const HIGHLIGHTS_SCHEMA = z.object({
   highlights: z.array(
     z.object({
@@ -106,6 +106,27 @@ const reviewBlock = (texts: string[]) => texts.join('\n\n');
 const subjectOf = (place: string, filter?: string) => {
   const p = place || 'this place';
   return filter ? `"${filter}" at ${p}` : p;
+};
+
+// The structured half of summarize(): its exact prompt, schema and output cap.
+// evals/latency.ts times this same request across models.
+export const structuredRequest = ({ placeName, reviewTexts, removedReviews }: Subject, filterQuery?: string) => {
+  const removal = removalNote(removedReviews);
+  return {
+    maxOutputTokens: 8192,
+    schema: HIGHLIGHTS_SCHEMA,
+    prompt: `${reviewBlock(reviewTexts)}\n\n---\n\nExtract highlights about ${subjectOf(placeName, filterQuery)} and rate value for money 1-5 from pricing mentions.
+
+Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
+
+Also list items: up to ${MAX_SCORED_ITEMS} concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword biased toward recall: the term is searched against all reviews, so prefer the broadest word reviewers actually repeat — a term only one or two reviews contain makes a useless chip. One word when possible; drop prices, sizes, and qualifiers ("brunch menu €14" → "brunch", "Western Lowland Gorilla" → "gorilla"). Spell normally — never glue words together ("patatas bravas" → "bravas", not "patatasbravas"). Split a compound like "salmon avocado toast" into "salmon", "avocado". Keep a phrase only when the bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"; "dulce de leche", not "leche"). Skip generic qualities every place has — service, staff, cleanliness, value. These must be things at THIS place. Empty list if nothing specific stands out.
+
+Separately, list alternatives: proper names of OTHER places reviewers say are BETTER than this one — somewhere they'd rather go because it beats this place (common when they call this place overrated). Better only: skip any place mentioned as worse, or that reviewers say this place beats. Can be anywhere — a nearby swap or a better one in another city/country, not just local substitutes. Names only — never put these in items, since a place named as a better alternative is not a feature of this one. Use the short name reviewers actually write ("BrunchIt", not "BrunchIt Café & Terrace") so searching mentions of it matches. Empty list if reviewers name none.
+
+In both lists each entry appears once — no duplicates or spelling variants of the same term — and an empty list is an empty array with no placeholder entry.
+
+${NOTES}${removal ? `\n\n${removal} If they do, add one negative highlight for it.` : ''}`,
+  };
 };
 
 // Structured-output mode mangles markdown prose (Gemini strips \n\n inside
@@ -127,24 +148,12 @@ export async function summarize({ placeName, reviewTexts, removedReviews }: Subj
 
 ${NOTES}${removal ? `\n\n${removal}` : ''}`;
 
-  const structuredPrompt = `${block}\n\n---\n\nExtract highlights about ${subject} and rate value for money 1-5 from pricing mentions.
-
-Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
-
-Also list items: up to ${MAX_SCORED_ITEMS} concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword biased toward recall: the term is searched against all reviews, so prefer the broadest word reviewers actually repeat — a term only one or two reviews contain makes a useless chip. One word when possible; drop prices, sizes, and qualifiers ("brunch menu €14" → "brunch", "Western Lowland Gorilla" → "gorilla"). Spell normally — never glue words together ("patatas bravas" → "bravas", not "patatasbravas"). Split a compound like "salmon avocado toast" into "salmon", "avocado". Keep a phrase only when the bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"; "dulce de leche", not "leche"). Skip generic qualities every place has — service, staff, cleanliness, value. These must be things at THIS place. Empty list if nothing specific stands out.
-
-Separately, list alternatives: proper names of OTHER places reviewers say are BETTER than this one — somewhere they'd rather go because it beats this place (common when they call this place overrated). Better only: skip any place mentioned as worse, or that reviewers say this place beats. Can be anywhere — a nearby swap or a better one in another city/country, not just local substitutes. Names only — never put these in items, since a place named as a better alternative is not a feature of this one. Use the short name reviewers actually write ("BrunchIt", not "BrunchIt Café & Terrace") so searching mentions of it matches. Empty list if reviewers name none.
-
-In both lists each entry appears once — no duplicates or spelling variants of the same term — and an empty list is an empty array with no placeholder entry.
-
-${NOTES}${removal ? `\n\n${removal} If they do, add one negative highlight for it.` : ''}`;
-
   const [verdict, structured] = await Promise.all([
     generateText({ model, providerOptions, maxOutputTokens: 1024, prompt: verdictPrompt }).then((r) => {
       report(provider, 'verdict', r.usage);
       return r.text;
     }),
-    generateObject({ model, providerOptions, maxOutputTokens: 8192, schema: HIGHLIGHTS_SCHEMA, prompt: structuredPrompt })
+    generateObject({ model, providerOptions, ...structuredRequest({ placeName, reviewTexts, removedReviews }, filterQuery) })
       .then((r) => {
         report(provider, 'structured', r.usage);
         return { ...r.object, items: capItems(r.object.items), alternatives: capItems(r.object.alternatives) };

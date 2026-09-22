@@ -83,6 +83,11 @@ const SUMMARY_SCHEMA = {
   additionalProperties: false,
 };
 
+// Reference material (e.g. a course's volume/chapter breakdown) appended to
+// both the structured-summary prompt and every Ask, so questions can map vague
+// reviewer mentions to specific named sections too — not just the summary.
+export const withContext = (prompt: string, context?: string) => (context ? `${prompt}\n\n${context}` : prompt);
+
 // One pass over the reviews on the popup's model: free-form text for a null
 // schema, else an object matching it (see llm.ts).
 export const llmSummarize = (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null = SUMMARY_SCHEMA): Promise<any> =>
@@ -180,11 +185,6 @@ export const buildSummarizeWidget = ({
   autoSummarize,
   searchAsk,
 }: SummarizeWidgetOpts) => {
-  // Reference material (e.g. a course's volume/chapter breakdown) appended to
-  // both the structured-summary prompt and every Ask, so questions can map vague
-  // reviewer mentions to specific named sections too — not just the summary.
-  const withContext = (prompt: string) => (context ? `${prompt}\n\n${context}` : prompt);
-
   const questionRow = document.createElement('div');
   questionRow.className = 'ars-question-row';
   const questionInput = document.createElement('input');
@@ -245,7 +245,7 @@ export const buildSummarizeWidget = ({
     try {
       const reviews = await loadReviews();
       btn.textContent = '\u23F3 Summarizing\u2026';
-      const parsed = await llmSummarize(reviews, withContext(summaryPrompt));
+      const parsed = await llmSummarize(reviews, withContext(summaryPrompt, context));
       bumpRateLimit();
       summaryTs = Date.now();
       // Quota-full must not discard a summary the LLM call already paid for.
@@ -288,9 +288,9 @@ export const buildSummarizeWidget = ({
       if (searchAsk) {
         summaryPanel.style.display = 'block';
         panelMode = 'answer';
-        ({ text: answer, searches } = await askReviews(summaryPanel, 'ars-answer', searchAsk, reviews, withContext(questionPrompt), question));
+        ({ text: answer, searches } = await askReviews(summaryPanel, 'ars-answer', searchAsk, reviews, withContext(questionPrompt, context), question));
       } else {
-        answer = await llmSummarize(reviews, `${withContext(questionPrompt)}\n\nQuestion: ${question}`, null);
+        answer = await llmSummarize(reviews, `${withContext(questionPrompt, context)}\n\nQuestion: ${question}`, null);
         showAnswer(answer);
       }
       bumpRateLimit();
