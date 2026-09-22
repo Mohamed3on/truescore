@@ -8,8 +8,8 @@
 // Flash (low, its floor), and DeepSeek V4.1 Flash non-thinking, its thinking
 // effort ladder (low|medium|high|xhigh|max) and strict tool calls
 // (ds:strict:off|low). Reasoning/thought tokens explain
-// the latency. --judge adds a blind gpt-6-sol quality score (grounded/specific/
-// useful, 1-5) of each variant's structured output, scored after timing so it
+// the latency. --judge adds a blind gpt-6-sol quality score (grounded/coverage/
+// concise, 1-5) of each variant's structured output, scored after timing so it
 // never pollutes the latency numbers. --only=a,b runs just those variants.
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -91,17 +91,17 @@ const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.le
 // --judge: a blind gpt-6-sol scorer for each structured output (same rubric as
 // evals/compare.ts). Absolute 1-5 per dimension; a call's clock stops before
 // its output is judged, so judge time never counts toward latency.
-type Q = { g: number; s: number; u: number };
+type Q = { grounded: number; coverage: number; concise: number };
 const judge = openai('gpt-6-sol');
-const QUALITY_SCHEMA = z.object({ grounded: z.number().int(), specific: z.number().int(), useful: z.number().int() });
+const QUALITY_SCHEMA = z.object({ grounded: z.number().int(), coverage: z.number().int(), concise: z.number().int() });
 const scoreQuality = async (summary: unknown): Promise<Q> => {
   const { object } = await generateObject({
     model: judge,
     providerOptions: { openai: { reasoningEffort: 'medium' } },
     schema: QUALITY_SCHEMA,
-    prompt: `${REVIEWS.join('\n\n')}\n\n---\n\nA model extracted the structured summary below from the reviews above. Score it 1-5 on grounded (every claim traceable to the reviews, nothing invented), specific (concrete details over vague adjectives), and useful (helps someone decide).\n\n${JSON.stringify(summary, null, 1)}`,
+    prompt: `${REVIEWS.join('\n\n')}\n\n---\n\nA model extracted the structured summary below from the reviews above. Score it 1-5 on grounded (every claim traceable to the reviews and given the weight the reviews give it — inventing detail, overstating how many reviewers said something, or presenting a one-off as a pattern are grounding errors), coverage (conveys what matters most for deciding: the points many reviewers raise and any major caveat — leaving out minor or one-off points is not a flaw), and concise (no padding or repetition; length is not a virtue).\n\n${JSON.stringify(summary, null, 1)}`,
   });
-  return { g: object.grounded, s: object.specific, u: object.useful };
+  return object;
 };
 
 type Variant = { label: string; run: () => Promise<any> };
@@ -181,16 +181,16 @@ const rows: Row[] = variants.flatMap((v) => {
   if (!mine.length) return [];
   const lats = mine.map((s) => s.ms);
   const qs = mine.map((s) => s.q).filter((q): q is Q => !!q);
-  const q = qs.length ? { g: avg(qs.map((x) => x.g)), s: avg(qs.map((x) => x.s)), u: avg(qs.map((x) => x.u)) } : undefined;
+  const q = qs.length ? { grounded: avg(qs.map((x) => x.grounded)), coverage: avg(qs.map((x) => x.coverage)), concise: avg(qs.map((x) => x.concise)) } : undefined;
   return [{ label: v.label, med: median(lats), mean: avg(lats), lats, reason: avg(mine.map((s) => s.reason)), out: avg(mine.map((s) => s.out)), q }];
 });
 
 const fastest = Math.min(...rows.map((r) => r.med));
-console.log(`variant      median    mean   ×fast   reasoning  output${JUDGE ? '   qual (g/s/u)' : ''}   runs (s)`);
+console.log(`variant      median    mean   ×fast   reasoning  output${JUDGE ? '   qual (g/cov/con)' : ''}   runs (s)`);
 console.log('-'.repeat(JUDGE ? 96 : 74));
 for (const r of rows) {
   const qcol = JUDGE
-    ? (r.q ? `  ${((r.q.g + r.q.s + r.q.u) / 3).toFixed(1)} (${r.q.g.toFixed(1)}/${r.q.s.toFixed(1)}/${r.q.u.toFixed(1)})` : '  —').padEnd(18)
+    ? (r.q ? `  ${((r.q.grounded + r.q.coverage + r.q.concise) / 3).toFixed(1)} (${r.q.grounded.toFixed(1)}/${r.q.coverage.toFixed(1)}/${r.q.concise.toFixed(1)})` : '  —').padEnd(18)
     : '';
   console.log(
     `${r.label.padEnd(11)} ${(r.med / 1000).toFixed(1).padStart(5)}s  ${(r.mean / 1000).toFixed(1).padStart(5)}s  ` +

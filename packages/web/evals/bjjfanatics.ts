@@ -263,13 +263,13 @@ for (const fx of fixtures) {
 if (JUDGE && KEYS.openai) {
   const judgeModel = createOpenAI({ apiKey: KEYS.openai })('gpt-6-sol');
   const judgeSchema = z.object({
-    a: z.object({ grounded: z.number().int(), specific: z.number().int(), useful: z.number().int() }),
-    b: z.object({ grounded: z.number().int(), specific: z.number().int(), useful: z.number().int() }),
+    a: z.object({ grounded: z.number().int(), coverage: z.number().int(), concise: z.number().int() }),
+    b: z.object({ grounded: z.number().int(), coverage: z.number().int(), concise: z.number().int() }),
     winner: z.enum(['A', 'B', 'tie']),
     reason: z.string(),
   });
-  const tally: Record<string, { w: number; t: number; l: number; g: number; s: number; u: number; n: number }> = {};
-  const acc = (p: string) => (tally[p] ??= { w: 0, t: 0, l: 0, g: 0, s: 0, u: 0, n: 0 });
+  const tally: Record<string, { w: number; t: number; l: number; grounded: number; coverage: number; concise: number; n: number }> = {};
+  const acc = (p: string) => (tally[p] ??= { w: 0, t: 0, l: 0, grounded: 0, coverage: 0, concise: 0, n: 0 });
   const out = (x: any) => JSON.stringify({ conclusion: x.conclusion, praised: x.praised, complaints: x.complaints, betterAlternative: x.betterAlternative }, null, 1);
 
   const groups = [...new Set(rows.filter((r) => r.parsed).map((r) => `${r.fixture}::${r.variant}`))];
@@ -293,7 +293,7 @@ if (JUDGE && KEYS.openai) {
           model: judgeModel,
           providerOptions: { openai: { reasoningEffort: 'medium' } },
           schema: judgeSchema,
-          prompt: `${reviewBlock}\n\n---\n\nTwo anonymous models summarized the source above (reviews, plus official course contents when present). Score each 1-5 on: grounded (every claim traceable to the reviews OR the official contents — a volume/chapter citation that matches the contents is grounded, NOT invented), specific (named techniques/volumes over vague adjectives), useful (helps someone decide buy/skip). Then pick the overall winner.\n\nOutput A:\n${out(a.parsed)}\n\nOutput B:\n${out(b.parsed)}`,
+          prompt: `${reviewBlock}\n\n---\n\nTwo anonymous models summarized the source above (reviews, plus official course contents when present). Score each 1-5 on: grounded (every claim traceable to the reviews OR the official contents — a volume/chapter citation that matches the contents is grounded, NOT invented — and given the weight the reviews give it: crediting a volume or technique reviewers didn't single out, overstating how many reviewers said something, or presenting a one-off as a pattern are grounding errors), coverage (conveys what matters most for a buy/skip decision: the points many reviewers raise, including major complaints — leaving out minor or one-off points is not a flaw), concise (no padding or repetition; length is not a virtue). Then pick the overall winner: the output a careful buyer should rely on to decide, where a grounding error weighs more than a missed minor detail.\n\nOutput A:\n${out(a.parsed)}\n\nOutput B:\n${out(b.parsed)}`,
         });
         const scores = flip ? { [r0.label]: object.b, [r1.label]: object.a } : { [r0.label]: object.a, [r1.label]: object.b };
         const winner = object.winner === 'tie' ? 'tie' : (object.winner === 'A') !== flip ? r0.label : r1.label;
@@ -301,20 +301,20 @@ if (JUDGE && KEYS.openai) {
       }),
     );
     for (const { r0, r1, scores, winner, reason } of judged) {
-      console.log(`${r0.label} vs ${r1.label}: ${Object.entries(scores).map(([p, s]) => `${p} g${s.grounded}/s${s.specific}/u${s.useful}`).join(' | ')} → ${winner}${winner === 'tie' ? '' : `: ${reason}`}`);
+      console.log(`${r0.label} vs ${r1.label}: ${Object.entries(scores).map(([p, s]) => `${p} grounded ${s.grounded}/coverage ${s.coverage}/concise ${s.concise}`).join(' | ')} → ${winner}${winner === 'tie' ? '' : `: ${reason}`}`);
       for (const [p, s] of Object.entries(scores)) {
         const x = acc(p);
-        x.g += s.grounded; x.s += s.specific; x.u += s.useful; x.n++;
+        x.grounded += s.grounded; x.coverage += s.coverage; x.concise += s.concise; x.n++;
       }
       if (winner === 'tie') { acc(r0.label).t++; acc(r1.label).t++; }
       else { acc(winner).w++; acc(winner === r0.label ? r1.label : r0.label).l++; }
     }
   }
   console.log(`\n${'='.repeat(74)}\n## standings — gpt-6-sol thinking, blind\n`);
-  const ranked = Object.entries(tally).map(([label, x]) => ({ label, x, avg: x.n ? (x.g + x.s + x.u) / x.n : 0 })).sort((m, n) => n.x.w - m.x.w || n.avg - m.avg);
+  const ranked = Object.entries(tally).map(([label, x]) => ({ label, x, avg: x.n ? (x.grounded + x.coverage + x.concise) / x.n : 0 })).sort((m, n) => n.x.w - m.x.w || n.avg - m.avg);
   for (const { label, x, avg } of ranked) {
     const a = (v: number) => (x.n ? (v / x.n).toFixed(2) : '—');
-    console.log(`- ${label} — ${x.w}W ${x.t}T ${x.l}L · grounded ${a(x.g)} · specific ${a(x.s)} · useful ${a(x.u)} · avg ${avg.toFixed(2)}/15`);
+    console.log(`- ${label} — ${x.w}W ${x.t}T ${x.l}L · grounded ${a(x.grounded)} · coverage ${a(x.coverage)} · concise ${a(x.concise)} · avg ${avg.toFixed(2)}/15`);
   }
 }
 

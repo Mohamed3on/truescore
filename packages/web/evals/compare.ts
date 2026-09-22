@@ -72,14 +72,20 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (x: T, i: number) =>
 }
 
 const judgeSchema = z.object({
-  a: z.object({ grounded: z.number().int(), specific: z.number().int(), useful: z.number().int() }),
-  b: z.object({ grounded: z.number().int(), specific: z.number().int(), useful: z.number().int() }),
+  a: z.object({ grounded: z.number().int(), coverage: z.number().int(), concise: z.number().int() }),
+  b: z.object({ grounded: z.number().int(), coverage: z.number().int(), concise: z.number().int() }),
   winner: z.enum(['A', 'B', 'tie']),
   reason: z.string(),
 });
 
 // GPT-6 Sol at medium reasoning effort — a proper thinking
 // model as the blind judge. Effort is set on the generateObject call below.
+//
+// Accuracy-first rubric: grounding counts the weight of evidence and length
+// earns nothing. The grounded/specific/useful rubric it replaced (2026-09-22)
+// rewarded detail: it picked GPT-5.6 Luna's fuller summaries over GPT-6
+// Luna's 22-2, yet under this one GPT-6 won 18-6 on the same outputs, since
+// 5.6's extra detail was where it overstated consensus.
 const judgeModel = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-6-sol');
 
 const judgeRuns = async (f: (typeof fixtures)[number], r0: Run, r1: Run, flip: boolean) => {
@@ -88,7 +94,7 @@ const judgeRuns = async (f: (typeof fixtures)[number], r0: Run, r1: Run, flip: b
     model: judgeModel,
     providerOptions: { openai: { reasoningEffort: 'medium' } },
     schema: judgeSchema,
-    prompt: `${f.reviewTexts.join('\n\n')}\n\n---\n\nTwo anonymous models summarized the reviews above for ${f.place}${f.filter ? ` (topic: "${f.filter}")` : ''}. Score each output 1-5 on: grounded (claims traceable to the reviews, nothing invented), specific (concrete details over vague adjectives), useful (helps someone decide). Then pick the overall winner.\n\nOutput A:\n${JSON.stringify(a.summary, null, 1)}\n\nOutput B:\n${JSON.stringify(b.summary, null, 1)}`,
+    prompt: `${f.reviewTexts.join('\n\n')}\n\n---\n\nTwo anonymous models summarized the reviews above for ${f.place}${f.filter ? ` (topic: "${f.filter}")` : ''}. Score each output 1-5 on: grounded (every claim traceable to the reviews and given the weight the reviews give it — inventing detail, overstating how many reviewers said something, or presenting a one-off as a pattern are grounding errors), coverage (conveys what matters most for deciding: the points many reviewers raise and any major caveat — leaving out minor or one-off points is not a flaw), concise (no padding or repetition; length is not a virtue). Then pick the overall winner: the output a careful reader should rely on to decide, where a grounding error weighs more than a missed minor detail.\n\nOutput A:\n${JSON.stringify(a.summary, null, 1)}\n\nOutput B:\n${JSON.stringify(b.summary, null, 1)}`,
   });
   const label = (x: 'A' | 'B' | 'tie') => (x === 'tie' ? 'tie' : (x === 'A') !== flip ? r0.label : r1.label);
   const scores = flip ? { [r0.label]: object.b, [r1.label]: object.a } : { [r0.label]: object.a, [r1.label]: object.b };
@@ -110,8 +116,8 @@ const block = (r: Run) => {
 
 // W/T/L record and per-criterion score sums per provider, aggregated across
 // every pairwise judgment (a provider is scored once per pair it appears in).
-const tally: Record<string, { w: number; t: number; l: number; g: number; s: number; u: number; n: number }> = {};
-const acc = (p: string) => (tally[p] ??= { w: 0, t: 0, l: 0, g: 0, s: 0, u: 0, n: 0 });
+const tally: Record<string, { w: number; t: number; l: number; grounded: number; coverage: number; concise: number; n: number }> = {};
+const acc = (p: string) => (tally[p] ??= { w: 0, t: 0, l: 0, grounded: 0, coverage: 0, concise: 0, n: 0 });
 
 for (const [i, f] of RUN_FIXTURES.entries()) {
   console.log(`\n${'='.repeat(72)}\n## ${f.place}${f.filter ? ` [filter: ${f.filter}]` : ''} — ${f.reviewTexts.length} reviews\n`);
@@ -128,14 +134,14 @@ for (const [i, f] of RUN_FIXTURES.entries()) {
   judged.forEach(({ scores, winner, reason }, k) => {
     const [r0, r1] = pairs[k]!;
     const line = Object.entries(scores)
-      .map(([p, s]) => `${p}: grounded ${s.grounded}, specific ${s.specific}, useful ${s.useful}`)
+      .map(([p, s]) => `${p}: grounded ${s.grounded}, coverage ${s.coverage}, concise ${s.concise}`)
       .join(' | ');
     console.log(`### judge: ${r0.label} vs ${r1.label} (gpt-6-sol thinking, blind)\n\n${line}\n\n**Winner:** ${winner} — ${reason}\n`);
     for (const [p, s] of Object.entries(scores)) {
       const x = acc(p);
-      x.g += s.grounded;
-      x.s += s.specific;
-      x.u += s.useful;
+      x.grounded += s.grounded;
+      x.coverage += s.coverage;
+      x.concise += s.concise;
       x.n++;
     }
     if (winner === 'tie') {
@@ -152,11 +158,11 @@ if (JUDGE) {
   console.log(`\n${'='.repeat(72)}\n## standings — gpt-6-sol thinking, blind, all pairs across ${RUN_FIXTURES.length} review sets\n`);
   const ranked = CONTESTANTS.map((c) => {
     const x = acc(c.label);
-    return { label: c.label, x, avg: x.n ? (x.g + x.s + x.u) / x.n : 0 };
+    return { label: c.label, x, avg: x.n ? (x.grounded + x.coverage + x.concise) / x.n : 0 };
   }).sort((m, n) => n.x.w - m.x.w || n.avg - m.avg);
   for (const { label, x, avg } of ranked) {
     const a = (v: number) => (x.n ? (v / x.n).toFixed(2) : '—');
-    console.log(`- **${label}** — ${x.w}W ${x.t}T ${x.l}L · grounded ${a(x.g)} · specific ${a(x.s)} · useful ${a(x.u)} · avg ${avg.toFixed(2)}/15`);
+    console.log(`- **${label}** — ${x.w}W ${x.t}T ${x.l}L · grounded ${a(x.grounded)} · coverage ${a(x.coverage)} · concise ${a(x.concise)} · avg ${avg.toFixed(2)}/15`);
   }
   console.log(`\n**Best quality:** ${ranked[0]!.label}`);
 }
