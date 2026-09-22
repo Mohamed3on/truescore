@@ -7,13 +7,19 @@ import { askReviews, mountAskView, type SearchAsk } from './review-ask';
 import type { AskSearch } from '@truescore/gmaps-shared';
 import type { JSONSchema7 } from 'ai';
 
+// The betterAlternative rule every structured summary prompt shares (retail,
+// BJJ courses, hotels), so the "Better alternative" section means the same thing
+// on every site: a rival reviewers endorse over this one, never one they merely
+// mention or compare. `rival` names what a rival is on that site.
+export const betterAlternativeRule = (rival: string) => `betterAlternative: only if 2+ reviewers say a specific ${rival} is better than this one — they prefer it, switched to it, or recommend it instead — give its name and why they prefer it, nothing else. Merely being mentioned or compared is not enough: leave out ones reviewers call equal, only marginally different, or worse, and ones reviewers disagree about. If none clears that bar, return an empty string for this field. Never write a sentence explaining that there's no alternative; absence must be silent.`;
+
 // Shared default summary prompt for retail product pages (Amazon, Decathlon, dm…).
 // Domain-specific pages (hotels, films, BJJ courses) keep their own prompts.
 export const PRODUCT_SUMMARY_PROMPT = `Analyze these product reviews. Ignore shipping, delivery, packaging, or seller issues — focus ONLY on the product itself. Skip generic praise like "great product".
 
 Cover the recurring themes mentioned by 3+ reviewers, ranked by how often they come up. Each bullet is one concrete, specific point with enough detail to be useful — e.g. "Adhesive lifts at the edges after a few hours", not just "doesn't stick". When reviewers disagree on a point, say so. Give the 4–6 strongest points for praised and for complaints; don't pad with weak or one-off mentions.
 
-betterAlternative: only if 2+ reviewers say a specific competing product is better than this one — they prefer it, switched to it, or recommend buying it instead — give its name and why they prefer it, nothing else. Merely being mentioned or compared is not enough: leave out competitors reviewers call equal, only marginally different, or worse, and ones reviewers disagree about. If no competitor clears that bar, return an empty string for this field. Never write a sentence explaining that there's no alternative; absence must be silent.
+${betterAlternativeRule('competing product')}
 
 conclusion: 2–4 sentences — the overall verdict: what owners consistently say, who it suits best or the main thing to watch out for, and whether it's good value when reviewers mention price. Don't just restate the bullets, and don't mention what reviewers didn't say.`;
 

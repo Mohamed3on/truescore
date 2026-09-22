@@ -1,32 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { cleanItems, salvageStructured } from './summary-parse';
+import { capItems, salvageStructured } from './summary-parse';
 
-describe('cleanItems', () => {
-  test('returns [] for non-arrays', () => {
-    expect(cleanItems(undefined)).toEqual([]);
-    expect(cleanItems(null)).toEqual([]);
-    expect(cleanItems('gorilla')).toEqual([]);
+describe('capItems', () => {
+  test('caps at MAX_SCORED_ITEMS, keeping order', () => {
+    expect(capItems(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
   });
 
-  test('trims, drops blanks and letterless junk', () => {
-    // models occasionally echo the empty-list notation ("[]", "—") as an element
-    expect(cleanItems(['  gorilla  ', '', '   ', '[]', '—', '!!!'])).toEqual(['gorilla']);
-  });
-
-  test('dedupes case-insensitively, keeping the first spelling', () => {
-    expect(cleanItems(['Bravas', 'bravas', 'BRAVAS', 'churros'])).toEqual(['Bravas', 'churros']);
-  });
-
-  test('caps at 6', () => {
-    expect(cleanItems(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
-  });
-
-  test('skips non-string entries', () => {
-    expect(cleanItems(['gorilla', 42, { x: 1 }, 'lion'])).toEqual(['gorilla', 'lion']);
-  });
-
-  test('keeps multi-word and accented terms with a letter/number', () => {
-    expect(cleanItems(['dulce de leche', '€14 brunch'])).toEqual(['dulce de leche', '€14 brunch']);
+  test("passes shorter lists through untouched — hygiene is the prompt's job", () => {
+    expect(capItems(['Bravas', 'churros'])).toEqual(['Bravas', 'churros']);
   });
 });
 
@@ -50,13 +31,13 @@ describe('salvageStructured', () => {
     expect(r.valueForMoney).toBe(4);
   });
 
-  test('cleans salvaged items (dedupe + hygiene)', () => {
-    const r = salvageStructured('"items":["bravas","Bravas","churros"]');
-    expect(r.items).toEqual(['bravas', 'churros']);
+  test('caps salvaged items', () => {
+    const r = salvageStructured('"items":["a","b","c","d","e","f","g"]');
+    expect(r.items).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
   });
 
-  test('defaults valueForMoney to 3 when the field never arrived', () => {
-    expect(salvageStructured('{"highlights":[{"text":"x","sentiment":"neutral"}]').valueForMoney).toBe(3);
+  test('leaves valueForMoney unset when the field never arrived', () => {
+    expect(salvageStructured('{"highlights":[{"text":"x","sentiment":"neutral"}]').valueForMoney).toBeUndefined();
   });
 
   test('degrades to empty fields on unsalvageable text', () => {
@@ -64,6 +45,6 @@ describe('salvageStructured', () => {
     expect(r.highlights).toEqual([]);
     expect(r.items).toEqual([]);
     expect(r.alternatives).toEqual([]);
-    expect(r.valueForMoney).toBe(3);
+    expect(r.valueForMoney).toBeUndefined();
   });
 });

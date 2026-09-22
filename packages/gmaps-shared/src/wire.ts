@@ -18,8 +18,9 @@ export type SummaryHighlight = { text: string; sentiment: string };
 // `alternatives`: proper names of OTHER places reviewers point to as somewhere
 // they'd go instead — kept apart from `items` because such a place scores low
 // here precisely because it's a rival, so auto-scoring it as a feature misleads.
-// Both optional — older cached summaries predate them.
-export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney: number; items?: string[]; alternatives?: string[] };
+// Both optional — older cached summaries predate them. valueForMoney is unset
+// when a truncated reply was cut before it (summary-parse.salvageStructured).
+export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney?: number; items?: string[]; alternatives?: string[] };
 
 export type Score = {
   featureId: string;

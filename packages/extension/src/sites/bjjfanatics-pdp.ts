@@ -1,6 +1,6 @@
 import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
-import { buildSummarizeWidget } from '../shared/review-summary';
+import { betterAlternativeRule, buildSummarizeWidget } from '../shared/review-summary';
 import { buildSearchSection } from '../shared/review-search';
 import { createIslandShell } from '../shared/score-island';
 
@@ -156,7 +156,7 @@ Surface the actual takeaways — what reviewers say they learned, what mental mo
 
 Each review may be prefixed with [Ranking: BLUE | How old are you?: 33-40 | How many years have you been training BJJ?: 1-3]. Use this to note which skill levels found which sections useful.
 
-If 2+ reviewers mention a specific better alternative course or instructor by name, note it and explain how reviewers compare.
+${betterAlternativeRule('other course or instructor')}
 
 The conclusion is the most important field — write it like a buying verdict, not an essay. Lead with the bottom line: buy or skip, and for whom. Then the single most important takeaway reviewers walked away with, what to watch first, and what this course doesn't deliver so the reader knows when to pass. Be punchy and decisive, cite specific techniques and volumes by name, no hedging like "many reviewers say". Make the most important takeaway concrete — name the specific technique, sweep, grip, or detail a reviewer actually credited (a sweep someone hit, the cue that unlocked a position), not a generic "systematic approach". The verdict may spotlight one such vivid, named detail even if only one or two reviewers mention it, as long as you attribute it honestly — the 3+ threshold governs the ranked bullets, not the verdict's specifics. Use the course contents only to turn a vague reviewer reference ("the darce part") into its real named chapter; never rank or recommend sections reviewers didn't single out, invent chapter contents, or claim the course omits something reviewers didn't say it omits. Format however reads best — a few short paragraphs or short bullets. Use **bold** only on concrete specifics, never on connecting phrases.`;
 

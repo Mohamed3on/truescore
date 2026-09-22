@@ -1,6 +1,6 @@
 // Booking.com hotel page - recent reviews scoreboard + summary
 import { cacheGet, cacheSet } from '../shared/cache';
-import { buildSummarizeWidget } from '../shared/review-summary';
+import { betterAlternativeRule, buildSummarizeWidget } from '../shared/review-summary';
 import { el } from '../shared/utils';
 import { createIslandShell } from '../shared/score-island';
 
@@ -86,9 +86,9 @@ const SUMMARY_PROMPT = `Analyze these hotel reviews. Focus on the stay itself: r
 
 ONLY include points mentioned by 3+ reviewers. Rank by frequency (most mentioned first). Each bullet should be one concrete point, e.g. "Rooms are clean but noticeably compact".
 
-If 2+ reviewers mention a specific better nearby alternative hotel, apartment, or chain, note it and explain the comparison.
+${betterAlternativeRule('nearby hotel, apartment, or chain')}
 
-End with a short summary: the gist of what guests say, anything to watch out for, any better-value alternatives mentioned, and whether this is the best stay you can get for the price.`;
+End with a short summary: the gist of what guests say, anything to watch out for, and whether this is the best stay you can get for the price.`;
 
 const formatGuest = (value: string) =>
   GUEST_LABELS[value] ||
