@@ -621,8 +621,8 @@ const fetchReviewNodes = async (
 const recentRatioFromNodes = (nodes: ReviewNode[]): number | null =>
   recentRatio(nodes.filter((n) => n.rating).map((n) => n.rating as number));
 
-/** `stars` tallies the window's ratings, 5★ first — the sample the ratio stands on. */
-type RecentStats = { ratio: number | null; total: number; stars: number[] };
+/** `rated` is the sample the ratio stands on: the window's reviews that carry stars. */
+type RecentStats = { ratio: number | null; total: number; rated: number };
 
 /**
  * Recent-positive ratio plus the size of the book's review corpus, cached a day per work
@@ -630,20 +630,19 @@ type RecentStats = { ratio: number | null; total: number; stars: number[] };
  * a failed fetch: a null ratio means "no recent ratings", never "couldn't look".
  */
 const fetchRecentStats = async (workId: string): Promise<RecentStats> => {
-  // v2: v1 entries carried no star tally.
-  const cacheKey = `gr_recent_v2_${workId}`;
+  // v3: earlier entries carried no sample size.
+  const cacheKey = `gr_recent_v3_${workId}`;
   const cached = (await idbGet(cacheKey, CONFIG.RECENT_CACHE_MS)) as RecentStats | null;
   if (cached) return cached;
   const { nodes, totalCount } = await fetchReviewNodes(workId);
-  const stars = [5, 4, 3, 2, 1].map((s) => nodes.filter((n) => n.rating === s).length);
-  const stats: RecentStats = { ratio: recentRatioFromNodes(nodes), total: totalCount, stars };
+  const stats: RecentStats = { ratio: recentRatioFromNodes(nodes), total: totalCount, rated: nodes.filter((n) => n.rating).length };
   idbSet(cacheKey, stats);
   return stats;
 };
 
 /** The reference's own recent stats; unknown (null, 0) on a failed fetch. */
 const getRecentStats = async (workId: string): Promise<RecentStats> => {
-  try { return await fetchRecentStats(workId); } catch { return { ratio: null, total: 0, stars: [] }; }
+  try { return await fetchRecentStats(workId); } catch { return { ratio: null, total: 0, rated: 0 }; }
 };
 
 // =============================================================================
@@ -1390,15 +1389,14 @@ const appendScore = async (bookTitle: Element) => {
   // shelf lookup outlasts it anyway.
   const recentStats = getRecentStats(stats.workId);
   renderSimilarPicks(summarySection, window.location.href, stats, recentStats.then((r) => r.ratio));
-  const { ratio: recentRatio, total: reviewTotal, stars } = await recentStats;
+  const { ratio: recentRatio, total: reviewTotal, rated } = await recentStats;
   recentElement.textContent = recentRatio !== null
     ? `Recent: ${Math.round(recentRatio * 100)}%`
     : 'Recent: N/A';
-  const rated = stars.reduce((a, b) => a + b, 0);
   if (rated) {
-    const tally = el('span', undefined, ` · newest ${rated} rated reviews: ${stars.map((n, i) => `${5 - i}★ ${n}`).join(' · ')}`);
-    tally.style.cssText = 'font-size: 12px; color: #999;';
-    recentElement.append(tally);
+    const sample = el('span', undefined, ` · n=${rated}`);
+    sample.style.cssText = 'font-size: 12px; color: #999;';
+    recentElement.append(sample);
   }
 
   if (searchReviews && reviewTotal) {
