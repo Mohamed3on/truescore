@@ -36,6 +36,25 @@ const CONFIG = {
 const debug = (...args: any[]) => CONFIG.DEBUG && console.log('[GR]', ...args);
 
 const STYLES = `
+  /* The score row sits under Goodreads' own rating row in that row's clothes: the label in
+     the stars' slot, the figure in the host's figure face, the working in its grey meta. */
+  .gr-score { display: flex; align-items: center; flex-wrap: wrap; column-gap: 16px; row-gap: 2px; margin: -2px 0 12px; }
+  .gr-score-head { display: flex; align-items: center; }
+  .gr-score-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #707070; }
+  .gr-score-figure {
+    font-family: Copernicus, Georgia, serif;
+    font-size: 26px;
+    line-height: 37px;
+    font-weight: 600;
+    color: #1e1915;
+    font-variant-numeric: tabular-nums;
+  }
+  .gr-score-meta { font-size: 14px; line-height: 19px; color: #707070; font-variant-numeric: tabular-nums; }
+  .gr-score-meta strong { font-weight: 700; color: #1e1915; }
+  .gr-score-meta strong.-trails { color: #9a6700; }
+  .gr-score-meta strong.-ahead { color: #00635d; }
+  .gr-score [title] { cursor: help; }
+
   .gr-similar {
     margin: 24px 0;
     padding: 20px;
@@ -1352,12 +1371,24 @@ const appendScore = async (bookTitle: Element) => {
   apiKey = stats.apiKey;
   signedIn = !!stats.jwtToken;
 
-  const scoreElement = el('h1', undefined, `${addCommas(Math.round(stats.score))} (${Math.round(stats.ratio * 100)}%)`);
-  bookTitle.parentNode!.insertBefore(scoreElement, bookTitle.nextSibling);
-
-  const recentElement = el('div', undefined, 'Recent: loading...');
-  recentElement.style.cssText = 'font-size: 16px; margin-top: 4px; color: #666;';
-  scoreElement.parentNode!.insertBefore(recentElement, scoreElement.nextSibling);
+  // The adjusted score leads, as it does in every picks list; its working follows.
+  const label = el('span', 'gr-score-label', 'TrueScore');
+  const figure = el('span', 'gr-score-figure', '…');
+  figure.title = 'The all-time score scaled by how the newest reviews rate the book. Better picks must beat it.';
+  const head = el('div', 'gr-score-head');
+  head.append(label, figure);
+  const net = Math.round(stats.ratio * stats.ratingsCount);
+  const allTime = el('span', undefined, `${addCommas(Math.round(Math.abs(stats.score)))} all-time`);
+  allTime.title = `(5★ − 1★)² ÷ ratings: ${addCommas(net)}² ÷ ${addCommas(stats.ratingsCount)} · ${pct(stats.ratio)} net loved`;
+  const meta = el('div', 'gr-score-meta');
+  meta.append(allTime);
+  const scoreRow = el('div', 'gr-score');
+  scoreRow.append(head, meta);
+  // Under Goodreads' own rating row, its figure lined up under the host's average.
+  const ratingRow = document.querySelector('.BookPageMetadataSection__ratingStats');
+  const hostFigure = document.querySelector('.RatingStatistics__rating');
+  (ratingRow ?? bookTitle).after(scoreRow);
+  if (ratingRow && hostFigure) label.style.width = `${hostFigure.getBoundingClientRect().left - ratingRow.getBoundingClientRect().left}px`;
 
   const getReviews = makeGetReviews(stats.workId);
   const searchReviews = stats.jwtToken || stats.apiKey ? makeReviewSearch(stats.workId) : null;
@@ -1366,7 +1397,8 @@ const appendScore = async (bookTitle: Element) => {
   // buildMediaSummary reads localStorage and never blocks on the network. Review
   // text is fetched lazily, only when the user actually summarizes or asks.
   const summarySection = buildMediaSummary({
-    anchor: recentElement,
+    // Below the book's own details, so the author, ratings and description stay on the first screen.
+    anchor: document.querySelector('.BookDetails') ?? scoreRow,
     classPrefix: 'gr-summary',
     heading: 'Reader Reviews',
     summaryPrompt: SUMMARY_PROMPT,
@@ -1390,13 +1422,14 @@ const appendScore = async (bookTitle: Element) => {
   const recentStats = getRecentStats(stats.workId);
   renderSimilarPicks(summarySection, window.location.href, stats, recentStats.then((r) => r.ratio));
   const { ratio: recentRatio, total: reviewTotal, rated } = await recentStats;
-  recentElement.textContent = recentRatio !== null
-    ? `Recent: ${Math.round(recentRatio * 100)}%`
-    : 'Recent: N/A';
-  if (rated) {
-    const sample = el('span', undefined, ` · n=${rated}`);
-    sample.style.cssText = 'font-size: 12px; color: #999;';
-    recentElement.append(sample);
+  if (recentRatio === null) {
+    figure.textContent = '—';
+    meta.append(' · recent unknown');
+  } else {
+    figure.textContent = addCommas(adjust(stats.score, recentRatio));
+    const recent = el('strong', recentRatio < stats.ratio ? '-trails' : recentRatio > stats.ratio ? '-ahead' : undefined, pct(recentRatio));
+    recent.title = `5★ minus 1★ among the newest ${rated} reviews with stars, against ${pct(stats.ratio)} across all ratings`;
+    meta.append(' × ', recent, ` in ${rated >= reviewTotal ? 'all' : 'the newest'} ${rated} reviews`);
   }
 
   if (searchReviews && reviewTotal) {
