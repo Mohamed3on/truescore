@@ -54,7 +54,7 @@ const histograms = async (ids: string[]): Promise<Record<string, number[]>> => {
 // 9★ and 10★ against 1★ and 2★, over every rating. Null with none.
 const scoreOf = (histogram: number[] | undefined) => {
   const total = histogram?.reduce((sum, c) => sum + c, 0) ?? 0;
-  return total ? npsStats(histogram![8] + histogram![9], histogram![0] + histogram![1], total) : null;
+  return total ? { ...npsStats(histogram![8] + histogram![9], histogram![0] + histogram![1], total), total } : null;
 };
 type Score = NonNullable<ReturnType<typeof scoreOf>>;
 const scoreText = ({ score, nps }: Score) => `${addCommas(score)} (${Math.round(nps)}%)`;
@@ -63,8 +63,9 @@ const idOf = (card: Element) =>
   card.querySelector('a[href*="/title/tt"]')?.getAttribute('href')?.match(/\/title\/(tt\d+)/)?.[1];
 const CARD = '[data-testid="MoreLikeThis"] .ipc-poster-card';
 
-// The title page and its ratings page both get the score under the name; only
-// the title page has a strip. One request covers the title and every card.
+// The title page puts the score in its rating bar, and a page without that bar puts it
+// under the name; only the title page has a strip. One request covers the title and
+// every card.
 const id = window.location.pathname.match(/\/title\/(tt\d+)\/(?:ratings\/?)?$/)?.[1];
 const similar = id ? similarFromPage() : [];
 const scores: Promise<Record<string, Score | null>> = id
@@ -100,7 +101,7 @@ const renderSimilar = (current: Score, all: Record<string, Score | null>, anchor
       const name = el('span', 'ts-similar-name', pick.name);
       name.append(el('span', 'ts-similar-meta', [pick.year, pick.type, pick.rating != null && `★ ${pick.rating}`].filter(Boolean).join(' · ')));
       const score = el('span', 'ts-similar-score', scoreText(pick));
-      score.style.color = npsColor(pick.nps, 60);
+      score.style.color = npsColor(pick.nps);
       row.append(poster, name, score);
       panel.append(row);
     }
@@ -108,13 +109,39 @@ const renderSimilar = (current: Score, all: Record<string, Score | null>, anchor
   anchor.after(panel);
 };
 
-scores.then((all) => {
+// A fourth block in IMDb's own rating bar, after "IMDb RATING"; the working opens in a card.
+const scoreBlock = ({ score, nps, total }: Score) => {
+  const card = el('span', 'ts-card');
+  card.append(
+    el('span', 'ts-card-head', `TrueScore ${addCommas(score)}`),
+    el('span', undefined, `Net loved: 9–10★ minus 1–2★, over all ${addCommas(total)} ratings`),
+  );
+  const value = el('span', 'ts-bar-value');
+  value.append(el('span', 'ts-bar-fig', addCommas(score)), el('span', 'ts-bar-sub', `${Math.round(nps)}% net loved`), card);
+  const block = el('div', 'ts-bar');
+  block.append(el('span', 'ts-bar-label', 'TrueScore'), value);
+  return block;
+};
+
+// The strip can render after the scores land; its heading is where the verdict on it goes.
+const whenPresent = (selector: string) => new Promise<Element>((resolve) => {
+  const find = () => {
+    const found = document.querySelector(selector);
+    if (found) { observer.disconnect(); resolve(found); }
+  };
+  const observer = new MutationObserver(find);
+  observer.observe(document.body, { childList: true, subtree: true });
+  find();
+});
+
+scores.then(async (all) => {
   const current = id && all[id];
+  if (!current) return;
+  const bar = document.querySelector('[data-testid="hero-parent"] [data-testid="hero-rating-bar__aggregate-rating"]');
   const headline = document.querySelector('h1');
-  if (!current || !headline) return;
-  const scoreElement = el('div', 'ts-score', scoreText(current));
-  headline.after(scoreElement);
-  if (similar.length) renderSimilar(current, all, scoreElement);
+  if (bar) bar.after(scoreBlock(current));
+  else headline?.after(el('div', 'ts-score', scoreText(current)));
+  if (similar.length) renderSimilar(current, all, await whenPresent('[data-testid="MoreLikeThis"] .ipc-title'));
 }).catch(() => {});
 
 // --- the "More like this" strip ----------------------------------------------
