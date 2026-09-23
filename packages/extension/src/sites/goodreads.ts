@@ -36,24 +36,49 @@ const CONFIG = {
 const debug = (...args: any[]) => CONFIG.DEBUG && console.log('[GR]', ...args);
 
 const STYLES = `
-  /* The score row sits under Goodreads' own rating row in that row's clothes: the label in
-     the stars' slot, the figure in the host's figure face, the working in its grey meta. */
-  .gr-score { display: flex; align-items: center; flex-wrap: wrap; column-gap: 16px; row-gap: 2px; margin: -2px 0 12px; }
-  .gr-score-head { display: flex; align-items: center; }
-  .gr-score-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #707070; }
-  .gr-score-figure {
-    font-family: Copernicus, Georgia, serif;
-    font-size: 26px;
-    line-height: 37px;
-    font-weight: 600;
-    color: #1e1915;
+  /* The score is one more item on Goodreads' own "ratings · reviews" line (its u-dot-before
+     draws the dot); the working opens in a card on hover, or while the rating row has focus. */
+  .gr-score {
+    position: relative;
+    display: inline-block;
+    vertical-align: top;
+    font-family: "Proxima Nova", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 19px;
+    color: #707070;
     font-variant-numeric: tabular-nums;
+    cursor: default;
   }
-  .gr-score-meta { font-size: 14px; line-height: 19px; color: #707070; font-variant-numeric: tabular-nums; }
-  .gr-score-meta strong { font-weight: 700; color: #1e1915; }
-  .gr-score-meta strong.-trails { color: #9a6700; }
-  .gr-score-meta strong.-ahead { color: #00635d; }
-  .gr-score [title] { cursor: help; }
+  .gr-score > b { font-weight: 600; color: #1e1915; text-decoration: underline dotted rgba(30, 25, 21, .35); text-underline-offset: 3px; }
+  .gr-score-card {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: max-content;
+    max-width: 300px;
+    padding: 10px 12px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 0 0 1px rgba(30, 25, 21, .08), 0 8px 24px rgba(30, 25, 21, .12);
+    opacity: 0;
+    transform: translateY(-4px) scale(.97);
+    transform-origin: top left;
+    pointer-events: none;
+    transition: opacity 100ms ease-out, transform 100ms ease-out;
+  }
+  .gr-score:hover .gr-score-card, .RatingStatistics:focus-visible .gr-score-card {
+    opacity: 1;
+    transform: none;
+    transition: opacity 160ms cubic-bezier(.23, 1, .32, 1) 80ms, transform 160ms cubic-bezier(.23, 1, .32, 1) 80ms;
+  }
+  .gr-score-card-head { font-size: 16px; line-height: 22px; color: #1e1915; }
+  .gr-score-card-head b { font-weight: 700; }
+  .gr-score-card-work { font-size: 14px; line-height: 19px; color: #707070; text-wrap: balance; }
+  @media (prefers-reduced-motion: reduce) { .gr-score-card { transform: none !important; } }
 
   .gr-similar {
     margin: 24px 0;
@@ -1371,24 +1396,22 @@ const appendScore = async (bookTitle: Element) => {
   apiKey = stats.apiKey;
   signedIn = !!stats.jwtToken;
 
-  // The adjusted score leads, as it does in every picks list; its working follows.
-  const label = el('span', 'gr-score-label', 'TrueScore');
-  const figure = el('span', 'gr-score-figure', '…');
-  figure.title = 'The all-time score scaled by how the newest reviews rate the book. Better picks must beat it.';
-  const head = el('div', 'gr-score-head');
-  head.append(label, figure);
-  const net = Math.round(stats.ratio * stats.ratingsCount);
-  const allTime = el('span', undefined, `${addCommas(Math.round(Math.abs(stats.score)))} all-time`);
-  allTime.title = `(5★ − 1★)² ÷ ratings: ${addCommas(net)}² ÷ ${addCommas(stats.ratingsCount)} · ${pct(stats.ratio)} net loved`;
-  const meta = el('div', 'gr-score-meta');
-  meta.append(allTime);
-  const scoreRow = el('div', 'gr-score');
-  scoreRow.append(head, meta);
-  // Under Goodreads' own rating row, its figure lined up under the host's average.
-  const ratingRow = document.querySelector('.BookPageMetadataSection__ratingStats');
-  const hostFigure = document.querySelector('.RatingStatistics__rating');
-  (ratingRow ?? bookTitle).after(scoreRow);
-  if (ratingRow && hostFigure) label.style.width = `${hostFigure.getBoundingClientRect().left - ratingRow.getBoundingClientRect().left}px`;
+  // The adjusted score, as every picks list shows it, and the all-time net loved share on
+  // Goodreads' own "ratings · reviews" line; the working sits in the card.
+  const figure = el('b', undefined, '…');
+  const cardFigure = el('b', undefined, '…');
+  const cardHead = el('span', 'gr-score-card-head', 'TrueScore ');
+  cardHead.append(cardFigure);
+  const working = el('span', 'gr-score-card-work', `${addCommas(Math.round(Math.abs(stats.score)))} all-time`);
+  const card = el('span', 'gr-score-card');
+  card.append(cardHead, working, el('span', 'gr-score-card-work', `Net loved: 5★ minus 1★, over all ${addCommas(stats.ratingsCount)} ratings`));
+  const score = el('span', 'gr-score u-dot-before', 'TrueScore ');
+  score.append(figure, el('span', 'u-dot-before', `${pct(stats.ratio)} net loved`), card);
+  // The rating row is a link to the reviews; a click on the score stays put.
+  score.addEventListener('click', (e) => e.preventDefault());
+  const ratingMeta = document.querySelector('.BookPageMetadataSection__ratingStats .RatingStatistics__meta');
+  if (ratingMeta) ratingMeta.append(score);
+  else bookTitle.after(score);
 
   const getReviews = makeGetReviews(stats.workId);
   const searchReviews = stats.jwtToken || stats.apiKey ? makeReviewSearch(stats.workId) : null;
@@ -1398,7 +1421,7 @@ const appendScore = async (bookTitle: Element) => {
   // text is fetched lazily, only when the user actually summarizes or asks.
   const summarySection = buildMediaSummary({
     // Below the book's own details, so the author, ratings and description stay on the first screen.
-    anchor: document.querySelector('.BookDetails') ?? scoreRow,
+    anchor: document.querySelector('.BookDetails') ?? bookTitle,
     classPrefix: 'gr-summary',
     heading: 'Reader Reviews',
     summaryPrompt: SUMMARY_PROMPT,
@@ -1423,13 +1446,11 @@ const appendScore = async (bookTitle: Element) => {
   renderSimilarPicks(summarySection, window.location.href, stats, recentStats.then((r) => r.ratio));
   const { ratio: recentRatio, total: reviewTotal, rated } = await recentStats;
   if (recentRatio === null) {
-    figure.textContent = '—';
-    meta.append(' · recent unknown');
+    figure.textContent = cardFigure.textContent = '—';
+    working.append(' · recent unknown');
   } else {
-    figure.textContent = addCommas(adjust(stats.score, recentRatio));
-    const recent = el('strong', recentRatio < stats.ratio ? '-trails' : recentRatio > stats.ratio ? '-ahead' : undefined, pct(recentRatio));
-    recent.title = `5★ minus 1★ among the newest ${rated} reviews with stars, against ${pct(stats.ratio)} across all ratings`;
-    meta.append(' × ', recent, ` in ${rated >= reviewTotal ? 'all' : 'the newest'} ${rated} reviews`);
+    figure.textContent = cardFigure.textContent = addCommas(adjust(stats.score, recentRatio));
+    working.append(` × ${pct(recentRatio)} in ${rated >= reviewTotal ? 'all' : 'the newest'} ${rated} reviews`);
   }
 
   if (searchReviews && reviewTotal) {
