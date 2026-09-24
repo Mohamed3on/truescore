@@ -876,33 +876,46 @@ async function run(ratings: number[]) {
   const cachedFilm = cachedFilmRaw?.scored ? cachedFilmRaw : null;
   const recentRatingsRaw = getRecentRatingsSummary().catch(() => null);
 
-  const reviewSection = document.querySelector('.review.body-text');
+  const reviewSection = document.querySelector<HTMLElement>('.review.body-text');
   // Anchor on the histogram container, not Letterboxd's average — films below
   // the site's own-average threshold render the histogram without one.
   const scoreAnchor = document.querySelector('.ratings-histogram-chart .rating-histogram');
   if (!scoreAnchor || !reviewSection) return;
 
-  const renderScore = (scoreEl: HTMLElement, score: number, ratio: number) => {
-    scoreEl.textContent = addCommas(score);
-    scoreEl.append(el('span', 'lbx-pct', `· ${Math.round(ratio * 100)}%`));
-  };
+  // One line under Letterboxd's own ratings chart: the adjusted score, as the similar picks
+  // compare it, and the all-time net loved share; the working sits in a card on hover.
+  const figure = el('b', undefined, '…');
+  const cardFigure = el('b', undefined, '…');
+  const loved = el('span');
+  const working = el('span', undefined, 'Calculating…');
+  const basis = el('span');
+  const cardHead = el('span', 'lbx-card-head', 'TrueScore ');
+  cardHead.append(cardFigure);
+  const card = el('span', 'lbx-card');
+  card.append(cardHead, working, basis);
+  const item = el('span', 'lbx-score-item', 'TrueScore ');
+  item.append(figure, loved, card);
+  const scoreLine = el('div', 'lbx-score');
+  scoreLine.append(item);
+  scoreAnchor.after(scoreLine);
 
-  const adjustedElement = el('div', 'lbx-adjusted', 'Calculating...');
-  reviewSection.after(adjustedElement);
+  const showAllTime = (score: number, ratio: number, imdbFailed = false) => {
+    loved.textContent = ` · ${pctText(ratio)} net loved`;
+    working.textContent = `${addCommas(Math.abs(score))} all-time`;
+    basis.textContent = imdbFailed
+      ? 'Net loved: 4½–5★ minus ½–1★, over Letterboxd’s ratings (IMDb’s didn’t load)'
+      : 'Net loved: 4½–5★ minus ½–1★ (9–10 minus 1–2 on IMDb), over both sites’ ratings';
+  };
 
   let scorePromise: Promise<{ score: number; ratio: number; imdbFailed?: boolean }>;
   if (cachedFilm) {
-    const scoreElement = el('span', 'lbx-score');
-    renderScore(scoreElement, cachedFilm.score, cachedFilm.ratio);
-    scoreAnchor.before(scoreElement);
+    showAllTime(cachedFilm.score, cachedFilm.ratio);
     scorePromise = Promise.resolve({ score: cachedFilm.score, ratio: cachedFilm.ratio });
   } else {
-    const scoreElement = el('span', 'lbx-score', 'Calculating...');
-    scoreAnchor.before(scoreElement);
     scorePromise = fetchImdbRatings(document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null)
       .then((imdb) => {
         const { score, ratio } = calculateCombinedScore(ratings, imdb?.imdbScore, imdb?.imdbTotal);
-        renderScore(scoreElement, score, ratio);
+        showAllTime(score, ratio, !imdb);
         // A failed IMDb fetch leaves a Letterboxd-only score: shown, but never cached,
         // so the next visit retries.
         if (imdb && currentSlug && currentRuntime) {
@@ -915,17 +928,16 @@ async function run(ratings: number[]) {
   const currentPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score, imdbFailed }, recentRatings]) => {
     const ratio = recentRatings?.ratio ?? null;
     const adjusted = adjust(score, ratio);
-    adjustedElement.textContent = adjusted == null
-      ? 'Adjusted: — · Recent: n/a'
-      : `Adjusted: ${addCommas(adjusted)} · Recent: ${pctText(ratio!)}`;
+    figure.textContent = cardFigure.textContent = adjusted == null ? '—' : addCommas(adjusted);
+    working.append(adjusted == null ? ' · recent unknown' : ` × ${pctText(ratio!)} in the newest ${recentRatings!.total} reviews`);
     // Nor is a Letterboxd-only score a reference for picks scored with IMDb votes.
     return imdbFailed ? { score, ratio: null, adjusted: null } : { score, ratio, adjusted };
   });
 
-  // AI summary of recent reviews sits between the adjusted line and Similar Picks.
+  // AI summary of recent reviews sits between the synopsis and Similar Picks.
   const summaryAnchor = currentSlug
     ? buildMediaSummary({
-        anchor: adjustedElement,
+        anchor: reviewSection,
         classPrefix: 'lbx-summary',
         heading: 'Recent Reviews',
         summaryPrompt: SUMMARY_PROMPT,
@@ -936,7 +948,7 @@ async function run(ratings: number[]) {
         initialButtonLabel: '✦ Summarize recent reviews',
         fetchReviews: () => fetchRecentReviewTexts(currentSlug),
       })
-    : adjustedElement;
+    : reviewSection;
 
   const similarPicksPromise = currentSlug && currentRuntime
     ? displaySimilarPicks(currentSlug, currentPromise, currentRuntime, summaryAnchor)
