@@ -1,7 +1,7 @@
 import { netScore } from '@truescore/gmaps-shared';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { couldReach, rankPicks, type RankedPick } from '../shared/better-picks';
-import { adjust, recentRatio } from '../shared/recency';
+import { adjust, recentRatio, THIN_SAMPLE, trendClass } from '../shared/recency';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 import { buildMediaSummary } from '../shared/review-summary';
@@ -50,6 +50,10 @@ const STYLES = `
     cursor: default;
   }
   .gr-score > b { font-weight: 600; color: #1e1915; text-decoration: underline dotted rgba(30, 25, 21, .35); text-underline-offset: 3px; }
+  /* The recent end of "55% → 41%": amber when it trails the all-time share, teal when ahead. */
+  .gr-score strong { font-weight: 600; }
+  .gr-score strong.-trails { color: #9a6700; }
+  .gr-score strong.-ahead { color: #00635d; }
   .gr-score-card {
     position: absolute;
     top: calc(100% + 8px);
@@ -1405,8 +1409,12 @@ const appendScore = async (bookTitle: Element) => {
   const working = el('span', 'gr-score-card-work', `${addCommas(Math.round(Math.abs(stats.score)))} all-time`);
   const card = el('span', 'gr-score-card');
   card.append(cardHead, working, el('span', 'gr-score-card-work', `Net loved: 5★ minus 1★, over all ${addCommas(stats.ratingsCount)} ratings`));
+  // "55% net loved" now; "55% → 41% net loved" once the newest reviews are in.
+  const lovedTail = document.createTextNode(' net loved');
+  const loved = el('span', 'u-dot-before', pct(stats.ratio));
+  loved.append(lovedTail);
   const score = el('span', 'gr-score u-dot-before', 'TrueScore ');
-  score.append(figure, el('span', 'u-dot-before', `${pct(stats.ratio)} net loved`), card);
+  score.append(figure, loved, card);
   // The rating row is a link to the reviews; a click on the score stays put.
   score.addEventListener('click', (e) => e.preventDefault());
   const ratingMeta = document.querySelector('.BookPageMetadataSection__ratingStats .RatingStatistics__meta');
@@ -1451,6 +1459,8 @@ const appendScore = async (bookTitle: Element) => {
   } else {
     figure.textContent = cardFigure.textContent = addCommas(adjust(stats.score, recentRatio));
     working.append(` × ${pct(recentRatio)} in ${rated >= reviewTotal ? 'all' : 'the newest'} ${rated} reviews`);
+    lovedTail.before(' → ', el('strong', trendClass(stats.ratio, recentRatio), pct(recentRatio)));
+    if (rated < THIN_SAMPLE) loved.append(` (${rated} reviews)`);
   }
 
   if (searchReviews && reviewTotal) {

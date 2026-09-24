@@ -18,6 +18,10 @@
   text-decoration: underline dotted rgba(221, 238, 255, .35);
   text-underline-offset: 3px;
 }
+/* The recent end of "34% → 40%": brass when it trails the all-time share, green when ahead. */
+.lbx-score strong { font-weight: 600; }
+.lbx-score strong.-trails { color: #e8b86d; }
+.lbx-score strong.-ahead { color: #00e054; }
 .lbx-card {
   position: absolute;
   top: calc(100% + 8px);

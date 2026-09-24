@@ -1,7 +1,7 @@
 import { netScore } from '@truescore/gmaps-shared';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { couldReach, rankPicks } from '../shared/better-picks';
-import { adjust, ratioFromTally, TEN_POINT } from '../shared/recency';
+import { adjust, ratioFromTally, TEN_POINT, THIN_SAMPLE, trendClass } from '../shared/recency';
 import { buildMediaSummary } from '../shared/review-summary';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
@@ -886,7 +886,9 @@ async function run(ratings: number[]) {
   // compare it, and the all-time net loved share; the working sits in a card on hover.
   const figure = el('b', undefined, '…');
   const cardFigure = el('b', undefined, '…');
+  // " · 34% net loved" once scored; " · 34% → 40% net loved" once the newest reviews are in.
   const loved = el('span');
+  const lovedTail = document.createTextNode(' net loved');
   const working = el('span', undefined, 'Calculating…');
   const basis = el('span');
   const cardHead = el('span', 'lbx-card-head', 'TrueScore ');
@@ -900,7 +902,7 @@ async function run(ratings: number[]) {
   scoreAnchor.after(scoreLine);
 
   const showAllTime = (score: number, ratio: number, imdbFailed = false) => {
-    loved.textContent = ` · ${pctText(ratio)} net loved`;
+    loved.replaceChildren(` · ${pctText(ratio)}`, lovedTail);
     working.textContent = `${addCommas(Math.abs(score))} all-time`;
     basis.textContent = imdbFailed
       ? 'Net loved: 4½–5★ minus ½–1★, over Letterboxd’s ratings (IMDb’s didn’t load)'
@@ -925,11 +927,15 @@ async function run(ratings: number[]) {
       });
   }
 
-  const currentPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score, imdbFailed }, recentRatings]) => {
+  const currentPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score, ratio: allTime, imdbFailed }, recentRatings]) => {
     const ratio = recentRatings?.ratio ?? null;
     const adjusted = adjust(score, ratio);
     figure.textContent = cardFigure.textContent = adjusted == null ? '—' : addCommas(adjusted);
     working.append(adjusted == null ? ' · recent unknown' : ` × ${pctText(ratio!)} in the newest ${recentRatings!.total} reviews`);
+    if (ratio != null) {
+      lovedTail.before(' → ', el('strong', trendClass(allTime, ratio), pctText(ratio)));
+      if (recentRatings!.total < THIN_SAMPLE) loved.append(` (${recentRatings!.total} reviews)`);
+    }
     // Nor is a Letterboxd-only score a reference for picks scored with IMDb votes.
     return imdbFailed ? { score, ratio: null, adjusted: null } : { score, ratio, adjusted };
   });

@@ -38,6 +38,15 @@ export const recentRatio = (ratings: number[], p: Polarity = FIVE_STAR): number 
 export const ratioFromTally = (net: number, total: number): number | null =>
   total > 0 ? net / total : null;
 
+/** Below this many rated reviews a recent % is shown with its count, so a thin sample reads as one. */
+export const THIN_SAMPLE = 30;
+
+/** How the recent share sits against the all-time one, compared as the whole percents on screen. */
+export const trendClass = (allTime: number, recent: number): string => {
+  const [a, r] = [Math.round(allTime * 100), Math.round(recent * 100)];
+  return r < a ? '-trails' : r > a ? '-ahead' : '';
+};
+
 /**
  * The Score re-aimed by the recent ratio: its size from the all-time Score, its
  * direction and strength from the newest reviews. `score * ratio` multiplied two
