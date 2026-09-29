@@ -1,5 +1,5 @@
 import { homedir } from 'os';
-import { buildListReq, parseReviewsResponse, type MapsCreds } from '@truescore/gmaps-shared';
+import { buildListReq, parseReviewsResponse, signReq, type MapsCreds, type Signer } from '@truescore/gmaps-shared';
 import { logEvent } from './events';
 
 const COOKIES_PATH = process.env.TRUESCORE_COOKIES_PATH || `${homedir()}/.truescore-cookies.json`;
@@ -177,9 +177,9 @@ export async function googleFetch(
 // fresh session before adopting it. overrideCookie fetches with a specific jar
 // without touching the global cookie override, so a bad verify can't poison the live
 // session. Returns the review count (0 on empty); a transport error propagates.
-export async function verifyReviewsLoad(creds: MapsCreds, overrideCookie?: string): Promise<number> {
+export async function verifyReviewsLoad(creds: MapsCreds, overrideCookie?: string, sign?: Signer): Promise<number> {
   const req = buildListReq(REVIEW_PROBE_FID, 'newest', creds);
-  return parseReviewsResponse(await googleFetch(req.url, req.init, overrideCookie)).reviews.length;
+  return parseReviewsResponse(await googleFetch(req.url, await signReq(req.init, sign), overrideCookie)).reviews.length;
 }
 
 export async function fetchPlacePreview(placeUrl: string): Promise<any> {

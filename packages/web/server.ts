@@ -26,7 +26,7 @@ import {
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
-import { applySeed, loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
+import { loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
@@ -421,10 +421,9 @@ Bun.serve({
         }
       },
     },
-    // The extension seeds a live logged-in session here: its captured bgkey +
-    // matching Google cookies, paired so the server can replay batchexecute
-    // (the legacy endpoint is retired and the server can't mint a bgkey itself).
-    // Off unless TRUESCORE_SEED_SECRET is set; creds are held in memory only.
+    // Session status, behind TRUESCORE_SEED_SECRET. Seeding it from the extension
+    // is retired: every request is now signed by the session's own Maps page
+    // (maps-minter), and a session captured in someone's browser can't be signed here.
     '/api/maps-creds': {
       // Liveness probe: when was the session last seeded, how stale is it now.
       // Same secret as POST so it never leaks session-liveness publicly.
@@ -434,20 +433,7 @@ Bun.serve({
         if (req.headers.get('x-truescore-seed') !== secret) return json({ error: 'forbidden' }, 403);
         return json(mapsCredsStatus());
       },
-      POST: async (req) => {
-        const secret = process.env.TRUESCORE_SEED_SECRET;
-        if (!secret) return json({ error: 'seeding disabled' }, 404);
-        if (req.headers.get('x-truescore-seed') !== secret) return json({ error: 'forbidden' }, 403);
-        try {
-          const { bgkey, bgbind = '', sessionId, at, cookies } = (await req.json()) as Record<string, string>;
-          // bgbind may be blank: Google stopped sending it on the review RPC.
-          if (!bgkey || !sessionId || !at || !cookies) return json({ error: 'incomplete creds' }, 400);
-          await applySeed({ bgkey, bgbind, sessionId, at, cookies });
-          return json({ ok: true });
-        } catch (e) {
-          return json(errBody(e), 400);
-        }
-      },
+      POST: () => json({ error: 'seeding retired: the server mints and signs its own session' }, 410),
     },
     // Public health for the web client's reseed banner: whether the server has a
     // usable Maps session right now. Just a boolean — no secret, no timing.

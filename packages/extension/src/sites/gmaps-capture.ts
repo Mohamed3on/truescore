@@ -1,5 +1,5 @@
 import { MAPS_CREDS_CAPTURED, PREVIEW_CAPTURED, type MapsCapturedCreds } from '../shared/gmaps-bridge-protocol';
-import { credsFromBatchExecute } from '@truescore/gmaps-shared';
+import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-shared';
 
 // MAIN world, document_start — early enough that our fetch/XHR patches wrap the
 // references before Maps' own app grabs them. Two captures:
@@ -128,44 +128,15 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
   };
   window.__truescoreRequestMapsCreds = requestCapture;
 
-  // A captured key now replays only its own request (see bgkeyRequestOf), so ours are
-  // signed the way Maps signs its own: it hands each request to its BotGuard VM as
-  // {request} and sends the key that comes back. Maps builds that VM from
-  // window.botguard.a, whose ready callback delivers the snapshot function. The
-  // interpreter keeps its own reference to the object and fills it in later, so a get
-  // trap (not a setter) is what hands Maps a wrapped `a` that keeps the newest one.
-  type Snapshot = (done: (key: string) => void, args: unknown[]) => void;
-  let snapshot: Snapshot | null = null;
-  const wrappedA = new WeakMap<Function, Function>();
-  const wrapA = (a: Function) => function (this: unknown, program: unknown, ready: (...fns: any[]) => unknown, ...rest: unknown[]) {
-    return a.call(this, program, (...fns: any[]) => { snapshot = fns[0]; return ready(...fns); }, ...rest);
-  };
-  let botguard: unknown;
-  Object.defineProperty(window, 'botguard', {
-    configurable: true,
-    enumerable: true,
-    get: () => botguard,
-    set: (v: unknown) => {
-      botguard = v && typeof v === 'object' ? new Proxy(v, {
-        get: (t: any, k) => {
-          const val = t[k];
-          if (k !== 'a' || typeof val !== 'function') return val;
-          if (!wrappedA.has(val)) wrappedA.set(val, wrapA(val));
-          return wrappedA.get(val);
-        },
-      }) : v;
-    },
-  });
-  const SIGN_TIMEOUT_MS = 5000;
+  // Our replays are signed the way Maps signs its own (see installMapsSigner). Maps
+  // builds its VM the first time it needs a key, and nudging its review list does that.
+  installMapsSigner();
+  const signOnce = window.__truescoreSignMaps!;
   window.__truescoreSignMaps = async (request) => {
-    // Maps builds its VM the first time it needs a key; nudging its review list does that.
-    if (!snapshot) await requestCapture();
-    const sign = snapshot;
-    if (!sign) return null;
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(null), SIGN_TIMEOUT_MS);
-      sign((key) => { clearTimeout(timer); resolve(key); }, [{ request }, undefined, undefined, undefined]);
-    });
+    const key = await signOnce(request);
+    if (key) return key;
+    await requestCapture();
+    return signOnce(request);
   };
 
   const storeCreds = (urlStr: string, headers: Record<string, string>, body: unknown) => {

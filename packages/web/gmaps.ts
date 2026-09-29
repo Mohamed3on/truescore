@@ -10,10 +10,11 @@ import {
   type Review,
   type SortKey,
   type SortStats,
+  signReq,
   type Transport,
 } from '@truescore/gmaps-shared';
 import { googleFetch } from './browser';
-import { getMapsCreds, mapsSessionHealthy, onStaleRpc, onFreshRpc } from './maps-creds';
+import { getMapsCreds, mapsSession, mapsSessionHealthy, onStaleRpc, onFreshRpc } from './maps-creds';
 import { logEvent } from './events';
 import { cache } from './cache';
 
@@ -34,7 +35,7 @@ const throttle = (ms: number) => {
 const staleLog = throttle(30_000);
 const noCredsLog = throttle(30_000);
 const warnNoCreds = (where: string): void => {
-  if (noCredsLog()) console.warn(`[maps-creds] no session seeded — ${where} serving empty; reseed by opening a Google Maps tab`);
+  if (noCredsLog()) console.warn(`[maps-creds] no session yet — ${where} serving empty until a mint lands one`);
 };
 
 // A [null,…,true] payload is NOT a reliable dead-session signal: it's also what
@@ -47,11 +48,12 @@ const warnNoCreds = (where: string): void => {
 // self-recovery, and the rpc-recovered / rpc-stale-final events tell the two apart.
 const STALE_RETRY_ATTEMPTS = 2;
 
-// The server's transport: proxy + cookies + retry all live in googleFetch. We
-// also sniff each batchexecute body for the expired-session shape (POST
-// batchexecute only — preview GETs don't exercise the session). No abort path —
-// the server never pauses a sort.
+// The server's transport: proxy + cookies + retry all live in googleFetch. Each
+// batchexecute is signed for its exact body by the session's own Maps page, and its
+// reply sniffed for the expired-session shape (POST batchexecute only — preview GETs
+// don't exercise the session). No abort path — the server never pauses a sort.
 const transport: Transport = async (url, init) => {
+  if (init?.method === 'POST') init = await signReq(init, mapsSession()?.sign);
   let body = await googleFetch(url, init);
   if (init?.method !== 'POST') return body;
   if (!isStaleReviewsResponse(body)) { onFreshRpc(); return body; }

@@ -1,14 +1,14 @@
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 import { writeFileSync, renameSync } from 'fs';
-import { type MapsCreds } from '@truescore/gmaps-shared';
+import { type MapsCreds, type Signer } from '@truescore/gmaps-shared';
 import { setGoogleCookieOverride } from './browser';
 import { logEvent } from './events';
 
 // Botguard creds for the ListUgcPosts batchexecute RPC (the legacy GET endpoint
-// is retired and the server has no browser JS to mint an x-maps-bgkey itself).
-// The extension seeds a live set — bgkey + the matching google.com cookies — via
-// POST /api/maps-creds. We hold them in memory AND mirror the last set to disk:
+// is retired). The minter lands a session — sessionId/at + the matching google.com
+// cookies — and keeps its Maps page open to sign every request, since Google binds
+// each bgkey to its exact request. We hold them in memory AND mirror the last set to disk:
 // the web auto-deploys on every push, and each restart would otherwise blank the
 // session until the next Maps visit re-seeds. bgkey and cookies persist as one
 // coupled blob — the token only validates against the session that minted it.
@@ -22,8 +22,10 @@ const SEED_PATH =
   (COOKIES_PATH ? join(dirname(COOKIES_PATH), 'maps-creds.json') : `${homedir()}/.truescore-maps-creds.json`);
 
 // One session: bgkey/bgbind/sessionId/at coupled to the cookies it was captured
-// with. The extension seeds it (POST /api/maps-creds); applySeed persists it.
-export type Seed = { bgkey: string; bgbind: string; sessionId: string; at: string; cookies: string };
+// with, and the page that signs its requests. applySeed persists all but the signer,
+// which dies with the process — so a seed restored from disk can't serve until the
+// boot mint lands.
+export type Seed = { bgkey: string; bgbind: string; sessionId: string; at: string; cookies: string; sign?: Signer };
 type PersistedSeed = Seed & { ts: number };
 
 // The session is ONE value. It used to be two module globals in two files —
@@ -50,8 +52,8 @@ const setRenewOk = (v: boolean, reason: string): void => {
   logEvent('health', { renewOk: v, reason });
 };
 
-/** A bgkey and the cookies it was minted with. Only adoptable as a pair. */
-export type MapsSession = { creds: MapsCreds; cookies: string };
+/** A bgkey, the cookies it was minted with, and the page that signs for them. Only adoptable together. */
+export type MapsSession = { creds: MapsCreds; cookies: string; sign?: Signer };
 
 const adopt = (next: MapsSession): void => {
   session = next;
@@ -60,7 +62,7 @@ const adopt = (next: MapsSession): void => {
 };
 
 const apply = (s: Seed): void =>
-  adopt({ creds: { bgkey: s.bgkey, bgbind: s.bgbind, sessionId: s.sessionId, at: s.at, hl: 'en' }, cookies: s.cookies });
+  adopt({ creds: { bgkey: s.bgkey, bgbind: s.bgbind, sessionId: s.sessionId, at: s.at, hl: 'en' }, cookies: s.cookies, sign: s.sign });
 
 // Write the seed atomically at 0600: create a fresh temp at that mode, then
 // rename over the target, so the real file — a logged-in Google session — never
@@ -174,12 +176,11 @@ export async function renewSession(reason: string, force = false): Promise<boole
   const minted = await mintMapsCreds();
   if (!minted) {
     setRenewOk(false, `mint-failed:${reason}`);
-    // Stealth is an arms race; if minting starts failing, an extension reseed is the
-    // fallback. Alert once per episode rather than on every stale RPC.
+    // Stealth is an arms race; alert once per episode rather than on every stale RPC.
     if (Date.now() - lastReseedAlert >= RESEED_ALERT_COOLDOWN_MS) {
       lastReseedAlert = Date.now();
-      logEvent('needs-reseed', { note: 'auto-mint failed — extension reseed as fallback' });
-      console.warn('[maps-creds] auto-mint failed — falling back to extension reseed');
+      logEvent('needs-reseed', { note: 'auto-mint failed' });
+      console.warn('[maps-creds] auto-mint failed');
     }
     return false;
   }
@@ -193,7 +194,7 @@ export async function renewSession(reason: string, force = false): Promise<boole
 // reactive path (onStaleRpc) is the backstop; the extension is the fallback if
 // stealth minting ever fails. TRUESCORE_MINT_INTERVAL_MIN (default 240; 0 disables).
 export function startMintTimer(): void {
-  if (!getMapsCreds()) void renewSession('boot', true);
+  void renewSession('boot', true); // a restored seed has no page to sign with
   const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 240);
   if (!(min > 0)) { console.log('[maps-creds] proactive mint disabled'); return; }
   const intervalMs = min * 60_000;

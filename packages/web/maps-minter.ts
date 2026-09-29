@@ -4,13 +4,16 @@
 // on (proven: a raw-CDP Chrome and a real one are JS-identical yet get 2 tabs vs 4;
 // stealth flips it). Drive the system Chrome (no bundled-Chromium download) through
 // the residential proxy to a busy place's reviews deeplink, scroll the panel so the
-// qv9Egd ListUgcPosts RPC fires, and lift its x-maps-bgkey + the cookie jar. The
+// qv9Egd ListUgcPosts RPC fires, and lift its session + the cookie jar. The
 // result is an ANONYMOUS session (consent cookies only) that replays server-side —
-// so the server keeps itself seeded with no logged-in state and no human.
+// so the server keeps itself seeded with no logged-in state and no human. Google
+// binds each bgkey to its exact request (gmaps-shared botguard), so the page stays
+// open after the mint and signs every review request of its session until the next
+// mint replaces it.
 import { addExtra } from 'puppeteer-extra';
-import puppeteerCore, { type Browser, type HTTPRequest } from 'puppeteer-core';
+import puppeteerCore, { type Browser, type HTTPRequest, type Page } from 'puppeteer-core';
 import Stealth from 'puppeteer-extra-plugin-stealth';
-import { credsFromBatchExecute, PAGE_SIZE } from '@truescore/gmaps-shared';
+import { credsFromBatchExecute, installMapsSigner, PAGE_SIZE, type Signer } from '@truescore/gmaps-shared';
 import { verifyReviewsLoad, proxyConfig, SEED_COOKIES, REVIEW_PROBE_FID } from './browser';
 import type { Seed } from './maps-creds';
 import { logEvent } from './events';
@@ -30,10 +33,21 @@ const MINT_URL =
 const MINT_TIMEOUT_MS = 70_000;
 
 let inFlight: Promise<Seed | null> | null = null;
+// The browser whose page signs for the adopted session; closed when a newer mint takes over.
+let live: Browser | null = null;
+// Google caps some fresh sessions at 5 reviews a request with no next page; the next
+// browser usually lands an uncapped one.
+const MINT_ATTEMPTS = 3;
 
 // Single-flight: a stale-storm of triggers collapses to one browser launch.
 export function mintMapsCreds(): Promise<Seed | null> {
-  return (inFlight ??= runMint().finally(() => { inFlight = null; }));
+  return (inFlight ??= (async () => {
+    for (let i = 0; i < MINT_ATTEMPTS; i++) {
+      const seed = await runMint();
+      if (seed) return seed;
+    }
+    return null;
+  })().finally(() => { inFlight = null; }));
 }
 
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
@@ -44,24 +58,29 @@ async function runMint(): Promise<Seed | null> {
   if (!server) { console.warn('[maps-minter] no proxy configured — cannot mint'); return null; }
   const t0 = Date.now();
   let browser: Browser | undefined;
+  let adopted = false;
   try {
     const seed = await withTimeout(capture(server, user, pass, (b) => (browser = b)), MINT_TIMEOUT_MS);
     if (!seed) { console.warn(`[maps-minter] no bgkey captured in ${Date.now() - t0}ms`); logEvent('mint', { result: 'fail', reason: 'no-bgkey', ms: Date.now() - t0 }); return null; }
-    // Verify the minted creds actually serve reviews before we trust them — via a
-    // cookie override so a bad mint can't clobber the live session's global jar.
+    // Verify the minted session actually serves reviews, signed by its own page, before
+    // we trust it — via a cookie override so a bad mint can't clobber the live session's
+    // global jar.
     // The probe place always fills a page, so a short one is a session Google caps:
     // 5 reviews a page and no next page, which scored every place from 10 reviews.
-    const verify = await verifyReviewsLoad({ ...seed, hl: 'en' }, seed.cookies);
+    const verify = await verifyReviewsLoad({ ...seed, hl: 'en' }, seed.cookies, seed.sign);
     if (verify < PAGE_SIZE) { console.warn(`[maps-minter] minted bgkey verified ${verify} reviews — discarding`); logEvent('mint', { result: 'fail', reason: verify ? 'verify-capped' : 'verify-empty', ms: Date.now() - t0, bgkey: seed.bgkey.slice(-6) }); return null; }
     console.log(`[maps-minter] minted bgkey …${seed.bgkey.slice(-6)} in ${Date.now() - t0}ms (verify: ${verify} reviews)`);
     logEvent('mint', { result: 'ok', ms: Date.now() - t0, bgkey: seed.bgkey.slice(-6), verify });
+    void live?.close().catch(() => {});
+    live = browser ?? null;
+    adopted = true;
     return seed;
   } catch (e) {
     console.warn('[maps-minter] mint error:', e instanceof Error ? e.message : e);
     logEvent('mint', { result: 'fail', reason: 'error', ms: Date.now() - t0, msg: e instanceof Error ? e.message : String(e) });
     return null;
   } finally {
-    try { await browser?.close(); } catch {}
+    if (!adopted) try { await browser?.close(); } catch {}
   }
 }
 
@@ -83,6 +102,8 @@ async function capture(
   setBrowser(browser);
   const page = await browser.newPage();
   if (proxyUser) await page.authenticate({ username: proxyUser, password: proxyPass });
+  // Before any Maps script runs, so the page can sign our requests later.
+  await page.evaluateOnNewDocument(installMapsSigner);
 
   // Grab the bgkey + bgbind + POST body off the one qv9Egd batchexecute (the review
   // RPC — the only batchexecute carrying x-maps-bgkey). Field extraction mirrors
@@ -105,5 +126,9 @@ async function capture(
   if (!got) return null;
 
   const cookies = (await page.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
-  return { ...credsFromBatchExecute(got.bgkey, got.bgbind, got.postData), cookies };
+  return { ...credsFromBatchExecute(got.bgkey, got.bgbind, got.postData), cookies, sign: signerFor(page) };
 }
+
+// The page resolves null itself when it can't sign; a dead or hung page counts as can't.
+const signerFor = (page: Page): Signer => (request) =>
+  withTimeout(page.evaluate((r) => (window as any).__truescoreSignMaps(r) as Promise<string | null>, request), 10_000).catch(() => null);

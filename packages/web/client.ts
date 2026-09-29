@@ -88,9 +88,9 @@ function setStatus(msg: string, isErr = false) {
   status.classList.toggle('err', isErr);
 }
 
-// Session-health banner: the server can only fetch reviews while the extension
-// has seeded a live Google Maps session. When it's stale/credless every lookup
-// reads empty, so surface an actionable reseed prompt instead of silent zeros.
+// Session-health banner: the server can only fetch reviews while it holds a live
+// Google Maps session. When it's stale/credless every lookup reads empty, so say so
+// instead of showing silent zeros.
 const sessionBanner = $('sessionBanner') as HTMLElement;
 async function refreshSessionHealth() {
   try {

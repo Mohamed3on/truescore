@@ -180,9 +180,8 @@ export const expandSearchTerms = (query: string): string[] =>
 // botguard-signed `x-maps-bgkey` minted by Google's page JS. We lift creds off a
 // request Google's own UI made (extension: capture bridge; web: headless browser)
 // and replay them. Until 2026-09-29 one token replayed across sorts, pages and
-// places; now each is bound to its own request (bgkeyRequestOf), so the extension
-// signs every replay with the page's BotGuard and the rest of the set carries the
-// session.
+// places; now each is bound to its own request, so every replay is signed by a Maps
+// page's own BotGuard (./botguard) and the rest of the set carries the session.
 // `authuser`: which signed-in account Maps' own request ran as. The token and `at`
 // belong to that account, so a replay without it runs as account 0 and gets a 400.
 export type MapsCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; hl?: string; authuser?: string };
@@ -203,14 +202,6 @@ export const credsFromBatchExecute = (bgkey: string, bgbind: string, body: strin
   const sessionId = (bgbind.match(SESSION_ID_RE) || decoded.match(SESSION_ID_RE) || [])[1] || '';
   const atRaw = (body.match(/(?:^|&)at=([^&]+)/) || [])[1];
   return { bgkey, bgbind, sessionId, at: atRaw ? decodeURIComponent(atRaw) : '' };
-};
-
-// What Maps' BotGuard signs for a review request: the inner ListUgcPosts JSON in the
-// body's f.req. Since 2026-09-29 Google checks each x-maps-bgkey against the request
-// it was minted for, so a captured key replays only its own request and every replay
-// needs a key signed for it.
-export const bgkeyRequestOf = (body: string): string | null => {
-  try { return JSON.parse(new URLSearchParams(body).get('f.req') ?? '')[0][0][1] ?? null; } catch { return null; }
 };
 
 let batchReqId = 1000;
@@ -678,6 +669,9 @@ export const reviewAge = (timestamp: number | null): string =>
 // Review-collection loop (paginate → dedup → stop), shared by web + extension.
 // Defined after the schema/scoring fns above; it consumes them at call time.
 export * from './collect';
+
+// Signing each review request with a Maps page's own BotGuard, for both packages.
+export * from './botguard';
 
 // The truescore-web HTTP contract (request / response / stream-event shapes),
 // shared by the server, the web client, and the extension.

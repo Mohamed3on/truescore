@@ -12,7 +12,7 @@ import {
   type AskView,
   type SearchReviews,
   runAsk,
-  bgkeyRequestOf,
+  signReq,
   buildSearchReq,
   chipPolarity,
   chipsFromPreview,
@@ -739,11 +739,8 @@ const localeFromDom = (): Locale => ({ hl: (document.documentElement.lang || 'en
 // Extension transport: fetch from the maps tab on the user's own session, each review
 // request signed by Maps' own BotGuard (gmaps-capture); the captured key is the
 // fallback when the page can't sign.
-const tabTransport: Transport = async (url, init) => {
-  const request = init?.body ? bgkeyRequestOf(init.body) : null;
-  const key = request ? await window.__truescoreSignMaps?.(request) : null;
-  return fetch(url, key ? { ...init, headers: { ...init?.headers, 'x-maps-bgkey': key } } : init).then((r) => r.text());
-};
+const tabTransport: Transport = async (url, init) =>
+  fetch(url, await signReq(init, window.__truescoreSignMaps)).then((r) => r.text());
 
 const PREVIEW_WAIT_MS = 3000;
 
