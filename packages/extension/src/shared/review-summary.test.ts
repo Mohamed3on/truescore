@@ -1,7 +1,10 @@
 import { test, expect, mock } from 'bun:test';
+import * as realLlm from './llm';
 
 const PARSED = { praised: ['Lasts long'], complaints: [], conclusion: 'Good.', betterAlternative: '' };
-mock.module('./llm', () => ({ summarize: async () => PARSED, askTransport: async () => { throw new Error('unused'); } }));
+// Keep the rest of the module intact: module mocks are process-wide, and a bare
+// factory blanked salvageObject for llm.test.ts whenever it ran after this file.
+mock.module('./llm', () => ({ ...realLlm, summarize: async () => PARSED, askTransport: async () => { throw new Error('unused'); } }));
 
 test('Re-summarize gets its label back once the new summary is on screen', async () => {
   const { buildSummarizeWidget } = await import('./review-summary');
