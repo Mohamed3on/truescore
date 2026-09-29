@@ -74,10 +74,10 @@ const persistSeed = (data: PersistedSeed): void => {
   renameSync(tmp, SEED_PATH);
 };
 
-// A fresh seed from the extension: apply in memory, then mirror to disk so it
-// survives the next restart. The in-memory seed is what serves reviews, so a
+// A fresh mint: apply in memory, then mirror to disk so it survives the next
+// restart. The in-memory seed is what serves reviews, so a
 // disk failure is logged loudly (never swallowed) but doesn't fail the seed.
-export function applySeed(seed: Seed, src: 'extension' | 'mint' = 'extension'): void {
+export function applySeed(seed: Seed): void {
   apply(seed);
   seededAt = Date.now();
   try {
@@ -86,7 +86,7 @@ export function applySeed(seed: Seed, src: 'extension' | 'mint' = 'extension'): 
     console.error('[maps-creds] failed to persist seed to disk — in-memory seed still active, but it will not survive a restart', e);
   }
   console.log(`[maps-creds] seeded bgkey …${seed.bgkey.slice(-6)} (${seed.cookies.length}b cookies) at ${new Date(seededAt).toISOString()}`);
-  logEvent('seed', { src, bgkey: seed.bgkey.slice(-6), cookieBytes: seed.cookies.length });
+  logEvent('seed', { src: 'mint', bgkey: seed.bgkey.slice(-6), cookieBytes: seed.cookies.length });
 }
 
 // Reload the last seed on boot so a deploy/restart doesn't serve empty until the
@@ -136,7 +136,7 @@ export function mapsSession(): MapsSession | null {
 
 // null when unconfigured — callers degrade to an empty score rather than throw,
 // so a creds-less deploy behaves like the (already review-less) status quo until
-// the extension seeds, instead of erroring the whole lookup.
+// a mint lands, instead of erroring the whole lookup.
 export function getMapsCreds(): MapsCreds | null {
   return mapsSession()?.creds ?? null;
 }
@@ -184,7 +184,7 @@ export async function renewSession(reason: string, force = false): Promise<boole
     }
     return false;
   }
-  applySeed(minted, 'mint'); // sets renewOk = true
+  applySeed(minted); // sets renewOk = true
   console.log(`[maps-creds] session renewed (${reason})`);
   return true;
 }
@@ -198,7 +198,7 @@ export function startMintTimer(): void {
   if (!(min > 0)) { console.log('[maps-creds] proactive mint disabled'); return; }
   const intervalMs = min * 60_000;
   setInterval(() => {
-    // Skip if a reactive mint / extension reseed already refreshed within the interval.
+    // Skip if a reactive mint already refreshed within the interval.
     if (seededAt && Date.now() - seededAt < intervalMs) return;
     void renewSession('timer');
   }, intervalMs);

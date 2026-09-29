@@ -53,9 +53,8 @@ type CachedCookies = { header: string; ts: number };
 let cookiesCache: CachedCookies | null = null;
 let cookiesRefreshing: Promise<string> | null = null;
 
-// When the extension seeds a live logged-in session (cookies that match its
-// captured bgkey), use those verbatim instead of the baked anonymous jar — the
-// botguard token only validates against the session that minted it.
+// The adopted session's cookies (its minted page's jar) replace the baked anonymous
+// jar: its sessionId, `at` and signer all belong to that jar.
 let cookieOverride: string | null = null;
 export function setGoogleCookieOverride(header: string | null): void {
   cookieOverride = header && header.trim() ? header.trim() : null;

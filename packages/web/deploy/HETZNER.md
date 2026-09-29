@@ -46,10 +46,10 @@ ssh root@65.108.153.112 'rm -f /var/lib/truescore/cache.sqlite* && systemctl res
 # wipe cookies (forces re-bake via proxy)
 ssh root@65.108.153.112 'rm /var/lib/truescore/cookies.json && systemctl restart truescore'
 
-# check the seeded Maps session age (bgkey freshness) — empty hasCreds=false means re-seed by opening a Maps tab
+# check the Maps session age — hasCreds=false means no mint has landed yet (force one with the renew call below)
 ssh root@65.108.153.112 'curl -s localhost/api/maps-creds -H "x-truescore-seed: $(sed -n "s/^TRUESCORE_SEED_SECRET=//p" /opt/truescore/.env)"'
 
-# clear the seeded Maps session (serves empty until the extension re-seeds)
+# clear the persisted Maps session (the restart mints a fresh one anyway)
 ssh root@65.108.153.112 'rm -f /var/lib/truescore/maps-creds.json && systemctl restart truescore'
 
 # HANDS-OFF SELF-MINT (rebuilt 2026-07-02, stealth): the server mints its own fresh
