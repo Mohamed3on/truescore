@@ -189,10 +189,9 @@ export async function renewSession(reason: string, force = false): Promise<boole
   return true;
 }
 
-// Hands-off engine: mint on boot if we have no creds, then refresh on a timer well
-// inside the ~day a session lasts, so it never expires in front of a user. The
-// reactive path (onStaleRpc) is the backstop; the extension is the fallback if
-// stealth minting ever fails. TRUESCORE_MINT_INTERVAL_MIN (default 240; 0 disables).
+// Hands-off engine: mint on boot, then refresh on a timer well inside the ~day a
+// session lasts, so it never expires in front of a user. The reactive path
+// (onStaleRpc) is the backstop. TRUESCORE_MINT_INTERVAL_MIN (default 240; 0 disables).
 export function startMintTimer(): void {
   void renewSession('boot', true); // a restored seed has no page to sign with
   const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 240);
@@ -203,7 +202,7 @@ export function startMintTimer(): void {
     if (seededAt && Date.now() - seededAt < intervalMs) return;
     void renewSession('timer');
   }, intervalMs);
-  console.log(`[maps-creds] proactive mint every ${min}min (+ boot if credless)`);
+  console.log(`[maps-creds] proactive mint every ${min}min (+ boot)`);
 }
 
 // Liveness + age for the GET probe on /api/maps-creds. Never returns the secrets
