@@ -9,9 +9,9 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
 // 2. Botguard creds off Google's ListUgcPosts batchexecute XHR (bgkey/bgbind in
 //    request headers, at/sessionId in the body). Google retired the legacy GET
 //    listugcposts endpoint; the only way to fetch reviews now is to replay this
-//    batchexecute, and its x-maps-bgkey can't be forged — only lifted here. One
-//    capture is session-bound (reusable across places/sorts/tokens), so gmaps.ts
-//    caches it globally and refreshes whenever a newer one flies by.
+//    batchexecute. A capture carries the session (sessionId, at, authuser) that
+//    gmaps.ts caches per account; each replay's key is signed separately by Maps'
+//    own BotGuard (__truescoreSignMaps below).
 (() => {
   if (window.__truescorePreviewCapture) return;
   window.__truescorePreviewCapture = true;
@@ -127,6 +127,46 @@ import { credsFromBatchExecute } from '@truescore/gmaps-shared';
     return captureInFlight;
   };
   window.__truescoreRequestMapsCreds = requestCapture;
+
+  // A captured key now replays only its own request (see bgkeyRequestOf), so ours are
+  // signed the way Maps signs its own: it hands each request to its BotGuard VM as
+  // {request} and sends the key that comes back. Maps builds that VM from
+  // window.botguard.a, whose ready callback delivers the snapshot function. The
+  // interpreter keeps its own reference to the object and fills it in later, so a get
+  // trap (not a setter) is what hands Maps a wrapped `a` that keeps the newest one.
+  type Snapshot = (done: (key: string) => void, args: unknown[]) => void;
+  let snapshot: Snapshot | null = null;
+  const wrappedA = new WeakMap<Function, Function>();
+  const wrapA = (a: Function) => function (this: unknown, program: unknown, ready: (...fns: any[]) => unknown, ...rest: unknown[]) {
+    return a.call(this, program, (...fns: any[]) => { snapshot = fns[0]; return ready(...fns); }, ...rest);
+  };
+  let botguard: unknown;
+  Object.defineProperty(window, 'botguard', {
+    configurable: true,
+    enumerable: true,
+    get: () => botguard,
+    set: (v: unknown) => {
+      botguard = v && typeof v === 'object' ? new Proxy(v, {
+        get: (t: any, k) => {
+          const val = t[k];
+          if (k !== 'a' || typeof val !== 'function') return val;
+          if (!wrappedA.has(val)) wrappedA.set(val, wrapA(val));
+          return wrappedA.get(val);
+        },
+      }) : v;
+    },
+  });
+  const SIGN_TIMEOUT_MS = 5000;
+  window.__truescoreSignMaps = async (request) => {
+    // Maps builds its VM the first time it needs a key; nudging its review list does that.
+    if (!snapshot) await requestCapture();
+    const sign = snapshot;
+    if (!sign) return null;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), SIGN_TIMEOUT_MS);
+      sign((key) => { clearTimeout(timer); resolve(key); }, [{ request }, undefined, undefined, undefined]);
+    });
+  };
 
   const storeCreds = (urlStr: string, headers: Record<string, string>, body: unknown) => {
     // Maps' own review request only. Our replays send the same header but no

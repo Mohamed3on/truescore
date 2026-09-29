@@ -12,6 +12,7 @@ import {
   type AskView,
   type SearchReviews,
   runAsk,
+  bgkeyRequestOf,
   buildSearchReq,
   chipPolarity,
   chipsFromPreview,
@@ -243,8 +244,8 @@ const store = createScoreStore({ storage: bridgeStorage, now: Date.now });
 // batchexecute call needing a signed x-maps-bgkey. gmaps-capture owns lifting it
 // off Maps' own review XHR and nudging Maps to emit one on demand
 // (window.__truescoreRequestMapsCreds). This is just the cache + consume path:
-// the token is session-bound (reusable across every place/sort/page/highlight-
-// token until it expires), so we keep one set per signed-in account (chrome.storage):
+// the session it carries outlives the page (each replay's key is signed per request
+// in tabTransport), so we keep one set per signed-in account (chrome.storage):
 // a set only replays as the account Maps minted it for, and Google can refuse one
 // account in a profile while another works.
 const MAPS_CREDS_KEY = 'rc_maps_creds';
@@ -263,7 +264,9 @@ let credsRetried = false; // one fresh-set nudge per place; reset in resetScores
 // the flagged account on every Maps page load, so it is persisted per account and
 // trusted for a while; the first page load after that probes once more, which is
 // how a lifted block gets noticed.
-const REFUSED_KEY = 'rc_maps_refused_until';
+// v2: every refusal recorded before replays were signed per request was Google
+// rejecting a reused key (2026-09-29), not the account.
+const REFUSED_KEY = 'rc_maps_refused_until_v2';
 const REFUSED_TTL_MS = 6 * 60 * 60 * 1000;
 // A set Maps minted this recently hasn't had time to expire, so a refusal is the only
 // reason it returns nothing.
@@ -733,8 +736,14 @@ const getFeatureId = () => {
 // responses), and never takes gl, so just strip the region.
 const localeFromDom = (): Locale => ({ hl: (document.documentElement.lang || 'en').split('-')[0] || 'en' });
 
-// Extension transport: fetch from the maps tab on the user's own session.
-const tabTransport: Transport = (url, init) => fetch(url, init).then((r) => r.text());
+// Extension transport: fetch from the maps tab on the user's own session, each review
+// request signed by Maps' own BotGuard (gmaps-capture); the captured key is the
+// fallback when the page can't sign.
+const tabTransport: Transport = async (url, init) => {
+  const request = init?.body ? bgkeyRequestOf(init.body) : null;
+  const key = request ? await window.__truescoreSignMaps?.(request) : null;
+  return fetch(url, key ? { ...init, headers: { ...init?.headers, 'x-maps-bgkey': key } } : init).then((r) => r.text());
+};
 
 const PREVIEW_WAIT_MS = 3000;
 

@@ -177,11 +177,12 @@ export const expandSearchTerms = (query: string): string[] =>
 // Google retired GET /maps/rpc/listugcposts — it now returns [null,…,1] for
 // everyone, Maps' own page included. Reviews come only from the batchexecute
 // RPC (rpcid qv9Egd → /MapsUgcPostService.ListUgcPosts), which requires a
-// botguard-signed `x-maps-bgkey` minted by Google's page JS. We can't forge it;
-// we lift creds off a request Google's own UI made (extension: capture bridge;
-// web: headless browser) and replay them. One token is session-bound — reusable
-// across sorts, pages, highlight-tokens, AND different places, until it expires
-// (verified live), so callers cache a single set of creds globally.
+// botguard-signed `x-maps-bgkey` minted by Google's page JS. We lift creds off a
+// request Google's own UI made (extension: capture bridge; web: headless browser)
+// and replay them. Until 2026-09-29 one token replayed across sorts, pages and
+// places; now each is bound to its own request (bgkeyRequestOf), so the extension
+// signs every replay with the page's BotGuard and the rest of the set carries the
+// session.
 // `authuser`: which signed-in account Maps' own request ran as. The token and `at`
 // belong to that account, so a replay without it runs as account 0 and gets a 400.
 export type MapsCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; hl?: string; authuser?: string };
@@ -202,6 +203,14 @@ export const credsFromBatchExecute = (bgkey: string, bgbind: string, body: strin
   const sessionId = (bgbind.match(SESSION_ID_RE) || decoded.match(SESSION_ID_RE) || [])[1] || '';
   const atRaw = (body.match(/(?:^|&)at=([^&]+)/) || [])[1];
   return { bgkey, bgbind, sessionId, at: atRaw ? decodeURIComponent(atRaw) : '' };
+};
+
+// What Maps' BotGuard signs for a review request: the inner ListUgcPosts JSON in the
+// body's f.req. Since 2026-09-29 Google checks each x-maps-bgkey against the request
+// it was minted for, so a captured key replays only its own request and every replay
+// needs a key signed for it.
+export const bgkeyRequestOf = (body: string): string | null => {
+  try { return JSON.parse(new URLSearchParams(body).get('f.req') ?? '')[0][0][1] ?? null; } catch { return null; }
 };
 
 let batchReqId = 1000;
