@@ -177,11 +177,11 @@ export const expandSearchTerms = (query: string): string[] =>
 // Google retired GET /maps/rpc/listugcposts — it now returns [null,…,1] for
 // everyone, Maps' own page included. Reviews come only from the batchexecute
 // RPC (rpcid qv9Egd → /MapsUgcPostService.ListUgcPosts), which requires a
-// botguard-signed `x-maps-bgkey` minted by Google's page JS. We lift creds off a
-// request Google's own UI made (extension: capture bridge; web: headless browser)
-// and replay them. Until 2026-09-29 one token replayed across sorts, pages and
-// places; now each is bound to its own request, so every replay is signed by a Maps
-// page's own BotGuard (./botguard) and the rest of the set carries the session.
+// botguard-signed `x-maps-bgkey` minted by Google's page JS. The extension lifts creds
+// off a request Google's own UI made (capture bridge) and replays them; the web mints
+// its own session. Until 2026-09-29 one token replayed across sorts, pages and
+// places; now each is bound to its own request, so every replay is signed by Maps'
+// own BotGuard VM (./botguard) and the rest of the set carries the session.
 // `authuser`: which signed-in account Maps' own request ran as. The token and `at`
 // belong to that account, so a replay without it runs as account 0 and gets a 400.
 export type MapsCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; hl?: string; authuser?: string };

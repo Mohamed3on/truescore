@@ -1,32 +1,12 @@
-import { homedir } from 'os';
-import { dirname, join } from 'path';
-import { writeFileSync, renameSync } from 'fs';
 import { type MapsCreds, type Signer } from '@truescore/gmaps-shared';
 import { setGoogleCookieOverride } from './browser';
+import { mintMapsCreds } from './maps-minter';
 import { logEvent } from './events';
 
-// Botguard creds for the ListUgcPosts batchexecute RPC (the legacy GET endpoint
-// is retired). The minter lands a session — sessionId/at + the matching google.com
-// cookies — and keeps its Maps page open to sign every request, since Google binds
-// each bgkey to its exact request. We hold them in memory AND mirror the last set to disk:
-// the web auto-deploys on every push, and each restart would otherwise blank the
-// session until the next Maps visit re-seeds. bgkey and cookies persist as one
-// coupled blob — the token only validates against the session that minted it.
-// Live next to the cookies file (TRUESCORE_COOKIES_PATH → /var/lib/truescore on
-// the box) so the coupled bgkey+cookies session persists in the same managed
-// state dir, not the service user's home; fall back to the home dir for local
-// dev. TRUESCORE_MAPS_CREDS_PATH overrides outright.
-const COOKIES_PATH = process.env.TRUESCORE_COOKIES_PATH;
-const SEED_PATH =
-  process.env.TRUESCORE_MAPS_CREDS_PATH ||
-  (COOKIES_PATH ? join(dirname(COOKIES_PATH), 'maps-creds.json') : `${homedir()}/.truescore-maps-creds.json`);
-
-// One session: bgkey/bgbind/sessionId/at coupled to the cookies it was captured
-// with, and the page that signs its requests. applySeed persists all but the signer,
-// which dies with the process — so a seed restored from disk can't serve until the
-// boot mint lands.
-export type Seed = { bgkey: string; bgbind: string; sessionId: string; at: string; cookies: string; sign?: Signer };
-type PersistedSeed = Seed & { ts: number };
+// The session for the ListUgcPosts batchexecute RPC (the legacy GET endpoint is
+// retired): a sessionId, the google.com cookies it belongs to, and the BotGuard VM
+// that signs every request of it, since Google binds each bgkey to its exact request.
+// Memory only: the VM dies with the process, and the boot mint takes seconds.
 
 // The session is ONE value. It used to be two module globals in two files —
 // `cached` here and `cookieOverride` in browser.ts — joined only by apply()
@@ -52,7 +32,7 @@ const setRenewOk = (v: boolean, reason: string): void => {
   logEvent('health', { renewOk: v, reason });
 };
 
-/** A bgkey, the cookies it was minted with, and the page that signs for them. Only adoptable together. */
+/** Creds, the cookies they belong to, and the VM that signs for them. Only adoptable together. */
 export type MapsSession = { creds: MapsCreds; cookies: string; sign?: Signer };
 
 const adopt = (next: MapsSession): void => {
@@ -61,49 +41,12 @@ const adopt = (next: MapsSession): void => {
   setRenewOk(true, 'apply');
 };
 
-const apply = (s: Seed): void =>
-  adopt({ creds: { bgkey: s.bgkey, bgbind: s.bgbind, sessionId: s.sessionId, at: s.at, hl: 'en' }, cookies: s.cookies, sign: s.sign });
-
-// Write the seed atomically at 0600: create a fresh temp at that mode, then
-// rename over the target, so the real file — a logged-in Google session — never
-// exists world-readable (no chmod-after-write window). New temp each call, so
-// the mode always applies on creation.
-const persistSeed = (data: PersistedSeed): void => {
-  const tmp = `${SEED_PATH}.tmp`;
-  writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
-  renameSync(tmp, SEED_PATH);
-};
-
-// A fresh mint: apply in memory, then mirror to disk so it survives the next
-// restart. The in-memory seed is what serves reviews, so a
-// disk failure is logged loudly (never swallowed) but doesn't fail the seed.
-export function applySeed(seed: Seed): void {
-  apply(seed);
+// A fresh mint becomes the live session.
+function applySeed(s: MapsSession): void {
+  adopt(s);
   seededAt = Date.now();
-  try {
-    persistSeed({ ...seed, ts: seededAt });
-  } catch (e) {
-    console.error('[maps-creds] failed to persist seed to disk — in-memory seed still active, but it will not survive a restart', e);
-  }
-  console.log(`[maps-creds] seeded bgkey …${seed.bgkey.slice(-6)} (${seed.cookies.length}b cookies) at ${new Date(seededAt).toISOString()}`);
-  logEvent('seed', { src: 'mint', bgkey: seed.bgkey.slice(-6), cookieBytes: seed.cookies.length });
-}
-
-// Reload the last seed on boot so a deploy/restart doesn't serve empty until the
-// next Maps visit. Best-effort: a missing/corrupt file just leaves us credless.
-export async function loadPersistedSeed(): Promise<void> {
-  try {
-    const f = Bun.file(SEED_PATH);
-    if (!(await f.exists())) return;
-    const s = (await f.json()) as PersistedSeed;
-    if (!s?.bgkey || !s.cookies) return;
-    apply(s);
-    seededAt = typeof s.ts === 'number' ? s.ts : null;
-    console.log(`[maps-creds] restored seed from disk, bgkey …${s.bgkey.slice(-6)}, last seeded ${seededAt ? new Date(seededAt).toISOString() : '?'}`);
-    logEvent('seed', { src: 'disk', bgkey: s.bgkey.slice(-6), cookieBytes: s.cookies.length });
-  } catch (e) {
-    console.warn('[maps-creds] failed to restore seed', e);
-  }
+  console.log(`[maps-creds] seeded session …${s.creds.sessionId.slice(-6)} (${s.cookies.length}b cookies) at ${new Date(seededAt).toISOString()}`);
+  logEvent('seed', { src: 'mint', session: s.creds.sessionId.slice(-6), cookieBytes: s.cookies.length });
 }
 
 // An operator-supplied session, for pinning one by hand. All of it or nothing:
@@ -155,10 +98,7 @@ export function onFreshRpc(): void { setRenewOk(true, 'fresh-rpc'); }
 export function onThrottledScrape(): void { setRenewOk(false, 'throttled-scrape'); void renewSession('throttled-scrape'); }
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
 
-// --- self-mint: refresh the bgkey via a stealth-cloaked headless browser ---
-// Google serves an automated browser a review-less page UNLESS it's cloaked by
-// puppeteer-extra-plugin-stealth (see maps-minter). mintMapsCreds captures a fresh
-// ANONYMOUS session, so the server keeps itself seeded with no human and no extension.
+// --- self-mint: a fresh ANONYMOUS session, no browser, no human (see maps-minter) ---
 // A cooldown collapses a stale-storm to one attempt (force bypasses it for the timer /
 // operator endpoint); mintMapsCreds has its own single-flight one layer down.
 const RENEW_COOLDOWN_MS = 60_000;
@@ -170,13 +110,10 @@ export async function renewSession(reason: string, force = false): Promise<boole
   if (!force && Date.now() - lastRenewAttempt < RENEW_COOLDOWN_MS) return false;
   lastRenewAttempt = Date.now();
   console.log(`[maps-creds] minting a fresh session (${reason})…`);
-  // Lazy-load the minter so puppeteer-extra + the stealth evasion graph stay out of
-  // the boot path — they're only needed the handful of times a day we actually mint.
-  const { mintMapsCreds } = await import('./maps-minter');
   const minted = await mintMapsCreds();
   if (!minted) {
     setRenewOk(false, `mint-failed:${reason}`);
-    // Stealth is an arms race; alert once per episode rather than on every stale RPC.
+    // Alert once per episode rather than on every stale RPC.
     if (Date.now() - lastReseedAlert >= RESEED_ALERT_COOLDOWN_MS) {
       lastReseedAlert = Date.now();
       logEvent('needs-reseed', { note: 'auto-mint failed' });
@@ -193,7 +130,7 @@ export async function renewSession(reason: string, force = false): Promise<boole
 // session lasts, so it never expires in front of a user. The reactive path
 // (onStaleRpc) is the backstop. TRUESCORE_MINT_INTERVAL_MIN (default 240; 0 disables).
 export function startMintTimer(): void {
-  void renewSession('boot', true); // a restored seed has no page to sign with
+  void renewSession('boot', true);
   const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 240);
   if (!(min > 0)) { console.log('[maps-creds] proactive mint disabled'); return; }
   const intervalMs = min * 60_000;

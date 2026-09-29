@@ -12,9 +12,7 @@
     "@ai-sdk/openai": "^4.0.66",
     "@truescore/gmaps-shared": "workspace:*",
     "ai": "^7.0.101",
-    "puppeteer-core": "^25.3.0",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "happy-dom": "^20.10.6",
     "zod": "^4.4.3"
   },
   "devDependencies": {

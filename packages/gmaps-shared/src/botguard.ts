@@ -1,8 +1,8 @@
 // Since 2026-09-29 Google checks each x-maps-bgkey against the exact review request
 // it was minted for, so a captured key replays only its own request and every replay
 // needs a key signed for it. Maps mints one per request with its own BotGuard VM, and
-// so do we: the extension in the user's Maps tab, the server in its headless Maps
-// page. One home for it, so a Google-side change is fixed once.
+// so do we: the extension in the user's Maps tab, the server with the same VM booted
+// from a Maps page's challenge (packages/web/maps-minter).
 
 /** Signs one review request: resolves to its x-maps-bgkey, or null when it can't. */
 export type Signer = (request: string) => Promise<string | null>;
@@ -22,8 +22,7 @@ export const signReq = async <T extends { body?: string; headers?: Record<string
 };
 
 // Installs window.__truescoreSignMaps in a Maps page; must run before Maps' own
-// scripts. The server injects it with evaluateOnNewDocument, so it stays
-// self-contained. Maps hands each request to its VM as {request} and sends the key
+// scripts. Maps hands each request to its VM as {request} and sends the key
 // that comes back, building that VM from window.botguard.a, whose ready callback
 // delivers the snapshot function. The interpreter keeps its own reference to the
 // object and fills it in later, so a get trap (not a setter) is what hands Maps a

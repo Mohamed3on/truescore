@@ -11,7 +11,7 @@ TLS: Cloudflare edge (Flexible mode — edge ↔ origin is plain HTTP)
 |---|---|
 | App dir | `/opt/truescore` |
 | .env | `/opt/truescore/.env` (PORT=80, Decodo creds, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `LLM_PROVIDER`, paths) |
-| Code/cache state | `/var/lib/truescore/{cache.sqlite,cookies.json,maps-creds.json}` (legacy `cache.json` migrated on first start; `maps-creds.json` = last extension-seeded Maps session, `0600`) |
+| Code/cache state | `/var/lib/truescore/{cache.sqlite,cookies.json}` (legacy `cache.json` migrated on first start) |
 | systemd unit | `/etc/systemd/system/truescore.service` |
 | Service user | `truescore` |
 | Bun | `/usr/local/bin/bun` |
@@ -49,17 +49,13 @@ ssh root@65.108.153.112 'rm /var/lib/truescore/cookies.json && systemctl restart
 # check the Maps session age — hasCreds=false means no mint has landed yet (force one with the renew call below)
 ssh root@65.108.153.112 'curl -s localhost/api/maps-creds -H "x-truescore-seed: $(sed -n "s/^TRUESCORE_SEED_SECRET=//p" /opt/truescore/.env)"'
 
-# clear the persisted Maps session (the restart mints a fresh one anyway)
-ssh root@65.108.153.112 'rm -f /var/lib/truescore/maps-creds.json && systemctl restart truescore'
-
-# HANDS-OFF SELF-MINT (rebuilt 2026-07-02, stealth): the server mints its own fresh
-# ANONYMOUS bgkey — no extension, no login. A naive automated browser gets served a
-# review-less page (Google detects the debug attachment, not a spoofable fingerprint),
-# but puppeteer-extra-plugin-stealth cloaks it; maps-minter drives the system Chrome
-# through the proxy to a busy place's reviews deeplink, scrolls to fire qv9Egd, and
-# lifts the bgkey. Runs on boot (if credless), on a timer, and reactively on a stale
-# lookup. If stealth ever stops working it emits `needs-reseed` and the extension is
-# the fallback. Force a mint now (spawns Chrome ~10-15s via the proxy):
+# HANDS-OFF SELF-MINT (no browser since 2026-09-29): the server mints its own
+# ANONYMOUS session — no extension, no login. One GET of Maps via the proxy gives the
+# cookies, session id and BotGuard challenge; the challenge's VM runs in a worker
+# (happy-dom) and signs every review request (Google binds each key to its request).
+# About half of fresh sessions are capped at 5 reviews, so maps-minter races 3 and
+# keeps the first uncapped one. Runs on boot, on a timer, and reactively on a stale
+# lookup; if a whole mint fails it emits `needs-reseed`. Force a mint now (~6-12s):
 ssh root@65.108.153.112 'curl -s -X POST localhost/api/maps-creds/renew -H "x-truescore-seed: $(sed -n "s/^TRUESCORE_SEED_SECRET=//p" /opt/truescore/.env)"'
 
 # tune proactive mint cadence (minutes; default 240 = every 4h; 0 disables → reactive
@@ -77,12 +73,11 @@ Every Maps-session lifecycle moment is emitted as one structured line
 `[ts-event] type=<t> k=v …` AND mirrored to the `session_events` table in
 `cache.sqlite` (durable across restarts, pruned to 14 days). This is the fast path
 for "web is empty/0% — why": you no longer have to reconstruct it from scattered
-`warn()` lines. Event types: `seed` (src=extension|mint|disk), `mint`
-(result=ok|fail; a failed mint carries `page={title,tabs,english,consent,bodyLen}`
-explaining why the Reviews UI didn't render), `rpc-stale` / `rpc-recovered` /
+`warn()` lines. Event types: `seed` (src=mint), `mint` (result=ok|fail, one per
+raced session; a failed one carries its reason, e.g. verify-capped), `rpc-stale` / `rpc-recovered` /
 `rpc-stale-final` (the throttle-retry: recovered = transient throttle, stale-final =
-genuine expiry → renewal), `throttle`, `needs-reseed` (auto-mint failed → extension
-fallback), `health` (renewOk transitions), `fetch-fail` (status+body — 407 quota vs
+genuine expiry → renewal), `throttle`, `needs-reseed` (a whole auto-mint failed),
+`health` (renewOk transitions), `fetch-fail` (status+body — 407 quota vs
 4xx bgkey).
 
 ```bash

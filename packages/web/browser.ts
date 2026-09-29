@@ -5,26 +5,18 @@ import { logEvent } from './events';
 const COOKIES_PATH = process.env.TRUESCORE_COOKIES_PATH || `${homedir()}/.truescore-cookies.json`;
 const COOKIES_TTL_MS = Number(process.env.TRUESCORE_COOKIES_TTL_MS) || 7 * 24 * 60 * 60 * 1000;
 
-// The residential proxy as its three parts. Exported so the headless minter can
-// feed the auth separately to Chrome (which can't take inline proxy creds),
-// while googleFetch below assembles them into a single URL.
-export const proxyConfig = (): { server: string; user: string; pass: string } => ({
-  server: process.env.TRUESCORE_PROXY_SERVER || '',
-  user: process.env.TRUESCORE_PROXY_USER || '',
-  pass: process.env.TRUESCORE_PROXY_PASS || '',
-});
-
-const PROXY_URL = (() => {
-  const { server, user, pass } = proxyConfig();
+// The residential proxy, its auth inline.
+export const PROXY_URL = (() => {
+  const server = process.env.TRUESCORE_PROXY_SERVER;
   if (!server) return undefined;
   const u = new URL(server);
-  if (user) u.username = user;
-  if (pass) u.password = pass;
+  u.username = process.env.TRUESCORE_PROXY_USER || '';
+  u.password = process.env.TRUESCORE_PROXY_PASS || '';
   return u.toString();
 })();
 
 // One canonical Chrome identity for the whole package — googleFetch sends it as a
-// header; the headless minter feeds it to Network.setUserAgentOverride. Must stay
+// header; the minter gives it to its BotGuard VM's navigator. Must stay
 // a real Chrome UA (a "HeadlessChrome" UA makes Google serve a reviews-less page).
 export const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
 
@@ -38,16 +30,14 @@ const FETCH_HEADERS_BASE = {
 // Pre-seeded values that signal "consent already given" — bypasses the EU consent dance.
 // Google then issues __Secure-ENID and __Secure-BUCKET on the next page load, which
 // together with these are enough to authenticate listugcposts and preview/place RPCs.
-// Exported so the minter sets the same consent cookies in its headless session.
-export const SEED_COOKIES: Record<string, string> = {
+const SEED_COOKIES: Record<string, string> = {
   CONSENT: 'YES+cb.20210720-07-p0.en+FX+410',
   SOCS: 'CAESHAgBEhJnd3NfMjAyMzAyMDgtMF9SQzIaAmVuIAEaBgiAm6KfBg',
 };
 
-// Eiffel Tower — the canonical "always has reviews, bgkey is place-independent"
-// place. The minter uses it as the mint target (maps-minter.MINT_URL) and
-// verifyReviewsLoad probes it to confirm a freshly-minted session serves reviews.
-export const REVIEW_PROBE_FID = '0x47e66e2964e34e2d:0x8ddca9ee380ef7e0';
+// Eiffel Tower — the canonical "always has reviews" place. verifyReviewsLoad probes
+// it to confirm a freshly-minted session serves reviews.
+const REVIEW_PROBE_FID = '0x47e66e2964e34e2d:0x8ddca9ee380ef7e0';
 
 type CachedCookies = { header: string; ts: number };
 let cookiesCache: CachedCookies | null = null;
@@ -60,7 +50,9 @@ export function setGoogleCookieOverride(header: string | null): void {
   cookieOverride = header && header.trim() ? header.trim() : null;
 }
 
-async function bakeCookies(): Promise<string> {
+// A fresh anonymous google.com jar and the Maps page that set it. The minter reads the
+// page's session id and BotGuard challenge too.
+export async function fetchMapsPage(): Promise<{ html: string; cookies: string }> {
   const jar: Record<string, string> = { ...SEED_COOKIES };
   const cookieHeader = () => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
   const r = await fetch('https://www.google.com/maps?hl=en', {
@@ -75,7 +67,7 @@ async function bakeCookies(): Promise<string> {
     const m = c?.match(/^([^=]+)=([^;]*)/);
     if (m?.[1]) jar[m[1]] = m[2] ?? '';
   }
-  return cookieHeader();
+  return { html: await r.text(), cookies: cookieHeader() };
 }
 
 export async function getGoogleCookieHeader(): Promise<string> {
@@ -89,7 +81,7 @@ export async function getGoogleCookieHeader(): Promise<string> {
   if (cookiesCache && Date.now() - cookiesCache.ts < COOKIES_TTL_MS) return cookiesCache.header;
   if (cookiesRefreshing) return cookiesRefreshing;
   cookiesRefreshing = (async () => {
-    const header = await bakeCookies();
+    const { cookies: header } = await fetchMapsPage();
     cookiesCache = { header, ts: Date.now() };
     await Bun.write(COOKIES_PATH, JSON.stringify(cookiesCache));
     console.log(`[browser] baked google cookies via proxy`);

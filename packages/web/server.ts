@@ -26,7 +26,7 @@ import {
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
-import { loadPersistedSeed, mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
+import { mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch } from './gmaps';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
@@ -385,11 +385,8 @@ function getOrFetchPreviewBundle(featureId: string): Promise<PreviewBundle> {
   });
 }
 
-// Restore the last seeded session before serving, so a deploy/restart doesn't blank
-// reviews until the first mint lands. Then start the hands-off mint timer: a
-// stealth-cloaked headless browser captures a fresh anonymous bgkey — on boot if
-// credless, and on a timer well inside the session's ~day life.
-await loadPersistedSeed();
+// The hands-off mint (maps-minter): a fresh anonymous session on boot, then on a timer
+// well inside the session's ~day life.
 startMintTimer();
 
 Bun.serve({
@@ -422,7 +419,7 @@ Bun.serve({
       },
     },
     // Session status, behind TRUESCORE_SEED_SECRET. Seeding it from the extension
-    // is retired: every request is now signed by the session's own Maps page
+    // is retired: every request is now signed by the session's own BotGuard VM
     // (maps-minter), and a session captured in someone's browser can't be signed here.
     '/api/maps-creds': {
       // Liveness probe: when was the session last seeded, how stale is it now.
