@@ -36,7 +36,7 @@ import { answerKey, cache, type CachedAnswer, type CacheEntry } from './cache';
 import { logEvent } from './events';
 import { createInflight } from './inflight';
 import index from './index.html';
-import { errStatus, resolveSubject } from './summary-subject';
+import { errStatus, NoReviews, resolveSubject } from './summary-subject';
 
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -545,7 +545,8 @@ Bun.serve({
           if (!filter && entry) await cache.putSummary(featureId, summary);
           return corsJson({ summary, cached: false } satisfies SummarizeResponse);
         } catch (e) {
-          console.error('[summarize]', e);
+          // No reviews to summarize is the caller's 404, not a server fault.
+          if (!(e instanceof NoReviews)) console.error('[summarize]', e);
           return corsJson(errBody(e), errStatus(e));
         }
       },
@@ -623,7 +624,7 @@ Bun.serve({
           if (entry) await cache.putHighlightSummary(featureId, token, summary);
           return corsJson({ summary, label, cached: false } satisfies HighlightSummaryResponse);
         } catch (e) {
-          console.error('[highlight-summary]', e);
+          if (!(e instanceof NoReviews)) console.error('[highlight-summary]', e);
           return corsJson(errBody(e), errStatus(e));
         }
       },

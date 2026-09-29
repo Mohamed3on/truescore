@@ -103,12 +103,26 @@ export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renew
 // operator endpoint); mintMapsCreds has its own single-flight one layer down.
 const RENEW_COOLDOWN_MS = 60_000;
 const RESEED_ALERT_COOLDOWN_MS = 10 * 60_000;
+const FIRST_SESSION_WAIT_MS = 20_000;
 let lastRenewAttempt = 0;
 let lastReseedAlert = 0;
+// The latest renewal, settled once its session is adopted or its mint failed.
+let renewing: Promise<boolean> = Promise.resolve(false);
 
-export async function renewSession(reason: string, force = false): Promise<boolean> {
-  if (!force && Date.now() - lastRenewAttempt < RENEW_COOLDOWN_MS) return false;
+export function renewSession(reason: string, force = false): Promise<boolean> {
+  if (!force && Date.now() - lastRenewAttempt < RENEW_COOLDOWN_MS) return Promise.resolve(false);
   lastRenewAttempt = Date.now();
+  return (renewing = renew(reason));
+}
+
+// getMapsCreds for a scrape. One that arrives before there's any session (a fresh
+// boot) waits briefly for the mint in flight rather than scoring the place empty.
+export async function mapsCredsReady(): Promise<MapsCreds | null> {
+  if (!getMapsCreds()) await Promise.race([renewing, Bun.sleep(FIRST_SESSION_WAIT_MS)]);
+  return getMapsCreds();
+}
+
+async function renew(reason: string): Promise<boolean> {
   console.log(`[maps-creds] minting a fresh session (${reason})…`);
   const minted = await mintMapsCreds();
   if (!minted) {

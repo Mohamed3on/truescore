@@ -14,7 +14,7 @@ import {
   type Transport,
 } from '@truescore/gmaps-shared';
 import { googleFetch } from './browser';
-import { getMapsCreds, mapsSession, mapsSessionHealthy, onStaleRpc, onFreshRpc } from './maps-creds';
+import { mapsCredsReady, mapsSession, mapsSessionHealthy, onStaleRpc, onFreshRpc } from './maps-creds';
 import { logEvent } from './events';
 import { cache } from './cache';
 
@@ -105,14 +105,14 @@ export type ScoreProgressCallback = (partial: PartialScore) => void;
 // typed `dog` — searches only its new terms; only while the session is healthy,
 // since a stale page cuts a search short without failing it. `force`
 // re-searches every term, refreshing the cache.
-export function fetchAllForSearch(
+export async function fetchAllForSearch(
   featureId: string,
   query: string,
   onPage?: SortPageCallback,
   force = false,
 ): Promise<Review[]> {
-  const creds = getMapsCreds();
-  if (!creds) { warnNoCreds('search'); return Promise.resolve([]); }
+  const creds = await mapsCredsReady();
+  if (!creds) { warnNoCreds('search'); return []; }
   const terms = cache.terms(featureId);
   return collectSearchTerms(
     expandSearchTerms(query),
@@ -124,7 +124,7 @@ export function fetchAllForSearch(
 }
 
 export async function fetchAllForToken(featureId: string, token: string): Promise<Review[]> {
-  const creds = getMapsCreds();
+  const creds = await mapsCredsReady();
   if (!creds) { warnNoCreds('token'); return []; }
   // A token fetch coming back empty while the list path works is the recurring
   // highlights failure. A stale session is already flagged by the transport, so
@@ -170,7 +170,7 @@ export async function scorePlace(
     });
   };
 
-  const creds = getMapsCreds();
+  const creds = await mapsCredsReady();
   if (!creds) {
     warnNoCreds('scorePlace');
     const z = statsForReviews([]);
