@@ -571,6 +571,11 @@ const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
 
 const GRAPHQL_ENDPOINT = 'https://kxbwmqov6jgg3daaamb744ycu4.appsync-api.us-east-1.amazonaws.com/graphql';
 
+// The endpoint gets a queue of its own: on the one the pages share, a Summarize, an
+// Ask's Searches or a typed search waited behind every book page the picks scan had
+// queued. It's another host, and takes a 40-call burst in its stride (see below).
+const graphqlFetch = createThrottledFetcher(CONFIG.MAX_CONCURRENCY);
+
 type ReviewNode = { rating?: number | null; createdAt?: number | null; text?: string | null };
 
 // The endpoint's ceiling — asking for more returns a null connection, not a bigger page.
@@ -634,7 +639,7 @@ const fetchReviewNodes = async (
       }`,
   });
   const request = async (auth: Record<string, string>) => {
-    const res = await throttledFetch(GRAPHQL_ENDPOINT, {
+    const res = await graphqlFetch(GRAPHQL_ENDPOINT, {
       method: 'POST',
       credentials: 'omit',
       headers: { 'content-type': 'application/json', ...auth },
