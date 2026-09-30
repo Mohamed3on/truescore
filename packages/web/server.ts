@@ -31,7 +31,7 @@ import { scorePlace, fetchAllForSearch } from './gmaps';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
-import { harvestTokens, harvestQuick, scoreHighlight } from './highlights';
+import { harvestTokens, harvestQuick, scoreHighlight, type Harvest } from './highlights';
 import { answerKey, cache, type CachedAnswer, type CacheEntry } from './cache';
 import { logEvent } from './events';
 import { createInflight } from './inflight';
@@ -124,36 +124,45 @@ const PORT = Number(process.env.PORT || 3000);
 const previewInflight = createInflight<PreviewBundle>();
 const revalidateInflight = createInflight<void>();
 const highlightsRecomputeInflight = createInflight<void>();
-const warmChipsInflight = createInflight<ChipMeta[]>();
+const warmChipsInflight = createInflight<Harvest>();
 
 const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
 
 // Get a place's topic chips: the set the lookup's preview already cached if
 // present, else harvest them. The preview RPC only serves the chips ~15-20% of
 // the time (random per request), but the tokens are stable, so the harvest is
-// single-flight per place and persistent, and records its outcome — a hit caches
-// the stable tokens, a *clean* miss stamps the entry topic-less so we stop
-// re-warming it. A harvest that never got a usable preview response (proxy down,
-// cookie jar expired, Google throttling) is NOT recorded: stamping it would sell
-// a transient outage as "this place has no topics" for the next six hours.
-// Shared by the /api/highlights background warm (fire-and-forget while the client
-// re-polls the 202 `pending`) and the drift recompute, so both dedup and
-// self-cache through one primitive.
-function ensureChips(featureId: string, name: string): Promise<ChipMeta[]> {
+// single-flight per place and persistent, and records its outcome (recordHarvest).
+// `quick` leads with one quick round, for a caller that hasn't tried one. Shared by
+// a cold lookup (started the moment its preview lands without chips), the
+// /api/highlights background warm (fire-and-forget while the client re-polls the
+// 202 `pending`) and the drift recompute, so all dedup and self-cache through one
+// primitive.
+function ensureChips(featureId: string, name: string, quick = false): Promise<Harvest> {
   const cached = cache.get(featureId)?.chipMeta;
-  if (cached?.length) return Promise.resolve(cached);
+  if (cached?.length) return Promise.resolve({ chips: cached, ok: true });
   return warmChipsInflight.run(featureId, async () => {
-    const { chips, ok } = await harvestTokens(mapsUrlFor(featureId));
-    if (chips.length || ok) await cache.recordChipWarm(featureId, chips);
+    const url = mapsUrlFor(featureId);
+    const first = quick ? await harvestQuick(url) : undefined;
+    const harvest = first?.chips.length ? first : await harvestTokens(url);
+    await recordHarvest(featureId, harvest);
+    const { chips, ok } = harvest;
     const outcome = chips.length
       ? `cached ${chips.length} chips`
       : ok
         ? 'no chips after warm — marked topic-less'
         : 'warm failed (no usable preview response) — not marked, will retry';
     console.log(`[warm-chips] ${name} (${featureId}): ${outcome}`);
-    return chips;
+    return harvest;
   });
 }
+
+// A hit caches the stable tokens, a *clean* miss stamps the entry topic-less so we
+// stop re-warming it. A harvest that never got a usable preview response (proxy
+// down, cookie jar expired, Google throttling) is NOT recorded: stamping it would
+// sell a transient outage as "this place has no topics" for the next six hours.
+// A no-op until the place has a row — see streamFreshLookup.
+const recordHarvest = (featureId: string, { chips, ok }: Harvest): Promise<void> =>
+  chips.length || ok ? cache.recordChipWarm(featureId, chips) : Promise.resolve();
 
 // Score every chip in parallel: collect successes, count failures, and cache
 // whatever succeeded. A set missing a chip that threw is stored as short, so
@@ -189,7 +198,7 @@ async function scoreChips(
 // pushes Google's preview RPC into A-B buckets where the chip slot is empty —
 // retries thrash and sometimes give up. The bare ftid URL avoids that.
 async function recomputeHighlights(featureId: string, name: string): Promise<void> {
-  const chips = await ensureChips(featureId, name);
+  const { chips } = await ensureChips(featureId, name);
   if (!chips.length) return;
   const { successes, failures, totalFetched, cached } = await scoreChips(featureId, name, chips);
   const tag = `${successes.length}/${chips.length} chips, ${totalFetched} reviews${failures ? `, ${failures} failed` : ''}`;
@@ -350,6 +359,19 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string,
         return { histogram: null, meta: {}, chips: [] } as PreviewBundle;
       });
 
+    // The preview carries the topic chips only ~15-20% of the time, and harvesting
+    // them otherwise waited for the whole scrape — the client asks /api/highlights
+    // after `score`. Start the harvest the moment the preview lands without them,
+    // wherever /api/highlights would harvest. Tokens only: scoring them stays behind
+    // the score, the guard against caching a throttled or capped session's chips. A
+    // harvest that lands before putScore creates the row has nothing to record into,
+    // so it's recorded below.
+    let harvested: Harvest | undefined;
+    void previewPromise.then(({ chips }) => {
+      if (chips.length || (cached && (cache.highlightsServable(cached) || cache.chipWarmedEmpty(cached)))) return;
+      return ensureChips(featureId, name, true).then((h) => { harvested = h; });
+    }).catch((e) => console.error(`[warm-chips] ${name} (${featureId}):`, e));
+
     const score = await scorePlace(featureId, (partial) => {
       write({ type: 'score-progress', score: partial });
     });
@@ -366,8 +388,10 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string,
       onThrottledScrape();
     } else if (!cached) {
       // The preview landed before putScore created this place's row, so its
-      // putPreviewBundle had nothing to patch — persist it now the row exists.
+      // putPreviewBundle had nothing to patch — persist it now the row exists, and
+      // a chip harvest that landed first likewise.
       await cache.putPreviewBundle(featureId, bundle);
+      if (harvested) await recordHarvest(featureId, harvested);
     }
     write({ type: 'score', score, fetchMs: Date.now() - t0, throttled });
   });
@@ -573,7 +597,8 @@ Bun.serve({
           // way out if the stamp was wrong, and it's user-initiated so the cost is theirs.
           if (cache.chipWarmedEmpty(entry) && !body.force) return json({ error: "Google didn't return any topic chips for this place" }, 404);
 
-          // Fast path: one quick harvest round (skip if a background warm is already running).
+          // Fast path: one quick harvest round (skip if a background warm — or a cold
+          // lookup's harvest — is already running).
           if (!warmChipsInflight.peek(featureId)) {
             const { chips } = await harvestQuick(url);
             if (chips.length) {
