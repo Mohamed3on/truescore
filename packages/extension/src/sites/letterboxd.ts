@@ -560,12 +560,16 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     let foundOnPage = 0;
     let pagesSearched = 0;
     let lastPageItemCount = 0;
+    const listPages: Promise<string>[] = [];
+    const listPage = (page: number) => (listPages[page] ??=
+      throttledFetch(page === 1 ? listBaseUrl : `${listBaseUrl}page/${page}/`, { credentials: 'include' }).then((r) => r.text()));
 
     for (let page = 1; page <= CONFIG.MAX_SIMILAR_PAGES; page++) {
-      const pageUrl = page === 1 ? listBaseUrl : `${listBaseUrl}page/${page}/`;
+      // Page 1 alone, where the film usually is; once it isn't, every page left loads
+      // at once. A page past the one the film turns up on goes unread, failure and all.
+      if (page === 2) for (let rest = page; rest <= CONFIG.MAX_SIMILAR_PAGES; rest++) listPage(rest).catch(() => {});
       updateProgress(statusElement, 1, `Loading "${listName}"${page > 1 ? ` (page ${page})` : ''}...`);
-      const listResponse = await throttledFetch(pageUrl, { credentials: 'include' });
-      const listDoc = new DOMParser().parseFromString(await listResponse.text(), 'text/html');
+      const listDoc = new DOMParser().parseFromString(await listPage(page), 'text/html');
 
       pagesSearched = page;
       const pageItems = Array.from(listDoc.querySelectorAll('li.posteritem'));
