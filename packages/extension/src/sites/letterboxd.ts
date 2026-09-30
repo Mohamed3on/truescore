@@ -921,12 +921,14 @@ async function run(histogram: Promise<number[]>) {
   const currentFilmName = document.querySelector('h1.headline-1')?.textContent?.trim() || currentSlug;
   const imdbLink = document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null;
 
+  // The picks start first: their lists page heads a long chain, and started after
+  // the recent pages it would queue behind them.
+  const picks = currentSlug && currentRuntime ? startSimilarPicks(currentSlug, currentRuntime) : null;
   // Similar Picks caches unscored placeholders; a hated film's real score is below 0.
   const cachedFilmPromise = currentSlug ? getCachedFilmData(currentSlug).then((raw) => (raw?.scored ? raw : null)) : Promise.resolve(null);
   // Only a score the cache lacks needs the IMDb half.
   const imdbPromise = cachedFilmPromise.then((cached) => (cached ? null : fetchImdbRatings([imdbLink]).then(([imdb]) => imdb)));
   const recentRatingsRaw = getRecentRatingsSummary().catch(() => null);
-  const picks = currentSlug && currentRuntime ? startSimilarPicks(currentSlug, currentRuntime) : null;
 
   const ratings = await histogram;
   const cachedFilm = await cachedFilmPromise;
