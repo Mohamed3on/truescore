@@ -2294,8 +2294,8 @@ const triggerSummarize = async () => {
 
 // Maps mutates its DOM continuously (tiles, panning, hover cards), so run the
 // place-detection pass on a trailing throttle instead of on every mutation — a
-// burst collapses to one run. Nothing here is latency-critical (idempotent score
-// injection + SPA-nav detection), so ~200ms is imperceptible.
+// burst collapses to one run. A new URL doesn't wait out the throttle: the nav
+// handling it gets is what starts a place's scoring.
 const handleDomMutation = () => {
   const url = location.href;
 
@@ -2365,6 +2365,7 @@ const handleDomMutation = () => {
 
 let domMutationTimer: ReturnType<typeof setTimeout> | null = null;
 const observer = new MutationObserver(() => {
+  if (location.href !== lastUrl) { handleDomMutation(); return; }
   if (domMutationTimer) return;
   domMutationTimer = setTimeout(() => { domMutationTimer = null; handleDomMutation(); }, 200);
 });
