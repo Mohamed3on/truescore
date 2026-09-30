@@ -223,9 +223,22 @@ const throttledFetch = createThrottledFetcher(CONFIG.MAX_CONCURRENCY, fetchWithR
 // IMDb's calls don't use it: they go to the background (see fetchImdbRatings), whose
 // own queue keeps the current film's from waiting behind Letterboxd's.
 
+// One fetch per review page per visit, however many steps read it: the film's recent %
+// and its summary and search read the same newest pages.
+const reviewPages = new Map<string, Promise<string>>();
+
 /** Fetches one recent-reviews page (reviews/by/added) as HTML */
-const fetchReviewPage = (slug: string, page: number) =>
-  throttledFetch(`https://letterboxd.com/film/${slug}/reviews/by/added/page/${page}/`, { credentials: 'include' }).then((r) => r.text());
+const fetchReviewPage = (slug: string, page: number) => {
+  const url = `https://letterboxd.com/film/${slug}/reviews/by/added/page/${page}/`;
+  let pending = reviewPages.get(url);
+  if (!pending) {
+    pending = throttledFetch(url, { credentials: 'include' }).then((r) => r.text());
+    reviewPages.set(url, pending);
+    // A failed fetch shouldn't pin its failure for the rest of the visit.
+    pending.catch(() => reviewPages.delete(url));
+  }
+  return pending;
+};
 
 /**
  * IMDb rating data for each of `imdbLinks`, in order. Null where the fetch failed,
