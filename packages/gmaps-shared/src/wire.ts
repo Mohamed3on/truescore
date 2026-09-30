@@ -32,8 +32,12 @@ export type Score = {
   newest: SortStats;
   reviews: Review[];
 };
-// Streamed progress omits the per-review array; the final `score` event carries it.
+// A Score without its reviews: streamed progress, and an extension's contribution.
 export type PartialScore = Omit<Score, 'reviews'>;
+// A place's Score as a lookup streams it: the numbers, and when its newest review
+// was written (ms; null when none is dated) for the freshness label. Not the
+// reviews themselves — they run to megabytes, and no client read them for more.
+export type LookupScore = PartialScore & { latestReviewTs: number | null };
 
 // A topic chip with its scraped review score. (Formerly `Highlight` in both
 // highlights.ts and the client — the source of the collision.)
@@ -51,7 +55,7 @@ export type SearchResult = {
 // ---- /api/lookup (NDJSON stream) ----
 export type LookupPayload = {
   name: string;
-  score: Score;
+  score: LookupScore;
   summary?: Summary;
   highlights?: Chip[];
   histogram?: number[];
@@ -64,7 +68,7 @@ export type LookupPayload = {
 };
 export type LookupEvent =
   | ({ type: 'lookup' } & LookupPayload)
-  | { type: 'refreshed'; name: string; score: Score; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string }
+  | { type: 'refreshed'; name: string; score: LookupScore; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string }
   | { type: 'highlights-refreshed'; highlights: Chip[] }
   | { type: 'place'; name: string; featureId: string; resolvedUrl: string }
   // A score the extension already computed for this place and contributed, sent
@@ -77,7 +81,7 @@ export type LookupEvent =
   // `throttled`: the server refused to cache this scrape — Google returned no
   // reviews, or left one sort empty, for a place that has them. It is not the
   // place's score; never paint it.
-  | { type: 'score'; score: Score; fetchMs: number; throttled: boolean }
+  | { type: 'score'; score: LookupScore; fetchMs: number; throttled: boolean }
   | { type: 'error'; error: string };
 
 // ---- /api/highlights (NDJSON stream, or JSON on cache hit) ----

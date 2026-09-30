@@ -19,6 +19,7 @@ import {
   type HistogramResponse,
   type LookupEvent,
   type LookupRequest,
+  type LookupScore,
   type PlacesResponse,
   type SearchEvent,
   type SearchRequest,
@@ -27,7 +28,7 @@ import {
 } from '@truescore/gmaps-shared';
 import { resolvePlace } from './resolve';
 import { mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
-import { scorePlace, fetchAllForSearch } from './gmaps';
+import { scorePlace, fetchAllForSearch, type ScoreResult } from './gmaps';
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
@@ -89,6 +90,13 @@ const replayAnswer = ({ answer, searches, ts }: CachedAnswer) => createUIMessage
   },
 });
 const mapsUrlFor = (featureId: string) => `https://www.google.com/maps?q=&ftid=${featureId}`;
+
+// A Score as a lookup streams it (see LookupScore): the reviews stay here, only
+// the newest one's date goes out. Google review timestamps come in microseconds.
+const lookupScore = ({ reviews, ...score }: ScoreResult): LookupScore => {
+  const latest = reviews.reduce((max, r) => Math.max(max, r.timestamp ?? 0), 0);
+  return { ...score, latestReviewTs: latest ? (latest > 1e14 ? Math.floor(latest / 1000) : latest) : null };
+};
 
 // NDJSON streaming response. The producer pushes one JSON object per line via
 // `write`; if it throws, we emit a final `{type:'error'}` event so the client
@@ -291,7 +299,7 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
     write({
       type: 'lookup',
       name: cached.name,
-      score: cached.score,
+      score: lookupScore(cached.score),
       summary: cached.summary,
       highlights: slimHighlights,
       histogram: cached.histogram,
@@ -307,7 +315,7 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
         write({
           type: 'refreshed',
           name: fresh.name,
-          score: fresh.score,
+          score: lookupScore(fresh.score),
           histogram: fresh.histogram,
           overallPct: fresh.histogram ? overallPctFromHistogram(fresh.histogram) : null,
           meta: fresh.meta,
@@ -404,7 +412,7 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string,
       await cache.putPreviewBundle(featureId, bundle);
       if (harvested) await recordHarvest(featureId, harvested);
     }
-    write({ type: 'score', score, fetchMs: Date.now() - t0, throttled });
+    write({ type: 'score', score: lookupScore(score), fetchMs: Date.now() - t0, throttled });
   });
 }
 

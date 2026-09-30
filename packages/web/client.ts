@@ -7,8 +7,8 @@ import {
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
-  type LookupEvent, type LookupPayload, type PartialScore, type PlaceItem, type PlaceMeta,
-  type PlacesResponse, type Review, type Score, type SearchEvent, type SearchResult,
+  type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
+  type PlacesResponse, type Review, type SearchEvent, type SearchResult,
   type SortStats, type Summary, type SummarizeResponse,
   type AskRequest, type HighlightSummaryRequest, type HighlightsRequest, type HistogramRequest, type LookupRequest, type SearchRequest, type SummarizeRequest,
 } from '@truescore/gmaps-shared';
@@ -684,7 +684,7 @@ const DEFAULT_TITLE = document.title;
 type PaintData = {
   name?: string;
   featureId?: string;
-  score?: PartialScore | Score;
+  score?: PartialScore | LookupScore;
   histogram?: number[] | null;
   overallPct?: number | null;
   meta?: PlaceMeta | null;
@@ -711,9 +711,7 @@ function paintScore(data: PaintData) {
     : `${displayName} · TrueScore`;
   renderPlaceMeta(data.meta ?? undefined);
   $('scoreLabel').textContent = adjusted ? 'SCORE · ADJUSTED' : 'SCORE';
-  if (data.score && 'reviews' in data.score && data.score.reviews) {
-    renderFreshness(data.score.reviews);
-  }
+  if (data.score && 'latestReviewTs' in data.score) renderFreshness(data.score.latestReviewTs);
   const pctEl = $('scorePct');
   if (data.score) {
     pctEl.textContent = `${displayPct}`;
@@ -779,7 +777,7 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   // Wipe the previous place's meta/freshness so a fresh-lookup sequence
   // doesn't show stale photo + address until `preview` lands.
   renderPlaceMeta(undefined);
-  renderFreshness([]);
+  renderFreshness(null);
   const shareUrl = resolvedUrl ?? urlInput.value;
   if (shareUrl) {
     const next = `?url=${encodeURIComponent(shareUrl)}`;
@@ -913,7 +911,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number,
           const prevScore = $('scorePct').textContent ?? '';
           const prevReviews = $('reviewsLabel').textContent ?? '';
           paintScore(acc);
-          renderFreshness(evt.score.reviews);
+          renderFreshness(evt.score.latestReviewTs);
           // Flash only what the rescrape actually moved, so a provisional score
           // the scrape agreed with settles silently.
           if (provisional) {
@@ -1019,17 +1017,10 @@ function renderRemovedReviews(meta: PlaceMeta | undefined) {
   banner.hidden = false;
 }
 
-function renderFreshness(reviews: Review[]) {
+function renderFreshness(latestReviewTs: number | null) {
   const row = $('freshnessRow');
-  const label = $('freshnessLabel');
-  let latest = 0;
-  for (const r of reviews) {
-    if (r.timestamp != null && r.timestamp > latest) latest = r.timestamp;
-  }
-  if (!latest) { row.hidden = true; return; }
-  // Google review timestamps come in microseconds; normalise to ms.
-  const ms = latest > 1e14 ? latest / 1000 : latest;
-  label.textContent = timeAgo(ms);
+  if (!latestReviewTs) { row.hidden = true; return; }
+  $('freshnessLabel').textContent = timeAgo(latestReviewTs);
   row.hidden = false;
 }
 
