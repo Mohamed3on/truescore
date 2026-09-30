@@ -158,7 +158,8 @@ export type SummarizeRequest = { featureId: string; name?: string; reviewTexts?:
 export type HistogramRequest = { featureId: string };
 // `wait`: hold the request through a background harvest rather than answer 202
 // (see HighlightsResponse). The web client opts in; the extension still polls.
-export type HighlightsRequest = { featureId: string; force?: boolean; wait?: boolean };
+// `token`: just that chip, read from the cache — the web client opening one.
+export type HighlightsRequest = { featureId: string; force?: boolean; wait?: boolean; token?: string };
 export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean } & LlmOverrides;
 export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean } & LlmOverrides;
 // A Search's matches as a client finds them: review texts and their TrueScore.

@@ -417,7 +417,7 @@ async function onHighlightClick(h: UiChip) {
   showChipPanel(h);
   if (h.reviews) return;
   chipBody.replaceChildren(el('div', 'chip-loading', 'loading reviews…'));
-  await ensureHighlightReviews();
+  await ensureHighlightReviews(h);
   if (activePanel?.kind !== 'highlight' || activePanel.chip !== h) return;
   setPanelTitle(h.label.toUpperCase(), h.score?.scorePct ?? 0, h.score?.trustedReviews ?? 0, (h as Chip).reviews?.length ?? h.count);
   renderReviewList(h.reviews ?? []);
@@ -602,31 +602,26 @@ function showHighlights(highlights: UiChip[]) {
   highlightsRefreshBtn.hidden = false;
 }
 
-// /api/lookup returns highlights without per-chip review bodies — fetched
-// here on demand the first time a user opens a chip. /api/highlights cache
-// hit is fast and the result is mutated into the in-memory chips so
-// subsequent clicks are instant.
-async function ensureHighlightReviews(): Promise<void> {
+// /api/lookup returns highlights without per-chip review bodies — a chip's are
+// fetched here, just its own, the first time a user opens it, and kept on the
+// chip so the next click is instant.
+async function ensureHighlightReviews(h: UiChip): Promise<void> {
   const epoch = currentPlace();
-  if (!epoch || !currentHighlights.length) return;
-  if (currentHighlights.every((h) => h.reviews)) return;
+  if (!epoch || h.reviews) return;
   // Keyed on the epoch: a click on place B must not await — or adopt — a
   // request that was issued for place A.
-  return epoch.once('highlight-reviews', async () => {
+  return epoch.once(`highlight-reviews:${h.token}`, async () => {
     const resp = await fetchWithRetry('/api/highlights', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ featureId: epoch.featureId } satisfies HighlightsRequest),
+      body: JSON.stringify({ featureId: epoch.featureId, token: h.token } satisfies HighlightsRequest),
     });
     if (!epoch.alive) return;
     const ct = resp.headers.get('content-type') ?? '';
     if (!resp.ok || !ct.includes('json')) return;
     const data = await resp.json() as HighlightsResponse;
     if (!epoch.alive) return;
-    const byToken = new Map((data.highlights ?? []).map((h) => [h.token, h.reviews]));
-    for (const h of currentHighlights) {
-      if (!h.reviews) h.reviews = byToken.get(h.token);
-    }
+    h.reviews ??= data.highlights?.find((c) => c.token === h.token)?.reviews;
   });
 }
 

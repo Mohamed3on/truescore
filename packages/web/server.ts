@@ -603,6 +603,8 @@ Bun.serve({
           featureId = body.featureId;
           const entry = cache.get(featureId);
           if (!entry) return json({ error: 'look up the place first' }, 404);
+          // One chip's reviews, for a client opening it: only ever a cache read.
+          if (body.token) return json({ highlights: entry.highlights?.filter((h) => h.token === body.token), cached: true } satisfies HighlightsResponse);
           // `.length`, not truthiness: an empty contributed array must fall through
           // to a harvest, not pin the row blank forever. A set the throttle cut
           // short falls through the same way, so the missing topics come back.
