@@ -828,6 +828,11 @@ const getShelfPage = (shelf: string, page: number, viewerScope: string): Promise
   return pending;
 };
 
+/** Starts the pages a shelf's scan reads first (see findSimilarPicks), for getShelfPage to hand it. */
+const prefetchScan = (shelf: string, viewerScope: string) => {
+  for (let page = 1; page <= CONFIG.PAGE_BATCH; page++) getShelfPage(shelf, page, viewerScope);
+};
+
 /** How the viewer holds a shelf: their 4–5★ books on its first page, less their 1–2★ ones. */
 const getShelfScore = async (shelf: string, viewerScope: string): Promise<number> => {
   const cacheKey = `gr_shelf_score_v2_${viewerScope}_${shelf}`;
@@ -857,6 +862,8 @@ const NON_CONTENT_SHELF = /(^|-)(tbr|read|reread|currently-reading|dnf|did-not-f
  */
 const pickShelf = async (shelves: string[], viewerScope: string): Promise<string | null> => {
   const content = shelves.filter(s => !NON_CONTENT_SHELF.test(s));
+  // The first is nearly always the pick, so the pages its scan starts on load alongside its probe.
+  if (content.length) prefetchScan(content[0], viewerScope);
   for (let i = 0; i < content.length; i += CONFIG.SHELF_PROBE_BATCH) {
     const batch = content.slice(i, i + CONFIG.SHELF_PROBE_BATCH);
     const probes = batch.map((shelf) => getShelfScore(shelf, viewerScope).catch((e: any) => {
@@ -928,7 +935,7 @@ const findSimilarPicks = async (params: {
   const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
   if (cached) return cached;
   const refAvg = parseFloat(refAvgRating);
-  /** Settled by the first shelf page, whose own average is the prior the book's is shrunk toward. */
+  /** Settled by the first batch of shelf pages, whose own average is the prior the book's is shrunk toward. */
   let avgGate = Infinity;
 
   const allScored: Array<ScoredCandidate | FailedCandidate> = [];
@@ -1230,6 +1237,8 @@ const renderSimilarPicks = async (
       return;
     }
     shelf = picked;
+    // Its pages needn't wait on this book's recent % below — only the scan's bar does.
+    prefetchScan(shelf, viewerScope);
 
     renderProgress(section, 1, `Fetching books in "${shelf}"…`);
 
