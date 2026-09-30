@@ -488,14 +488,15 @@ function updateProgress(element: HTMLElement, step: number, detail = '') {
 /**
  * Which of `uids` the user has watched, and their rating (out of 10) of those
  * they rated, asked in batches of a list page's 100 posters — the call
- * Letterboxd's own posters make. Empty when logged out or on failure, so
- * nothing is hidden.
+ * Letterboxd's own posters make — all at once. Empty when logged out or on
+ * failure, so nothing is hidden.
  */
 async function fetchWatched(uids: (string | null | undefined)[]) {
   const ids = uids.filter((uid): uid is string => !!uid);
   const watched = new Set<string>();
   const ratings = new Map<string, number>();
-  for (let i = 0; i < ids.length; i += 100) {
+  const batches = Array.from({ length: Math.ceil(ids.length / 100) }, (_, b) => b * 100);
+  await Promise.all(batches.map(async (i) => {
     try {
       const res = await fetch('/ajax/letterboxd-metadata/', {
         method: 'POST', credentials: 'include',
@@ -508,7 +509,7 @@ async function fetchWatched(uids: (string | null | undefined)[]) {
     } catch (e: any) {
       debug('Failed to fetch metadata:', e.message);
     }
-  }
+  }));
   return { watched, ratings };
 }
 
