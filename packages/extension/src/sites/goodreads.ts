@@ -677,20 +677,32 @@ const recentRatioFromNodes = (nodes: ReviewNode[]): number | null =>
 /** `rated` is the sample the ratio stands on: the window's reviews that carry stars. */
 type RecentStats = { ratio: number | null; total: number; rated: number };
 
+// One call per work per visit: a pick's starts the moment the picks scan scores it (see
+// findSimilarPicks), and the list it lands in reads that same call — failure included,
+// which leaves the view uncached, so the next visit retries.
+const recentStatsCalls = new Map<string, Promise<RecentStats>>();
+
 /**
  * Recent-positive ratio plus the size of the book's review corpus, cached a day per work
  * so the reference and every pick it shares with other books pay for it once. Throws on
  * a failed fetch: a null ratio means "no recent ratings", never "couldn't look".
  */
-const fetchRecentStats = async (workId: string): Promise<RecentStats> => {
-  // v3: earlier entries carried no sample size.
-  const cacheKey = `gr_recent_v3_${workId}`;
-  const cached = (await idbGet(cacheKey, CONFIG.RECENT_CACHE_MS)) as RecentStats | null;
-  if (cached) return cached;
-  const { nodes, totalCount } = await fetchReviewNodes(workId);
-  const stats: RecentStats = { ratio: recentRatioFromNodes(nodes), total: totalCount, rated: nodes.filter((n) => n.rating).length };
-  idbSet(cacheKey, stats);
-  return stats;
+const fetchRecentStats = (workId: string): Promise<RecentStats> => {
+  let pending = recentStatsCalls.get(workId);
+  if (!pending) {
+    pending = (async () => {
+      // v3: earlier entries carried no sample size.
+      const cacheKey = `gr_recent_v3_${workId}`;
+      const cached = (await idbGet(cacheKey, CONFIG.RECENT_CACHE_MS)) as RecentStats | null;
+      if (cached) return cached;
+      const { nodes, totalCount } = await fetchReviewNodes(workId);
+      const stats: RecentStats = { ratio: recentRatioFromNodes(nodes), total: totalCount, rated: nodes.filter((n) => n.rating).length };
+      idbSet(cacheKey, stats);
+      return stats;
+    })();
+    recentStatsCalls.set(workId, pending);
+  }
+  return pending;
 };
 
 /** The reference's own recent stats; unknown (null, 0) on a failed fetch. */
@@ -955,6 +967,9 @@ const findSimilarPicks = async (params: {
     const scored = await Promise.all(eligible.map(async (c) => {
       try {
         const stats = await getBookStatsFromURL(c.bookURL);
+        // A book that will qualify — not another edition of this one, and able to reach
+        // the bar — has its recent % started now rather than after the batch's slowest page.
+        if (stats.workId !== refWorkId && couldReach(bar, stats.score)) fetchRecentStats(stats.workId).catch(() => {});
         return { ...c, ...stats } as ScoredCandidate;
       } catch (e) {
         return { ...c, failed: true as const, permanent: e instanceof DeadBookError };
