@@ -21,6 +21,7 @@ const CONFIG = {
   RECENT_REVIEW_PAGES: 8, // reviews/by/added pages scanned for AI summary text
   RECENT_MARGIN: 5, // points a better pick's recent % may trail this film's and still be highlighted (~180 ratings are that noisy)
   MAX_CONCURRENCY: 10,
+  IMDB_BATCH: 100, // titles per background IMDb query
   DEBUG: false,
 };
 
@@ -219,34 +220,43 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries
 }
 
 const throttledFetch = createThrottledFetcher(CONFIG.MAX_CONCURRENCY, fetchWithRetry);
-// The IMDb proxy gets its own queue: unthrottled, a list crawl fired every
-// candidate's call at once, and the current film's never waits behind Letterboxd's.
+// IMDb's calls don't use it: they go to the background (see fetchImdbRatings), whose
+// own queue keeps the current film's from waiting behind Letterboxd's.
 
 /** Fetches one recent-reviews page (reviews/by/added) as HTML */
 const fetchReviewPage = (slug: string, page: number) =>
   throttledFetch(`https://letterboxd.com/film/${slug}/reviews/by/added/page/${page}/`, { credentials: 'include' }).then((r) => r.text());
 
 /**
- * Fetches IMDB rating data via CORS proxy. Null when the fetch failed, which is
- * not the same as a film without IMDb ratings: a score built without them sits
- * on another scale than every score that has them.
+ * IMDb rating data for each of `imdbLinks`, in order. Null where the fetch failed,
+ * which is not the same as a film without IMDb ratings: a score built without them
+ * sits on another scale than every score that has them.
  */
-async function fetchImdbRatings(imdbLink: string | null): Promise<{ imdbScore: number; imdbTotal: number } | null> {
-  if (!imdbLink) return { imdbScore: 0, imdbTotal: 0 };
-
-  const id = imdbLink.match(/\/title\/(tt\d+)/)?.[1];
-  if (!id) return { imdbScore: 0, imdbTotal: 0 };
-  // Fetched by the background (see imdbHistogram there): IMDb walls off pages
-  // fetched through a proxy, and this is a cross-origin call a content script can't make.
-  const counts: number[] | null = await chrome.runtime.sendMessage({ type: 'imdbHistogram', id }).catch(() => null);
-  if (!counts) {
-    debug(`IMDb histogram unavailable for ${id}`);
-    return null;
-  }
-  return {
-    imdbScore: counts[8] + counts[9] - counts[0] - counts[1],
-    imdbTotal: counts.reduce((a, b) => a + b, 0),
-  };
+async function fetchImdbRatings(imdbLinks: (string | null)[]): Promise<({ imdbScore: number; imdbTotal: number } | null)[]> {
+  const ids = imdbLinks.map((link) => link?.match(/\/title\/(tt\d+)/)?.[1]);
+  const asked = [...new Set(ids.filter((id): id is string => !!id))];
+  // Fetched by the background (see imdbHistograms there): IMDb walls off pages
+  // fetched through a proxy, and this is a cross-origin call a content script can't
+  // make. One query answers a whole list of titles, so a list's films go a hundred
+  // to a message rather than one each.
+  const answers: (Record<string, number[]> | null)[] = await Promise.all(
+    Array.from({ length: Math.ceil(asked.length / CONFIG.IMDB_BATCH) }, (_, i) =>
+      chrome.runtime.sendMessage({ type: 'imdbHistograms', ids: asked.slice(i * CONFIG.IMDB_BATCH, (i + 1) * CONFIG.IMDB_BATCH) })
+        .catch(() => null)),
+  );
+  const histograms: Record<string, number[]> = Object.assign({}, ...answers);
+  return ids.map((id) => {
+    if (!id) return { imdbScore: 0, imdbTotal: 0 };
+    const counts = histograms[id];
+    if (!counts) {
+      debug(`IMDb histogram unavailable for ${id}`);
+      return null;
+    }
+    return {
+      imdbScore: counts[8] + counts[9] - counts[0] - counts[1],
+      imdbTotal: counts.reduce((a, b) => a + b, 0),
+    };
+  });
 }
 
 /**
@@ -620,21 +630,22 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     const uncached = runtimeMatches.filter((f: any) => !f.fromCache).length;
     updateProgress(statusElement, 3, `Scoring ${runtimeMatches.length} matches${uncached ? ` (${uncached} new)` : ''}...`);
 
-    const scoredFilms = await Promise.all(
-      runtimeMatches.map(async (film: any) => {
-        if (film.fromCache && film.scored !== false) return film;
-        if (film.fetchFailed) return { ...film, score: 0, ratio: 0 };
+    // The IMDb half of every match still unscored, all asked at once (see fetchImdbRatings).
+    const imdbRatings = await fetchImdbRatings(runtimeMatches.map((film: any) =>
+      (film.fromCache && film.scored !== false) || film.fetchFailed ? null : film.imdbLink));
+    const scoredFilms = runtimeMatches.map((film: any, i) => {
+      if (film.fromCache && film.scored !== false) return film;
+      if (film.fetchFailed) return { ...film, score: 0, ratio: 0 };
 
-        const imdb = await fetchImdbRatings(film.imdbLink);
-        // Without its IMDb half the score is on another scale: the film goes unscored,
-        // and its placeholder stays for the next visit to retry.
-        if (!imdb) return { ...film, score: 0, ratio: 0, fetchFailed: true };
-        const { score, ratio } = calculateCombinedScore(film.ratings, imdb.imdbScore, imdb.imdbTotal);
+      const imdb = imdbRatings[i];
+      // Without its IMDb half the score is on another scale: the film goes unscored,
+      // and its placeholder stays for the next visit to retry.
+      if (!imdb) return { ...film, score: 0, ratio: 0, fetchFailed: true };
+      const { score, ratio } = calculateCombinedScore(film.ratings, imdb.imdbScore, imdb.imdbTotal);
 
-        setCachedFilmData(film.slug, { score, ratio, scored: true, runtime: film.runtime, year: film.year, filmName: film.filmName });
-        return { ...film, score, ratio };
-      })
-    );
+      setCachedFilmData(film.slug, { score, ratio, scored: true, runtime: film.runtime, year: film.year, filmName: film.filmName });
+      return { ...film, score, ratio };
+    });
 
     scoredFilms.sort((a: any, b: any) => b.score - a.score);
     const candidates: any[] = [];
@@ -926,8 +937,8 @@ async function run(ratings: number[]) {
     showAllTime(cachedFilm.score, cachedFilm.ratio);
     scorePromise = Promise.resolve({ score: cachedFilm.score, ratio: cachedFilm.ratio });
   } else {
-    scorePromise = fetchImdbRatings(document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null)
-      .then((imdb) => {
+    scorePromise = fetchImdbRatings([document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null])
+      .then(([imdb]) => {
         const { score, ratio } = calculateCombinedScore(ratings, imdb?.imdbScore, imdb?.imdbTotal);
         showAllTime(score, ratio, !imdb);
         // A failed IMDb fetch leaves a Letterboxd-only score: shown, but never cached,

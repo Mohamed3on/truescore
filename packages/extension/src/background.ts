@@ -156,13 +156,9 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === 'imdbHistogram' && typeof msg.id === 'string') {
-    imdbHistograms([msg.id]).then((histograms) => sendResponse(histograms?.[msg.id] ?? null));
-    return true; // answered asynchronously
-  }
   if (msg?.type === 'imdbHistograms' && Array.isArray(msg.ids)) {
     imdbHistograms(msg.ids.filter((id: unknown) => typeof id === 'string')).then(sendResponse);
-    return true;
+    return true; // answered asynchronously
   }
 });
 
