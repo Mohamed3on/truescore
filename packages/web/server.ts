@@ -244,8 +244,19 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
   });
 }
 
-function streamHighlights(name: string, featureId: string, url: string, chips: ChipMeta[]): Response {
+// A harvest warms for ~75-100s, and Cloudflare cuts a response idle for 100s.
+const HIGHLIGHTS_HEARTBEAT_MS = 20_000;
+
+// Chips still being harvested (a client that asked to `wait`) hold the stream open
+// first, a `pending` line now and every heartbeat; a harvest that finds none ends it.
+function streamHighlights(name: string, featureId: string, url: string, chips: ChipMeta[] | Promise<ChipMeta[]>): Response {
   return ndjsonStream<HighlightEvent>(async (write) => {
+    if (!Array.isArray(chips)) {
+      write({ type: 'pending' });
+      const heartbeat = setInterval(() => write({ type: 'pending' }), HIGHLIGHTS_HEARTBEAT_MS);
+      chips = await chips.finally(() => clearInterval(heartbeat));
+      if (!chips.length) return;
+    }
     write({ type: 'chips', chips });
     const { successes, failures, totalFetched, cached } = await scoreChips(featureId, name, chips, {
       onChip: (h) => write({ type: 'chip', highlight: h }),
@@ -606,11 +617,15 @@ Bun.serve({
               return streamHighlights(entry.name, featureId, url, chips);
             }
           }
-          // Still nothing — harvest persistently in the background and have the client re-poll.
+          // Still nothing — harvest persistently in the background. A client that asked
+          // to `wait` is held through it and gets the chips the moment they land; any
+          // other re-polls the 202.
           // Bind just the name, not the whole entry, so the ~minute-long warm closure
           // doesn't pin the cached review arrays for its lifetime.
           const name = entry.name;
-          void ensureChips(featureId, name).catch((e) => console.error(`[warm-chips] ${name} (${featureId}):`, e));
+          const harvest = ensureChips(featureId, name);
+          if (body.wait) return streamHighlights(name, featureId, url, harvest.then((h) => h.chips));
+          void harvest.catch((e) => console.error(`[warm-chips] ${name} (${featureId}):`, e));
           return json({ pending: true } satisfies HighlightsResponse, 202);
         } catch (e) {
           const entry = featureId ? cache.get(featureId) : null;

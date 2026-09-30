@@ -520,10 +520,13 @@ async function runSearch(query: string, force = false) {
 }
 
 // The server harvests a cold place's topic chips in the background (the preview
-// RPC serves them only intermittently) and answers 202 `pending` meanwhile.
-// loadHighlights polls through that: re-request on a bounded schedule until the
-// chips stream or it 404s. The place epoch supersedes an in-flight poll when the
-// place is re-looked-up or refreshed — the fetch/sleep awaits bail on a bump.
+// RPC serves them only intermittently). Asked to `wait`, it holds the request
+// open through the harvest and streams the chips the moment they land. A held
+// stream that closes without chips found none: ask once more, unforced, for the
+// verdict — a topic-less place 404s, a failed harvest gets another go. A server
+// that answers 202 `pending` instead is polled on a bounded schedule until the
+// chips stream or it 404s. The place epoch supersedes an in-flight request when
+// the place is re-looked-up or refreshed — the fetch/sleep awaits bail on a bump.
 // The poll budget must outlast the server's warm budget (15 rounds of 3 preview
 // shots, spaced 2.5s — roughly 75-100s wall clock). At the old 12 × 3.5s ≈ 42s
 // the client gave up mid-warm, so chips that landed at t=60s were never shown:
@@ -543,14 +546,20 @@ async function loadHighlights(force = false) {
       const resp = await fetchWithRetry('/api/highlights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ featureId, force } satisfies HighlightsRequest),
+        body: JSON.stringify({ featureId, force, wait: true } satisfies HighlightsRequest),
       });
       if (superseded()) return;
       const ct = resp.headers.get('content-type') ?? '';
       if (resp.ok && ct.includes('ndjson') && resp.body) {
-        await consumeHighlightStream(resp.body);
-        highlightsRefreshBtn.hidden = false;
-        return;
+        const found = await consumeHighlightStream(resp.body, superseded);
+        if (superseded()) return;
+        if (found) {
+          highlightsRefreshBtn.hidden = false;
+          return;
+        }
+        if (attempt > 0) return giveUpOnHighlights('still looking for topics — refresh to retry');
+        force = false;
+        continue;
       }
       if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
       const data = await resp.json() as HighlightsResponse;
@@ -621,11 +630,18 @@ async function ensureHighlightReviews(): Promise<void> {
   });
 }
 
-async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
+// Resolves to whether any chips came: a held stream (see loadHighlights) closes
+// without them when the harvest found none. It can outlast the place it was asked
+// for, so it stops painting once that place is superseded.
+async function consumeHighlightStream(body: ReadableStream<Uint8Array>, superseded: () => boolean): Promise<boolean> {
   const chipMap = new Map<string, UiChip>();
   let lastFailures = 0;
   for await (const evt of readNdjson<HighlightEvent>(body)) {
+    if (superseded()) return false;
     switch (evt.type) {
+      case 'pending':
+        showHighlightsLoading('finding topics…');
+        break;
       case 'chips':
         chipMap.clear();
         for (const c of evt.chips) chipMap.set(c.token, { ...c, state: 'loading' });
@@ -652,6 +668,7 @@ async function consumeHighlightStream(body: ReadableStream<Uint8Array>) {
   if (lastFailures > 0) {
     setStatus(`${lastFailures} highlight${lastFailures === 1 ? '' : 's'} failed — refresh to retry`, true);
   }
+  return chipMap.size > 0;
 }
 
 const DEFAULT_TITLE = document.title;

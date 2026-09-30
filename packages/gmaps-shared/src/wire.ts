@@ -83,9 +83,12 @@ export type LookupEvent =
 // ---- /api/highlights (NDJSON stream, or JSON on cache hit) ----
 // `pending` (HTTP 202): topic chips aren't cached yet and the server is
 // harvesting them in the background (the preview RPC only serves them
-// intermittently) — the client re-polls until they arrive or it 404s.
+// intermittently) — the client re-polls until they arrive or it 404s. A client
+// that asks to `wait` gets the stream instead, held open through the harvest by a
+// `pending` line every 20s; one that closes without `chips` found none.
 export type HighlightsResponse = { highlights?: Chip[]; cached?: boolean; pending?: boolean; error?: string };
 export type HighlightEvent =
+  | { type: 'pending' }
   | { type: 'chips'; chips: ChipMeta[] }
   | { type: 'chip'; highlight: Chip }
   | { type: 'chip-error'; token: string; label: string; error: string }
@@ -149,7 +152,9 @@ export type LookupRequest = { url: string };
 // so it can weigh a survivor-only review set and hedge its verdict.
 export type SummarizeRequest = { featureId: string; name?: string; reviewTexts?: string[]; filter?: string; force?: boolean; removedReviews?: RemovedReviews | null } & LlmOverrides;
 export type HistogramRequest = { featureId: string };
-export type HighlightsRequest = { featureId: string; force?: boolean };
+// `wait`: hold the request through a background harvest rather than answer 202
+// (see HighlightsResponse). The web client opts in; the extension still polls.
+export type HighlightsRequest = { featureId: string; force?: boolean; wait?: boolean };
 export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean } & LlmOverrides;
 export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean } & LlmOverrides;
 // A Search's matches as a client finds them: review texts and their TrueScore.
