@@ -1,4 +1,4 @@
-import { npsStats } from '../shared/utils';
+import { afterHydration, npsStats } from '../shared/utils';
 import { cacheGetMaybe, cacheSetMaybe } from '../shared/cache';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
@@ -51,7 +51,8 @@ const dedupGrid = () => {
   }
 };
 
-setupScoreGrid({
+// Badges wait until React has hydrated the server-rendered grid (see afterHydration).
+const startGrid = () => setupScoreGrid({
   cardSelector: CARD,
   scoreForCard: (card) => {
     const link = card.querySelector(LINK);
@@ -66,6 +67,7 @@ setupScoreGrid({
   // it also can't corrupt the carousel tracks the way node moves could.
   discover: containersBySelector(CONTAINERS),
 });
+afterHydration().then(startGrid);
 
 let dedupFrame: number;
 const scheduleDedup = () => {

@@ -1,4 +1,4 @@
-import { addCommas, el, npsColor, npsStats } from '../shared/utils';
+import { addCommas, afterHydration, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet, NEG_TTL } from '../shared/cache';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from '../shared/review-summary';
@@ -268,7 +268,8 @@ setupSpaInjector({
     const site = getDecathlonSite();
     const ids = extractDecathlonIds();
     if (!site || !ids) return null;
-    const stats = await fetchStats(site.tld, site.locale, ids.sku, ids.productId);
+    // Nothing touches the page before React has hydrated it (see afterHydration).
+    const [stats] = await Promise.all([fetchStats(site.tld, site.locale, ids.sku, ids.productId), afterHydration()]);
     if (!stats) return null;
     return { site, ids, stats, scoreData: getScoreFromStats(stats) };
   },

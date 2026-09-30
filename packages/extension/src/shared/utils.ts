@@ -25,6 +25,16 @@ export const el = (tag: string, className?: string, text?: string | number) => {
   return e;
 };
 
+// Resolves once a server-rendered host has had its chance to hydrate: after the
+// load event, at the first idle moment. React hydrates in chunks that can run past
+// load, and a node we add before it's done fails hydration (#418), so React throws
+// the page's HTML away and renders it again from scratch.
+export const afterHydration = () => new Promise<void>((resolve) => {
+  const idle = () => requestIdleCallback(() => resolve(), { timeout: 3000 });
+  if (document.readyState === 'complete') idle();
+  else window.addEventListener('load', idle, { once: true });
+});
+
 export const renderMarkdown = (container: HTMLElement, text: string) => {
   container.innerHTML = mdToHtml(text);
 };
