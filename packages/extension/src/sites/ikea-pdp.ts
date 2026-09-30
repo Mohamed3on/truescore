@@ -105,28 +105,23 @@ const reviewToText = (r: IkeaReview): string => [r.title, r.body].filter(Boolean
 
 const reviewFields = (r: IkeaReview) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date });
 
-// Every review up to SEARCH_MAX (submissionOn desc), each with its 1–5 rating, in
-// one request: IKEA hands over a page as large as asked (KALLAX's ~10.5k is 13 MB). No
-// country filter: the pool spans all markets and product variants — the same
-// population the rating endpoint's totals (and so our overall score) cover. Kept a
-// week in IndexedDB: a big item's set would crowd the site's localStorage.
-const fetchReviews = async (country: string, lang: string, itemNo: string): Promise<IkeaReview[]> => {
-  const cacheKey = `ikea-reviews-v3-${itemNo}`;
-  const cached = await idbGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
-  if (cached) return cached;
-
+// One page of reviews, newest first (submissionOn desc), each with its 1–5 rating;
+// null when the request fails. No country filter: the pool spans all markets and
+// product variants — the same population the rating endpoint's totals (and so our
+// overall score) cover.
+const fetchPage = async (country: string, lang: string, itemNo: string, size: number): Promise<IkeaReview[] | null> => {
   const res = await fetch(`https://web-api.ikea.com/tugc/public/v5/reviews/${country}/${lang}/${itemNo}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-client-id': CLIENT_ID },
     body: JSON.stringify({
       filter: { and: [], not: [] },
       sort: [{ field: 'submissionOn', direction: 'desc' }],
-      page: { size: SEARCH_MAX, number: 1 },
+      page: { size, number: 1 },
     }),
-  });
-  if (!res.ok) return [];
+  }).catch(() => null);
+  if (!res?.ok) return null;
   const json = await res.json();
-  if (!Array.isArray(json)) return [];
+  if (!Array.isArray(json)) return null;
 
   const seen = new Set<string>();
   const reviews: IkeaReview[] = [];
@@ -142,16 +137,30 @@ const fetchReviews = async (country: string, lang: string, itemNo: string): Prom
     seen.add(id);
     reviews.push(review);
   }
-  // Empty result sets tombstone briefly too (see the TTL above) — a host re-render
-  // that evicts the island would otherwise refire this POST on every rebuild.
-  idbSet(cacheKey, reviews);
   return reviews;
+};
+
+// The newest RECENT_REVIEWS in one small request, so the gauge needn't wait, and
+// every review up to SEARCH_MAX in one more (IKEA hands over a page as large as
+// asked; KALLAX's ~10.5k is 13 MB) for the Sample and the search. The whole set is
+// kept a week in IndexedDB: a big item's set would crowd the site's localStorage.
+const fetchReviews = (country: string, lang: string, itemNo: string) => {
+  const cacheKey = `ikea-reviews-v3-${itemNo}`;
+  const cached: Promise<IkeaReview[] | null> = idbGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
+  const all = cached.then(async (hit) => {
+    if (hit) return hit;
+    const reviews = await fetchPage(country, lang, itemNo, SEARCH_MAX);
+    // Empty result sets tombstone briefly too (see the TTL above).
+    if (reviews) idbSet(cacheKey, reviews);
+    return reviews ?? [];
+  });
+  const recent = cached.then(async (hit) => hit ?? (await fetchPage(country, lang, itemNo, RECENT_REVIEWS)) ?? all);
+  return { recent, all };
 };
 
 const addSummarizeUI = (
   anchor: Element,
-  country: string,
-  lang: string,
+  { recent, all }: ReturnType<typeof fetchReviews>,
   itemNo: string,
   total: number,
   scoreData: { score: number; nps: number } | null
@@ -160,43 +169,45 @@ const addSummarizeUI = (
 
   const wrapper = createIslandShell();
 
-  // Recent-positive gauge over the newest RECENT_REVIEWS, filled once every review
-  // lands (one cached fetch shared with the summarizer and the search), plus the
-  // adjusted/analyzed stats row.
+  // Recent-positive gauge and the adjusted/analyzed stats row from the newest
+  // RECENT_REVIEWS, which land first; the search waits for every review.
   const gauge = buildRecentGauge();
-  wrapper.appendChild(gauge);
-  const reviewsPromise = fetchReviews(country, lang, itemNo);
+  const searchSlot = el('div');
+  wrapper.append(gauge, searchSlot);
   // The Sample stops at SAMPLE_MAX; past it, an Ask Searches the rest.
-  const searchAsk = total > SAMPLE_MAX ? localSearchAsk(reviewsPromise, reviewFields, reviewToText, wrapper) : undefined;
-  reviewsPromise
+  const searchAsk = total > SAMPLE_MAX ? localSearchAsk(all, reviewFields, reviewToText, wrapper) : undefined;
+  recent
     .then((reviews) => {
-      const recent = reviews.slice(0, RECENT_REVIEWS);
-      const ratio = recentRatio(recent.map((r) => r.rating));
+      const newest = reviews.slice(0, RECENT_REVIEWS);
+      const ratio = recentRatio(newest.map((r) => r.rating));
       fillRecentGauge(gauge, ratio);
       if (ratio == null) return;
       const stats = el('div', 'ars-stats');
       if (scoreData) appendStat(stats, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
-      appendStat(stats, String(recent.length), 'analyzed');
+      appendStat(stats, String(newest.length), 'analyzed');
       gauge.after(stats);
-
-      // Between the stats row and the summarize widget's question row.
-      stats.after(buildSearchSection({
-        reviews,
-        fields: reviewFields,
-        toText: reviewToText,
-        summaryPrompt: keywordSummaryPrompt,
-        exampleQuery: 'quality OR assembly',
-        mountSummarize: summarizeMatches(`ikea-summary-${itemNo}`, { searchAsk }),
-      }));
     })
     .catch(() => fillRecentGauge(gauge, null));
+
+  // Between the stats row and the summarize widget's question row.
+  all.then((reviews) => {
+    if (!reviews.length) return;
+    searchSlot.appendChild(buildSearchSection({
+      reviews,
+      fields: reviewFields,
+      toText: reviewToText,
+      summaryPrompt: keywordSummaryPrompt,
+      exampleQuery: 'quality OR assembly',
+      mountSummarize: summarizeMatches(`ikea-summary-${itemNo}`, { searchAsk }),
+    }));
+  });
 
   buildSummarizeWidget({
     wrapper,
     cacheKey: `ikea-summary-${itemNo}`,
     summaryPrompt: PRODUCT_SUMMARY_PROMPT,
     fetchReviews: () =>
-      reviewsPromise.then((reviews) => [...new Set(reviews.slice(0, SAMPLE_MAX).map(reviewToText).filter(Boolean))]),
+      all.then((reviews) => [...new Set(reviews.slice(0, SAMPLE_MAX).map(reviewToText).filter(Boolean))]),
     searchAsk,
   });
 
@@ -217,18 +228,21 @@ setupSpaInjector({
     if (!locale || !itemNo) return null;
     const data = await fetchRating(locale.country, locale.lang, itemNo);
     if (!data) return null;
-    return { locale, itemNo, scoreData: getScore(data), panel: buildInsightsPanel(data), reviewCount: data.totalReviewCount ?? 0 };
+    const reviewCount = data.totalReviewCount ?? 0;
+    // Reviews start downloading now, not once the page has an anchor for the island.
+    const reviews = reviewCount >= 5 ? fetchReviews(locale.country, locale.lang, itemNo) : null;
+    return { itemNo, scoreData: getScore(data), panel: buildInsightsPanel(data), reviewCount, reviews };
   },
-  inject: ({ locale, itemNo, scoreData, panel, reviewCount }) => {
+  inject: ({ itemNo, scoreData, panel, reviewCount, reviews }) => {
     if (scoreData) {
       const ratingBtn = document.querySelector('button.pipf-rating');
       if (ratingBtn && !ratingBtn.querySelector('.nps-score-badge')) appendScore(ratingBtn, scoreData);
     }
     const ugc = document.querySelector('.js-ugc-container');
     if (panel && !document.body.contains(panel) && ugc) ugc.after(panel);
-    if (reviewCount >= 5) {
+    if (reviews) {
       const anchor = document.querySelector('.nps-insights') || ugc;
-      if (anchor) addSummarizeUI(anchor, locale.country, locale.lang, itemNo, reviewCount, scoreData);
+      if (anchor) addSummarizeUI(anchor, reviews, itemNo, reviewCount, scoreData);
     }
   },
   cleanup,
