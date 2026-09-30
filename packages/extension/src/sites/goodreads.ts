@@ -545,9 +545,9 @@ class DeadBookError extends Error {}
 const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
   const id = getBookIdFromURL(bookURL);
   if (id) {
-    const cached = await idbGet(bookCacheKey(id), CONFIG.BOOK_CACHE_MS);
+    const [cached, knownDead] = await Promise.all([idbGet(bookCacheKey(id), CONFIG.BOOK_CACHE_MS), idbGet(deadBookKey(id), CONFIG.DEAD_BOOK_CACHE_MS)]);
     if (cached) return cached;
-    if (await idbGet(deadBookKey(id), CONFIG.DEAD_BOOK_CACHE_MS)) throw new DeadBookError(bookURL);
+    if (knownDead) throw new DeadBookError(bookURL);
   }
   const dead = (why: string) => {
     if (id) idbSet(deadBookKey(id), true);
