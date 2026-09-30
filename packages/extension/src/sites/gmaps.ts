@@ -730,12 +730,20 @@ const tabTransport: Transport = async (url, init) =>
   fetch(url, await signReq(init, window.__truescoreSignMaps)).then((r) => r.text());
 
 const PREVIEW_WAIT_MS = 3000;
+// The place on screen, and when it opened. An in-page navigation has Maps fetch the
+// preview as the place opens, so PREVIEW_WAIT_MS on it has landed or isn't coming. The
+// place the page itself loaded counts as opened long ago: a cold load never fetches its
+// preview at all (see previewFromAppState).
+let placeOpened = { featureId: getFeatureId(), at: -Infinity };
 
-// Wake on PREVIEW_CAPTURED for this featureId, or fall through after a short
-// timeout. Last-resort active fetch is done by the caller if we return null.
+// Wake on PREVIEW_CAPTURED for this featureId, or fall through once what's left of
+// the wait since the place opened runs out. Last-resort active fetch is done by the
+// caller if we return null.
 const waitForCapturedPreview = (featureId: string): Promise<any | null> => new Promise((resolve) => {
   const existing = window.__truescorePreviews?.[featureId]?.json;
   if (existing) { resolve(existing); return; }
+  const left = placeOpened.featureId === featureId ? placeOpened.at + PREVIEW_WAIT_MS - Date.now() : PREVIEW_WAIT_MS;
+  if (left <= 0) { resolve(null); return; }
   const cleanup = () => {
     document.removeEventListener(PREVIEW_CAPTURED, handler);
     clearTimeout(timer);
@@ -745,7 +753,7 @@ const waitForCapturedPreview = (featureId: string): Promise<any | null> => new P
     cleanup();
     resolve(window.__truescorePreviews?.[featureId]?.json ?? null);
   };
-  const timer = setTimeout(() => { cleanup(); resolve(null); }, PREVIEW_WAIT_MS);
+  const timer = setTimeout(() => { cleanup(); resolve(null); }, left);
   document.addEventListener(PREVIEW_CAPTURED, handler);
 });
 
@@ -2333,6 +2341,8 @@ const handleDomMutation = () => {
   }
 
   if (featureId !== lastFeatureId) {
+    // Opened just now — unless this is the page's own place, seen for the first time.
+    if (lastFeatureId || featureId !== placeOpened.featureId) placeOpened = { featureId, at: Date.now() };
     lastFeatureId = featureId;
     resetScores();
     loadSummaryCache();
