@@ -3,7 +3,7 @@ import { beginPlace, currentPlace, endPlace, type PlaceEpoch } from './place-ses
 import { WEEKDAYS, formatHourLabel, isOpenNow, localHourInTz, slotsOf } from './hours';
 import { DefaultChatTransport } from 'ai';
 import {
-  fetchJson, fetchWithRetry, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
+  fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
@@ -1113,6 +1113,17 @@ async function fetchSummaryFor(epoch: PlaceEpoch, force = false): Promise<{ ok: 
 let lookupSeq = 0;
 const resetGoBtn = () => { goBtn.disabled = false; goBtn.textContent = 'SCORE'; };
 
+// index.html starts a shared ?url= link's lookup before this bundle has loaded;
+// the first submit of that same link adopts it rather than asking again. One the
+// network dropped is asked again the usual way.
+let earlyLookup = (window as { earlyLookup?: { url: string; response: Promise<Response> } }).earlyLookup;
+const lookupResponse = (url: string): Promise<Response> => {
+  const early = earlyLookup?.url === url ? earlyLookup.response : undefined;
+  earlyLookup = undefined;
+  const ask = () => postNdjson('/api/lookup', { url } satisfies LookupRequest);
+  return early ? early.then(ndjsonResponse, ask) : ask();
+};
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const url = urlInput.value.trim();
@@ -1130,7 +1141,7 @@ form.addEventListener('submit', async (e) => {
   setStatus('Resolving link…');
   const t0 = Date.now();
   try {
-    const resp = await postNdjson('/api/lookup', { url } satisfies LookupRequest);
+    const resp = await lookupResponse(url);
     await consumeLookupStream(resp.body!, t0, current);
   } catch (e) {
     if (!current()) return;

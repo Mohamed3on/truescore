@@ -60,12 +60,17 @@ export async function* readNdjson<T>(body: ReadableStream<Uint8Array>): AsyncGen
 }
 
 export async function postNdjson(url: string, body: unknown, signal?: AbortSignal): Promise<Response> {
-  const resp = await fetchWithRetry(url, {
+  return ndjsonResponse(await fetchWithRetry(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal,
-  });
+  }));
+}
+
+// An NDJSON POST's response, checked: a JSON error body throws its message, and
+// anything but a stream throws.
+export async function ndjsonResponse(resp: Response): Promise<Response> {
   const ct = resp.headers.get('content-type') ?? '';
   if (!resp.ok && ct.includes('json') && !ct.includes('ndjson')) {
     const data = await resp.json().catch(() => null);

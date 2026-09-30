@@ -6,6 +6,15 @@
 <meta name="theme-color" content="#0e1018">
 <title>TrueScore — honest scores for Google Maps</title>
 <meta name="description" content="TrueScore reads every Google review, drops the one-time tourists and lukewarm 3-stars, and gives you the only number that matters.">
+<!-- A shared ?url= link: start its lookup now rather than once client.ts has
+     loaded; that link's first submit adopts it. Above the stylesheet, which
+     would otherwise hold this script until it loads. -->
+<script>
+  (() => {
+    const url = new URLSearchParams(location.search).get('url')?.trim();
+    if (url) window.earlyLookup = { url, response: fetch('/api/lookup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) }) };
+  })();
+</script>
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
