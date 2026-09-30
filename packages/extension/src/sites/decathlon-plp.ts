@@ -61,9 +61,13 @@ const scoreFor = (link: Element | null) => {
   return score;
 };
 
-// Scores for the cards already on the page start fetching at once; only the
-// badges wait until React has hydrated the server-rendered grid (see afterHydration).
-for (const link of document.querySelectorAll(`${CARD} ${LINK}`)) scoreFor(link);
+// Scores for the cards on the page — and any that render before the grid starts —
+// start fetching at once; only the badges wait until React has hydrated the
+// server-rendered grid (see afterHydration).
+const prefetch = () => { for (const link of document.querySelectorAll(`${CARD} ${LINK}`)) scoreFor(link); };
+prefetch();
+const prefetchObs = new MutationObserver(prefetch);
+prefetchObs.observe(document.body, { childList: true, subtree: true });
 
 const startGrid = () => setupScoreGrid({
   cardSelector: CARD,
@@ -76,7 +80,10 @@ const startGrid = () => setupScoreGrid({
   // it also can't corrupt the carousel tracks the way node moves could.
   discover: containersBySelector(CONTAINERS),
 });
-afterHydration().then(startGrid);
+afterHydration().then(() => {
+  prefetchObs.disconnect();
+  startGrid();
+});
 
 let dedupFrame: number;
 const scheduleDedup = () => {

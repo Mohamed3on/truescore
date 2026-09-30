@@ -4,7 +4,7 @@ import { renderVariationCard, tallyVariationDims } from '../shared/variation-tab
 import { createIslandShell, buildGauge } from '../shared/score-island';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
-import { fetchEvaluation, parseVariations, productId, type AliReview, type Evaluation } from '../shared/aliexpress';
+import { cachedItemScore, fetchEvaluation, parseVariations, productId, type AliReview, type Evaluation } from '../shared/aliexpress';
 
 const EVAL_TTL = 7 * 24 * 60 * 60 * 1000;
 
@@ -44,29 +44,37 @@ const panelAnchor = (): [Element, InsertPosition] | null => {
 };
 
 const buildIsland = async (id: string): Promise<HTMLElement | null> => {
-  const { score, reviews } = await evaluationFor(id);
-  if (!score && !reviews.length) return null;
+  // A score the search grid already cached paints the gauge at once; the
+  // reviews' parts fill in when the evaluation request lands.
+  const evaluation = evaluationFor(id);
+  const score = cachedItemScore(id) || (await evaluation).score;
+  const early = score ? null : await evaluation;
+  if (!score && !early?.reviews.length) return null;
 
   const wrapper = createIslandShell();
   if (score) wrapper.append(...buildGauge(score));
 
-  const dims = buildDims(reviews);
-  if (dims.length) {
-    const card = renderVariationCard(dims, { animate: true });
-    card.style.maxWidth = '100%';
-    card.style.margin = '2px 0 0';
-    wrapper.appendChild(card);
-  }
+  const fillReviews = ({ reviews }: Evaluation) => {
+    const dims = buildDims(reviews);
+    if (dims.length) {
+      const card = renderVariationCard(dims, { animate: true });
+      card.style.maxWidth = '100%';
+      card.style.margin = '2px 0 0';
+      wrapper.appendChild(card);
+    }
 
-  const texts = [...new Set(reviews.map((r) => r.text).filter(Boolean))];
-  if (texts.length >= 5) {
-    buildSummarizeWidget({
-      wrapper,
-      cacheKey: `ali-summary-${id}`,
-      summaryPrompt: PRODUCT_SUMMARY_PROMPT,
-      fetchReviews: async () => texts,
-    });
-  }
+    const texts = [...new Set(reviews.map((r) => r.text).filter(Boolean))];
+    if (texts.length >= 5) {
+      buildSummarizeWidget({
+        wrapper,
+        cacheKey: `ali-summary-${id}`,
+        summaryPrompt: PRODUCT_SUMMARY_PROMPT,
+        fetchReviews: async () => texts,
+      });
+    }
+  };
+  if (early) fillReviews(early);
+  else evaluation.then(fillReviews);
   return wrapper;
 };
 

@@ -237,6 +237,10 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     ...(antiCsrf ? { 'anti-csrftoken-a2z': antiCsrf } : {}),
   };
 
+  // Once the POST has failed, every later page goes straight to the fallback GET
+  // instead of paying for a doomed POST first.
+  let portalFailed = false;
+
   // The one paginated review fetch all three callers share: POST the review AJAX
   // (cursor via nextPageToken), fall back to the plain product-reviews page, parse,
   // and hand each page to onPage. extraParams (e.g. filterByKeyword) flow into both
@@ -259,13 +263,16 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       if (nextToken) params.nextPageToken = nextToken;
 
       let html = '';
-      try {
-        const res = await fetch(portalUrl, {
-          method: 'POST', credentials: 'include', headers: portalHeaders,
-          body: new URLSearchParams(params),
-        });
-        if (res.ok) html = parseAjaxChunks(await res.text());
-      } catch (_) {}
+      if (!portalFailed) {
+        try {
+          const res = await fetch(portalUrl, {
+            method: 'POST', credentials: 'include', headers: portalHeaders,
+            body: new URLSearchParams(params),
+          });
+          if (res.ok) html = parseAjaxChunks(await res.text());
+        } catch (_) {}
+        portalFailed = !html;
+      }
 
       if (!html) {
         const qs = new URLSearchParams({ sortBy: 'recent', pageNumber: String(page), ...extraParams });
@@ -299,10 +306,11 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     return { total: reviews.length, texts };
   };
 
-  const ONE_DAY = 86400000;
   const fetchFreshReviewTexts = async () => {
     const reviewsCacheKey = `ars-reviews-${cacheASIN}`;
-    const cachedTexts = cacheGet(reviewsCacheKey, ONE_DAY);
+    // Kept as long as the scores the same walk produced: a shorter life made a
+    // Summarize on days 2–3 walk all ten pages again before the model could start.
+    const cachedTexts = cacheGet(reviewsCacheKey, THREE_DAYS);
     if (cachedTexts) return cachedTexts;
 
     const seen = new Set<string>();
@@ -320,6 +328,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     return texts;
   };
 
+  // The scoring walk: ten cursor-chained pages, so inherently one after another.
+  let walked: Promise<void> = Promise.resolve();
   if (!usedCache) {
     const starRatingsToLikeDislikeMapping: Record<number, number> = { 5: 1, 1: -1 };
     let totalRatingPercentages: { fiveStars: number; oneStars: number } | undefined;
@@ -388,7 +398,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     const seenReviewIds = new Set<string>();
     const collectedReviewTexts: string[] = [];
     const reviewTextsSeen = new Set<string>();
-    const complete = await fetchReviewPages((syntheticDocument, page) => {
+    walked = fetchReviewPages((syntheticDocument, page) => {
       if (!totalRatingPercentages) {
         totalRatingPercentages = getRatingPercentages(syntheticDocument);
         const { calculatedScore, totalScorePercentage } = setTotalRatingsScore(
@@ -441,31 +451,31 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       }
 
       updateLiveStats();
+    }).then((complete) => {
+      // A walk cut short still shows what it read, but isn't pinned for days.
+      if (complete && numberOfParsedReviews > 0) {
+        cacheSet(scoresCacheKey, { numberOfParsedReviews, scores, formatRatings });
+      }
+      if (collectedReviewTexts.length) {
+        cacheSet(`ars-reviews-${cacheASIN}`, collectedReviewTexts);
+      }
+
+      // Fade out scanning indicator
+      const spinner = wrapper.querySelector('[data-ars="scanning"]');
+      if (spinner) {
+        spinner.classList.add('ars-scan-done');
+        spinner.addEventListener('animationend', () => spinner.remove(), { once: true });
+      }
+
+      if (numberOfParsedReviews === 0) {
+        gauge.remove();
+        stats.remove();
+        const noReviews = document.createElement('div');
+        noReviews.className = 'ars-empty';
+        noReviews.textContent = 'No local reviews available for analysis';
+        wrapper.appendChild(noReviews);
+      }
     });
-
-    // A walk cut short still shows what it read, but isn't pinned for days.
-    if (complete && numberOfParsedReviews > 0) {
-      cacheSet(scoresCacheKey, { numberOfParsedReviews, scores, formatRatings });
-    }
-    if (collectedReviewTexts.length) {
-      cacheSet(`ars-reviews-${cacheASIN}`, collectedReviewTexts);
-    }
-
-    // Fade out scanning indicator
-    const spinner = wrapper.querySelector('[data-ars="scanning"]');
-    if (spinner) {
-      spinner.classList.add('ars-scan-done');
-      spinner.addEventListener('animationend', () => spinner.remove(), { once: true });
-    }
-
-    if (numberOfParsedReviews === 0) {
-      gauge.remove();
-      stats.remove();
-      const noReviews = document.createElement('div');
-      noReviews.className = 'ars-empty';
-      noReviews.textContent = 'No local reviews available for analysis';
-      wrapper.appendChild(noReviews);
-    }
   } else {
     // Cached path: build final widget immediately
     const pctRaw = ratioFromTally(scores.recent.absolute, numberOfParsedReviews);
@@ -548,8 +558,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   // while missing every one of those guards. The two genuinely Amazon-specific
   // parts stay injected: the remote keyword fetch, and the full summarize widget
   // (Ask + a per-keyword cache) where the section's default is a one-shot pass.
-  const buildKeywordSearch = () => {
-    wrapper.appendChild(buildSearchSection<FilteredReview>({
+  const buildKeywordSearch = (host: HTMLElement) => {
+    host.appendChild(buildSearchSection<FilteredReview>({
       reviews: [],
       total: numOfRatings || numberOfParsedReviews,
       search: async (terms) => ({ matches: await fetchReviewsByKeyword(terms) }),
@@ -566,20 +576,30 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     }));
   };
 
-  if (numberOfParsedReviews > 0) {
-    scores.recent.percentage = scores.recent.percentage || (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
-    buildKeywordSearch();
-
+  // The keyword search and Summarize/Ask need nothing from the scoring walk, so
+  // they mount at once rather than after it — gone again if the walk finds no
+  // reviews to analyze. `display: contents` keeps them in the island's own flow.
+  if (usedCache ? numberOfParsedReviews > 0 : numOfRatings > 0) {
+    const tools = el('div');
+    tools.style.display = 'contents';
+    wrapper.appendChild(tools);
+    buildKeywordSearch(tools);
     buildSummarizeWidget({
-      wrapper,
+      wrapper: tools,
       cacheKey: `review-summary-${cacheASIN}`,
       summaryPrompt: PRODUCT_SUMMARY_PROMPT,
-      fetchReviews: fetchFreshReviewTexts,
+      // After the walk its texts are cached, so this reads them, not a second walk.
+      fetchReviews: () => walked.then(fetchFreshReviewTexts),
       searchAsk,
     });
+    walked.then(() => { if (!numberOfParsedReviews) tools.remove(); });
   }
 
   if (!wrapper.parentNode) elementToAppendTo!.appendChild(wrapper);
+  await walked;
+  if (numberOfParsedReviews > 0) {
+    scores.recent.percentage = scores.recent.percentage || (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
+  }
   injectBestFormats(formatRatings);
 };
 

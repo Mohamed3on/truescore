@@ -12,21 +12,22 @@ const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const API_BASE = 'https://apps.bazaarvoice.com/bfd/v1/clients/dm-de/api-products/cv2/resources/data/reviews.json';
 const BFD_TOKEN = '18357,main_site,de_DE';
 
-const buildUrl = (productId: string, withMediaFilter: boolean) => {
+// The product's stats ride along with any page of its reviews; one review is the
+// smallest page. (A photo-reviews-only query used to go first, but it carries no
+// stats for a product without photo reviews, so most products paid for both.)
+const buildUrl = (productId: string) => {
   const params = new URLSearchParams();
   params.set('resource', 'reviews');
-  params.set('action', withMediaFilter ? 'PHOTOS_TYPE' : 'REVIEWS_N_STATS');
+  params.set('action', 'REVIEWS_N_STATS');
   params.append('filter', `productid:eq:${productId}`);
   params.append('filter', 'contentlocale:eq:de*,de_DE,de_DE');
   params.append('filter', 'isratingsonly:eq:false');
-  if (withMediaFilter) params.append('filter', 'HasMedia:eq:true');
   params.set('filter_reviews', 'contentlocale:eq:de*,de_DE,de_DE');
-  params.set('include', withMediaFilter ? 'authors,products,comments' : 'products');
+  params.set('include', 'products');
   params.set('filteredstats', 'reviews');
   params.set('Stats', 'Reviews');
   params.set('limit', '1');
   params.set('offset', '0');
-  if (withMediaFilter) params.set('limit_comments', '3');
   params.set('sort', 'submissiontime:desc');
   params.set('Offset', '0');
   params.set('apiversion', '5.5');
@@ -71,28 +72,19 @@ const fetchStats = async (productId: string) => {
   const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
   if (cached) return cached.value;
 
-  const urls = [buildUrl(productId, true), buildUrl(productId, false)];
-  let definitive = true;
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, REVIEW_REQUEST_INIT);
-      if (!res.ok) { definitive = false; continue; }
-      const json = await res.json();
-      const stats = extractStats(json, productId);
-      if (stats) {
-        cacheSet(cacheKey, stats);
-        return stats;
-      }
-    } catch {
-      definitive = false;
-    }
+  try {
+    const res = await fetch(buildUrl(productId), REVIEW_REQUEST_INIT);
+    if (!res.ok) return null;
+    const stats = extractStats(await res.json(), productId);
+    // An answer with no stats: this id genuinely has no reviews. Tombstoned so
+    // recreated cards stop re-firing the same doomed request; transport failures
+    // stay uncached and retry.
+    if (stats) cacheSet(cacheKey, stats);
+    else cacheSetMaybe(cacheKey, null);
+    return stats;
+  } catch {
+    return null;
   }
-
-  // Both endpoints answered with no stats: this id genuinely has no reviews.
-  // Tombstoned so candidate sweeps stop re-firing the same doomed requests;
-  // transport failures stay uncached and retry.
-  if (definitive) cacheSetMaybe(cacheKey, null);
-  return null;
 };
 
 const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -155,22 +147,34 @@ const dedupe = (reviews: DmReview[]) => {
   });
 };
 
-// Every review up to the newest SAMPLE_MAX, all pages in parallel, so the
-// wall-clock cost is about one round-trip. Feeds the recent gauge and the
-// Summary/Ask. Kept a week in IndexedDB, and only whole: a failed page's hole
-// would otherwise be served for the week.
-const fetchReviews = async (productId: string, totalCount: number): Promise<DmReview[]> => {
+// Every review up to the newest SAMPLE_MAX, newest first: page 0 at once, the
+// rest in parallel as soon as `total` says how many there are. `recent` settles
+// with the newest RECENT_REVIEWS for the gauge; `all` feeds the Summary/Ask and
+// the search. Kept a week in IndexedDB, and only whole: a failed page's hole would
+// otherwise be served for the week.
+const fetchReviews = (productId: string, total: Promise<number>) => {
   const cacheKey = `dm_reviews_v4_${productId}`;
-  const cached = await idbGet(cacheKey, REVIEWS_TTL);
-  if (cached) return cached;
-
-  const pageCount = Math.min(SAMPLE_MAX / REVIEWS_PAGE, Math.max(1, Math.ceil(totalCount / REVIEWS_PAGE)));
-  const pages = await Promise.allSettled(
-    Array.from({ length: pageCount }, (_, i) => fetchPage(productId, i * REVIEWS_PAGE))
-  );
-  const reviews = dedupe(pages.flatMap((p) => (p.status === 'fulfilled' ? p.value.reviews : [])));
-  if (reviews.length && pages.every((p) => p.status === 'fulfilled')) idbSet(cacheKey, reviews);
-  return reviews;
+  const cached: Promise<DmReview[] | null> = idbGet(cacheKey, REVIEWS_TTL);
+  const pages = cached.then((hit) => {
+    if (hit) return [];
+    const first = fetchPage(productId, 0);
+    return total.then((count) => [
+      first,
+      ...Array.from({ length: Math.ceil(Math.min(count, SAMPLE_MAX) / REVIEWS_PAGE) - 1 }, (_, i) => fetchPage(productId, (i + 1) * REVIEWS_PAGE)),
+    ]);
+  });
+  const settle = async (of: Promise<Awaited<ReturnType<typeof fetchPage>>>[]) => {
+    const settled = await Promise.allSettled(of);
+    return { reviews: dedupe(settled.flatMap((p) => (p.status === 'fulfilled' ? p.value.reviews : []))), whole: settled.every((p) => p.status === 'fulfilled') };
+  };
+  const recent = cached.then(async (hit) => hit ?? (await settle((await pages).slice(0, RECENT_REVIEWS / REVIEWS_PAGE))).reviews);
+  const all = cached.then(async (hit) => {
+    if (hit) return hit;
+    const { reviews, whole } = await settle(await pages);
+    if (reviews.length && whole) idbSet(cacheKey, reviews);
+    return reviews;
+  });
+  return { recent, all };
 };
 
 const reviewTexts = (reviews: DmReview[]) => reviews.map(reviewToText).filter(Boolean);
@@ -326,7 +330,12 @@ const resolvePanelAnchor = () => {
 // One unified "Review Intelligence" card: a recent-positive gauge (NPS over the
 // latest reviews, Amazon-style) + recommend rate + score/review stats + secondary
 // bars, with the summarize/ask widget below it (5+ reviews).
-const buildCard = (stats: any, scoreData: { score: number; nps: number } | null, productId: string): HTMLElement | null => {
+const buildCard = (
+  stats: any,
+  scoreData: { score: number; nps: number } | null,
+  productId: string,
+  { recent, all }: ReturnType<typeof fetchReviews>,
+): HTMLElement | null => {
   const total = Number(stats?.TotalReviewCount) || 0;
   const hasRecommend = (Number(stats?.RecommendedCount) || 0) + (Number(stats?.NotRecommendedCount) || 0) > 0;
   if (!scoreData && !hasRecommend && total < 5) return null;
@@ -339,10 +348,7 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
 
   appendInsights(wrapper, stats, scoreData);
 
-  // One fetch of the Sample, shared by the gauge, the summarizer and the search.
-  const reviewsPromise = total > 0 && productId ? fetchReviews(productId, total) : null;
-
-  if (total >= 5 && reviewsPromise) {
+  if (total >= 5) {
     // Past SAMPLE_MAX, BazaarVoice's own search reaches the reviews the Sample
     // lacks, for the box and for an Ask's Searches alike.
     const remote = total > SAMPLE_MAX ? makeReviewSearch(productId) : null;
@@ -355,7 +361,7 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
     wrapper.appendChild(buildSearchSection({
       reviews: [],
       total,
-      search: remote ?? sampleSearch(reviewsPromise),
+      search: remote ?? sampleSearch(all),
       fields: reviewFields,
       toText: reviewToText,
       summaryPrompt: keywordSummaryPrompt,
@@ -367,16 +373,16 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
       wrapper,
       cacheKey: `dm-summary-${productId}`,
       summaryPrompt: PRODUCT_SUMMARY_PROMPT,
-      fetchReviews: () => reviewsPromise.then(reviewTexts),
+      fetchReviews: () => all.then(reviewTexts),
       searchAsk,
     });
   }
 
-  // Fill the recent-positive gauge from the newest RECENT_REVIEWS. Drop the gauge
-  // if none load; land the adjusted stat (score damped by the recent ratio) beside
-  // the others.
-  if (reviewsPromise) {
-    reviewsPromise
+  // Fill the recent-positive gauge from the newest RECENT_REVIEWS, which land
+  // first. Drop the gauge if none load; land the adjusted stat (score damped by
+  // the recent ratio) beside the others.
+  if (total > 0) {
+    recent
       .then((reviews) => {
         const ratio = recentRatio(reviews.slice(0, RECENT_REVIEWS).map((r) => r.rating));
         fillRecentGauge(gauge, ratio);
@@ -393,7 +399,7 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
   return wrapper;
 };
 
-const injectUi = (scoreData: any, stats: any, productId: string) => {
+const injectUi = (scoreData: any, stats: any, productId: string, reviews: ReturnType<typeof fetchReviews>) => {
   if (scoreData) injectScoreBadgeNearRating(scoreData);
 
   // Card already placed — skip the anchor resolution on every later mutation.
@@ -402,7 +408,7 @@ const injectUi = (scoreData: any, stats: any, productId: string) => {
   const anchor = resolvePanelAnchor();
   if (!anchor) return false;
 
-  const card = buildCard(stats, scoreData, productId);
+  const card = buildCard(stats, scoreData, productId, reviews);
   if (card) {
     if (anchor.position === 'before') anchor.node.before(card);
     else anchor.node.after(card);
@@ -414,15 +420,19 @@ const injectUi = (scoreData: any, stats: any, productId: string) => {
 // The id is in the URL, so load() needs no page DOM — the URL-id single-entity
 // PDP shape ADR 0001 describes, same as ikea-pdp/decathlon-pdp. inject() re-runs
 // on body mutations until dm has rendered an anchor to attach to.
-setupSpaInjector<{ stats: any; scoreData: { score: number; nps: number } | null; productId: string }>({
+setupSpaInjector<{ stats: any; scoreData: { score: number; nps: number } | null; productId: string; reviews: ReturnType<typeof fetchReviews> }>({
   match: () => !!productIdFromUrl(),
   load: async () => {
     const productId = productIdFromUrl();
     if (!productId) return null;
-    const stats = await fetchStats(productId);
+    const statsPromise = fetchStats(productId);
+    // Reviews start downloading alongside the stats that size them, not once dm
+    // has rendered an anchor for the card.
+    const reviews = fetchReviews(productId, statsPromise.then((stats) => Number(stats?.TotalReviewCount) || 0));
+    const stats = await statsPromise;
     if (!stats) return null;
-    return { stats, scoreData: getScoreFromStats(stats), productId };
+    return { stats, scoreData: getScoreFromStats(stats), productId, reviews };
   },
-  inject: ({ stats, scoreData, productId }) => injectUi(scoreData, stats, productId),
+  inject: ({ stats, scoreData, productId, reviews }) => injectUi(scoreData, stats, productId, reviews),
   cleanup,
 });

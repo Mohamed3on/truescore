@@ -90,9 +90,14 @@ const evaluate = async (fetcher: Fetcher, id: string, pageSize: number): Promise
   return { score, reviews };
 };
 
+// The score a search grid (or an earlier visit) already cached; undefined when
+// none is, null for a cached review-less item.
+export const cachedItemScore = (id: string): ItemScore | null | undefined =>
+  cacheGetMaybe(scoreKey(id), SCORE_TTL)?.value;
+
 export const fetchItemScore = async (fetcher: Fetcher, id: string): Promise<ItemScore | null> => {
-  const cached = cacheGetMaybe(scoreKey(id), SCORE_TTL);
-  if (cached) return cached.value;
+  const cached = cachedItemScore(id);
+  if (cached !== undefined) return cached;
   return (await evaluate(fetcher, id, SCORE_ONLY_PAGE_SIZE)).score;
 };
 

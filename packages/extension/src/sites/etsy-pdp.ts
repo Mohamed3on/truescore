@@ -163,12 +163,22 @@ const topicNps = (t: Topic) => (t.total ? ((t.pos - t.neg) / t.total) * 100 : 0)
 const topicSummaryPrompt = (topic: string) =>
   `These are Etsy reviews that mention ${topic} for this product. Focus ONLY on what buyers say about ${topic} — ignore unrelated praise or issues. List what they praise and what they complain about regarding ${topic}, most-common first; include a point only if 2+ reviewers make it. If reviewers disagree, surface the tension. End with a one-line verdict on ${topic}.`;
 
+// One fetch per topic page for the visit: the topic's row loads pages 1–2 and its
+// summary pages 1–TOPIC_SUMMARY_PAGES, so a summary reuses what the row has.
+const topicPages = new Map<string, Promise<EtsyReview[]>>();
+const topicPage = (meta: ListingMeta, tag: string, page: number) => {
+  const key = `${tag}\n${page}`;
+  let reviews = topicPages.get(key);
+  if (!reviews) {
+    // A failed page isn't kept, so a later summary retries it.
+    reviews = fetchTopicReviews(throttledFetch, meta, tag, page).catch((): EtsyReview[] => (topicPages.delete(key), []));
+    topicPages.set(key, reviews);
+  }
+  return reviews;
+};
+
 const topicReviewTexts = async (meta: ListingMeta, tag: string): Promise<string[]> => {
-  const pages = await Promise.all(
-    Array.from({ length: TOPIC_SUMMARY_PAGES }, (_, i) =>
-      fetchTopicReviews(throttledFetch, meta, tag, i + 1).catch((): EtsyReview[] => [])
-    )
-  );
+  const pages = await Promise.all(Array.from({ length: TOPIC_SUMMARY_PAGES }, (_, i) => topicPage(meta, tag, i + 1)));
   return [...new Set(pages.flat().map((r) => r.text).filter(Boolean))];
 };
 
@@ -191,7 +201,7 @@ const fillTopicDetail = (detail: HTMLElement, meta: ListingMeta, t: Topic) => {
   list.appendChild(el('div', 'ars-topic-loading', 'Loading reviews…'));
   detail.append(summaryHost, list);
 
-  Promise.all([1, 2].map((p) => fetchTopicReviews(throttledFetch, meta, t.tag, p).catch((): EtsyReview[] => [])))
+  Promise.all([1, 2].map((p) => topicPage(meta, t.tag, p)))
     .then((pages) => {
       const reviews = pages.flat().filter((r) => r.text);
       list.replaceChildren();
@@ -266,25 +276,31 @@ const renderTopics = (topics: Topic[], meta: ListingMeta): HTMLElement | null =>
 };
 
 const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
-  const [score, reviews] = await Promise.all([
-    fetchItemScore(throttledFetch, meta.listingId, meta.shopId).catch(() => null),
-    recentReviews(meta),
-  ]);
-  if (!score && !reviews.length) return null;
+  // The newest reviews take two rounds of the throttle; the score — which the
+  // search grid has usually cached — doesn't wait for them. With a score the
+  // island shows at once and the reviews fill in their parts when they land;
+  // without one there's nothing to show before them.
+  const reviewsPromise = recentReviews(meta);
+  const score = await fetchItemScore(throttledFetch, meta.listingId, meta.shopId).catch(() => null);
+  const early = score ? null : await reviewsPromise;
+  if (!score && !early?.length) return null;
 
   const wrapper = createIslandShell();
 
-  // One gauge: the overall percent, carrying the recent trend — `reviews` are the
-  // newest ~104, so their ratings are the trend the histogram can't show.
-  const ratio = recentRatio(reviews.map((r) => r.rating));
-  if (score) wrapper.append(...buildGauge(score, ratio));
-  else if (ratio != null) wrapper.append(buildRecentGauge(ratio));
+  // One gauge: the overall percent, carrying the recent trend once the reviews —
+  // the newest ~104, whose ratings are the trend the histogram can't show — land.
+  const [gauge, stats] = score ? buildGauge(score) : [null, el('div', 'ars-stats') as HTMLElement];
+  if (gauge) wrapper.append(gauge);
+  wrapper.append(stats);
+  // Held in its place, ahead of postage, until the reviews give the recent ratio.
+  let adjusted: HTMLElement | null = null;
+  if (score) {
+    appendStat(stats, '…', 'adjusted');
+    adjusted = stats.lastElementChild as HTMLElement;
+  }
 
   // Postage rides in the stats row: it belongs to the buying decision the panel
   // is already answering, and the row exists even when there is no score.
-  let stats = wrapper.querySelector<HTMLElement>('.ars-stats');
-  if (!stats) wrapper.appendChild((stats = el('div', 'ars-stats') as HTMLElement));
-  if (ratio != null && score) appendStat(stats, addCommas(adjust(score.score, ratio)), 'adjusted');
   attachPostage(stats);
 
   // Aspect breakdown sits under the headline number: score first, then what
@@ -299,38 +315,51 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
   const variationSlot = document.createElement('div');
   wrapper.appendChild(variationSlot);
 
-  const texts = [...new Set(reviews.map((r) => r.text).filter(Boolean))];
-  if (texts.length >= 5) {
-    // Etsy has no text search to reach the rest, so this searches the newest
-    // reviews in hand — the same ones the summary reads.
-    wrapper.appendChild(buildSearchSection({
-      reviews: reviews.filter((r) => r.text),
-      fields: (r) => ({ rating: r.rating, body: r.text, meta: r.date }),
-      toText: (r) => r.text,
-      summaryPrompt: FILTERED_PRODUCT_SUMMARY_PROMPT,
-      exampleQuery: 'size OR gift',
-    }));
-    buildSummarizeWidget({
-      wrapper,
-      cacheKey: `etsy-summary-${meta.listingId}`,
-      summaryPrompt: PRODUCT_SUMMARY_PROMPT,
-      fetchReviews: async () => texts,
-    });
-  }
-  // Variations resolve a beat after the panel is built; fill the slot once they
-  // land, by which point the injector has the island on screen.
-  if (reviews.length) {
-    variationsFor(meta, reviews)
-      .then((variations) => {
-        const dims = buildDims(reviews, variations);
-        if (!dims.length) return;
-        const card = renderVariationCard(dims, { animate: true });
-        card.style.maxWidth = '100%';
-        card.style.margin = '2px 0 0';
-        variationSlot.appendChild(card);
-      })
-      .catch(() => {});
-  }
+  const fillReviews = (reviews: EtsyReview[]) => {
+    const ratio = recentRatio(reviews.map((r) => r.rating));
+    if (score && ratio != null) {
+      gauge!.replaceWith(buildGauge(score, ratio)[0]);
+      adjusted!.querySelector('.ars-stat-val')!.textContent = addCommas(adjust(score.score, ratio));
+    } else {
+      adjusted?.previousElementSibling?.remove(); // its divider
+      adjusted?.remove();
+      if (ratio != null) stats.before(buildRecentGauge(ratio));
+    }
+
+    const texts = [...new Set(reviews.map((r) => r.text).filter(Boolean))];
+    if (texts.length >= 5) {
+      // Etsy has no text search to reach the rest, so this searches the newest
+      // reviews in hand — the same ones the summary reads.
+      wrapper.appendChild(buildSearchSection({
+        reviews: reviews.filter((r) => r.text),
+        fields: (r) => ({ rating: r.rating, body: r.text, meta: r.date }),
+        toText: (r) => r.text,
+        summaryPrompt: FILTERED_PRODUCT_SUMMARY_PROMPT,
+        exampleQuery: 'size OR gift',
+      }));
+      buildSummarizeWidget({
+        wrapper,
+        cacheKey: `etsy-summary-${meta.listingId}`,
+        summaryPrompt: PRODUCT_SUMMARY_PROMPT,
+        fetchReviews: async () => texts,
+      });
+    }
+    // Variations resolve a beat after the reviews; fill the slot once they land.
+    if (reviews.length) {
+      variationsFor(meta, reviews)
+        .then((variations) => {
+          const dims = buildDims(reviews, variations);
+          if (!dims.length) return;
+          const card = renderVariationCard(dims, { animate: true });
+          card.style.maxWidth = '100%';
+          card.style.margin = '2px 0 0';
+          variationSlot.appendChild(card);
+        })
+        .catch(() => {});
+    }
+  };
+  if (early) fillReviews(early);
+  else reviewsPromise.then(fillReviews, () => fillReviews([]));
 
   return wrapper;
 };

@@ -58,19 +58,31 @@ const getRatingPercentage = (ratingText: string) => {
   }
 };
 
+// One popover request per ASIN at a time, so overlapping sort passes share it.
+const popovers = new Map<string, Promise<any>>();
+const fetchRatings = (productSIN: string) => {
+  let ratings = popovers.get(productSIN);
+  if (!ratings) {
+    ratings = fetch(
+      `/gp/customer-reviews/widgets/average-customer-review/popover/ref=dpx_acr_pop_?contextId=dpx&asin=${productSIN}`,
+      { method: 'GET', mode: 'cors', credentials: 'include' }
+    )
+      .then(async (resp) => {
+        if (!resp.ok) throw new Error('Failed to fetch ratings');
+        return { ...getRatingPercentage(await resp.text()), ts: Date.now() };
+      })
+      .finally(() => popovers.delete(productSIN));
+    popovers.set(productSIN, ratings);
+  }
+  return ratings;
+};
+
 const getRatingScores = async (productSIN: string, elementToReplace: Element, cache: any) => {
   try {
     const now = Date.now();
     let ratings = cache[productSIN];
     if (!ratings || now - ratings.ts > CACHE_TTL) {
-      const resp = await fetch(
-        `/gp/customer-reviews/widgets/average-customer-review/popover/ref=dpx_acr_pop_?contextId=dpx&asin=${productSIN}`,
-        { method: 'GET', mode: 'cors', credentials: 'include' }
-      );
-      if (!resp.ok) throw new Error('Failed to fetch ratings');
-      const text = await resp.text();
-      const parsed = getRatingPercentage(text);
-      ratings = { ...parsed, ts: now };
+      ratings = await fetchRatings(productSIN);
       cache[productSIN] = ratings;
     }
     const scorePercentage = ratings.fiveStars - ratings.oneStars;
@@ -100,7 +112,12 @@ const resumeObs = () => {
     resultObs.observe(observedContainer, { childList: true });
 };
 
+// Sort passes overlap — new cards start their fetches at once instead of waiting
+// out the previous pass — and only the newest pass, which saw the most cards,
+// applies its order.
+let latestSort = 0;
 const sortAmazonResults = async () => {
+  const pass = ++latestSort;
   // Browse/promo pages and brand stores list the same product cards in their own
   // grids, with the ASIN in `data-csa-c-item-id` or on an inner `[data-asin]`.
   const items = document.querySelectorAll('.s-result-item[data-asin]:not([data-asin=""]):not(.AdHolder), .dcl-html-grid > [data-csa-c-item-id^="amzn1.asin."], [data-testid="product-grid-container"] > ul > li');
@@ -161,7 +178,9 @@ const sortAmazonResults = async () => {
   resumeObs();
 
   const results = await Promise.allSettled(fetchPromises);
-  saveCache(cache);
+  // Merged into what's stored now: an overlapping pass may have saved meanwhile.
+  saveCache({ ...getCache(), ...cache });
+  if (pass !== latestSort) return;
 
   const itemsArr: [number | null, Element][] = results
     .filter((r): r is PromiseFulfilledResult<[number | null, Element]> => r.status === 'fulfilled')
@@ -183,18 +202,11 @@ const sortAmazonResults = async () => {
 (async function main() {
   const isSearchPage = () => /s\?k|s\?i|s\?|\/b\/|browse\.html|\/stores\//.test(location.href);
 
-  let sorting = false, pendingSort = false;
   const debouncedSort = (() => {
     let timer: ReturnType<typeof setTimeout>;
     return () => {
       clearTimeout(timer);
-      timer = setTimeout(async () => {
-        if (sorting) { pendingSort = true; return; }
-        sorting = true;
-        await sortAmazonResults();
-        sorting = false;
-        if (pendingSort) { pendingSort = false; debouncedSort(); }
-      }, 300);
+      timer = setTimeout(() => void sortAmazonResults(), 300);
     };
   })();
 

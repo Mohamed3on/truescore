@@ -8,21 +8,22 @@ const API_BASE = 'https://apps.bazaarvoice.com/bfd/v1/clients/dm-de/api-products
 const BFD_TOKEN = '18357,main_site,de_DE';
 const throttledFetch = createThrottledFetcher(8);
 
-const buildUrl = (productId: string, withMediaFilter: boolean) => {
+// The product's stats ride along with any page of its reviews; one review is the
+// smallest page. (A photo-reviews-only query used to go first, but it carries no
+// stats for a product without photo reviews, so most products paid for both.)
+const buildUrl = (productId: string) => {
   const params = new URLSearchParams();
   params.set('resource', 'reviews');
-  params.set('action', withMediaFilter ? 'PHOTOS_TYPE' : 'REVIEWS_N_STATS');
+  params.set('action', 'REVIEWS_N_STATS');
   params.append('filter', `productid:eq:${productId}`);
   params.append('filter', 'contentlocale:eq:de*,de_DE,de_DE');
   params.append('filter', 'isratingsonly:eq:false');
-  if (withMediaFilter) params.append('filter', 'HasMedia:eq:true');
   params.set('filter_reviews', 'contentlocale:eq:de*,de_DE,de_DE');
-  params.set('include', withMediaFilter ? 'authors,products,comments' : 'products');
+  params.set('include', 'products');
   params.set('filteredstats', 'reviews');
   params.set('Stats', 'Reviews');
   params.set('limit', '1');
   params.set('offset', '0');
-  if (withMediaFilter) params.set('limit_comments', '3');
   params.set('sort', 'submissiontime:desc');
   params.set('Offset', '0');
   params.set('apiversion', '5.5');
@@ -69,27 +70,19 @@ const fetchStats = async (productId: string) => {
     referrer: 'https://www.dm.de/',
   };
 
-  const urls = [buildUrl(productId, true), buildUrl(productId, false)];
-  let definitive = true;
-  for (const url of urls) {
-    try {
-      const res = await throttledFetch(url, requestInit);
-      if (!res.ok) { definitive = false; continue; }
-      const json = await res.json();
-      const stats = extractStats(json, productId);
-      if (stats) {
-        cacheSet(cacheKey, stats);
-        return stats;
-      }
-    } catch {
-      definitive = false;
-    }
+  try {
+    const res = await throttledFetch(buildUrl(productId), requestInit);
+    if (!res.ok) return null;
+    const stats = extractStats(await res.json(), productId);
+    // An answer with no stats: this id genuinely has no reviews. Tombstoned so
+    // recreated cards stop re-firing the same doomed request; transport failures
+    // stay uncached and retry.
+    if (stats) cacheSet(cacheKey, stats);
+    else cacheSetMaybe(cacheKey, null);
+    return stats;
+  } catch {
+    return null;
   }
-
-  // Both endpoints answered with no stats: a review-less product. Tombstoned so
-  // recreated cards don't refire the request; transport failures stay uncached.
-  if (definitive) cacheSetMaybe(cacheKey, null);
-  return null;
 };
 
 const getScoreFromStats = (stats: any) => {

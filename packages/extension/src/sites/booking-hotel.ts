@@ -532,22 +532,25 @@ const renderEmptyPanel = (
   mountPanel(panel);
 };
 
+// Checked at once — the hidden inputs usually come with the server's HTML — then
+// every 500 ms until they render.
 function waitForHotelData(callback: (data: HotelData) => void) {
-  let attempts = 0;
-  const checkInterval = setInterval(() => {
+  const check = () => {
     const hotelIdInput = document.querySelector('input[name="hotel_id"]') as HTMLInputElement;
     const destIdInput = document.querySelector('input[name="dest_id"]') as HTMLInputElement;
-    if (!hotelIdInput?.value || !destIdInput?.value) {
-      // Some layouts never render the hidden inputs — stop polling after 30s.
-      if (++attempts >= 60) clearInterval(checkInterval);
-      return;
-    }
-    clearInterval(checkInterval);
+    if (!hotelIdInput?.value || !destIdInput?.value) return false;
     callback({
       hotelId: hotelIdInput.value,
       destId: destIdInput.value,
       hotelCountryCode: getHotelCountryCode(),
     });
+    return true;
+  };
+  if (check()) return;
+  let attempts = 0;
+  const checkInterval = setInterval(() => {
+    // Some layouts never render the hidden inputs — stop polling after 30s.
+    if (check() || ++attempts >= 60) clearInterval(checkInterval);
   }, 500);
 }
 

@@ -226,12 +226,13 @@ setupSpaInjector({
     const locale = getLocale();
     const itemNo = extractItemNo();
     if (!locale || !itemNo) return null;
+    // Reviews start downloading alongside the rating, which only decides whether
+    // the island shows — not once the page has an anchor for it.
+    const reviews = fetchReviews(locale.country, locale.lang, itemNo);
     const data = await fetchRating(locale.country, locale.lang, itemNo);
     if (!data) return null;
     const reviewCount = data.totalReviewCount ?? 0;
-    // Reviews start downloading now, not once the page has an anchor for the island.
-    const reviews = reviewCount >= 5 ? fetchReviews(locale.country, locale.lang, itemNo) : null;
-    return { itemNo, scoreData: getScore(data), panel: buildInsightsPanel(data), reviewCount, reviews };
+    return { itemNo, scoreData: getScore(data), panel: buildInsightsPanel(data), reviewCount, reviews: reviewCount >= 5 ? reviews : null };
   },
   inject: ({ itemNo, scoreData, panel, reviewCount, reviews }) => {
     if (scoreData) {

@@ -65,13 +65,26 @@ const dedupeById = (reviews: StampedReview[]): StampedReview[] => {
   return out;
 };
 
+// The review count in the page's own structured data. Stamped's total, which
+// page 1 reports, can run higher (519 against 425 on one course).
+const pageReviewCount = () => {
+  let count = 0;
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    for (const m of (script.textContent ?? '').matchAll(/"reviewCount"\s*:\s*"?(\d+)/g)) count = Math.max(count, Number(m[1]));
+  }
+  return count;
+};
+
 const fetchAllReviews = async (info: ProductInfo): Promise<ReviewBundle> => {
   const cacheKey = reviewsCacheKey(info.id);
   const cached = cacheGet(cacheKey, REVIEWS_CACHE_MS) as ReviewBundle | null;
 
-  // Always probe page 1 — gives current `total` plus the newest reviews,
-  // so we can detect new reviews and incrementally refresh the cache.
-  const first = await fetchPage(1, info);
+  // With a cache, page 1 goes alone — it gives the current `total` plus the
+  // newest reviews, so we can detect new ones and incrementally refresh. Cold,
+  // the pages the page's own review count calls for go out with it.
+  const upfront = cached ? 1 : Math.min(MAX_PAGES, Math.max(1, Math.ceil(pageReviewCount() / PAGE_SIZE)));
+  const early = Array.from({ length: upfront }, (_, i) => fetchPage(i + 1, info).catch(() => null));
+  const first = await early[0];
   if (!first) {
     if (cached) return cached;
     throw new Error('Stamped API unavailable');
@@ -92,12 +105,12 @@ const fetchAllReviews = async (info: ProductInfo): Promise<ReviewBundle> => {
     return bundle;
   }
 
-  // Otherwise refetch the rest in parallel.
+  // Otherwise refetch the rest in parallel — past those already under way.
   let complete = true;
   const remaining = Math.min(MAX_PAGES, Math.ceil(total / PAGE_SIZE)) - 1;
   if (remaining > 0) {
     const rest = await Promise.all(
-      Array.from({ length: remaining }, (_, i) => fetchPage(i + 2, info).catch(() => null))
+      Array.from({ length: remaining }, (_, i) => early[i + 1] ?? fetchPage(i + 2, info).catch(() => null))
     );
     for (const r of rest) {
       if (r?.data) merged.push(...r.data);

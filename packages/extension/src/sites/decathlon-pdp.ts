@@ -9,6 +9,9 @@ import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from
 import { adjust, RECENT_REVIEWS, recentRatio } from '../shared/recency';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// Hydration happens once per page load: in-app navigations after it wait for nothing.
+const hydrated = afterHydration();
 const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
 // Decathlon hands over a page as large as asked, but big ones fail (500) now and
 // then — a 20,000-review page (25 MB) did — so the full set comes in pages this
@@ -200,18 +203,21 @@ const addReviews = (json: any, into: DktReview[], seen = new Set<string>()) => {
 
 // Newest first (sortBy=DATE, the page's own language leading): the newest
 // RECENT_REVIEWS in one small request, so the gauge needn't wait, and every review
-// up to SEARCH_MAX for the Sample and the search. The whole set is kept a week in
+// up to SEARCH_MAX for the Sample and the search — its first page at once, the
+// rest when `total` says how many there are. The whole set is kept a week in
 // IndexedDB — only once complete, or a failed page's hole would be served for the
 // week. `v3`: entries were the newest 500 as plain texts before.
-const fetchReviews = (tld: string, locale: string, sku: string, productId: string, total: number) => {
+const fetchReviews = (tld: string, locale: string, sku: string, productId: string, total: Promise<number>) => {
   const cacheKey = `dkt-reviews-v3-${productId}`;
   const cached: Promise<DktReview[] | null> = idbGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
   const all = cached.then(async (hit) => {
     if (hit) return hit;
-    const pages = await Promise.allSettled(
-      Array.from({ length: Math.ceil(Math.min(total, SEARCH_MAX) / REVIEWS_PAGE) }, (_, page) =>
-        fetchJson(reviewsUrl(tld, locale, sku, REVIEWS_PAGE, page)))
-    );
+    const first = fetchJson(reviewsUrl(tld, locale, sku, REVIEWS_PAGE, 0));
+    const pageCount = Math.ceil(Math.min(await total, SEARCH_MAX) / REVIEWS_PAGE);
+    const pages = await Promise.allSettled([
+      first,
+      ...Array.from({ length: pageCount - 1 }, (_, i) => fetchJson(reviewsUrl(tld, locale, sku, REVIEWS_PAGE, i + 1))),
+    ]);
     const reviews: DktReview[] = [];
     const seen = new Set<string>();
     for (const page of pages) if (page.status === 'fulfilled') addReviews(page.value, reviews, seen);
@@ -287,13 +293,12 @@ setupSpaInjector({
     const ids = extractDecathlonIds();
     if (!site || !ids) return null;
     const statsPromise = fetchStats(site.tld, site.locale, ids.sku, ids.productId);
-    // Reviews start downloading at once; only touching the page waits for React to
-    // hydrate it (see afterHydration).
-    const reviews = statsPromise.then((stats) =>
-      stats?.count >= 5 ? fetchReviews(site.tld, site.locale, ids.sku, ids.productId, stats.count) : null);
-    const [stats] = await Promise.all([statsPromise, afterHydration()]);
+    // Reviews start downloading at once, alongside the stats that size them; only
+    // touching the page waits for React to hydrate it.
+    const reviews = fetchReviews(site.tld, site.locale, ids.sku, ids.productId, statsPromise.then((stats) => stats?.count ?? 0));
+    const [stats] = await Promise.all([statsPromise, hydrated]);
     if (!stats) return null;
-    return { ids, stats, scoreData: getScoreFromStats(stats), reviews: await reviews };
+    return { ids, stats, scoreData: getScoreFromStats(stats), reviews: stats.count >= 5 ? reviews : null };
   },
   inject: ({ ids, stats, scoreData, reviews }) => {
     const productInfo = document.querySelector('.product-info');
