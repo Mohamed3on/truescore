@@ -44,6 +44,22 @@ describe('runAsk', () => {
     expect(settled).toEqual({ searches: [{ query: 'dog OR Hund', found: 2, done: true, scorePct: 80, trustedReviews: 2 }], text: 'Yes, dogs are welcome.', done: true });
   });
 
+  test("a Search starts the moment its query is written, not when the round's stream closes", async () => {
+    // The first round holds its stream open until the Search has started.
+    let started!: () => void;
+    const searching = new Promise<void>((r) => { started = r; });
+    const rounds: Array<(c: ReadableStreamDefaultController<UIMessageChunk>) => Promise<void>> = [
+      async (c) => { c.enqueue({ type: 'start' }); c.enqueue(call('c1', 'wifi')); await searching; c.enqueue({ type: 'finish' }); },
+      async (c) => { for (const chunk of [{ type: 'start' } as const, ...text('a', 'Fast wifi.'), { type: 'finish' } as const]) c.enqueue(chunk); },
+    ];
+    const t: ChatTransport<AskMessage> = {
+      sendMessages: async () => { const round = rounds.shift()!; return new ReadableStream({ async start(c) { await round(c); c.close(); } }); },
+      reconnectToStream: async () => null,
+    };
+    const settled = await runAsk(t, 'Wifi?', async () => { started(); return { texts: ['[2024-01-01] fast wifi'], scorePct: 100, trustedReviews: 1 }; }, () => {});
+    expect(settled).toEqual({ searches: [{ query: 'wifi', found: 1, done: true, scorePct: 100, trustedReviews: 1 }], text: 'Fast wifi.', done: true });
+  });
+
   test('a Search the client cannot run goes back as an error, and its row says so', async () => {
     const { t, sent } = transport(
       [{ type: 'start' }, call('c1', 'wifi'), { type: 'finish' }],
@@ -65,7 +81,7 @@ describe('runAsk', () => {
     expect(b?.searches).toBe(a?.searches);
   });
 
-  test('a replayed Answer paints the Searches behind it and when it was written', async () => {
+  test('a replayed Answer paints the Searches behind it and when it was written, and runs none', async () => {
     const { t, sent } = transport([
       { type: 'start', messageMetadata: { answeredAt: 1234 } },
       call('c1', 'dog'),
@@ -73,8 +89,10 @@ describe('runAsk', () => {
       ...text('a', 'Yes.'),
       { type: 'finish' },
     ]);
-    expect(await runAsk(t, 'Dogs?', async () => null, () => {})).toEqual({ searches: [{ query: 'dog', found: 3, done: true, scorePct: 90, trustedReviews: 3 }], text: 'Yes.', done: true, answeredAt: 1234 });
+    let searched = 0;
+    expect(await runAsk(t, 'Dogs?', async () => { searched++; return null; }, () => {})).toEqual({ searches: [{ query: 'dog', found: 3, done: true, scorePct: 90, trustedReviews: 3 }], text: 'Yes.', done: true, answeredAt: 1234 });
     expect(sent).toHaveLength(1);
+    expect(searched).toBe(0);
   });
 
   test('a round with no Answer and no Search is cut off; an error says what went wrong', async () => {

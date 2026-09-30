@@ -67,29 +67,51 @@ const SEARCH_FAILED = 'Search is unavailable right now. Answer from the sample, 
 export async function runAsk(transport: ChatTransport<AskMessage>, question: string, search: SearchReviews, onView: (v: AskView) => void, abortSignal?: AbortSignal): Promise<AskView> {
   const asked: AskMessage = { id: 'question', role: 'user', parts: [{ type: 'text', text: question }] };
   const progress = new Map<string, number>();
+  // Each Search's matches by its call, null when it couldn't run.
+  const found = new Map<string, SearchMatches | null>();
   let answer: AskMessage | undefined;
   let view = askViewOf(answer);
+  // The Ask with every settled Search handed back as its call's output.
+  const settled = (m: AskMessage): AskMessage => ({
+    ...m,
+    parts: m.parts.map((p) => {
+      if (!isStaticToolUIPart(p) || p.state !== 'input-available' || !found.has(p.toolCallId)) return p;
+      const matches = found.get(p.toolCallId);
+      return matches
+        ? { ...p, state: 'output-available' as const, output: { ...matches, found: matches.texts.length } }
+        : { ...p, state: 'output-error' as const, errorText: SEARCH_FAILED };
+    }),
+  });
   // Rows only get a new array when one changed, so a painter can skip rebuilding them.
   const paint = () => {
-    const next = askViewOf(answer, progress);
+    const next = askViewOf(answer && settled(answer), progress);
     onView((view = JSON.stringify(next.searches) === JSON.stringify(view.searches) ? { ...next, searches: view.searches } : next));
   };
   for (;;) {
+    // Each Search starts the moment the model has written its query, not once the
+    // round's stream closes. Not a replayed Answer's (answeredAt): its calls
+    // stream in with their matches.
+    const searches = new Map<string, Promise<void>>();
+    const run = (m: AskMessage) => {
+      for (const call of m.parts) {
+        if (!isStaticToolUIPart(call) || call.state !== 'input-available' || searches.has(call.toolCallId)) continue;
+        const id = call.toolCallId;
+        searches.set(id, search(call.input.query, (n) => { progress.set(id, n); paint(); })
+          .catch(() => null)
+          .then((matches) => { found.set(id, matches); paint(); }));
+      }
+    };
     const stream = await transport.sendMessages({ trigger: 'submit-message', chatId: 'ask', messageId: undefined, messages: answer ? [asked, answer] : [asked], abortSignal });
     for await (const m of readUIMessageStream<AskMessage>({ message: answer, stream, terminateOnError: true })) {
       answer = m;
+      if (!m.metadata?.answeredAt) run(m);
       paint();
     }
     const calls = answer?.parts.filter(isStaticToolUIPart).filter((p) => p.state === 'input-available') ?? [];
     if (!calls.length) break;
-    await Promise.all(calls.map(async (call) => {
-      const matches = await search(call.input.query, (found) => { progress.set(call.toolCallId, found); paint(); }).catch(() => null);
-      const settled = matches
-        ? { ...call, state: 'output-available' as const, output: { ...matches, found: matches.texts.length } }
-        : { ...call, state: 'output-error' as const, errorText: SEARCH_FAILED };
-      answer = { ...answer!, parts: answer!.parts.map((p) => (p === call ? settled : p)) };
-      paint();
-    }));
+    run(answer!);
+    await Promise.all(calls.map((call) => searches.get(call.toolCallId)));
+    answer = settled(answer!);
   }
   if (!view.text.trim()) throw new Error('The answer was cut off — try again');
   onView((view = { ...view, done: true }));
