@@ -223,13 +223,16 @@ const throttledFetch = createThrottledFetcher(CONFIG.MAX_CONCURRENCY, fetchWithR
 // IMDb's calls don't use it: they go to the background (see fetchImdbRatings), whose
 // own queue keeps the current film's from waiting behind Letterboxd's.
 
-// One fetch per review page per visit, however many steps read it: the film's recent %
-// and its summary and search read the same newest pages.
+// One fetch per review page of this page's film per visit, however many steps read
+// it: its recent % and its summary and search read the same newest pages. A similar
+// pick's pages are read once, so they aren't kept.
 const reviewPages = new Map<string, Promise<string>>();
+const pageSlug = extractSlugFromUrl(location.href);
 
 /** Fetches one recent-reviews page (reviews/by/added) as HTML */
 const fetchReviewPage = (slug: string, page: number) => {
   const url = `https://letterboxd.com/film/${slug}/reviews/by/added/page/${page}/`;
+  if (slug !== pageSlug) return throttledFetch(url, { credentials: 'include' }).then((r) => r.text());
   let pending = reviewPages.get(url);
   if (!pending) {
     pending = throttledFetch(url, { credentials: 'include' }).then((r) => r.text());
@@ -1059,7 +1062,12 @@ function initObserver() {
     observer.observe(document.body, { childList: true, subtree: true });
     tryResolve();
   });
-  run(histogram).catch((error) => console.error('LBX Extension error:', error));
+  // A film with ratings says so in the page's own HTML (its average, in a meta tag):
+  // only then do the fetches start before the ratings chart renders. An unreleased
+  // film's never does, and its picks crawl would be for nothing.
+  const rated = !!document.querySelector('meta[name="twitter:data2"]');
+  (rated ? run(histogram) : histogram.then(() => run(histogram)))
+    .catch((error) => console.error('LBX Extension error:', error));
 }
 
 initObserver();
