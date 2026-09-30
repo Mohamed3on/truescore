@@ -2,7 +2,7 @@ import { netScore } from '@truescore/gmaps-shared';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas, el } from '../shared/utils';
 import { adjust, ratioFromTally } from '../shared/recency';
-import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, summarizeMatches } from '../shared/review-summary';
 import { buildSearchSection, runSearch, searchWith } from '../shared/review-search';
 import type { SearchAsk } from '../shared/review-ask';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
@@ -175,12 +175,8 @@ const parseFilteredReview = (review: Element): FilteredReview => {
   };
 };
 
-// The searched term is only a lens. Without this framing a brand-name search
-// ("Durex") on a competitor page came back as a review of Durex; the page title
-// goes along as context so the model knows which product is under review.
-const keywordSummaryPrompt = (kw: string) =>
-  `These are Amazon reviews of the product on this page that mention "${kw}". This product is always the subject, never ${kw}: do not review, rate, or give a verdict on ${kw} itself. Cover what reviewers praise and complain about regarding this product where ${kw} comes up, most-mentioned first; include a point only if 2+ reviewers make it. If ${kw} is a competing product or brand, frame each point as how reviewers say this product compares to it. Ignore shipping, delivery, packaging, and seller issues. If reviewers disagree, surface the tension. End with a short verdict on this product in relation to ${kw}.`;
-
+// The page title goes along as context, so the model knows which product the
+// searched term is a lens on (see keywordSummaryPrompt).
 const productContext = () => {
   const title = document.getElementById('productTitle')?.textContent?.trim();
   return title ? `The product on this page: ${title}` : undefined;
@@ -566,15 +562,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       toText: keywordText,
       summaryPrompt: keywordSummaryPrompt,
       exampleQuery: 'battery OR strap',
-      mountSummarize: (host, query, texts) => buildSummarizeWidget({
-        wrapper: host,
-        cacheKey: `review-summary-${cacheASIN}-kw-${query.toLowerCase()}`,
-        summaryPrompt: keywordSummaryPrompt(query),
-        context: productContext(),
-        fetchReviews: async () => texts,
-        questionPlaceholder: `Ask about \u201c${query}\u201d reviews\u2026`,
-        searchAsk,
-      }),
+      mountSummarize: summarizeMatches(`review-summary-${cacheASIN}`, { context: productContext(), searchAsk }),
     }));
   };
 

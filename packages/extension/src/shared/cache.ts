@@ -12,7 +12,7 @@ export const cacheGet = (key: string, ttl: number): any => {
 // as a short-lived tombstone — hosts that recreate processed nodes would
 // otherwise refire the same doomed request on every re-render batch. Transport
 // failures stay uncached so transient errors retry normally.
-const NEG_TTL = 6 * 60 * 60 * 1000;
+export const NEG_TTL = 6 * 60 * 60 * 1000;
 
 export const cacheGetMaybe = (key: string, ttl: number): { value: any } | null => {
   const data = cacheGet(key, ttl);

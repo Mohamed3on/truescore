@@ -3,6 +3,7 @@ import { idbGet, idbSet } from '../shared/idb-cache';
 import { couldReach, rankPicks } from '../shared/better-picks';
 import { adjust, ratioFromTally, TEN_POINT, THIN_SAMPLE, trendClass } from '../shared/recency';
 import { buildMediaSummary } from '../shared/review-summary';
+import { buildSearchSection } from '../shared/review-search';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 
@@ -297,6 +298,9 @@ function calculateCombinedScore(lbRatings: number[], imdbScore = 0, imdbTotal = 
   return { score: netScore(totalScore, totalRatings), ratio };
 }
 
+/** A rating label on the 10-point half-star scale ("★★★½" → 7); 0 when there is none */
+const ratingValue = (label: string) => (label.match(/★/g) || []).length * 2 + (label.includes('½') ? 1 : 0);
+
 /**
  * Tallies ratings from review page for recent reviews calculation. Scoped to
  * review entries: every page also inlines an icon sprite with one `svg.-rating`
@@ -305,8 +309,7 @@ function calculateCombinedScore(lbRatings: number[], imdbScore = 0, imdbTotal = 
  */
 function tallyRatings(doc: Document, tally: RecentTally) {
   doc.querySelectorAll('.production-viewing svg.-rating[aria-label]').forEach((svg) => {
-    const label = svg.getAttribute('aria-label')!;
-    const value = (label.match(/★/g) || []).length * 2 + (label.includes('½') ? 1 : 0);
+    const value = ratingValue(svg.getAttribute('aria-label')!);
     if (value <= 0) return;
     tally.total += 1;
     if (value >= TEN_POINT.positive) tally.net += 1;
@@ -424,24 +427,33 @@ const SUMMARY_SCHEMA = {
 
 const SUMMARY_PROMPT = `Summarize these recent Letterboxd reviews for someone deciding whether to watch this film. Be concise and specific to THIS film (performances, direction, writing, pacing, tone). Only use points raised by multiple reviewers; ignore Letterboxd in-jokes and contentless one-liners. You may use **bold** for emphasis. Each field is one or two short sentences, no preamble.`;
 
-/** Fetches recent-review prose (skipping rating-only entries) for summarization */
-async function fetchRecentReviewTexts(slug: string): Promise<string[]> {
+const SEARCH_SUMMARY_PROMPT = `Summarize what these film reviews say about the searched topic. Lead with the bottom line, keep it specific to what reviewers actually wrote, and avoid plot spoilers. A short paragraph or a few bullets.`;
+
+type LbxReview = { text: string; rating: number; date: string };
+
+/** Fetches recent reviews with prose (skipping rating-only entries), each with its own rating, for the summary and the review search */
+async function fetchRecentReviews(slug: string): Promise<LbxReview[]> {
   const parser = new DOMParser();
   const pages = await Promise.all(
     Array.from({ length: CONFIG.RECENT_REVIEW_PAGES }, (_, i) => fetchReviewPage(slug, i + 1).catch(() => ''))
   );
-  const texts: string[] = [];
+  const reviews: LbxReview[] = [];
   const seen = new Set<string>();
   for (const html of pages) {
     const doc = parser.parseFromString(html, 'text/html');
-    doc.querySelectorAll('.js-review-body').forEach((body) => {
-      const text = body.textContent?.trim().replace(/\s+/g, ' ') ?? '';
-      if (text.length >= 20 && !seen.has(text)) { seen.add(text); texts.push(text); }
+    doc.querySelectorAll('.production-viewing').forEach((entry) => {
+      const text = entry.querySelector('.js-review-body')?.textContent?.trim().replace(/\s+/g, ' ') ?? '';
+      if (text.length < 20 || seen.has(text)) return;
+      seen.add(text);
+      reviews.push({
+        text,
+        rating: ratingValue(entry.querySelector('svg.-rating[aria-label]')?.getAttribute('aria-label') ?? ''),
+        date: entry.querySelector('time[datetime]')?.getAttribute('datetime') ?? '',
+      });
     });
   }
-  return texts;
+  return reviews;
 }
-
 
 // =============================================================================
 // Similar Picks
@@ -940,6 +952,10 @@ async function run(ratings: number[]) {
     return imdbFailed ? { score, ratio: null, adjusted: null } : { score, ratio, adjusted };
   });
 
+  // One fetch of the recent reviews, shared by the summary and the review search.
+  let recentReviews: Promise<LbxReview[]> | undefined;
+  const getRecentReviews = (slug: string) => (recentReviews ??= fetchRecentReviews(slug));
+
   // AI summary of recent reviews sits between the synopsis and Similar Picks.
   const summaryAnchor = currentSlug
     ? buildMediaSummary({
@@ -952,13 +968,32 @@ async function run(ratings: number[]) {
         summaryCacheKey: `lbx_summary_${currentSlug}`,
         summaryTtl: CONFIG.SUMMARY_CACHE_MS,
         initialButtonLabel: '✦ Summarize recent reviews',
-        fetchReviews: () => fetchRecentReviewTexts(currentSlug),
+        fetchReviews: () => getRecentReviews(currentSlug).then((reviews) => reviews.map((r) => r.text)),
       })
     : reviewSection;
 
   const similarPicksPromise = currentSlug && currentRuntime
     ? displaySimilarPicks(currentSlug, currentPromise, currentRuntime, summaryAnchor)
     : Promise.resolve();
+
+  // A search over the same recent reviews, under the summary. Fetched once the
+  // picks are done, so its pages never queue ahead of theirs.
+  if (currentSlug) {
+    Promise.allSettled([currentPromise, similarPicksPromise])
+      .then(() => getRecentReviews(currentSlug))
+      .then((reviews) => {
+        if (reviews.length < 5) return;
+        summaryAnchor.appendChild(buildSearchSection({
+          reviews,
+          // Halves round up, so 4½★ and 5★ land on 5 (loved) and ½★ and 1★ on 1
+          // (hated): TEN_POINT's cut.
+          fields: (r) => ({ rating: Math.round(r.rating / 2), body: r.text, meta: r.date }),
+          toText: (r) => r.text,
+          summaryPrompt: SEARCH_SUMMARY_PROMPT,
+          exampleQuery: 'ending OR score',
+        }));
+      });
+  }
 
   await Promise.all([currentPromise, similarPicksPromise]);
 }

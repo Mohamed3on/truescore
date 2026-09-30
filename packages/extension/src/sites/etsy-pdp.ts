@@ -5,8 +5,8 @@ import { renderVariationCard, tallyVariationDims } from '../shared/variation-tab
 import { appendStat, buildGauge, buildRecentGauge, createIslandShell } from '../shared/score-island';
 import { adjust, recentRatio } from '../shared/recency';
 import { setupSpaInjector } from '../shared/spa-injector';
-import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
-import { buildReviewCard } from '../shared/review-search';
+import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { buildReviewCard, buildSearchSection } from '../shared/review-search';
 import {
   fetchItemScore,
   fetchRecentReviews,
@@ -301,6 +301,15 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
 
   const texts = [...new Set(reviews.map((r) => r.text).filter(Boolean))];
   if (texts.length >= 5) {
+    // Etsy has no text search to reach the rest, so this searches the newest
+    // reviews in hand — the same ones the summary reads.
+    wrapper.appendChild(buildSearchSection({
+      reviews: reviews.filter((r) => r.text),
+      fields: (r) => ({ rating: r.rating, body: r.text, meta: r.date }),
+      toText: (r) => r.text,
+      summaryPrompt: FILTERED_PRODUCT_SUMMARY_PROMPT,
+      exampleQuery: 'size OR gift',
+    }));
     buildSummarizeWidget({
       wrapper,
       cacheKey: `etsy-summary-${meta.listingId}`,

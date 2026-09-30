@@ -1,10 +1,12 @@
 import { addCommas, npsColor, npsStats } from '../shared/utils';
-import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
-import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
-import { buildSearchSection } from '../shared/review-search';
+import { cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
+import { idbGet, idbSet } from '../shared/idb-cache';
+import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from '../shared/review-summary';
+import { buildSearchSection, runSearch, searchWith } from '../shared/review-search';
+import type { SearchAsk } from '../shared/review-ask';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
-import { adjust, recentRatio } from '../shared/recency';
+import { adjust, RECENT_REVIEWS, recentRatio } from '../shared/recency';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const API_BASE = 'https://apps.bazaarvoice.com/bfd/v1/clients/dm-de/api-products/cv2/resources/data/reviews.json';
@@ -93,11 +95,10 @@ const fetchStats = async (productId: string) => {
   return null;
 };
 
-const REVIEWS_TTL = 24 * 60 * 60 * 1000; // 24h
-const REVIEWS_PAGE = 30; // BazaarVoice page size dm itself uses
-const REVIEWS_MAX_PAGES = 5; // up to 150 most-recent reviews, fetched in parallel
+const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
+const REVIEWS_PAGE = 100; // the most BazaarVoice hands over per request
 
-const buildReviewsUrl = (productId: string, offset: number) => {
+const buildReviewsUrl = (productId: string, offset: number, search?: string) => {
   const params = new URLSearchParams();
   params.set('resource', 'reviews');
   params.set('action', 'REVIEWS_N_STATS');
@@ -114,6 +115,7 @@ const buildReviewsUrl = (productId: string, offset: number) => {
   params.set('Offset', String(offset));
   params.set('apiversion', '5.5');
   params.set('displaycode', '18357-de_de');
+  if (search) params.set('search', search);
   return `${API_BASE}?${params.toString()}`;
 };
 
@@ -126,46 +128,70 @@ interface DmReview {
 
 const reviewToText = (r: DmReview) => [r.title, r.body].filter(Boolean).join(': ').trim();
 
-// Most-recent reviews (BazaarVoice sorts by submissiontime:desc). All pages fire
-// in parallel, so the wall-clock cost is a single round-trip no matter how many
-// pages we pull. Feeds both the "recent positive" gauge and LLM summarization.
-const fetchReviews = async (productId: string, totalCount = REVIEWS_PAGE * REVIEWS_MAX_PAGES): Promise<DmReview[]> => {
-  const cacheKey = `dm_reviews_v3_${productId}`;
-  const cached = cacheGet(cacheKey, REVIEWS_TTL);
+// One page of reviews, newest first, with the count of every review it's a page of.
+const fetchPage = async (productId: string, offset: number, search?: string) => {
+  const res = await fetch(buildReviewsUrl(productId, offset, search), REVIEW_REQUEST_INIT);
+  if (!res.ok) throw new Error(`dm reviews ${res.status}`);
+  const response = (await res.json())?.response;
+  const reviews: DmReview[] = (response?.Results ?? []).map((r: any) => ({
+    rating: Number(r.Rating) || 0,
+    title: r.Title || '',
+    body: r.ReviewText || '',
+    date: String(r.SubmissionTime || '').slice(0, 10),
+  }));
+  return { reviews, total: Number(response?.TotalResults) || 0 };
+};
+
+// First of each review text: syndicated copies repeat it verbatim.
+const dedupe = (reviews: DmReview[]) => {
+  const seen = new Set<string>();
+  return reviews.filter((r) => {
+    const text = reviewToText(r);
+    if (!text || seen.has(text)) return false;
+    seen.add(text);
+    return true;
+  });
+};
+
+// Every review up to the newest SAMPLE_MAX, all pages in parallel, so the
+// wall-clock cost is about one round-trip. Feeds the recent gauge and the
+// Summary/Ask. Kept a week in IndexedDB, and only whole: a failed page's hole
+// would otherwise be served for the week.
+const fetchReviews = async (productId: string, totalCount: number): Promise<DmReview[]> => {
+  const cacheKey = `dm_reviews_v4_${productId}`;
+  const cached = await idbGet(cacheKey, REVIEWS_TTL);
   if (cached) return cached;
 
-  const pageCount = Math.min(REVIEWS_MAX_PAGES, Math.max(1, Math.ceil(totalCount / REVIEWS_PAGE)));
+  const pageCount = Math.min(SAMPLE_MAX / REVIEWS_PAGE, Math.max(1, Math.ceil(totalCount / REVIEWS_PAGE)));
   const pages = await Promise.allSettled(
-    Array.from({ length: pageCount }, (_, i) =>
-      fetch(buildReviewsUrl(productId, i * REVIEWS_PAGE), REVIEW_REQUEST_INIT).then((r) => (r.ok ? r.json() : null))
-    )
+    Array.from({ length: pageCount }, (_, i) => fetchPage(productId, i * REVIEWS_PAGE))
   );
-
-  const seen = new Set<string>();
-  const reviews: DmReview[] = [];
-  for (const page of pages) {
-    if (page.status !== 'fulfilled') continue;
-    const results = page.value?.response?.Results;
-    if (!Array.isArray(results)) continue;
-    for (const r of results) {
-      const review: DmReview = {
-        rating: Number(r.Rating) || 0,
-        title: r.Title || '',
-        body: r.ReviewText || '',
-        date: String(r.SubmissionTime || '').slice(0, 10),
-      };
-      const text = reviewToText(review);
-      if (text && !seen.has(text)) {
-        seen.add(text);
-        reviews.push(review);
-      }
-    }
-  }
-  if (reviews.length) cacheSet(cacheKey, reviews);
+  const reviews = dedupe(pages.flatMap((p) => (p.status === 'fulfilled' ? p.value.reviews : [])));
+  if (reviews.length && pages.every((p) => p.status === 'fulfilled')) idbSet(cacheKey, reviews);
   return reviews;
 };
 
 const reviewTexts = (reviews: DmReview[]) => reviews.map(reviewToText).filter(Boolean);
+
+// Search every review through BazaarVoice's own full-text search, one request per
+// OR term: it ORs a term's words itself and drops stop-words ("zu klein" finds
+// every "klein"). A term's newest hundred matches come back; one term's count is
+// BazaarVoice's own over every review, several terms' is what their union holds.
+// Queries are kept, so backspacing doesn't refire them.
+const makeReviewSearch = (productId: string) => {
+  const cache = new Map<string, { matches: DmReview[]; total: number }>();
+  return async (terms: string[]) => {
+    const key = terms.join(' OR ');
+    let hit = cache.get(key);
+    if (!hit) {
+      const pages = await Promise.all(terms.map((t) => fetchPage(productId, 0, t)));
+      const matches = dedupe(pages.flatMap((p) => p.reviews));
+      hit = { matches, total: pages.length === 1 ? pages[0].total : matches.length };
+      cache.set(key, hit);
+    }
+    return hit;
+  };
+};
 
 const getScoreFromStats = (stats: any) => {
   const dist = stats?.RatingDistribution;
@@ -293,40 +319,46 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
 
   appendInsights(wrapper, stats, scoreData);
 
-  // Filled with the review-search section once the corpus lands; sits above the
-  // summarize widget the same way it does on the other PDP islands.
-  const searchSlot = document.createElement('div');
-  wrapper.appendChild(searchSlot);
-
   if (total >= 5 && productId) {
+    const search = makeReviewSearch(productId);
+    // The Sample stops at SAMPLE_MAX; past it, an Ask Searches the rest.
+    const searchAsk: SearchAsk | undefined = total > SAMPLE_MAX ? {
+      search: searchWith((terms) => search(terms).then((hit) => hit.matches), reviewToText, (r) => r.rating),
+      open: (query) => runSearch(wrapper, query),
+    } : undefined;
+
+    // Above the summarize widget, the same way it sits on the other PDP islands.
+    wrapper.appendChild(buildSearchSection({
+      reviews: [],
+      total,
+      search,
+      fields: (r) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date }),
+      toText: reviewToText,
+      summaryPrompt: keywordSummaryPrompt,
+      exampleQuery: 'Duft OR Haut',
+      mountSummarize: summarizeMatches(`dm-summary-${productId}`, { searchAsk }),
+    }));
+
     buildSummarizeWidget({
       wrapper,
       cacheKey: `dm-summary-${productId}`,
       summaryPrompt: PRODUCT_SUMMARY_PROMPT,
       fetchReviews: () => fetchReviews(productId, total).then(reviewTexts),
+      searchAsk,
     });
   }
 
-  // Fill the recent-positive gauge from the most-recent reviews (shares the cache
-  // with summarize, so it's one fetch per product). Drop the gauge if none load;
-  // land the adjusted stat (score damped by the recent ratio) beside the others.
+  // Fill the recent-positive gauge from the newest RECENT_REVIEWS (shares the
+  // cache with summarize, so it's one fetch per product). Drop the gauge if none
+  // load; land the adjusted stat (score damped by the recent ratio) beside the others.
   if (total > 0 && productId) {
     fetchReviews(productId, total)
       .then((reviews) => {
-        const ratio = recentRatio(reviews.map((r) => r.rating));
+        const ratio = recentRatio(reviews.slice(0, RECENT_REVIEWS).map((r) => r.rating));
         fillRecentGauge(gauge, ratio);
         if (ratio != null && scoreData) {
           const row = wrapper.querySelector<HTMLElement>('.ars-stats');
           if (row) appendStat(row, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
-        }
-        if (reviews.length >= 5) {
-          searchSlot.appendChild(buildSearchSection({
-            reviews,
-            fields: (r) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date }),
-            toText: reviewToText,
-            summaryPrompt: FILTERED_PRODUCT_SUMMARY_PROMPT,
-            exampleQuery: 'Duft OR Haut',
-          }));
         }
       })
       .catch(() => fillRecentGauge(gauge, null));

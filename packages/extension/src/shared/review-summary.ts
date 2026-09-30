@@ -27,6 +27,18 @@ conclusion: 2–4 sentences — the overall verdict: what owners consistently sa
 // (the review-search section's "Summarize <query>" pass).
 export const FILTERED_PRODUCT_SUMMARY_PROMPT = `These are reviews of the product on this page, filtered to the ones that mention the searched term. Summarize what they say about this product where that term comes up. The product is always the subject: if the term is a competing product or brand, describe how reviewers compare this product to it instead of reviewing the competitor. Lead with the bottom line. Ignore shipping, delivery, packaging, or seller issues — focus only on the product itself. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
 
+// The structured counterpart, for the full summarize widget under a search's
+// matches (see summarizeMatches). The searched term is only a lens: without this
+// framing a brand-name search ("Durex") on a competitor page came back as a
+// review of Durex.
+export const keywordSummaryPrompt = (kw: string) =>
+  `These are reviews of the product on this page that mention "${kw}". This product is always the subject, never ${kw}: do not review, rate, or give a verdict on ${kw} itself. Cover what reviewers praise and complain about regarding this product where ${kw} comes up, most-mentioned first; include a point only if 2+ reviewers make it. If ${kw} is a competing product or brand, frame each point as how reviewers say this product compares to it. Ignore shipping, delivery, packaging, and seller issues. If reviewers disagree, surface the tension. End with a short verdict on this product in relation to ${kw}.`;
+
+// A product's Summary and Ask read every review up to the newest this many: more
+// would put hundreds of thousands of tokens into each one. An Ask on an item with
+// more reaches the rest by Searching.
+export const SAMPLE_MAX = 3000;
+
 export const renderStructuredSummary = (
   container: HTMLElement,
   { complaints, praised, conclusion, betterAlternative }: any,
@@ -381,6 +393,19 @@ export const buildSummarizeWidget = ({
     });
   }
 };
+
+// The full summarize widget under a search's matches (buildSearchSection's
+// mountSummarize): a summary of them and an Ask about them, cached per query
+// under `cacheKey`.
+export const summarizeMatches = (cacheKey: string, opts: Pick<SummarizeWidgetOpts, 'context' | 'searchAsk'> = {}) =>
+  (wrapper: HTMLElement, query: string, texts: string[]) => buildSummarizeWidget({
+    wrapper,
+    cacheKey: `${cacheKey}-kw-${query.toLowerCase()}`,
+    summaryPrompt: keywordSummaryPrompt(query),
+    fetchReviews: async () => texts,
+    questionPlaceholder: `Ask about “${query}” reviews…`,
+    ...opts,
+  });
 
 interface MediaSummaryOpts {
   anchor: Element;

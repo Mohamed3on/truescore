@@ -8,6 +8,7 @@ and `gmaps-shared`.
 
 ## Domain vocabulary
 
+- **Item** — whatever a site's reviews are about: a Place, a product, a book, a film, a hotel. _Avoid_: "product" or "place" as the generic word.
 - **Place** — a Google Maps location, identified by a **featureId** (`0x…:0x…` hex pair) parsed from the URL.
 - **Review** — one Google review: `stars`, `reviewerReviewCount`, `timestamp`, `text`.
 - **Trust filtering** — a review counts only if its author is **trusted**: `reviewerReviewCount >= TRUSTED_MIN_REVIEWS` (3). Filtering out drive-by/low-history reviewers is the whole premise.
@@ -18,9 +19,9 @@ and `gmaps-shared`.
 - **Summary** — LLM output for a place (gemini, openai, or deepseek; see packages/web/llm.ts): a prose **verdict**, a list of **SummaryHighlight**s, **valueForMoney** (1–5), and **items** (praised dishes/menu terms). The model reads a **Subject** (`web/summary-subject.ts`): place name, review texts, and — when Google shows one — the **RemovedReviews** takedown notice, which `removalNote` turns into a prompt paragraph: weigh the set as survivor-only (takedowns are business-requested and skew negative), check the surviving reviews for corroboration, and mention the removal only when they corroborate it — the UI already shows Google's banner. The extension ships the notice in the body; the web caller gets it from the cached preview meta.
 - **SummaryHighlight** — one verdict bullet: `{ text, sentiment }`. Distinct from **Chip** — both used to be called "highlight".
 - **items** (dish chips) — short praised dish/menu terms from the Summary, rendered as their own chips below the topic chips and auto-scored via a **Search** each; clicking one opens that search.
-- **Search** — arbitrary review-text search within a place, run by the user or by the model during an **Ask**. A Gmail-style ` OR ` operator (`parseOrQuery`, any case) splits the query into terms; each is searched separately and the matches are unioned (dedup by `reviewId`). _Avoid_: label search (extension UI copy only).
-- **Ask** — a free-form question about a Place, or about a Chip's or Search's reviews, answered by the LLM from a **Sample**. When the Sample doesn't settle it, the model runs its own Searches over every review of the Place before answering. Its output is the **Answer**. Amazon and Goodreads Asks work the same way in the extension, on the popup's model, with each Search going through that site's own review search.
-- **Sample** — the reviews an Ask starts from: whatever was collected before the score stabilized, or the Chip/Search subset being asked about. Never the Place's full review set.
+- **Search** — arbitrary review-text search within an Item, run by the user or by the model during an **Ask**. A Gmail-style ` OR ` operator (`parseOrQuery`, any case) splits the query into terms; each is searched separately and the matches are unioned (dedup by `reviewId`). It spans every review of the Item, except on sites that offer no way to reach them all, where it covers only the reviews already fetched and says how many. _Avoid_: label search (extension UI copy only).
+- **Ask** — a free-form question about an Item, or about a Chip's or Search's reviews, answered by the LLM from a **Sample**. When the Sample doesn't settle it, the model runs its own Searches over every review of the Item before answering — offered only where a Search reaches reviews the Sample lacks. Its output is the **Answer**. Extension Asks run on the popup's model, each Search going through that site's own review search.
+- **Sample** — the reviews an Ask starts from: for a Place, whatever was collected before the score stabilized — never its full review set; for a product, its newest reviews up to a few thousand — all of them, where the site hands them all over — and its summary reads the same set; or the Chip/Search subset being asked about.
 
 ## Architecture vocabulary
 

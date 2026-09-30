@@ -1,5 +1,6 @@
 import { addCommas, el, npsColor, npsStats } from './utils';
 import { llmSummarize, renderFreeFormAnswer } from './review-summary';
+import type { SearchAsk } from './review-ask';
 import { parseOrQuery, type SearchReviews } from '@truescore/gmaps-shared';
 
 // Gmail-style ` OR ` (any case) splits a query into lowercased terms; a review
@@ -64,6 +65,32 @@ const appendHighlighted = (parent: HTMLElement, text: string, terms: string[]) =
 
 export interface SearchReviewFields { rating: number; title?: string; body?: string; meta?: string }
 
+// A Search over reviews in hand: every one holding any term in its title, body
+// or meta, lowercased. The search box filters this way when it has no remote
+// `search`.
+export const localSearch = <T,>(reviews: T[], fields: (r: T) => SearchReviewFields) => {
+  const projected = reviews.map((r) => {
+    const f = fields(r);
+    return { r, h: [f.title, f.body, f.meta].filter(Boolean).join(' ').toLowerCase() };
+  });
+  return (terms: string[]) => projected.filter((p) => terms.some((t) => p.h.includes(t))).map((p) => p.r);
+};
+
+// An Ask's Searches over every review in hand, for an item whose Sample holds only
+// the newest of them; a Search's row opens its query in `island`'s search box.
+export const localSearchAsk = <T,>(
+  reviews: Promise<T[]>,
+  fields: (r: T) => SearchReviewFields,
+  toText: (r: T) => string,
+  island: Element,
+): SearchAsk => {
+  let find: ((terms: string[]) => T[]) | undefined;
+  return {
+    search: searchWith(async (terms) => (find ??= localSearch(await reviews, fields))(terms), toText, (r) => fields(r).rating),
+    open: (query) => runSearch(island, query),
+  };
+};
+
 const MAX_RENDERED_RESULTS = 50;
 const SEARCH_DEBOUNCE_MS = 120;
 // Remote searches cost a request per keystroke-burst, so they wait longer.
@@ -103,10 +130,7 @@ export const buildSearchSection = <T,>({
 }: ReviewSearchOpts<T>) => {
   const promptFor = (query: string) => (typeof summaryPrompt === 'function' ? summaryPrompt(query) : summaryPrompt);
   const corpusSize = total ?? reviews.length;
-  const projected = reviews.map((r) => {
-    const f = fields(r);
-    return { r, f, h: [f.title, f.body, f.meta].filter(Boolean).join(' ').toLowerCase() };
-  });
+  const findLocal = localSearch(reviews, fields);
 
   const section = el('div', 'ars-search-section');
   const input = document.createElement('input');
@@ -146,7 +170,7 @@ export const buildSearchSection = <T,>({
 
   const findMatches = async (terms: string[]): Promise<{ matches: Match[]; total: number }> => {
     if (!search) {
-      const matches = projected.filter((p) => terms.some((t) => p.h.includes(t)));
+      const matches = findLocal(terms).map((r) => ({ r, f: fields(r) }));
       return { matches, total: matches.length };
     }
     const hit = await search(terms);

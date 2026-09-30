@@ -216,6 +216,76 @@
 .lbx-summary-error { color: #e54; font-size: .85rem; }
 .lbx-summary-progress { color: #678; font-size: .9rem; }
 
+/* Review search under the summary: the shared .ars-search-* section, in Letterboxd's palette. */
+.ars-search-section {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  margin-top: 1rem;
+  padding-top: .75rem;
+  border-top: 1px dashed #456;
+}
+.ars-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: .45rem .7rem;
+  font: inherit;
+  font-size: .85rem;
+  color: #def;
+  background: #2c3440;
+  border: 1px solid #456;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color .15s ease;
+}
+.ars-search-input::placeholder { color: #678; }
+.ars-search-input:focus { border-color: #00e054; }
+.ars-search-header { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.ars-search-score { font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ars-search-summary { flex: 1; min-width: 140px; font-size: .8rem; color: #678; }
+.ars-search-count { font-weight: 700; color: #def; font-variant-numeric: tabular-nums; margin-right: 2px; }
+.ars-summarize-btn {
+  background: transparent;
+  border: 1px solid #456;
+  color: #9ab;
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 600;
+  padding: .3rem .7rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color .15s ease, color .15s ease;
+}
+.ars-summarize-btn:hover:not(:disabled) { border-color: #00e054; color: #00e054; }
+.ars-summarize-btn:disabled { opacity: .55; cursor: default; }
+.ars-summary-panel { color: #9ab; font-size: .9rem; line-height: 1.5; }
+.ars-summary-panel p { margin: 0 0 .5rem; }
+.ars-summary-panel p:last-child { margin-bottom: 0; }
+.ars-summary-panel strong { color: #cde; font-weight: 600; }
+.ars-search-list {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.ars-search-review {
+  padding: .5rem .7rem;
+  background: #2c3440;
+  border-radius: 4px;
+  font-size: .85rem;
+  line-height: 1.5;
+  color: #9ab;
+}
+.ars-search-review-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .2rem; }
+.ars-search-stars { color: #00e054; font-size: .75rem; letter-spacing: .05em; }
+.ars-search-meta { font-size: .75rem; color: #678; font-variant-numeric: tabular-nums; }
+.ars-search-body { white-space: pre-wrap; word-break: break-word; }
+.ars-search-hl { background: rgba(0, 224, 84, .2); color: #def; padding: 0 2px; border-radius: 2px; }
+.ars-search-empty,
+.ars-search-truncated { font-size: .8rem; color: #678; font-style: italic; }
+
 /* Ignore controls: an × per pick that mutes it from the winner check, plus a
    collapsed drawer holding what's been muted so any of it can be restored. */
 .lbx-similar [hidden] { display: none; }

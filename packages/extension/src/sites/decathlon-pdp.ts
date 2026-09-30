@@ -1,12 +1,17 @@
 import { addCommas, el, npsColor, npsStats } from '../shared/utils';
-import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
-import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { cacheGet, cacheSet, NEG_TTL } from '../shared/cache';
+import { idbGet, idbSet } from '../shared/idb-cache';
+import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from '../shared/review-summary';
+import { buildSearchSection, localSearchAsk } from '../shared/review-search';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
-import { adjust, recentRatio } from '../shared/recency';
+import { adjust, RECENT_REVIEWS, recentRatio } from '../shared/recency';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
+const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
+// A page past any item's review count: Decathlon hands over the whole set at once.
+const EVERY_REVIEW = 20000;
 
 const fetchStats = async (tld: string, locale: string, sku: string, productId: string) => {
   const cacheKey = `nps_stats_${productId}`;
@@ -154,39 +159,45 @@ const replaceSizometer = (stats: any) => {
   (sizometer as HTMLElement).style.display = 'none';
 };
 
-interface DktReview { rating: number; text: string }
+interface DktReview { rating: number; title: string; body: string; date: string }
 
-// The newest ~500 reviews (sortBy=DATE, newest first), each with its 1–5 rating.
-// Rating-only reviews stay in — they count toward the recent gauge even with no
-// prose for the summarizer. `v2`: entries were plain texts before ratings rode along.
-const fetchRecentReviews = async (tld: string, locale: string, sku: string, productId: string): Promise<DktReview[]> => {
-  const reviewsCacheKey = `dkt-reviews-v2-${productId}`;
-  const cached = cacheGetMaybe(reviewsCacheKey, 86400000);
-  if (cached) return cached.value ?? [];
+const reviewToText = (r: DktReview) => [r.title, r.body].filter(Boolean).join(': ').trim();
+
+const reviewFields = (r: DktReview) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date });
+
+// Every review (sortBy=DATE: newest first, the page's own language leading), each
+// with its 1–5 rating, in one request. Rating-only reviews stay in — they count
+// toward the recent gauge even with no prose for the summarizer. Kept a week in
+// IndexedDB: a big item's set would crowd the site's localStorage. `v3`: entries
+// were the newest 500 as plain texts before.
+const fetchReviews = async (tld: string, locale: string, sku: string, productId: string): Promise<DktReview[]> => {
+  const cacheKey = `dkt-reviews-v3-${productId}`;
+  const cached = await idbGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
+  if (cached) return cached;
+
+  const res = await fetch(
+    `https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${sku}/product?nbItemsPerPage=${EVERY_REVIEW}&page=0&sortBy=DATE`
+  );
+  if (!res.ok) return [];
+  const json = await res.json();
 
   const seen = new Set<string>();
   const reviews: DktReview[] = [];
-  const results = await Promise.allSettled(
-    [0, 1, 2, 3, 4].map(page =>
-      fetch(`https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${sku}/product?nbItemsPerPage=100&page=${page}&sortBy=DATE`)
-        .then(r => r.ok ? r.json() : null)
-    )
-  );
-  for (const result of results) {
-    if (result.status !== 'fulfilled' || !result.value?.reviews) continue;
-    for (const r of result.value.reviews) {
-      const text = [r.title, r.comment].filter(Boolean).join(': ').trim();
-      const id = String(r.id ?? '') || text;
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      reviews.push({ rating: Number(r.rating?.code) || 0, text });
-    }
+  for (const r of json?.reviews ?? []) {
+    const review: DktReview = {
+      rating: Number(r.rating?.code) || 0,
+      title: r.title || '',
+      body: r.comment || '',
+      date: String(r.publisherDate || '').slice(0, 10),
+    };
+    const id = String(r.id ?? '') || reviewToText(review);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    reviews.push(review);
   }
-  // Tombstone parsed-but-empty results briefly; all-pages-failed stays uncached
-  // so transient errors retry.
-  const anyOk = results.some((r) => r.status === 'fulfilled' && r.value);
-  if (reviews.length) cacheSet(reviewsCacheKey, reviews);
-  else if (anyOk) cacheSetMaybe(reviewsCacheKey, null);
+  // Parsed-but-empty tombstones briefly (see the TTL above); a failed request
+  // stays uncached so transient errors retry.
+  idbSet(cacheKey, reviews);
   return reviews;
 };
 
@@ -196,26 +207,41 @@ const addSummarizeUI = (
   locale: string,
   sku: string,
   productId: string,
+  total: number,
   scoreData: { score: number; nps: number } | null
 ) => {
   if (document.querySelector('.ars-wrapper')) return;
 
   const wrapper = createIslandShell();
 
-  // Recent-positive gauge, filled once the newest reviews land (one cached
-  // fetch shared with the summarizer), plus the adjusted/analyzed stats row.
+  // Recent-positive gauge over the newest RECENT_REVIEWS, filled once every review
+  // lands (one cached fetch shared with the summarizer and the search), plus the
+  // adjusted/analyzed stats row.
   const gauge = buildRecentGauge();
   wrapper.appendChild(gauge);
-  const reviewsPromise = fetchRecentReviews(tld, locale, sku, productId);
+  const reviewsPromise = fetchReviews(tld, locale, sku, productId);
+  // The Sample stops at SAMPLE_MAX; past it, an Ask Searches the rest.
+  const searchAsk = total > SAMPLE_MAX ? localSearchAsk(reviewsPromise, reviewFields, reviewToText, wrapper) : undefined;
   reviewsPromise
     .then((reviews) => {
-      const ratio = recentRatio(reviews.map((r) => r.rating));
+      const recent = reviews.slice(0, RECENT_REVIEWS);
+      const ratio = recentRatio(recent.map((r) => r.rating));
       fillRecentGauge(gauge, ratio);
       if (ratio == null) return;
       const stats = el('div', 'ars-stats') as HTMLElement;
       if (scoreData) appendStat(stats, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
-      appendStat(stats, String(reviews.length), 'analyzed');
+      appendStat(stats, String(recent.length), 'analyzed');
       gauge.after(stats);
+
+      // Between the stats row and the summarize widget's question row.
+      stats.after(buildSearchSection({
+        reviews,
+        fields: reviewFields,
+        toText: reviewToText,
+        summaryPrompt: keywordSummaryPrompt,
+        exampleQuery: 'size OR quality',
+        mountSummarize: summarizeMatches(`dkt-summary-${productId}`, { searchAsk }),
+      }));
     })
     .catch(() => fillRecentGauge(gauge, null));
 
@@ -224,7 +250,8 @@ const addSummarizeUI = (
     cacheKey: `dkt-summary-${productId}`,
     summaryPrompt: PRODUCT_SUMMARY_PROMPT,
     fetchReviews: () =>
-      reviewsPromise.then((reviews) => [...new Set(reviews.map((r) => r.text).filter(Boolean))]),
+      reviewsPromise.then((reviews) => [...new Set(reviews.slice(0, SAMPLE_MAX).map(reviewToText).filter(Boolean))]),
+    searchAsk,
   });
 
   anchor.after(wrapper);
@@ -248,7 +275,7 @@ setupSpaInjector({
     replaceSizometer(stats);
     if (stats.count >= 5 && !document.querySelector('.ars-wrapper')) {
       const anchor = document.querySelector('.nps-insights') || productInfo.querySelector('.product-info__description') || productInfo;
-      addSummarizeUI(anchor, site.tld, site.locale, ids.sku, ids.productId, scoreData);
+      addSummarizeUI(anchor, site.tld, site.locale, ids.sku, ids.productId, stats.count, scoreData);
     }
   },
   cleanup: () => {

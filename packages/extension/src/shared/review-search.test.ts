@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { buildSearchSection, buildReviewCard, queryTerms } from './review-search';
+import { buildSearchSection, buildReviewCard, localSearchAsk, queryTerms } from './review-search';
 
 type R = { rating: number; title: string; body: string };
 const review = (rating: number, title: string, body = ''): R => ({ rating, title, body });
@@ -118,6 +118,29 @@ describe('buildSearchSection', () => {
     expect((section.querySelector('.ars-search-list') as HTMLElement).style.display).toBe('');
     await search(section, '');
     expect((section.querySelector('.ars-search-list') as HTMLElement).style.display).toBe('none');
+  });
+});
+
+describe('localSearchAsk', () => {
+  const fields = (r: R) => ({ rating: r.rating, title: r.title, body: r.body });
+
+  test("an Ask's Search matches every review in hand, scored over its rated matches", async () => {
+    const reviews = [review(5, 'great battery'), review(1, 'battery died'), review(5, 'nice strap'), review(0, 'battery ok')];
+    const ask = localSearchAsk(Promise.resolve(reviews), fields, (r) => r.title, document.body);
+    // (1 loved − 1 hated) / 2 rated; the unrated match still counts as found.
+    expect(await ask.search('Battery OR zip', () => {})).toEqual({
+      texts: ['great battery', 'battery died', 'battery ok'],
+      scorePct: 0,
+      trustedReviews: 2,
+    });
+  });
+
+  test("a Search's row opens its query in the island's search box", () => {
+    const island = document.createElement('div');
+    const section = mount({ reviews: [review(5, 'battery lasts')] });
+    island.appendChild(section);
+    localSearchAsk(Promise.resolve([]), fields, (r) => r.title, island).open!('strap OR battery');
+    expect((section.querySelector('.ars-search-input') as HTMLInputElement).value).toBe('strap OR battery');
   });
 });
 

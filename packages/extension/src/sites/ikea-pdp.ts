@@ -1,13 +1,17 @@
 import { addCommas, el, npsColor, npsStats } from '../shared/utils';
-import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
-import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
-import { buildSearchSection } from '../shared/review-search';
+import { cacheGet, cacheSet, NEG_TTL } from '../shared/cache';
+import { idbGet, idbSet } from '../shared/idb-cache';
+import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from '../shared/review-summary';
+import { buildSearchSection, localSearchAsk } from '../shared/review-search';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
-import { adjust, recentRatio } from '../shared/recency';
+import { adjust, RECENT_REVIEWS, recentRatio } from '../shared/recency';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
-const REVIEWS_TTL = 24 * 60 * 60 * 1000;
+const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
+// A page past any item's review count (KALLAX, the most reviewed, has ~10.5k):
+// IKEA hands over the whole set at once.
+const EVERY_REVIEW = 20000;
 const CLIENT_ID = 'a1047798-0fc4-446e-9616-0afe3256d0d7';
 
 const getLocale = () => {
@@ -102,13 +106,16 @@ interface IkeaReview { rating: number; title: string; body: string; date: string
 
 const reviewToText = (r: IkeaReview): string => [r.title, r.body].filter(Boolean).join(': ').trim();
 
-// The newest ~500 reviews (submissionOn desc), each with its 1–5 rating. No
+const reviewFields = (r: IkeaReview) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date });
+
+// Every review (submissionOn desc), each with its 1–5 rating, in one request. No
 // country filter: the pool spans all markets and product variants — the same
-// population the rating endpoint's totals (and so our overall score) cover.
-const fetchRecentReviews = async (country: string, lang: string, itemNo: string): Promise<IkeaReview[]> => {
-  const cacheKey = `ikea-reviews-v2-${itemNo}`;
-  const cached = cacheGetMaybe(cacheKey, REVIEWS_TTL);
-  if (cached) return cached.value ?? [];
+// population the rating endpoint's totals (and so our overall score) cover. Kept a
+// week in IndexedDB: a big item's set would crowd the site's localStorage.
+const fetchReviews = async (country: string, lang: string, itemNo: string): Promise<IkeaReview[]> => {
+  const cacheKey = `ikea-reviews-v3-${itemNo}`;
+  const cached = await idbGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
+  if (cached) return cached;
 
   const res = await fetch(`https://web-api.ikea.com/tugc/public/v5/reviews/${country}/${lang}/${itemNo}`, {
     method: 'POST',
@@ -116,7 +123,7 @@ const fetchRecentReviews = async (country: string, lang: string, itemNo: string)
     body: JSON.stringify({
       filter: { and: [], not: [] },
       sort: [{ field: 'submissionOn', direction: 'desc' }],
-      page: { size: 500, number: 1 },
+      page: { size: EVERY_REVIEW, number: 1 },
     }),
   });
   if (!res.ok) return [];
@@ -137,9 +144,9 @@ const fetchRecentReviews = async (country: string, lang: string, itemNo: string)
     seen.add(id);
     reviews.push(review);
   }
-  // Empty result sets tombstone briefly too — a host re-render that evicts the
-  // island would otherwise refire this 500-review POST on every rebuild.
-  cacheSetMaybe(cacheKey, reviews.length ? reviews : null);
+  // Empty result sets tombstone briefly too (see the TTL above) — a host re-render
+  // that evicts the island would otherwise refire this POST on every rebuild.
+  idbSet(cacheKey, reviews);
   return reviews;
 };
 
@@ -148,34 +155,40 @@ const addSummarizeUI = (
   country: string,
   lang: string,
   itemNo: string,
+  total: number,
   scoreData: { score: number; nps: number } | null
 ) => {
   if (document.querySelector('.ars-wrapper')) return;
 
   const wrapper = createIslandShell();
 
-  // Recent-positive gauge, filled once the newest reviews land (one cached
-  // fetch shared with the summarizer), plus the adjusted/analyzed stats row.
+  // Recent-positive gauge over the newest RECENT_REVIEWS, filled once every review
+  // lands (one cached fetch shared with the summarizer and the search), plus the
+  // adjusted/analyzed stats row.
   const gauge = buildRecentGauge();
   wrapper.appendChild(gauge);
-  const reviewsPromise = fetchRecentReviews(country, lang, itemNo);
+  const reviewsPromise = fetchReviews(country, lang, itemNo);
+  // The Sample stops at SAMPLE_MAX; past it, an Ask Searches the rest.
+  const searchAsk = total > SAMPLE_MAX ? localSearchAsk(reviewsPromise, reviewFields, reviewToText, wrapper) : undefined;
   reviewsPromise
     .then((reviews) => {
-      const ratio = recentRatio(reviews.map((r) => r.rating));
+      const recent = reviews.slice(0, RECENT_REVIEWS);
+      const ratio = recentRatio(recent.map((r) => r.rating));
       fillRecentGauge(gauge, ratio);
       if (ratio == null) return;
       const stats = el('div', 'ars-stats');
       if (scoreData) appendStat(stats, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
-      appendStat(stats, String(reviews.length), 'analyzed');
+      appendStat(stats, String(recent.length), 'analyzed');
       gauge.after(stats);
 
       // Between the stats row and the summarize widget's question row.
       stats.after(buildSearchSection({
         reviews,
-        fields: (r) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date }),
+        fields: reviewFields,
         toText: reviewToText,
-        summaryPrompt: FILTERED_PRODUCT_SUMMARY_PROMPT,
+        summaryPrompt: keywordSummaryPrompt,
         exampleQuery: 'quality OR assembly',
+        mountSummarize: summarizeMatches(`ikea-summary-${itemNo}`, { searchAsk }),
       }));
     })
     .catch(() => fillRecentGauge(gauge, null));
@@ -185,7 +198,8 @@ const addSummarizeUI = (
     cacheKey: `ikea-summary-${itemNo}`,
     summaryPrompt: PRODUCT_SUMMARY_PROMPT,
     fetchReviews: () =>
-      reviewsPromise.then((reviews) => [...new Set(reviews.map(reviewToText).filter(Boolean))]),
+      reviewsPromise.then((reviews) => [...new Set(reviews.slice(0, SAMPLE_MAX).map(reviewToText).filter(Boolean))]),
+    searchAsk,
   });
 
   anchor.after(wrapper);
@@ -216,7 +230,7 @@ setupSpaInjector({
     if (panel && !document.body.contains(panel) && ugc) ugc.after(panel);
     if (reviewCount >= 5) {
       const anchor = document.querySelector('.nps-insights') || ugc;
-      if (anchor) addSummarizeUI(anchor, locale.country, locale.lang, itemNo, scoreData);
+      if (anchor) addSummarizeUI(anchor, locale.country, locale.lang, itemNo, reviewCount, scoreData);
     }
   },
   cleanup,

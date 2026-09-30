@@ -41,6 +41,9 @@ export const ratioFromTally = (net: number, total: number): number | null =>
 /** Below this many rated reviews a recent % is shown with its count, so a thin sample reads as one. */
 export const THIN_SAMPLE = 30;
 
+/** A product's recent % reads its newest this many reviews, where the site hands over more. */
+export const RECENT_REVIEWS = 500;
+
 /** How the recent share sits against the all-time one, compared as the whole percents on screen. */
 export const trendClass = (allTime: number, recent: number): string => {
   const [a, r] = [Math.round(allTime * 100), Math.round(recent * 100)];

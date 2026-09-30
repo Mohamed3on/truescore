@@ -160,6 +160,7 @@ export const fetchRecentReviews = async (
     transactionId: r.transactionId,
     rating: r.reviewInfo?.rating ?? 0,
     text: (r.reviewContent?.reviewText ?? '').trim(),
+    date: r.reviewInfo?.reviewDate ?? '',
   }));
 };
 
