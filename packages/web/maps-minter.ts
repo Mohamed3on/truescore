@@ -12,11 +12,14 @@ import { logEvent } from './events';
 const WARMUP_MS = 3_000;
 const MINT_TIMEOUT_MS = 30_000;
 const SIGN_TIMEOUT_MS = 5_000;
+// The racers share one interpreter download, so one that hangs would sink them all.
+const INTERPRETER_TIMEOUT_MS = 15_000;
 // Google caps about half of fresh sessions for life at 5 reviews a request with no
-// next page (what an unsigned request gets). So each round races a few sessions and
-// keeps the first uncapped one; all capped is ~1 in 8, and a second round follows.
+// next page (what an unsigned request gets). So a mint races a few sessions and
+// keeps the first uncapped one, starting another the moment one fails rather than
+// waiting out the slowest of a round — up to MINT_ATTEMPTS in all.
 const MINT_RACE = 3;
-const MINT_ROUNDS = 2;
+const MINT_ATTEMPTS = 6;
 
 type Minted = { session: MapsSession; stop: () => void };
 let inFlight: Promise<MapsSession | null> | null = null;
@@ -28,22 +31,48 @@ export function mintMapsCreds(): Promise<MapsSession | null> {
   return (inFlight ??= (async () => {
     // Without the proxy (local dev, tests) the mint would come from this machine's own IP.
     if (!PROXY_URL) { console.warn('[maps-minter] no proxy configured — cannot mint'); return null; }
-    for (let round = 0; round < MINT_ROUNDS; round++) {
-      const race = Array.from({ length: MINT_RACE }, runMint);
-      const won = await Promise.any(race).catch(() => null);
-      // One session is adopted; the rest stop, even those that land later.
-      for (const attempt of race) attempt.then((m) => { if (m !== won) m.stop(); }, () => {});
-      if (!won) continue;
-      live?.stop();
-      live = won;
-      return won.session;
-    }
-    return null;
-  })().finally(() => { inFlight = null; }));
+    const won = await firstOf(runMint, MINT_RACE, MINT_ATTEMPTS);
+    if (!won) return null;
+    live?.stop();
+    live = won;
+    return won.session;
+  })().finally(() => { inFlight = null; interpreters.clear(); }));
+}
+
+// `width` attempts at once, each failure replaced at once until `attempts` have
+// run: the first to succeed wins, null if none does. Only one is kept — the rest
+// stop, even those that land later.
+export function firstOf<T extends { stop: () => void }>(attempt: () => Promise<T>, width: number, attempts: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    let started = 0;
+    let failed = 0;
+    let won = false;
+    const start = () => {
+      started++;
+      attempt().then(
+        (m) => { if (won) m.stop(); else { won = true; resolve(m); } },
+        () => { if (++failed === attempts) resolve(null); else if (!won && started < attempts) start(); },
+      );
+    };
+    for (let i = 0; i < Math.min(width, attempts); i++) start();
+  });
 }
 
 const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
   Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`timeout after ${ms}ms`)), ms))]);
+
+// The BotGuard interpreter a challenge names is one script whatever the session,
+// so a mint's racers share one download of it. Dropped when the mint ends, and at
+// once if the download fails or times out, so the next racer fetches it afresh.
+const interpreters = new Map<string, Promise<string>>();
+const interpreterAt = (url: string, cookies: string): Promise<string> => {
+  const known = interpreters.get(url);
+  if (known) return known;
+  const script = withTimeout(googleFetch(url, undefined, cookies), INTERPRETER_TIMEOUT_MS);
+  interpreters.set(url, script);
+  script.catch(() => { if (interpreters.get(url) === script) interpreters.delete(url); });
+  return script;
+};
 
 // One session: resolves only an uncapped one; anything else stops its VM and rejects.
 async function runMint(): Promise<Minted> {
@@ -75,7 +104,7 @@ async function startSession(vm: BotguardWorker): Promise<MapsSession> {
   if (!sessionId || !challenge) throw new Error('no session in the Maps page');
   // jspb: "%.@." then the array minus its "[": [id, script, [,,,interpreterUrl], hash, program, globalName, …]
   const [, , [, , , url], , program, globalName] = JSON.parse(`[${JSON.parse(challenge).slice(4)}`);
-  await vm.boot({ interpreter: await googleFetch(`https:${url}`, undefined, cookies), program, globalName });
+  await vm.boot({ interpreter: await interpreterAt(`https:${url}`, cookies), program, globalName });
   await Bun.sleep(WARMUP_MS);
   return { creds: { bgkey: '', bgbind: '', sessionId, at: '', hl: 'en' }, cookies, sign: vm.sign };
 }
