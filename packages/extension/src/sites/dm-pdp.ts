@@ -2,7 +2,7 @@ import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from '../shared/review-summary';
-import { buildSearchSection, runSearch, searchWith } from '../shared/review-search';
+import { buildSearchSection, localSearch, runSearch, searchWith } from '../shared/review-search';
 import type { SearchAsk } from '../shared/review-ask';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
@@ -128,6 +128,8 @@ interface DmReview {
 
 const reviewToText = (r: DmReview) => [r.title, r.body].filter(Boolean).join(': ').trim();
 
+const reviewFields = (r: DmReview) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date });
+
 // One page of reviews, newest first, with the count of every review it's a page of.
 const fetchPage = async (productId: string, offset: number, search?: string) => {
   const res = await fetch(buildReviewsUrl(productId, offset, search), REVIEW_REQUEST_INIT);
@@ -173,24 +175,42 @@ const fetchReviews = async (productId: string, totalCount: number): Promise<DmRe
 
 const reviewTexts = (reviews: DmReview[]) => reviews.map(reviewToText).filter(Boolean);
 
-// Search every review through BazaarVoice's own full-text search, one request per
-// OR term: it ORs a term's words itself and drops stop-words ("zu klein" finds
-// every "klein"). A term's newest hundred matches come back; one term's count is
-// BazaarVoice's own over every review, several terms' is what their union holds.
-// Queries are kept, so backspacing doesn't refire them.
+// Every review holding `term`, through BazaarVoice's own full-text search. It ORs
+// a term's words and drops stop-words ("zu klein" finds every "klein"), so a term
+// of several words reads its hits up to SAMPLE_MAX and keeps the ones holding it
+// whole; one word takes BazaarVoice's own count and its newest hundred hits.
+const searchTerm = async (productId: string, term: string) => {
+  const first = await fetchPage(productId, 0, term);
+  if (!/\s/.test(term)) return first;
+  const offsets = Array.from({ length: Math.ceil(Math.min(first.total, SAMPLE_MAX) / REVIEWS_PAGE) - 1 }, (_, i) => (i + 1) * REVIEWS_PAGE);
+  const rest = await Promise.all(offsets.map((offset) => fetchPage(productId, offset, term)));
+  const reviews = [first, ...rest].flatMap((p) => p.reviews).filter((r) => reviewToText(r).toLowerCase().includes(term));
+  return { reviews, total: reviews.length };
+};
+
+// Search every review past the Sample through BazaarVoice, one search per OR term.
+// One term's count is its own; several terms' is what their union holds. Queries
+// are kept, so backspacing doesn't refire them.
 const makeReviewSearch = (productId: string) => {
   const cache = new Map<string, { matches: DmReview[]; total: number }>();
   return async (terms: string[]) => {
     const key = terms.join(' OR ');
     let hit = cache.get(key);
     if (!hit) {
-      const pages = await Promise.all(terms.map((t) => fetchPage(productId, 0, t)));
-      const matches = dedupe(pages.flatMap((p) => p.reviews));
-      hit = { matches, total: pages.length === 1 ? pages[0].total : matches.length };
+      const found = await Promise.all(terms.map((t) => searchTerm(productId, t)));
+      const matches = dedupe(found.flatMap((f) => f.reviews));
+      hit = { matches, total: found.length === 1 ? found[0].total : matches.length };
       cache.set(key, hit);
     }
     return hit;
   };
+};
+
+// Search the Sample itself, which holds every review up to SAMPLE_MAX: exact
+// phrases, and no request per query.
+const sampleSearch = (reviews: Promise<DmReview[]>) => {
+  const find = reviews.then((all) => localSearch(all, reviewFields));
+  return async (terms: string[]) => ({ matches: (await find)(terms) });
 };
 
 const getScoreFromStats = (stats: any) => {
@@ -319,11 +339,15 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
 
   appendInsights(wrapper, stats, scoreData);
 
-  if (total >= 5 && productId) {
-    const search = makeReviewSearch(productId);
-    // The Sample stops at SAMPLE_MAX; past it, an Ask Searches the rest.
-    const searchAsk: SearchAsk | undefined = total > SAMPLE_MAX ? {
-      search: searchWith((terms) => search(terms).then((hit) => hit.matches), reviewToText, (r) => r.rating),
+  // One fetch of the Sample, shared by the gauge, the summarizer and the search.
+  const reviewsPromise = total > 0 && productId ? fetchReviews(productId, total) : null;
+
+  if (total >= 5 && reviewsPromise) {
+    // Past SAMPLE_MAX, BazaarVoice's own search reaches the reviews the Sample
+    // lacks, for the box and for an Ask's Searches alike.
+    const remote = total > SAMPLE_MAX ? makeReviewSearch(productId) : null;
+    const searchAsk: SearchAsk | undefined = remote ? {
+      search: searchWith((terms) => remote(terms).then((hit) => hit.matches), reviewToText, (r) => r.rating),
       open: (query) => runSearch(wrapper, query),
     } : undefined;
 
@@ -331,8 +355,8 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
     wrapper.appendChild(buildSearchSection({
       reviews: [],
       total,
-      search,
-      fields: (r) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date }),
+      search: remote ?? sampleSearch(reviewsPromise),
+      fields: reviewFields,
       toText: reviewToText,
       summaryPrompt: keywordSummaryPrompt,
       exampleQuery: 'Duft OR Haut',
@@ -343,16 +367,16 @@ const buildCard = (stats: any, scoreData: { score: number; nps: number } | null,
       wrapper,
       cacheKey: `dm-summary-${productId}`,
       summaryPrompt: PRODUCT_SUMMARY_PROMPT,
-      fetchReviews: () => fetchReviews(productId, total).then(reviewTexts),
+      fetchReviews: () => reviewsPromise.then(reviewTexts),
       searchAsk,
     });
   }
 
-  // Fill the recent-positive gauge from the newest RECENT_REVIEWS (shares the
-  // cache with summarize, so it's one fetch per product). Drop the gauge if none
-  // load; land the adjusted stat (score damped by the recent ratio) beside the others.
-  if (total > 0 && productId) {
-    fetchReviews(productId, total)
+  // Fill the recent-positive gauge from the newest RECENT_REVIEWS. Drop the gauge
+  // if none load; land the adjusted stat (score damped by the recent ratio) beside
+  // the others.
+  if (reviewsPromise) {
+    reviewsPromise
       .then((reviews) => {
         const ratio = recentRatio(reviews.slice(0, RECENT_REVIEWS).map((r) => r.rating));
         fillRecentGauge(gauge, ratio);
