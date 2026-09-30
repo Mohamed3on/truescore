@@ -65,6 +65,10 @@ const appendHighlighted = (parent: HTMLElement, text: string, terms: string[]) =
 
 export interface SearchReviewFields { rating: number; title?: string; body?: string; meta?: string }
 
+// The most reviews a site's search downloads, newest first: every review for all
+// but the most reviewed items.
+export const SEARCH_MAX = 15000;
+
 // A Search over reviews in hand: every one holding any term in its title, body
 // or meta, lowercased. The search box filters this way when it has no remote
 // `search`.

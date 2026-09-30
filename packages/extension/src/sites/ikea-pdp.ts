@@ -2,16 +2,13 @@ import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet, NEG_TTL } from '../shared/cache';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from '../shared/review-summary';
-import { buildSearchSection, localSearchAsk } from '../shared/review-search';
+import { buildSearchSection, localSearchAsk, SEARCH_MAX } from '../shared/review-search';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
 import { adjust, RECENT_REVIEWS, recentRatio } from '../shared/recency';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
-// A page past any item's review count (KALLAX, the most reviewed, has ~10.5k):
-// IKEA hands over the whole set at once.
-const EVERY_REVIEW = 20000;
 const CLIENT_ID = 'a1047798-0fc4-446e-9616-0afe3256d0d7';
 
 const getLocale = () => {
@@ -108,7 +105,8 @@ const reviewToText = (r: IkeaReview): string => [r.title, r.body].filter(Boolean
 
 const reviewFields = (r: IkeaReview) => ({ rating: r.rating, title: r.title, body: r.body, meta: r.date });
 
-// Every review (submissionOn desc), each with its 1–5 rating, in one request. No
+// Every review up to SEARCH_MAX (submissionOn desc), each with its 1–5 rating, in
+// one request: IKEA hands over a page as large as asked (KALLAX's ~10.5k is 13 MB). No
 // country filter: the pool spans all markets and product variants — the same
 // population the rating endpoint's totals (and so our overall score) cover. Kept a
 // week in IndexedDB: a big item's set would crowd the site's localStorage.
@@ -123,7 +121,7 @@ const fetchReviews = async (country: string, lang: string, itemNo: string): Prom
     body: JSON.stringify({
       filter: { and: [], not: [] },
       sort: [{ field: 'submissionOn', direction: 'desc' }],
-      page: { size: EVERY_REVIEW, number: 1 },
+      page: { size: SEARCH_MAX, number: 1 },
     }),
   });
   if (!res.ok) return [];
