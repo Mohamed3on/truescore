@@ -51,14 +51,23 @@ const dedupGrid = () => {
   }
 };
 
-// Badges wait until React has hydrated the server-rendered grid (see afterHydration).
+// One fetch per product, shared by the early prefetch below and the grid.
+const scores = new Map<string, Promise<any>>();
+const scoreFor = (link: Element | null) => {
+  const ids = link && extractDecathlonIds(link.getAttribute('href')!);
+  if (!ids) return Promise.resolve(null);
+  let score = scores.get(ids.productId);
+  if (!score) scores.set(ids.productId, (score = fetchScore(ids.sku, ids.productId)));
+  return score;
+};
+
+// Scores for the cards already on the page start fetching at once; only the
+// badges wait until React has hydrated the server-rendered grid (see afterHydration).
+for (const link of document.querySelectorAll(`${CARD} ${LINK}`)) scoreFor(link);
+
 const startGrid = () => setupScoreGrid({
   cardSelector: CARD,
-  scoreForCard: (card) => {
-    const link = card.querySelector(LINK);
-    const ids = link && extractDecathlonIds(link.getAttribute('href')!);
-    return ids ? fetchScore(ids.sku, ids.productId) : Promise.resolve(null);
-  },
+  scoreForCard: (card) => scoreFor(card.querySelector(LINK)),
   placeBadge: (card, badge) => {
     card.querySelector('.review__fullstars__votes')?.after(badge);
   },
