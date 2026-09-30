@@ -215,10 +215,10 @@ describe('markBestRatios', () => {
     return el;
   };
 
-  test('tints each badge whose ratio clearly beats every one ranked above it', () => {
-    // The dm biscuit shelf ranked by score: dips, ties and a one-point edge stay plain.
+  test('tints each badge whose ratio beats every one ranked above it', () => {
+    // The dm biscuit shelf ranked by score: dips and ties stay plain, a one-point edge tints.
     const badges = [badge(162, 82), badge(147, 81), badge(137, 82), badge(128, 83), badge(123, 93)];
-    expect(markBestRatios(badges)).toEqual([badges[0], badges[4]]);
+    expect(markBestRatios(badges)).toEqual([badges[0], badges[3], badges[4]]);
     expect(badges[0].style.background).not.toBe('');
     expect(badges[1].style.background).toBe('');
   });

@@ -25,7 +25,7 @@ Ratings sit between 4.0 and 4.8 everywhere, so they cannot tell a mass-produced 
 - Net conviction: how many people loved it versus hated it, scaled by how many bothered to say so. `score = (5★ − 1★) × ((5★ − 1★) / total)`. Each site adapts this to the data it exposes (star histograms, 1–10 histograms, like/dislike counts).
 - Trust filtering on Google Maps: only reviews from reviewers with 3 or more reviews count. Excluding drive-by and low-history reviewers is the premise, not a feature.
 - Recency: an adjusted score scaled by how positive the newest reviews are (Amazon, dm, Letterboxd, Goodreads).
-- Ranking, not just labelling: search results and product grids are re-sorted by score, and a result whose hit rate clearly beats everything ranked above it is tinted as a best-ratio pick.
+- Ranking, not just labelling: search results and product grids are re-sorted by score, and a result whose hit rate beats everything ranked above it is tinted as a best-ratio pick.
 
 A neighbouring product could show a number; it cannot truthfully claim the number was computed from the reviews the user can read on that page, on every one of these sites, with no account and no server for the math.
 
