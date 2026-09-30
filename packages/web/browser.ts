@@ -173,7 +173,14 @@ export async function verifyReviewsLoad(creds: MapsCreds, overrideCookie?: strin
   return parseReviewsResponse(await googleFetch(req.url, await signReq(req.init, sign), overrideCookie)).reviews.length;
 }
 
-export async function fetchPlacePreview(placeUrl: string): Promise<any> {
+// Each place's preview-RPC URL, as its Maps page embeds it. Finding it cost a whole
+// page download per preview — five a quick chip-harvest round — so it's kept and
+// replayed, and the page is read again only when a replay fails. Replaying is safe:
+// which reply carries the topic chips is random per request, not per URL.
+const previewUrls = new Map<string, string>();
+const PREVIEW_URLS_MAX = 1000;
+
+async function previewUrlFor(placeUrl: string): Promise<string> {
   const html = await googleFetch(placeUrl);
   const m = html.match(/\/maps\/preview\/place\?[^"\s<>]+/);
   if (!m) throw new Error('preview URL not found in place HTML');
@@ -181,6 +188,23 @@ export async function fetchPlacePreview(placeUrl: string): Promise<any> {
   // Pin locale to en-US so chip labels and strings don't take on the proxy exit's geo.
   u.searchParams.set('hl', 'en');
   u.searchParams.set('gl', 'us');
-  const body = await googleFetch(u.toString());
-  return JSON.parse(body.replace(/^\)\]\}'\s*/, ''));
+  const url = u.toString();
+  previewUrls.set(placeUrl, url);
+  if (previewUrls.size > PREVIEW_URLS_MAX) previewUrls.delete(previewUrls.keys().next().value!);
+  return url;
+}
+
+const fetchPreview = async (url: string): Promise<any> =>
+  JSON.parse((await googleFetch(url)).replace(/^\)\]\}'\s*/, ''));
+
+export async function fetchPlacePreview(placeUrl: string): Promise<any> {
+  const known = previewUrls.get(placeUrl);
+  if (known) {
+    try {
+      return await fetchPreview(known);
+    } catch {
+      if (previewUrls.get(placeUrl) === known) previewUrls.delete(placeUrl);
+    }
+  }
+  return fetchPreview(await previewUrlFor(placeUrl));
 }
