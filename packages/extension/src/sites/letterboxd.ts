@@ -385,7 +385,7 @@ async function getRecentRatingsSummary(slug: string | null = null): Promise<Rece
  * so a revisit can re-check it without refetching.
  */
 async function getCandidateRecentRatings(slug: string, score: number, threshold: number | null, bar: number): Promise<CandidateRecent> {
-  const full = await getCachedRecentRatings(slug);
+  const [full, partial] = await Promise.all([getCachedRecentRatings(slug), getCachedRecentPartial(slug)]);
   if (full) return { ratio: full.ratio, tally: full };
 
   // Far enough from the bar that the pages left can only move the tally within the
@@ -406,7 +406,6 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
     const worst = adjust(score, floor);
     return worst != null && worst >= threshold && clearOfBar(tally) ? { ratio: floor, tally } : null;
   };
-  const partial = await getCachedRecentPartial(slug);
   const known = partial && settle(partial, partial.room);
   if (known) return known;
 
