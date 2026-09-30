@@ -717,6 +717,16 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
 }
 
 /**
+ * Starts finding similar picks — they need only the film and its runtime — with
+ * their progress in a section displaySimilarPicks places once the page is ready.
+ */
+function startSimilarPicks(currentSlug: string, currentRuntime: number) {
+  const section = el('section', 'lbx-similar');
+  section.append(el('span', 'lbx-progress', 'Finding similar picks...'));
+  return { section, found: findSimilarPicks(currentSlug, currentRuntime, section), ignored: loadIgnored() };
+}
+
+/**
  * Displays similar picks section: a candidate beats the current film when its
  * adjusted score (score × recent %) is equal or higher. Recent ratings are
  * fetched lazily, only for candidates whose score could reach the threshold,
@@ -726,16 +736,11 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
  * Films the user has ignored move to a collapsed drawer and stop counting
  * towards the winner check; restoring one from the drawer undoes that.
  */
-async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<{ score: number; ratio: number | null; adjusted: number | null }>, currentRuntime: number, anchor: HTMLElement) {
-  const similarSection = el('section', 'lbx-similar');
-  similarSection.append(el('span', 'lbx-progress', 'Finding similar picks...'));
+async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, currentPromise: Promise<{ score: number; ratio: number | null; adjusted: number | null }>, anchor: HTMLElement) {
+  const similarSection = picks.section;
   anchor.after(similarSection);
 
-  const [result, ignored, current] = await Promise.all([
-    findSimilarPicks(currentSlug, currentRuntime, similarSection),
-    loadIgnored(),
-    currentPromise,
-  ]);
+  const [result, ignored, current] = await Promise.all([picks.found, picks.ignored, currentPromise]);
 
   similarSection.textContent = '';
   if (result.error) {
@@ -904,18 +909,27 @@ async function displaySimilarPicks(currentSlug: string, currentPromise: Promise<
 // =============================================================================
 
 /**
- * Main entry point - orchestrates score calculation and display
+ * Main entry point - orchestrates score calculation and display. The fetches start
+ * at once on what the page's own HTML names — the film, its runtime, its IMDb link;
+ * the score, and the display around it, wait for `histogram`: Letterboxd's ratings
+ * chart, which renders later from an include of its own.
  */
-async function run(ratings: number[]) {
+async function run(histogram: Promise<number[]>) {
   const currentSlug = extractSlugFromUrl(window.location.href);
   const currentRuntime = extractRuntime(document);
   const currentYear = extractYear(document);
   const currentFilmName = document.querySelector('h1.headline-1')?.textContent?.trim() || currentSlug;
+  const imdbLink = document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null;
 
-  const cachedFilmRaw = currentSlug ? await getCachedFilmData(currentSlug) : null;
   // Similar Picks caches unscored placeholders; a hated film's real score is below 0.
-  const cachedFilm = cachedFilmRaw?.scored ? cachedFilmRaw : null;
+  const cachedFilmPromise = currentSlug ? getCachedFilmData(currentSlug).then((raw) => (raw?.scored ? raw : null)) : Promise.resolve(null);
+  // Only a score the cache lacks needs the IMDb half.
+  const imdbPromise = cachedFilmPromise.then((cached) => (cached ? null : fetchImdbRatings([imdbLink]).then(([imdb]) => imdb)));
   const recentRatingsRaw = getRecentRatingsSummary().catch(() => null);
+  const picks = currentSlug && currentRuntime ? startSimilarPicks(currentSlug, currentRuntime) : null;
+
+  const ratings = await histogram;
+  const cachedFilm = await cachedFilmPromise;
 
   const reviewSection = document.querySelector<HTMLElement>('.review.body-text');
   // Anchor on the histogram container, not Letterboxd's average — films below
@@ -955,17 +969,16 @@ async function run(ratings: number[]) {
     showAllTime(cachedFilm.score, cachedFilm.ratio);
     scorePromise = Promise.resolve({ score: cachedFilm.score, ratio: cachedFilm.ratio });
   } else {
-    scorePromise = fetchImdbRatings([document.querySelector('a[href*="imdb.com/title"]')?.getAttribute('href') || null])
-      .then(([imdb]) => {
-        const { score, ratio } = calculateCombinedScore(ratings, imdb?.imdbScore, imdb?.imdbTotal);
-        showAllTime(score, ratio, !imdb);
-        // A failed IMDb fetch leaves a Letterboxd-only score: shown, but never cached,
-        // so the next visit retries.
-        if (imdb && currentSlug && currentRuntime) {
-          setCachedFilmData(currentSlug, { score, ratio, scored: true, runtime: currentRuntime, year: currentYear, filmName: currentFilmName });
-        }
-        return { score, ratio, imdbFailed: !imdb };
-      });
+    scorePromise = imdbPromise.then((imdb) => {
+      const { score, ratio } = calculateCombinedScore(ratings, imdb?.imdbScore, imdb?.imdbTotal);
+      showAllTime(score, ratio, !imdb);
+      // A failed IMDb fetch leaves a Letterboxd-only score: shown, but never cached,
+      // so the next visit retries.
+      if (imdb && currentSlug && currentRuntime) {
+        setCachedFilmData(currentSlug, { score, ratio, scored: true, runtime: currentRuntime, year: currentYear, filmName: currentFilmName });
+      }
+      return { score, ratio, imdbFailed: !imdb };
+    });
   }
 
   const currentPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score, ratio: allTime, imdbFailed }, recentRatings]) => {
@@ -1001,9 +1014,7 @@ async function run(ratings: number[]) {
       })
     : reviewSection;
 
-  const similarPicksPromise = currentSlug && currentRuntime
-    ? displaySimilarPicks(currentSlug, currentPromise, currentRuntime, summaryAnchor)
-    : Promise.resolve();
+  const similarPicksPromise = picks ? displaySimilarPicks(picks, currentPromise, summaryAnchor) : Promise.resolve();
 
   // A search over the same recent reviews, under the summary. Fetched once the
   // picks are done, so its pages never queue ahead of theirs.
@@ -1036,21 +1047,18 @@ let observer: MutationObserver | null = null;
 function initObserver() {
   if (observer) observer.disconnect();
 
-  const tryRun = async () => {
-    const ratings = parseRatings(document);
-    if (!ratings.length) return false;
-    observer?.disconnect();
-    try {
-      await run(ratings);
-    } catch (error) {
-      console.error('LBX Extension error:', error);
-    }
-    return true;
-  };
-
-  observer = new MutationObserver(() => { tryRun(); });
-  observer.observe(document.body, { childList: true, subtree: true });
-  tryRun();
+  const histogram = new Promise<number[]>((resolve) => {
+    const tryResolve = () => {
+      const ratings = parseRatings(document);
+      if (!ratings.length) return;
+      observer?.disconnect();
+      resolve(ratings);
+    };
+    observer = new MutationObserver(tryResolve);
+    observer.observe(document.body, { childList: true, subtree: true });
+    tryResolve();
+  });
+  run(histogram).catch((error) => console.error('LBX Extension error:', error));
 }
 
 initObserver();
