@@ -1,5 +1,5 @@
 import { netScore } from '@truescore/gmaps-shared';
-import { idbGet, idbSet } from '../shared/idb-cache';
+import { idbEdit, idbGet, idbSet } from '../shared/idb-cache';
 import { couldReach, rankPicks, type RankedPick } from '../shared/better-picks';
 import { adjust, recentRatio, THIN_SAMPLE, trendClass } from '../shared/recency';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
@@ -7,7 +7,13 @@ import { addCommas, el } from '../shared/utils';
 import { buildMediaSummary } from '../shared/review-summary';
 import { buildSearchSection, runSearch, searchWith } from '../shared/review-search';
 import { shrunkAverage } from './goodreads-picks';
-import { goodreadsViewerCacheScope, shelfScoreCacheTtl } from './goodreads-shelf-cache';
+import {
+  goodreadsViewerCacheScope,
+  readViewerShelving,
+  shelfScoreCacheTtl,
+  type ShelfStatus,
+  type ViewerShelving,
+} from './goodreads-shelf-cache';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -747,8 +753,6 @@ const getBookShelves = async (bookURL: string): Promise<string[]> => {
   return shelves;
 };
 
-type ShelfStatus = 'read' | 'to-read' | 'reading' | 'dnf' | 'other' | null;
-
 type Candidate = {
   bookId: string;
   bookURL: string;
@@ -764,6 +768,9 @@ type Candidate = {
 
 /** Read, or given up on: nothing to recommend. Stars alone count too — rating a book shelves it as read. */
 const isRead = (c: Candidate) => c.status === 'read' || c.status === 'dnf' || c.myRating > 0;
+
+/** A shelf row worth scoring as a pick: unread, and averaging at least the scan's gate (see findSimilarPicks). */
+const isEligible = (c: Candidate, avgGate: number) => !isRead(c) && parseFloat(c.bookRating || '0') >= avgGate;
 
 /** The shelf's own average, over the rows that show one. */
 const meanRating = (rows: Candidate[]): number | null => {
@@ -805,13 +812,24 @@ const parseShelfPage = (doc: Document): Candidate[] =>
 
 const shelfPageURL = (shelf: string, page: number) => `https://www.goodreads.com/shelf/show/${shelf}?page=${page}`;
 
+/**
+ * Key prefixes of the caches under the viewer: shelf pages carry their shelves and stars, and
+ * the rest is built from those pages, so syncViewerShelving edits all four when they change.
+ */
+const viewerKey = {
+  shelfPage: (viewerScope: string) => `gr_shelf_page_v1_${viewerScope}_`,
+  shelfScore: (viewerScope: string) => `gr_shelf_score_v2_${viewerScope}_`,
+  picks: (viewerScope: string) => `gr_picks_v6_${viewerScope}_`,
+  picksView: (viewerScope: string) => `gr_picks_view7_${viewerScope}_`,
+};
+
 // One fetch per shelf page per visit, however many steps want it: scoring a shelf reads
 // its first page and scanning it starts there. The pages are the viewer's (their stars
 // and shelves are on the rows), so they cache under the viewer, for a week.
 const shelfPages = new Map<string, Promise<Candidate[]>>();
 
 const getShelfPage = (shelf: string, page: number, viewerScope: string): Promise<Candidate[]> => {
-  const cacheKey = `gr_shelf_page_v1_${viewerScope}_${shelf}_${page}`;
+  const cacheKey = `${viewerKey.shelfPage(viewerScope)}${shelf}_${page}`;
   let pending = shelfPages.get(cacheKey);
   if (!pending) {
     pending = (async () => {
@@ -834,15 +852,17 @@ const prefetchScan = (shelf: string, viewerScope: string) => {
 };
 
 /** How the viewer holds a shelf: their 4–5★ books on its first page, less their 1–2★ ones. */
+const shelfScore = (firstPage: Candidate[]) =>
+  firstPage.filter(r => r.myRating >= 4).length - firstPage.filter(r => r.myRating >= 1 && r.myRating <= 2).length;
+
 const getShelfScore = async (shelf: string, viewerScope: string): Promise<number> => {
-  const cacheKey = `gr_shelf_score_v2_${viewerScope}_${shelf}`;
+  const cacheKey = `${viewerKey.shelfScore(viewerScope)}${shelf}`;
   const cached = await idbGet(
     cacheKey,
     (score) => shelfScoreCacheTtl(score, CONFIG.IGNORED_SHELF_THRESHOLD),
   );
   if (cached !== null) return cached;
-  const rows = await getShelfPage(shelf, 1, viewerScope);
-  const score = rows.filter(r => r.myRating >= 4).length - rows.filter(r => r.myRating >= 1 && r.myRating <= 2).length;
+  const score = shelfScore(await getShelfPage(shelf, 1, viewerScope));
   idbSet(cacheKey, score);
   return score;
 };
@@ -931,7 +951,7 @@ const findSimilarPicks = async (params: {
   // v6: v5 gated rows on the book's raw average, so a new book's few fan ratings shut the shelf.
   // A scan bounded by the all-time Score is narrower than one bounded by the threshold,
   // so it keeps its own entry — one throttled reviews call can't stand in for a week.
-  const cacheKey = `gr_picks_v6_${viewerScope}_${originalId}_${shelf}${threshold === null ? '_alltime' : ''}`;
+  const cacheKey = `${viewerKey.picks(viewerScope)}${originalId}_${shelf}${threshold === null ? '_alltime' : ''}`;
   const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
   if (cached) return cached;
   const refAvg = parseFloat(refAvgRating);
@@ -964,11 +984,7 @@ const findSimilarPicks = async (params: {
       avgGate = shrunkAverage(refAvg, refRatingsCount, meanRating(rowsWithPage), CONFIG.AVG_PRIOR_WEIGHT) - CONFIG.AVG_RATING_TOLERANCE;
     }
 
-    const eligible = rowsWithPage.filter((c) => {
-      if (c.bookId === originalId) return false;
-      if (isRead(c)) return false;
-      return parseFloat(c.bookRating || '0') >= avgGate;
-    });
+    const eligible = rowsWithPage.filter((c) => c.bookId !== originalId && isEligible(c, avgGate));
     totalEligible += eligible.length;
 
     const scored = await Promise.all(eligible.map(async (c) => {
@@ -1212,7 +1228,7 @@ const renderSimilarPicks = async (
   // v6: v5 rows carried no shelf status and counted unrated Read books as unread.
   // v7: v6 views gated the shelf on the book's raw average — one pick for a book rated seven times.
   const viewerScope = goodreadsViewerCacheScope(document);
-  const viewKey = `gr_picks_view7_${viewerScope}_${getBookIdFromURL(currentBookURL)}`;
+  const viewKey = `${viewerKey.picksView(viewerScope)}${getBookIdFromURL(currentBookURL)}`;
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
   if (cachedView) { renderPicksView(section, cachedView, currentStats); return; }
 
@@ -1278,6 +1294,81 @@ const renderSimilarPicks = async (
     idbSet(viewKey, { ...view, result: { ...result, allScored: [] } });
   }
   renderPicksView(section, view, currentStats);
+};
+
+// =============================================================================
+// The viewer's own shelving
+// =============================================================================
+
+/**
+ * The viewer shelved or rated this page's book, but their cached shelf pages still hold its
+ * old row, and picks built from them can show it wrongly. Only that is redone: its rows are
+ * patched in place, a shelf's score recomputed where its stars changed on the first page,
+ * and picks dropped that show the book as it was, or never scored it and now could. A score
+ * crossing the bar moves which shelf picks come from, and views don't keep the shelves they
+ * passed over, so a crossing drops them all — rare, as one book moves a score by at most 2.
+ */
+const syncViewerShelving = async (viewerScope: string, bookId: string, now: ViewerShelving) => {
+  const pages = viewerKey.shelfPage(viewerScope);
+  const listings: Array<{ shelf: string; page: number; before: Candidate; rows: Candidate[] }> = [];
+  await idbEdit(pages, (rows: Candidate[], key) => {
+    const before = rows.find((r) => r.bookId === bookId);
+    if (!before || (before.status === now.status && before.myRating === now.myRating)) return undefined;
+    const at = key.lastIndexOf('_');
+    const patched = rows.map((r) => (r === before ? { ...r, ...now } : r));
+    listings.push({ shelf: key.slice(pages.length, at), page: Number(key.slice(at + 1)), before, rows: patched });
+    return patched;
+  });
+
+  let crossed = false;
+  const passes = (score: number) => score >= CONFIG.IGNORED_SHELF_THRESHOLD;
+  for (const { shelf, page, before, rows } of listings) {
+    if (page !== 1 || before.myRating === now.myRating) continue;
+    const key = `${viewerKey.shelfScore(viewerScope)}${shelf}`;
+    await idbEdit(key, (score: number, k) => {
+      if (k !== key) return undefined;
+      const next = shelfScore(rows);
+      crossed ||= passes(next) !== passes(score);
+      return next;
+    });
+  }
+
+  const outdated = (pick: Candidate) => pick.bookId === bookId && (pick.status !== now.status || pick.myRating !== now.myRating);
+  const stale = (refId: string, shelf: string, result: SimilarResult) => refId !== bookId && (
+    result.qualifying.some(outdated) ||
+    listings.some((l) => l.shelf === shelf && l.page <= result.pagesSearched &&
+      !isEligible(l.before, result.avgGate) && isEligible({ ...l.before, ...now }, result.avgGate)));
+  const views = viewerKey.picksView(viewerScope);
+  const scans = viewerKey.picks(viewerScope);
+  await Promise.all([
+    idbEdit(views, (view: SimilarView, key) => (crossed || stale(key.slice(views.length), view.shelf, view.result) ? null : undefined)),
+    // A scan's key runs `${refId}_${shelf}`, plus `_alltime` when the all-time Score bounded it.
+    idbEdit(scans, (result: SimilarResult, key) => {
+      const [refId, ...shelf] = key.slice(scans.length).replace(/_alltime$/, '').split('_');
+      return stale(refId, shelf.join('_'), result) ? null : undefined;
+    }),
+  ]);
+};
+
+/**
+ * Keeps the signed-in viewer's caches in step with this page's book: once its shelf and
+ * stars have rendered, so a change made in the app or elsewhere lands too, then on every
+ * change. Same scope as the picks, whatever goodreadsViewerCacheScope resolves to.
+ */
+const watchViewerShelving = (bookId: string) => {
+  const viewerScope = goodreadsViewerCacheScope(document);
+  // A book the viewer never shelved or rated has nothing to correct, so most visits walk nothing.
+  let seen = JSON.stringify({ status: null, myRating: 0 });
+  let syncing: Promise<unknown> = Promise.resolve();
+  const check = () => {
+    const now = readViewerShelving(document);
+    if (!now || JSON.stringify(now) === seen) return;
+    seen = JSON.stringify(now);
+    // One at a time, so a quick second click never lands before the first.
+    syncing = syncing.then(() => syncViewerShelving(viewerScope, bookId, now)).catch((e) => debug('shelving sync failed:', e));
+  };
+  new MutationObserver(check).observe(document.body, { childList: true, subtree: true, attributeFilter: ['aria-label'] });
+  check();
 };
 
 // =============================================================================
@@ -1428,6 +1519,7 @@ const appendScore = async (bookTitle: Element) => {
   sessionToken = stats.jwtToken;
   apiKey = stats.apiKey;
   signedIn = !!stats.jwtToken;
+  if (currentId && signedIn) watchViewerShelving(currentId);
 
   // The adjusted score, as every picks list shows it, and the all-time net loved share on
   // Goodreads' own "ratings · reviews" line; the working sits in the card.

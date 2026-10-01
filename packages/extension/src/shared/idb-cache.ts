@@ -47,3 +47,39 @@ export const idbSet = async (key: string, data: any): Promise<void> => {
 export const idbDel = (key: string): void => {
   run('readwrite', (s) => s.delete(key)).catch(() => {});
 };
+
+const done = (tx: IDBTransaction) =>
+  new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = tx.onabort = () => reject(tx.error);
+  });
+
+/**
+ * Edits the entries under a key prefix: `edit` returns an entry's new data, null to drop
+ * it, or undefined to leave it. The walk only reads, so it never holds up the page's own
+ * reads, and an edited entry keeps its ts: patching never extends how long it lives.
+ */
+export const idbEdit = async (prefix: string, edit: (data: any, key: string) => any): Promise<void> => {
+  try {
+    const db = await openDb();
+    const edits: Array<[IDBValidKey, { data: any; ts: number } | null]> = [];
+    const read = db.transaction(STORE);
+    const req = read.objectStore(STORE).openCursor(IDBKeyRange.bound(prefix, `${prefix}￿`));
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return;
+      const data = edit(cursor.value.data, String(cursor.key));
+      if (data !== undefined) edits.push([cursor.key, data === null ? null : { ...cursor.value, data }]);
+      cursor.continue();
+    };
+    await done(read);
+    if (!edits.length) return;
+    const write = db.transaction(STORE, 'readwrite');
+    const store = write.objectStore(STORE);
+    for (const [key, entry] of edits) {
+      if (entry) store.put(entry, key);
+      else store.delete(key);
+    }
+    await done(write);
+  } catch {}
+};
