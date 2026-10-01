@@ -28,10 +28,11 @@ const fetchScore = async (country: string, lang: string, productId: string) => {
   const cacheKey = `nps_uniqlo_score_v2_${productId}`; // v2: scores keep their sign (netScore)
   const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
   if (cached) return cached.value;
-  // reuse PDP cache if available
-  const pdpCached = cacheGet(`nps_uniqlo_${productId}`, CACHE_TTL);
-  if (pdpCached?.rateCount) {
-    const result = scoreFromRateCount(pdpCached.rateCount);
+  // Reuse the product page's cache when it has one: its aggregate rating carries
+  // the same star counts this would fetch.
+  const rateCount = cacheGet(`nps_uniqlo_v3_${productId}`, CACHE_TTL)?.rating?.rateCount;
+  if (rateCount) {
+    const result = scoreFromRateCount(rateCount);
     if (result) { cacheSet(cacheKey, result); return result; }
   }
 
