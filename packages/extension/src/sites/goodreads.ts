@@ -1353,7 +1353,7 @@ const syncViewerShelving = async (viewerScope: string, bookId: string, now: View
 /**
  * Keeps the signed-in viewer's caches in step with this page's book: once its shelf and
  * stars have rendered, so a change made in the app or elsewhere lands too, then on every
- * change. Same scope as the picks, whatever goodreadsViewerCacheScope resolves to.
+ * change, under the same scope as the picks.
  */
 const watchViewerShelving = (bookId: string) => {
   const viewerScope = goodreadsViewerCacheScope(document);

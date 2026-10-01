@@ -16,14 +16,17 @@ export const shelfScoreCacheTtl = (score: number, threshold: number): number => 
 /**
  * Goodreads' shelf-page ratings are the signed-in viewer's "My rating" values,
  * so every cache containing them (or decisions derived from them) is account-scoped.
- * Only inspect authenticated identity surfaces: book pages also contain reviewer links.
+ * The page's own data names the viewer (ROOT_QUERY.getUser, absent when signed out):
+ * its header no longer links them, and the user links a book page does have are reviewers'.
  */
 export const goodreadsViewerCacheScope = (root: ParentNode): string => {
-  const profile = root.querySelector<HTMLAnchorElement>(
-    '.dropdown__trigger--profileMenu[href*="/user/show/"], .personalNavDrawer__profileContainer a[href*="/user/show/"], .WriteReviewCTA a.Avatar[href*="/user/show/"]',
-  );
-  const id = profile?.href.match(/\/user\/show\/(\d+)/)?.[1];
-  return id ? `user-${id}` : 'anonymous';
+  try {
+    const data = JSON.parse(root.querySelector('#__NEXT_DATA__')?.textContent || '{}');
+    const id = data.props?.pageProps?.apolloState?.ROOT_QUERY?.getUser?.__ref?.match(/^User:(\d+)$/)?.[1];
+    return id ? `user-${id}` : 'anonymous';
+  } catch {
+    return 'anonymous';
+  }
 };
 
 export type ShelfStatus = 'read' | 'to-read' | 'reading' | 'dnf' | 'other' | null;

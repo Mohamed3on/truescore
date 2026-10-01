@@ -24,26 +24,23 @@ describe('shelfScoreCacheTtl', () => {
 });
 
 describe('goodreadsViewerCacheScope', () => {
-  test('uses the authenticated profile-navigation user id', () => {
+  const page = (rootQuery: object) => {
     document.body.innerHTML = `
-      <a class="dropdown__trigger--profileMenu" href="https://www.goodreads.com/user/show/123-reader">Profile</a>
+      <article class="ReviewCard"><a class="Avatar Avatar--medium" href="/user/show/999-reviewer">Reviewer</a></article>
+      <script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { apolloState: { ROOT_QUERY: rootQuery } } } })}</script>
     `;
-    expect(goodreadsViewerCacheScope(document)).toBe('user-123');
+    return goodreadsViewerCacheScope(document);
+  };
+
+  test("uses the signed-in viewer the page's own data names", () => {
+    expect(page({ __typename: 'Query', getUser: { __ref: 'User:123' } })).toBe('user-123');
   });
 
-  test('uses the signed-in reader attached to the book-page review CTA', () => {
-    document.body.innerHTML = `
-      <article class="WriteReviewCTA">
-        <a class="Avatar Avatar--medium" href="/user/show/456-reader">My profile</a>
-      </article>
-      <article class="ReviewCard">
-        <a class="Avatar Avatar--medium" href="/user/show/999-reviewer">Reviewer</a>
-      </article>
-    `;
-    expect(goodreadsViewerCacheScope(document)).toBe('user-456');
+  test('does not mistake a reviewer link for the viewer when signed out', () => {
+    expect(page({ __typename: 'Query' })).toBe('anonymous');
   });
 
-  test('does not mistake a reviewer link for the authenticated viewer', () => {
+  test('is anonymous on a page without its data', () => {
     document.body.innerHTML = '<main><a href="/user/show/999-reviewer">Reviewer</a></main>';
     expect(goodreadsViewerCacheScope(document)).toBe('anonymous');
   });
