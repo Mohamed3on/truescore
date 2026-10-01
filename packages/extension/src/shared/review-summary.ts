@@ -147,7 +147,9 @@ interface SummarizeWidgetOpts {
   context?: string;
   cacheMeta?: any;
   alternates?: AlternatesConfig;
-  autoSummarize?: boolean;
+  // Summarize on landing when nothing is cached — or once the promise says to,
+  // for a panel that may yet be replaced before it should spend a model call.
+  autoSummarize?: boolean | Promise<boolean>;
   // Lets an Ask Search every review before it answers; without it an Ask is
   // one pass over fetchReviews.
   searchAsk?: SearchAsk;
@@ -388,8 +390,8 @@ export const buildSummarizeWidget = ({
   // Auto-summarize on landing — skip silently if a summary is already cached
   // or the active provider has no key (the manual button stays available either way).
   if (autoSummarize && !cached?.parsed) {
-    getActiveLLM().then(({ key }) => {
-      if (key && !questionInput.value.trim()) summarizeBtn.click();
+    Promise.resolve(autoSummarize).then(async (go) => {
+      if (go && (await getActiveLLM()).key && !questionInput.value.trim()) summarizeBtn.click();
     });
   }
 };

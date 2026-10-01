@@ -198,6 +198,7 @@ const buildPanel = (
   bundle: ReviewBundle,
   scored: { score: number; nps: number; total: number },
   courseContent: string,
+  autoSummarize: boolean | Promise<boolean>,
 ) => {
   const wrapper = createIslandShell();
 
@@ -217,7 +218,7 @@ const buildPanel = (
     summaryPrompt: SUMMARY_PROMPT,
     context: courseContent ? courseContext(courseContent) : undefined,
     fetchReviews: async () => bundle.reviews.map(reviewToText).filter(Boolean),
-    autoSummarize: true,
+    autoSummarize,
   });
 
   return wrapper;
@@ -287,22 +288,25 @@ openCourseAccordions();
 
   const courseContent = getCourseContent();
 
-  const render = (bundle: ReviewBundle) => {
+  const render = (bundle: ReviewBundle, autoSummarize: boolean | Promise<boolean>) => {
     const scored = computeScore(bundle);
     if (!scored || scored.total < 5) return;
     document.querySelector('.ars-wrapper')?.remove();
-    anchor.after(buildPanel(info, bundle, scored, courseContent));
+    anchor.after(buildPanel(info, bundle, scored, courseContent, autoSummarize));
   };
 
-  // Paint instantly from cache; the Stamped API is cold-start slow (~9s first
-  // hit), so blocking the panel on it makes the widget feel absent.
   const cached = cacheGet(reviewsCacheKey(info.id), REVIEWS_CACHE_MS) as ReviewBundle | null;
-  if (cached?.reviews.length) render(cached);
-
   // Then confirm against the API in the background, re-rendering only if the
   // review count actually moved since the cached snapshot.
-  try {
-    const fresh = await fetchAllReviews(info);
-    if (!cached || fresh.total !== cached.total) render(fresh);
-  } catch {}
+  const freshPromise = fetchAllReviews(info).catch(() => null);
+  const moved = (fresh: ReviewBundle | null) => !!fresh && (!cached || fresh.total !== cached.total);
+
+  // Paint instantly from cache; the Stamped API is cold-start slow (~9s first
+  // hit), so blocking the panel on it makes the widget feel absent. Its
+  // auto-summary waits to learn the panel stays: one the fresh count replaces
+  // would have the replacement summarize again — two paid calls.
+  if (cached?.reviews.length) render(cached, freshPromise.then((fresh) => !moved(fresh)));
+
+  const fresh = await freshPromise;
+  if (moved(fresh)) render(fresh!, true);
 })();
