@@ -1,4 +1,5 @@
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, SERVER_SCORE_GET, SERVER_SCORE_RESULT, SERVER_SCORE_PORT, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, LLM_SETTINGS_GET, SERVER_SCORE_GET, SERVER_SCORE_RESULT, SERVER_SCORE_PORT, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
+import { getProviderChoice, getReasoningEffort } from '../shared/config';
 
 // ISOLATED world, document_start. Bridges chrome.storage.local, which
 // MAIN-world gmaps.ts can't reach itself (request/response via CustomEvents).
@@ -25,6 +26,14 @@ document.addEventListener(STORAGE_SET, (e) => {
   } catch {
     respond(id, false);
   }
+});
+
+// Only the two choices themselves (see LLM_SETTINGS_GET).
+document.addEventListener(LLM_SETTINGS_GET, async (e) => {
+  const { id } = (e as CustomEvent).detail || {};
+  if (!id) return;
+  const [reasoningEffort, provider] = await Promise.all([getReasoningEffort(), getProviderChoice()]);
+  respond(id, { reasoningEffort, provider });
 });
 
 // Any script in the page can dispatch this event, so the URL is never taken from

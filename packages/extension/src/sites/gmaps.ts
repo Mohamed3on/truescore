@@ -1,8 +1,8 @@
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, SERVER_SCORE_GET, SERVER_SCORE_RESULT, type MapsCapturedCreds, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, LLM_SETTINGS_GET, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, SERVER_SCORE_GET, SERVER_SCORE_RESULT, type MapsCapturedCreds, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
-import { getReasoningEffort, getProviderChoice } from '../shared/config';
+import type { LLMProvider, ReasoningEffort } from '../shared/config';
 import { findQA, loadQAs, removeQA, saveQA } from '../shared/qa-history';
 import { DefaultChatTransport } from 'ai';
 import {
@@ -229,6 +229,7 @@ const bridgeStorage = (() => {
   return {
     get: <T>(key: string) => call<T>(STORAGE_GET, { key }),
     set: (key: string, value: any) => call<true>(STORAGE_SET, { key, value }),
+    llmSettings: () => call<{ reasoningEffort: ReasoningEffort; provider?: LLMProvider }>(LLM_SETTINGS_GET, {}),
   };
 })();
 
@@ -1004,13 +1005,15 @@ const llmContext = async () => {
   const featureId = getFeatureId();
   if (!featureId) throw new Error('No Google Maps place detected');
   // Server-side summaries run on the server's key, but honor the popup's model
-  // + reasoning-effort knobs. provider is the popup's explicit pick (omitted
-  // when unset, so the server keeps its own default); reasoning-effort is
-  // gpt-6-luna only (the server ignores it on Gemini/DeepSeek).
-  const [reasoningEffort, provider] = await Promise.all([getReasoningEffort(), getProviderChoice()]);
+  // + reasoning-effort knobs, read through the bridge (this world has no
+  // chrome.storage). provider is the popup's explicit pick (omitted when unset,
+  // so the server keeps its own default); reasoning-effort is gpt-6-luna only
+  // (the server ignores it on Gemini/DeepSeek). No bridge answer leaves both to
+  // the server's defaults.
+  const settings = (await bridgeStorage.llmSettings()) ?? {};
   // removedReviews: Google's takedown notice for this place, so the model knows
   // it's reading the survivors and couches its words (see summary-subject.removalNote).
-  return { featureId, name: getPlaceInfo().name, removedReviews: activeRemovedReviews, reasoningEffort, provider };
+  return { featureId, name: getPlaceInfo().name, removedReviews: activeRemovedReviews, ...settings };
 };
 
 const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null): Promise<SummaryResult> => {
