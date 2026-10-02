@@ -6,7 +6,7 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
-  answersOf, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
+  answersOf, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, opinionTone, signedNet, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type SearchEvent, type SearchResult,
@@ -126,18 +126,20 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 // null keeps the star share it had before.
 const opinionsFor = (s: { stance?: StanceCounts; of?: number }): Opinions | null => (s.stance ? opinionsOf(s.stance, s.of) : null);
 
-// The two opinion counts as every surface shows them: the good, then the bad —
-// one order everywhere, so a column of them scans — or just the mentions when
-// too few take a side. Glyphs for the eye; the words go in the tooltip and the
-// accessible name of whatever holds them.
-function opinionCounts(o: Opinions, [up, down] = ['▲', '▼']): HTMLElement {
+// Opinions as every surface shows them: the share of those taking a side who are
+// positive ("77%", or "82% yes" for an Ask), then the net of them ("+37") — the
+// same order everywhere, so a column of them scans — or just the mentions when
+// too few take a side. The sign carries the polarity as well as the colour; the
+// counts behind them go in the tooltip and the accessible name.
+function opinionCounts(o: Opinions, word = ''): HTMLElement {
   const span = el('span', 'opinions');
   span.title = o.title;
   if (o.sparse) span.append(el('span', 'op none', mentionsText(o.mentions)));
-  else span.append(el('span', `op pos${o.pos ? '' : ' zero'}`, `${up}${o.pos}`), el('span', `op neg${o.neg ? '' : ' zero'}`, `${down}${o.neg}`));
+  else span.append(el('span', `op ${opinionTone(o)}`, `${o.share}%${word && ` ${word}`}`), el('span', 'op net', `·${signedNet(o.net)}`));
   return span;
 }
-const opinionsLabel = (label: string, o: Opinions) => `${label}: ${o.sparse ? mentionsText(o.mentions) : o.title}`;
+const opinionsLabel = (label: string, o: Opinions) =>
+  `${label}: ${o.sparse ? mentionsText(o.mentions) : `${o.share}% ${o.posWord}, net ${signedNet(o.net)} (${o.title})`}`;
 
 // The one chip-button shape shared by highlights, scored groups, and pending
 // placeholders: label · <pct span> · optional ·count, or label · opinion counts
@@ -278,9 +280,8 @@ const panelStances = (): Record<string, Stance> | undefined =>
   activePanel?.kind === 'highlight' ? activePanel.chip.stances : activePanel?.kind === 'search' ? activePanel.result.stances : undefined;
 
 function opinionFilters(o: Opinions): HTMLElement {
-  const box = el('span', 'opinions');
-  box.title = o.title;
-  if (o.sparse) { box.append(el('span', 'op none', mentionsText(o.mentions))); return box; }
+  const box = opinionCounts(o);
+  if (o.sparse) return box;
   const filter = (stance: Stance, cls: string, glyph: string, n: number, word: string) => {
     const btn = el('button', `op op-filter ${cls}`, `${glyph}${n}`);
     btn.type = 'button';
@@ -424,7 +425,7 @@ function askSearchRow(s: AskSearch, question: string): HTMLButtonElement {
   const counts = (a: AnswerCounts) => {
     const o = answersOf(a);
     row.setAttribute('aria-label', `${parseOrQuery(s.query).join(', ')}: ${opinionsLabel('answers', o)}`);
-    return opinionCounts(o, ['✓', '✗']);
+    return opinionCounts(o, 'yes');
   };
   if (read instanceof Promise) {
     // Space held at the counts' width, filled once — a crossfade, never a tick-up.
@@ -656,7 +657,7 @@ async function runSearch(query: string, force = false) {
       } else if (evt.type === 'search') {
         showSearchPanel(evt.result);
         const o = opinionsFor(evt.result);
-        const said = o ? (o.sparse ? mentionsText(o.mentions) : `${o.pos} praise · ${o.neg} complain`) : `${evt.result.scorePct}%`;
+        const said = o ? (o.sparse ? mentionsText(o.mentions) : `${o.share}% praise · net ${signedNet(o.net)}`) : `${evt.result.scorePct}%`;
         setStatus(
           evt.cached
             ? `"${query}" cached · ${evt.result.totalReviews} reviews · ${said}`

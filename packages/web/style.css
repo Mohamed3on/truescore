@@ -769,9 +769,9 @@ section#result::before {
 .chip.errored[disabled] { cursor: not-allowed; }
 .chip.errored:hover { background: var(--t5); }
 .chip .pct.prefer { color: var(--t2); font-weight: 500; }
-/* What a topic's reviews say, once Jev has read them: praise then complaints,
-   glyph and colour both carrying the sign, or "2 mentions" when too few take a
-   side. Shared by chips, the panel title and Ask rows. */
+/* What a topic's reviews say, once Jev has read them: the share positive, then
+   the net with its sign, or "2 mentions" when too few take a side. Shared by
+   chips, the panel title (with ▲/▼ filters) and Ask rows. */
 .opinions {
   display: inline-flex;
   align-items: baseline;
@@ -783,6 +783,8 @@ section#result::before {
 }
 .op.pos { color: var(--pos); }
 .op.neg { color: var(--neg); }
+.op.mid { color: var(--mid); }
+.op.net { color: var(--t3); font-weight: 500; }
 .op.none { color: var(--t3); font-weight: 500; }
 /* A zero is no signal: muted, so the eye goes to the counts that matter. */
 .op.zero { color: var(--t4); }

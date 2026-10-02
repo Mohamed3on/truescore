@@ -33,19 +33,23 @@ export const MIN_OPINIONS = 2;
 // a Search's most relevant) and the counts say how many they cover.
 export const MAX_JUDGED = 1_000;
 
-// One subject's opinions as every surface shows them: the good count, then the
-// bad, always in that order so a column of them scans; or, when too few take a
-// side, just how many reviews speak to it. `title` spells out everything, the
+// One subject's opinions as every surface shows them: the share of those taking
+// a side who are positive, and the net of them (praise − complaints), or, when
+// too few take a side, just how many reviews speak to it. `pos`/`neg` are the
+// counts behind them (the panel's filters); `title` spells out everything, the
 // mixed and off-topic reviews included, for the tooltip and the aria-label.
 export type Opinions = {
   pos: number;
   neg: number;
+  net: number;
+  share: number;
   posWord: string;
   negWord: string;
   mentions: number;
   sparse: boolean;
   title: string;
 };
+const sided = (pos: number, neg: number) => ({ net: pos - neg, share: pos + neg ? Math.round((pos / (pos + neg)) * 100) : 0 });
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -62,7 +66,7 @@ export const opinionsOf = (c: StanceCounts, of?: number): Opinions => {
   const mentions = c.praise + c.complain + c.mixed;
   const rest = [c.mixed && `${c.mixed} mixed or neutral`, c.off && `${c.off} not about it`].filter(Boolean);
   return {
-    pos: c.praise, neg: c.complain, posWord: 'praise', negWord: 'complain', mentions,
+    pos: c.praise, neg: c.complain, ...sided(c.praise, c.complain), posWord: 'praise', negWord: 'complain', mentions,
     sparse: c.praise + c.complain < MIN_OPINIONS,
     title: [`${c.praise} praise`, `${c.complain} complain`, ...rest, ...covered(c, of)].join(' · '),
   };
@@ -72,7 +76,7 @@ export const answersOf = (c: AnswerCounts, of?: number): Opinions => {
   const mentions = c.yes + c.no + c.unclear;
   const rest = [c.unclear && `${c.unclear} unclear`, c.none && `${c.none} don't say`].filter(Boolean);
   return {
-    pos: c.yes, neg: c.no, posWord: 'yes', negWord: 'no', mentions,
+    pos: c.yes, neg: c.no, ...sided(c.yes, c.no), posWord: 'yes', negWord: 'no', mentions,
     sparse: c.yes + c.no < MIN_OPINIONS,
     title: [`${c.yes} yes`, `${c.no} no`, ...rest, ...covered(c, of)].join(' · '),
   };
@@ -83,10 +87,12 @@ export const answersOf = (c: AnswerCounts, of?: number): Opinions => {
 // the reviews there were when only the first were read.
 export type StanceResult = { stance: StanceCounts; stances: Record<string, Stance>; of?: number };
 
-// The polarity an opinion split reads as: more praise than complaints is good.
-// The star-share chips grade against the place's overall score instead
+// How an opinion split reads: mostly positive, mostly negative, or split. The
+// star-share chips grade against the place's overall score instead
 // (chipPolarity); a topic's own praise-vs-complaint has no baseline to beat.
-export const opinionPolarity = (o: Opinions): 'pos' | 'neg' => (o.pos >= o.neg ? 'pos' : 'neg');
+export const opinionTone = (o: Opinions): 'pos' | 'mid' | 'neg' => (o.share >= 60 ? 'pos' : o.share <= 40 ? 'neg' : 'mid');
+// Net with its sign, as a vote count reads: +37, −5, 0.
+export const signedNet = (n: number): string => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
 
 // The net of an opinion split on the −100..100 scale the chips sort by
 // (sortChipsByImpact), so a stance chip ranks among star-share ones.
