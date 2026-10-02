@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e1018">
+<title>TrueScore — sign in</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<main>
+  <header>
+    <span class="brand">TRUESCORE</span>
+  </header>
+
+  <section class="hero">
+    <h1 class="hero-title">Sign in.</h1>
+    <p class="lede">TrueScore is invite-only for now. Enter your password.</p>
+  </section>
+
+  <form id="form">
+    <input name="username" autocomplete="username" value="truescore" hidden>
+    <input name="password" type="password" autocomplete="current-password" placeholder="Password" required autofocus>
+    <button type="submit">SIGN IN</button>
+  </form>
+  <div id="status" class="status err" role="alert"></div>
+</main>
+
+<!-- /session sets the cookie, then redirects to the page that sent us here (the
+     server picks it from ?next, never off this site). -->
+<script type="module">
+  const form = document.getElementById('form');
+  const status = document.getElementById('status');
+  const button = form.querySelector('button');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    button.disabled = true;
+    status.textContent = '';
+    const res = await fetch(`/session${location.search}`, { method: 'POST', body: new FormData(form) }).catch(() => null);
+    if (res?.ok) return location.replace(res.url);
+    button.disabled = false;
+    status.textContent = res?.status === 401 ? 'Wrong password' : 'Couldn’t sign in — try again';
+    form.password.select();
+  });
+</script>
+</body>
+</html>

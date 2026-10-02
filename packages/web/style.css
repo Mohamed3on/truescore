@@ -55,10 +55,9 @@ header {
   background: transparent;
   border: 0;
   padding: 4px 0;
-  cursor: pointer;
   transition: opacity 200ms var(--ease);
 }
-.brand:hover { opacity: 0.78; }
+button.brand:hover { opacity: 0.78; }
 .brand:focus-visible { outline: 1px solid var(--hairline); outline-offset: 4px; border-radius: 2px; }
 
 .hero { margin: 0 0 28px; max-width: 480px; }

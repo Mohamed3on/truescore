@@ -38,6 +38,7 @@ import { answerKey, cache, type CachedAnswer, type CacheEntry } from './cache';
 import { logEvent } from './events';
 import { createInflight } from './inflight';
 import index from './index.html';
+import login from './login.html';
 import { errStatus, NoReviews, resolveSubject } from './summary-subject';
 
 const json = (v: any, status = 200) =>
@@ -62,8 +63,8 @@ const corsOptions = () => new Response(null, {
 });
 
 // A shared password keeps the API to the people it's been given to: the web app
-// sends the cookie /login sets, the extension a header. Unset (local dev) leaves
-// everything open.
+// sends the cookie it gets by signing in at /login, the extension a header.
+// Unset (local dev) leaves everything open.
 const PASSWORD = process.env.TRUESCORE_PASSWORD;
 const PASSWORD_COOKIE = 'truescore-key';
 const authed = (req: BunRequest) =>
@@ -86,16 +87,8 @@ function lockApi<R extends string>(routes: Serve.Routes<undefined, R>): Serve.Ro
   return routes;
 }
 
-// The web app's sign-in: one password box. It sets the cookie for a year and goes
-// back to the page that sent us here, never off this site.
-const loginPage = (wrong = false) => new Response(`<!doctype html>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TrueScore</title>
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px system-ui}form{display:grid;gap:10px;width:min(300px,85vw)}input,button{font:inherit;padding:10px;border:1px solid #ccc;border-radius:8px}p{margin:0;color:#c00}</style>
-<form method="post">
-<input type="password" name="password" placeholder="Password" autocomplete="current-password" required autofocus>
-${wrong ? '<p>Wrong password</p>' : ''}<button>Sign in</button>
-</form>`, { status: wrong ? 401 : 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+// Where /session sends a signed-in browser: back to the page that sent it to
+// /login, never off this site.
 const nextPath = (req: Request) => {
   const next = new URL(new URL(req.url).searchParams.get('next') ?? '/', 'https://truescore.invalid');
   return next.origin === 'https://truescore.invalid' ? next.pathname + next.search : '/';
@@ -482,10 +475,11 @@ Bun.serve({
   idleTimeout: 120,
   routes: lockApi({
     '/': index,
-    '/login': {
-      GET: () => loginPage(),
+    '/login': login,
+    // The sign-in form's POST: a right password gets the cookie for a year.
+    '/session': {
       POST: async (req) => {
-        if ((await req.formData()).get('password') !== PASSWORD) return loginPage(true);
+        if ((await req.formData()).get('password') !== PASSWORD) return json({ error: 'wrong password' }, 401);
         req.cookies.set(PASSWORD_COOKIE, PASSWORD, { maxAge: 365 * 86400, httpOnly: true, secure: true, sameSite: 'lax', path: '/' });
         return new Response(null, { status: 303, headers: { Location: nextPath(req) } });
       },
