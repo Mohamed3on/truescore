@@ -10,7 +10,7 @@ TLS: Cloudflare edge (Flexible mode — edge ↔ origin is plain HTTP)
 | | |
 |---|---|
 | App dir | `/opt/truescore` |
-| .env | `/opt/truescore/.env` (PORT=80, Decodo creds, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `LLM_PROVIDER`, `TRUESCORE_PASSWORD`, paths) |
+| .env | `/opt/truescore/.env` (PORT=80, Decodo creds, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `LLM_PROVIDER`, `TRUESCORE_PASSWORD`, `TYPESAFE_API_KEY` for review stance and summary receipts, paths) |
 | Code/cache state | `/var/lib/truescore/{cache.sqlite,cookies.json}` (legacy `cache.json` migrated on first start) |
 | systemd unit | `/etc/systemd/system/truescore.service` |
 | Service user | `truescore` |

@@ -1,5 +1,7 @@
 import {
   askViewOf,
+  countAnswers,
+  MAX_JUDGED,
   questionOf,
   statsForReviews,
   textReviewsFor,
@@ -21,8 +23,13 @@ import {
   type LookupRequest,
   type LookupScore,
   type PlacesResponse,
+  type ReceiptsRequest,
+  type ReceiptsResponse,
   type SearchEvent,
   type SearchRequest,
+  type StanceRequest,
+  type StanceResponse,
+  type Summary,
   type SummarizeRequest,
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
@@ -30,7 +37,7 @@ import type { BunRequest, Serve, Server } from 'bun';
 import { resolvePlace } from './resolve';
 import { mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch, type ScoreResult } from './gmaps';
-import { createUIMessageStream, createUIMessageStreamResponse } from 'ai';
+import { createUIMessageStream, createUIMessageStreamResponse, isStaticToolUIPart } from 'ai';
 import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, harvestQuick, scoreHighlight, type Harvest } from './highlights';
@@ -39,7 +46,8 @@ import { logEvent } from './events';
 import { createInflight } from './inflight';
 import index from './index.html';
 import login from './login.html';
-import { errStatus, NoReviews, resolveSubject } from './summary-subject';
+import { errStatus, NoReviews, resolveSubject, type Subject } from './summary-subject';
+import { answersFor, hasReceipts, jevAvailable, mentioning, preferredCount, stanceOfReviews, stancesFor, supportFor, withReceipts } from './jev';
 
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -206,6 +214,27 @@ function ensureChips(featureId: string, name: string, quick = false): Promise<Ha
 const recordHarvest = (featureId: string, { chips, ok }: Harvest): Promise<void> =>
   chips.length || ok ? cache.recordChipWarm(featureId, chips) : Promise.resolve();
 
+// A chip as a lookup ships it: its counts, not its reviews or their stances.
+const slimChip = ({ reviews: _r, stances: _s, ...rest }: Chip) => rest;
+
+// Chips and summaries cached before Jev read them are read now, once, and kept —
+// by /api/highlights and /api/summarize, which a lookup leaves them to (see
+// streamCachedLookup), so they first paint with their counts and receipts.
+async function chipsWithStance(featureId: string, chips: Chip[]): Promise<Chip[]> {
+  if (!jevAvailable() || chips.every((c) => c.stance)) return chips;
+  const read = await Promise.all(chips.map(async (c) => (c.stance || !c.reviews ? c : { ...c, ...(await stanceOfReviews(c.label, c.reviews)) })));
+  if (read.every((c) => c.stance)) await cache.putHighlights(featureId, read);
+  return read;
+}
+async function summaryWithReceipts(summary: Summary, subject: Subject | null, keep: (s: Summary) => Promise<void>): Promise<Summary> {
+  if (hasReceipts(summary) || !subject || !jevAvailable()) return summary;
+  const checked = await withReceipts(summary, subject);
+  if (hasReceipts(checked)) await keep(checked);
+  return checked;
+}
+const cachedSubject = (entry: CacheEntry, reviews = entry.score?.reviews): Subject | null =>
+  reviews?.length ? { placeName: entry.name, reviewTexts: textReviewsFor(reviews), removedReviews: entry.meta?.removedReviews } : null;
+
 // Score every chip in parallel: collect successes, count failures, and cache
 // whatever succeeded. A set missing a chip that threw is stored as short, so
 // it's re-scored rather than served as the place's topics (see putHighlights).
@@ -326,7 +355,12 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
   void cache.touch(featureId).catch((e) => console.error('[touch]', e));
   // A throttle-shortened set is withheld rather than painted, so the client's
   // normal "no chips yet" path re-scores it instead of settling for the remnant.
-  const slimHighlights = cache.highlightsServable(cached) ? cached.highlights?.map(({ reviews: _r, ...rest }) => rest) : undefined;
+  // So are chips and a summary Jev hasn't read yet: the client's no-chips and
+  // no-summary paths fetch them through routes that read them first, so a star
+  // share or an unchecked bullet never paints only to be replaced.
+  const unread = jevAvailable();
+  const slimHighlights = cache.highlightsServable(cached) && !(unread && cached.highlights!.some((h) => !h.stance)) ? cached.highlights?.map(slimChip) : undefined;
+  const summary = cached.summary && !(unread && !hasReceipts(cached.summary)) ? cached.summary : undefined;
   const cachedScoreTs = cached.scoreTs ?? 0;
   const cachedHighlightsTs = cached.highlightsTs ?? 0;
   return ndjsonStream<LookupEvent>(async (write) => {
@@ -334,7 +368,7 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
       type: 'lookup',
       name: cached.name,
       score: lookupScore(cached.score),
-      summary: cached.summary,
+      summary,
       highlights: slimHighlights,
       histogram: cached.histogram,
       overallPct: cached.histogram ? overallPctFromHistogram(cached.histogram) : null,
@@ -367,7 +401,7 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
         if (post?.highlights?.length && (post.highlightsTs ?? 0) > cachedHighlightsTs) {
           write({
             type: 'highlights-refreshed',
-            highlights: post.highlights.map(({ reviews: _r, ...rest }) => rest),
+            highlights: post.highlights.map(slimChip),
           });
         }
       }
@@ -623,14 +657,18 @@ Bun.serve({
           // Only the unfiltered place summary participates in the persisted
           // cache; filtered topic summaries are per-callsite and shouldn't
           // overwrite the canonical entry.summary slot.
-          if (!filter && entry?.summary && !force) return corsJson({ summary: entry.summary, cached: true } satisfies SummarizeResponse);
+          if (!filter && entry?.summary && !force) {
+            const summary = await summaryWithReceipts(entry.summary, cachedSubject(entry), (s) => cache.putSummary(featureId, s));
+            return corsJson({ summary, cached: true } satisfies SummarizeResponse);
+          }
 
           const subject = resolveSubject({
             entry, name: body.name, reviewTexts: body.reviewTexts, reviews: entry?.score?.reviews, removedReviews: body.removedReviews,
             hint: 'look up the place first or pass reviewTexts in the body',
           });
 
-          const summary = await summarize(subject, filter, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
+          // Its receipts are read before it's returned: a bullet never shows only to be dropped.
+          const summary = await withReceipts(await summarize(subject, filter, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
           if (!filter && entry) await cache.putSummary(featureId, summary);
           return corsJson({ summary, cached: false } satisfies SummarizeResponse);
         } catch (e) {
@@ -654,7 +692,7 @@ Bun.serve({
           // `.length`, not truthiness: an empty contributed array must fall through
           // to a harvest, not pin the row blank forever. A set the throttle cut
           // short falls through the same way, so the missing topics come back.
-          if (cache.highlightsServable(entry) && !body.force) return json({ highlights: entry.highlights, cached: true } satisfies HighlightsResponse);
+          if (cache.highlightsServable(entry) && !body.force) return json({ highlights: await chipsWithStance(featureId, entry.highlights!), cached: true } satisfies HighlightsResponse);
           const url = mapsUrlFor(featureId);
 
           // Chips already in hand (a prior harvest, or the lookup's preview) — score + stream.
@@ -704,8 +742,9 @@ Bun.serve({
           const entry = cache.get(featureId);
           const cached = entry?.highlightSummaries?.[token];
           if (cached && !force) {
-            const label = entry?.highlights?.find((h) => h.token === token)?.label ?? body.label ?? '';
-            return corsJson({ summary: cached, label, cached: true } satisfies HighlightSummaryResponse);
+            const chip = entry?.highlights?.find((h) => h.token === token);
+            const summary = await summaryWithReceipts(cached, entry && cachedSubject(entry, chip?.reviews), (s) => cache.putHighlightSummary(featureId, token, s));
+            return corsJson({ summary, label: chip?.label ?? body.label ?? '', cached: true } satisfies HighlightSummaryResponse);
           }
 
           const highlight = entry?.highlights?.find((h) => h.token === token);
@@ -716,7 +755,7 @@ Bun.serve({
             hint: 'pass reviewTexts in the body or run highlights first',
           });
 
-          const summary = await summarize(subject, label, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
+          const summary = await withReceipts(await summarize(subject, label, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
           if (entry) await cache.putHighlightSummary(featureId, token, summary);
           return corsJson({ summary, label, cached: false } satisfies HighlightSummaryResponse);
         } catch (e) {
@@ -751,7 +790,7 @@ Bun.serve({
 
           return ndjsonStream<SearchEvent>(async (write) => {
             try {
-              if (cached && !force && (!doSummarize || cached.summary)) {
+              if (cached && !force && (!doSummarize || cached.summary) && (cached.stance || !jevAvailable())) {
                 write({ type: 'search', result: cached, cached: true });
                 return;
               }
@@ -764,6 +803,8 @@ Bun.serve({
                 }, force);
                 result = { query: term, ...statsForReviews(reviews), reviews, ts: Date.now() };
               }
+              // What the matches say about the query, read before the result first shows.
+              if (!result.stance) result = { ...result, ...(await stanceOfReviews(term, result.reviews)) };
               write({ type: 'search', result, cached: false });
 
               // Persist the scrape BEFORE summarizing: the search is the
@@ -778,7 +819,8 @@ Bun.serve({
               if (entry && doSummarize && (!result.summary || force)) {
                 const reviewTexts = textReviewsFor(result.reviews);
                 if (reviewTexts.length) {
-                  result.summary = await summarize({ placeName: entry.name, reviewTexts, removedReviews: entry.meta?.removedReviews }, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
+                  const subject = { placeName: entry.name, reviewTexts, removedReviews: entry.meta?.removedReviews };
+                  result.summary = await withReceipts(await summarize(subject, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
                   write({ type: 'search-summary', summary: result.summary });
                   if (cacheable) await cache.putSearch(featureId, term, result);
                 }
@@ -793,6 +835,49 @@ Bun.serve({
           return json(errBody(e), 400);
         }
       },
+    },
+    // Jev's read of texts a client already holds — the extension's own searches
+    // and chips, an Ask's matches (see StanceRequest). 503 when Jev is off, and
+    // the caller keeps the display it had.
+    '/api/stance': {
+      POST: async (req) => {
+        try {
+          const body = await req.json() as StanceRequest;
+          const texts = (Array.isArray(body.texts) ? body.texts : []).filter((t): t is string => typeof t === 'string').slice(0, MAX_JUDGED);
+          const question = body.question?.trim(), topic = body.topic?.trim();
+          if (!question && !topic) return corsJson({ error: 'missing topic or question' }, 400);
+          const answers = question ? await answersFor(question, texts) : null;
+          const stances = question ? null : await stancesFor(topic!, texts);
+          if (!answers && !stances) return corsJson({ error: 'unavailable' } satisfies StanceResponse, 503);
+          return corsJson((answers ? { answers } : { stances: stances! }) satisfies StanceResponse);
+        } catch (e) {
+          console.error('[stance]', e);
+          return corsJson(errBody(e), 400);
+        }
+      },
+      OPTIONS: corsOptions,
+    },
+    // Which of the texts a summary was built from make each of its points, and
+    // how many prefer each rival it names — for summaries the extension writes
+    // itself (see ReceiptsRequest). 503 when Jev is off.
+    '/api/receipts': {
+      POST: async (req) => {
+        try {
+          const body = await req.json() as ReceiptsRequest;
+          const strings = (v: unknown) => (Array.isArray(v) ? v : []).filter((t): t is string => typeof t === 'string');
+          const points = strings(body.points), texts = strings(body.texts).slice(0, MAX_JUDGED), rivals = strings(body.rivals);
+          const [support, preferredBy] = await Promise.all([
+            supportFor(points, texts),
+            Promise.all(rivals.map((r) => preferredCount(body.place ?? '', r, mentioning(texts, r)))),
+          ]);
+          if (!support || preferredBy.some((n) => n == null)) return corsJson({ error: 'unavailable' } satisfies ReceiptsResponse, 503);
+          return corsJson({ support, preferredBy: preferredBy as number[] } satisfies ReceiptsResponse);
+        } catch (e) {
+          console.error('[receipts]', e);
+          return corsJson(errBody(e), 400);
+        }
+      },
+      OPTIONS: corsOptions,
     },
     // CORS-allowed. Web caller passes `{ featureId, messages }` and we read
     // entry.score.reviews from cache; the extension passes `{ name, reviewTexts,
@@ -836,7 +921,16 @@ Bun.serve({
             onFinish: async ({ responseMessage, finishReason, isAborted }) => {
               const { text, searches } = askViewOf(responseMessage);
               if (!entry || !featureId || isAborted || finishReason !== 'stop' || !text.trim() || !searches.every((s) => s.done && s.found != null)) return;
-              await cache.putAnswer(featureId, key, { answer: text.trim(), searches, ts: Date.now() });
+              // A replay's rows show what their matches say to the question, as the
+              // live rows did: read now (the client's own read of them is memoised).
+              const calls = responseMessage.parts.filter(isStaticToolUIPart);
+              const answered = await Promise.all(searches.map(async (s, i) => {
+                const call = calls[i];
+                const texts = call?.state === 'output-available' ? call.output.texts.slice(0, MAX_JUDGED) : [];
+                const answers = texts.length ? await answersFor(question, texts) : null;
+                return answers ? { ...s, answers: countAnswers(answers) } : s;
+              }));
+              await cache.putAnswer(featureId, key, { answer: text.trim(), searches: answered, ts: Date.now() });
             },
           });
         } catch (e) {

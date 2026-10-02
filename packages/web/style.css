@@ -652,6 +652,7 @@ section#result::before {
   font-variant-numeric: tabular-nums;
   min-width: 0;
 }
+.chip-panel-title .nowrap { white-space: nowrap; }
 .chip-panel-title .pct {
   font-weight: 600;
   color: var(--t1);
@@ -767,6 +768,56 @@ section#result::before {
 .chip.loading[disabled] { cursor: wait; }
 .chip.errored[disabled] { cursor: not-allowed; }
 .chip.errored:hover { background: var(--t5); }
+.chip .pct.prefer { color: var(--t2); font-weight: 500; }
+/* What a topic's reviews say, once Jev has read them: praise then complaints,
+   glyph and colour both carrying the sign, or "2 mentions" when too few take a
+   side. Shared by chips, the panel title and Ask rows. */
+.opinions {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.op.pos { color: var(--pos); }
+.op.neg { color: var(--neg); }
+.op.none { color: var(--t3); font-weight: 500; }
+/* A zero is no signal: muted, so the eye goes to the counts that matter. */
+.op.zero { color: var(--t4); }
+.op-filter:disabled { cursor: default; }
+/* In the panel title each count filters the list below it. */
+.op-filter {
+  font: inherit;
+  letter-spacing: inherit;
+  padding: 1px 6px;
+  margin: -1px 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 160ms ease-out, background-color 160ms ease-out, border-color 160ms ease-out;
+}
+.op-filter:active { transform: scale(0.97); }
+.op-filter.pos[aria-pressed="true"] { background: rgba(74, 222, 128, 0.12); border-color: rgba(74, 222, 128, 0.5); }
+.op-filter.neg[aria-pressed="true"] { background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.5); }
+@media (hover: hover) and (pointer: fine) {
+  .op-filter:hover { background: var(--t5); border-color: var(--hairline); }
+}
+/* An Ask row's counts arrive after the row: the slot holds their space and
+   fills once, fading in rather than ticking up. */
+.op-slot {
+  display: inline-flex;
+  justify-content: flex-end;
+  min-width: 8ch;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--t4);
+}
+.op-slot.op-in > * { animation: op-in 150ms ease-out; }
+@keyframes op-in { from { opacity: 0; filter: blur(2px); } to { opacity: 1; filter: none; } }
 .chip .pct.chip-pending {
   color: var(--t3);
   letter-spacing: 0.06em;
@@ -889,6 +940,7 @@ section#result::before {
 }
 .highlights li {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
   font-size: 13px;
@@ -900,6 +952,54 @@ section#result::before {
 .highlights .h-text.pos { color: var(--pos); }
 .highlights .h-text.neg { color: var(--neg); }
 .highlights .h-text.neutral { color: var(--t1); }
+/* A bullet's receipt: how many reviews make its point; it opens them below. */
+.receipt {
+  flex-shrink: 0;
+  align-self: flex-start;
+  padding: 2px 8px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 500;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--t3);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 160ms ease-out, color 160ms ease-out, border-color 160ms ease-out;
+}
+.receipt:active { transform: scale(0.97); }
+.receipt[aria-expanded="true"] { color: var(--t1); border-color: var(--t4); }
+@media (hover: hover) and (pointer: fine) {
+  .receipt:hover { color: var(--t1); border-color: var(--t4); }
+}
+.receipt-quotes {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: enter 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.receipt-quote {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--t2);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+@keyframes enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes enter-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .receipt-quotes { animation-name: enter-fade; }
+  .op-slot.op-in > * { animation-name: enter-fade; }
+}
 
 .ask {
   display: flex;

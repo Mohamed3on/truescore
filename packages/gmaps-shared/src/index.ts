@@ -686,6 +686,9 @@ export * from './http';
 export * from './ask';
 export * from './markdown';
 
+// What reviews say about a topic or a question, as Jev reads them on the server.
+export * from './stance';
+
 // Reading fields out of JSON a model didn't finish writing — both packages hit
 // the same truncation against the same providers.
 export * from './json-salvage';

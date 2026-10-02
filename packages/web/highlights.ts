@@ -1,6 +1,7 @@
 import { chipsFromPreview, statsForReviews, type Chip, type ChipMeta } from '@truescore/gmaps-shared';
 import { fetchPlacePreview } from './browser';
 import { fetchAllForToken } from './gmaps';
+import { stanceOfReviews } from './jev';
 
 const QUICK_SHOTS = 5;
 const WARM_SHOTS = 3;
@@ -82,10 +83,14 @@ export async function scoreHighlight(featureId: string, chip: ChipMeta): Promise
     await Bun.sleep(TOKEN_RETRY_MS);
     reviews = await fetchAllForToken(featureId, chip.token);
   }
+  // What the reviews say about the topic, read before the chip is first shown,
+  // so a star share never paints only to be replaced; absent when Jev can't read them.
+  const stance = await stanceOfReviews(chip.label, reviews);
   return {
     ...chip,
     fetched: reviews.length,
     score: statsForReviews(reviews),
     reviews,
+    ...stance,
   };
 }

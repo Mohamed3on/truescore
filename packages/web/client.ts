@@ -6,6 +6,7 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  answersOf, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type SearchEvent, type SearchResult,
@@ -82,6 +83,9 @@ const scoredGroups = {
   alternatives: { chips: [] as ScoredChip[], row: alternativesRow, list: alternativesList, chipClass: 'alternative-chip' },
 };
 type ScoredKind = keyof typeof scoredGroups;
+// Per better alternative, how many reviews say they'd rather go there (the
+// summary's receipts); unset for a summary Jev didn't check.
+let preferredBy: Record<string, number> | undefined;
 
 function setStatus(msg: string, isErr = false) {
   status.textContent = msg;
@@ -118,31 +122,64 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e;
 }
 
+// A chip's or a Search's opinions, once Jev has read what its reviews say;
+// null keeps the star share it had before.
+const opinionsFor = (s: { stance?: StanceCounts; of?: number }): Opinions | null => (s.stance ? opinionsOf(s.stance, s.of) : null);
+
+// The two opinion counts as every surface shows them: the good, then the bad —
+// one order everywhere, so a column of them scans — or just the mentions when
+// too few take a side. Glyphs for the eye; the words go in the tooltip and the
+// accessible name of whatever holds them.
+function opinionCounts(o: Opinions, [up, down] = ['▲', '▼']): HTMLElement {
+  const span = el('span', 'opinions');
+  span.title = o.title;
+  if (o.sparse) span.append(el('span', 'op none', mentionsText(o.mentions)));
+  else span.append(el('span', `op pos${o.pos ? '' : ' zero'}`, `${up}${o.pos}`), el('span', `op neg${o.neg ? '' : ' zero'}`, `${down}${o.neg}`));
+  return span;
+}
+const opinionsLabel = (label: string, o: Opinions) => `${label}: ${o.sparse ? mentionsText(o.mentions) : o.title}`;
+
 // The one chip-button shape shared by highlights, scored groups, and pending
-// placeholders: label · <pct span> · optional ·count. `pct` is the middle span's
-// {text, class}; `cls` adds button modifiers (loading / errored / alternative-chip).
-type ChipSpec = { label: string; pct: { text: string; cls: string }; count?: number | null; cls?: string; token?: string; title?: string; disabled?: boolean; onClick?: () => void };
+// placeholders: label · <pct span> · optional ·count, or label · opinion counts
+// once Jev has read the reviews. `pct` is the middle span's {text, class};
+// `cls` adds button modifiers (loading / errored / alternative-chip).
+type ChipSpec = { label: string; pct: { text: string; cls: string }; count?: number | null; opinions?: Opinions | null; cls?: string; token?: string; title?: string; disabled?: boolean; onClick?: () => void };
 function chip(spec: ChipSpec): HTMLButtonElement {
   const btn = el('button', spec.cls ? `chip ${spec.cls}` : 'chip');
   btn.type = 'button';
   if (spec.token) btn.dataset.token = spec.token;
   if (spec.title) btn.title = spec.title;
-  btn.append(el('span', 'label', spec.label), el('span', `pct ${spec.pct.cls}`, spec.pct.text));
-  if (spec.count != null) btn.append(el('span', 'count', `·${spec.count}`));
+  btn.append(el('span', 'label', spec.label));
+  if (spec.opinions) {
+    btn.append(opinionCounts(spec.opinions));
+    btn.setAttribute('aria-label', opinionsLabel(spec.label, spec.opinions));
+  } else {
+    btn.append(el('span', `pct ${spec.pct.cls}`, spec.pct.text));
+    if (spec.count != null) btn.append(el('span', 'count', `·${spec.count}`));
+  }
   if (spec.onClick) btn.addEventListener('click', spec.onClick);
   if (spec.disabled) btn.disabled = true;
   return btn;
 }
 
+// With every chip read, they're ordered by what reviewers say — more praise than
+// complaints first, then the most lopsided and most discussed — instead of by
+// star share against the place's own score.
+const chipOrder = (chips: UiChip[]): UiChip[] => {
+  if (!chips.every((c) => c.stance)) return sortChipsByImpact(chips, currentMergedPct);
+  const ranked = chips.map((c) => { const o = opinionsOf(c.stance!); return { c, score: { scorePct: opinionPct(o) }, count: o.pos + o.neg }; });
+  return sortChipsByImpact(ranked, 0).map((r) => r.c);
+};
+
 function renderHighlights(highlights: UiChip[], sort = false) {
-  const list = sort ? sortChipsByImpact(highlights, currentMergedPct) : highlights;
+  const list = sort ? chipOrder(highlights) : highlights;
   highlightsList.replaceChildren(...list.map((h) => {
     const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
     const pct = state === 'done' && h.score
       ? { text: `${h.score.scorePct}%`, cls: chipPolarity(h.score.scorePct, currentMergedPct) }
       : state === 'error' ? { text: '✗', cls: 'neg' } : { text: '…', cls: 'chip-pending' };
     return chip({
-      label: h.label, pct, count: h.count, token: h.token,
+      label: h.label, pct, count: h.count, token: h.token, opinions: state === 'done' ? opinionsFor(h) : null,
       cls: state === 'loading' ? 'loading' : state === 'error' ? 'errored' : undefined,
       title: state === 'error' && h.error ? h.error : undefined,
       disabled: state !== 'done',
@@ -163,9 +200,13 @@ function renderScored(kind: ScoredKind) {
   g.list.replaceChildren(
     ...scored.map((d) => {
       const r = d.result!;
+      // A better alternative reads as how many say they'd rather go there, once
+      // the summary's receipts are in; a standout, as what its mentions say.
+      const prefer = kind === 'alternatives' ? preferredBy?.[d.item] : undefined;
       return chip({
         label: d.item, cls: g.chipClass || undefined, count: r.totalReviews,
-        pct: { text: r.trustedReviews ? `${r.scorePct}%` : '—', cls: chipPolarity(r.scorePct, currentMergedPct) },
+        pct: prefer != null ? { text: `${prefer} prefer it`, cls: 'prefer' } : { text: r.trustedReviews ? `${r.scorePct}%` : '—', cls: chipPolarity(r.scorePct, currentMergedPct) },
+        opinions: prefer != null ? null : opinionsFor(r),
         onClick: () => showSearchPanel(r),
       });
     }),
@@ -217,19 +258,64 @@ function setActiveChip(token?: string) {
   });
 }
 
-function setPanelTitle(label: string, scorePct: number, trusted: number, total: number) {
+// The panel's subject: its label, then what its reviews say — each count a
+// filter on the list below, pressed again or Esc to clear — or, unread, its star
+// share; then how many reviews it rests on.
+type PanelStats = { scorePct: number; trustedReviews: number; stance?: StanceCounts; of?: number };
+function setPanelTitle(label: string, s: PanelStats, total: number) {
+  const o = opinionsFor(s);
   chipPanelTitle.replaceChildren(
     el('span', undefined, label), ' · ',
-    el('span', `pct ${chipPolarity(scorePct, currentMergedPct)}`, `${scorePct}%`),
-    ` · ${trusted} trusted of ${total}`,
+    ...(o ? [opinionFilters(o)] : [el('span', `pct ${chipPolarity(s.scorePct, currentMergedPct)}`, `${s.scorePct}%`)]),
+    el('span', 'nowrap', ` · ${s.trustedReviews} trusted of ${total}`),
   );
 }
 
+// The review list's filter, by what reviews say: set by a count in the panel
+// title, cleared when the panel shows another subject.
+let stanceFilter: Stance | null = null;
+const panelStances = (): Record<string, Stance> | undefined =>
+  activePanel?.kind === 'highlight' ? activePanel.chip.stances : activePanel?.kind === 'search' ? activePanel.result.stances : undefined;
+
+function opinionFilters(o: Opinions): HTMLElement {
+  const box = el('span', 'opinions');
+  box.title = o.title;
+  if (o.sparse) { box.append(el('span', 'op none', mentionsText(o.mentions))); return box; }
+  const filter = (stance: Stance, cls: string, glyph: string, n: number, word: string) => {
+    const btn = el('button', `op op-filter ${cls}`, `${glyph}${n}`);
+    btn.type = 'button';
+    // Nothing to list behind a zero.
+    btn.disabled = !n;
+    btn.classList.toggle('zero', !n);
+    btn.setAttribute('aria-label', `${n} ${word} — show only these reviews`);
+    btn.setAttribute('aria-pressed', String(stanceFilter === stance));
+    btn.addEventListener('click', () => setStanceFilter(stanceFilter === stance ? null : stance));
+    return btn;
+  };
+  box.append(filter('praise', 'pos', '▲', o.pos, 'praise'), filter('complain', 'neg', '▼', o.neg, 'complain'));
+  return box;
+}
+
+// Instant, with no animation: it's a frequent action. The list only scrolls into
+// view when it's off screen.
+function setStanceFilter(stance: Stance | null) {
+  stanceFilter = stance;
+  chipPanelTitle.querySelectorAll<HTMLButtonElement>('.op-filter').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.classList.contains(stance === 'praise' ? 'pos' : 'neg') && !!stance));
+  });
+  renderReviewList(panelReviews() ?? []);
+  const top = chipBody.getBoundingClientRect().top;
+  if (top < 0 || top > window.innerHeight) chipBody.scrollIntoView({ block: 'nearest' });
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && stanceFilter && !chipPanel.hidden) setStanceFilter(null);
+});
+
 function showChipPanel(h: UiChip) {
   activePanel = { kind: 'highlight', chip: h };
+  stanceFilter = null;
   setActiveChip(h.token);
-  const score = h.score?.scorePct ?? 0;
-  setPanelTitle(h.label.toUpperCase(), score, h.score?.trustedReviews ?? 0, h.reviews?.length ?? h.count);
+  setPanelTitle(h.label.toUpperCase(), { scorePct: h.score?.scorePct ?? 0, trustedReviews: h.score?.trustedReviews ?? 0, stance: h.stance, of: h.of }, h.reviews?.length ?? h.count);
   renderReviewList(h.reviews ?? []);
   chipPanel.hidden = false;
   verdictRow.style.display = 'none';
@@ -243,6 +329,7 @@ function showChipPanel(h: UiChip) {
 
 function closeChipPanel() {
   activePanel = null;
+  stanceFilter = null;
   setActiveChip(undefined);
   chipPanel.hidden = true;
   verdictRow.style.display = '';
@@ -290,14 +377,18 @@ async function streamAsk(box: HTMLElement, question: string, body: Omit<AskReque
   const search: SearchReviews = async (query, onFound) => {
     for await (const e of streamNdjson<SearchEvent>('/api/search', { featureId: epoch.featureId, query } satisfies SearchRequest, ctrl.signal)) {
       if (e.type === 'search-progress') onFound(e.totalReviews);
-      else if (e.type === 'search') return { texts: textReviewsFor(e.result.reviews), scorePct: e.result.scorePct, trustedReviews: e.result.trustedReviews };
+      else if (e.type === 'search') {
+        const texts = textReviewsFor(e.result.reviews);
+        readAnswers(question, query, texts);
+        return { texts, scorePct: e.result.scorePct, trustedReviews: e.result.trustedReviews };
+      }
     }
     return null;
   };
   let shown: AskView | undefined;
   await runAsk(new DefaultChatTransport<AskMessage>({ api: '/api/ask', body }), question, search, (v) => {
     if (!epoch.alive) return ctrl.abort();
-    if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map(askSearchRow));
+    if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map((s) => askSearchRow(s, question)));
     if (v.text !== shown?.text) renderMarkdown(text, v.text);
     text.classList.toggle('reading', !v.done && !v.text && v.searches.every((s) => s.done));
     if (v.answeredAt && !shown?.answeredAt) {
@@ -314,7 +405,13 @@ async function streamAsk(box: HTMLElement, question: string, body: Omit<AskReque
   }, ctrl.signal);
 }
 
-function askSearchRow(s: AskSearch): HTMLButtonElement {
+// What each Ask Search's matches say to the question, read by Jev once the
+// matches are in (see streamAsk): settled, pending, or null when it couldn't —
+// the row then keeps the matches' TrueScore.
+const askAnswers = new Map<string, AnswerCounts | Promise<AnswerCounts | null> | null>();
+const answersKey = (question: string, query: string) => `${question}\u0000${query}`;
+
+function askSearchRow(s: AskSearch, question: string): HTMLButtonElement {
   const row = el('button', s.done ? 'ask-search' : 'ask-search live');
   row.type = 'button';
   row.disabled = !s.done || !s.found;
@@ -323,8 +420,24 @@ function askSearchRow(s: AskSearch): HTMLButtonElement {
     el('span', 'micro', s.done ? 'SEARCHED ALL REVIEWS' : 'SEARCHING ALL REVIEWS'),
     el('span', 'ask-search-terms', parseOrQuery(s.query).join(' · ')),
   );
+  const read = s.answers ?? askAnswers.get(answersKey(question, s.query));
+  const counts = (a: AnswerCounts) => {
+    const o = answersOf(a);
+    row.setAttribute('aria-label', `${parseOrQuery(s.query).join(', ')}: ${opinionsLabel('answers', o)}`);
+    return opinionCounts(o, ['✓', '✗']);
+  };
+  if (read instanceof Promise) {
+    // Space held at the counts' width, filled once — a crossfade, never a tick-up.
+    const slot = el('span', 'op-slot', '…');
+    row.append(slot);
+    void read.then((a) => {
+      if (!slot.isConnected) return;
+      slot.replaceChildren(a ? counts(a) : starShare(s));
+      slot.classList.add('op-in');
+    });
+  } else if (read) row.append(counts(read));
   // The matches' TrueScore, graded against the place's like the topic chips.
-  if (s.scorePct != null) row.append(el('span', `ask-search-pct ${chipPolarity(s.scorePct, currentMergedPct)}`, s.trustedReviews ? `${s.scorePct}%` : '—'));
+  else if (s.scorePct != null) row.append(starShare(s));
   row.append(el('span', 'ask-search-count', s.found == null ? '—' : `·${s.found}`));
   row.addEventListener('click', () => {
     searchInput.value = s.query;
@@ -332,11 +445,24 @@ function askSearchRow(s: AskSearch): HTMLButtonElement {
   });
   return row;
 }
+const starShare = (s: AskSearch) => el('span', `ask-search-pct ${chipPolarity(s.scorePct ?? 0, currentMergedPct)}`, s.trustedReviews ? `${s.scorePct}%` : '—');
+
+// Jev's read of how an Ask Search's matches answer the question, asked once per
+// question and Search; null when it can't (the row keeps its TrueScore).
+function readAnswers(question: string, query: string, texts: string[]): void {
+  const key = answersKey(question, query);
+  if (askAnswers.has(key)) return;
+  const read = postJson<StanceResponse>('/api/stance', { question, texts: texts.slice(0, MAX_JUDGED) } satisfies StanceRequest)
+    .then((r) => (r.answers ? countAnswers(r.answers) : null), () => null)
+    .then((a) => { askAnswers.set(key, a); return a; });
+  askAnswers.set(key, read);
+}
 
 function showSearchPanel(r: SearchResult) {
   activePanel = { kind: 'search', result: r };
+  stanceFilter = null;
   setActiveChip(undefined);
-  setPanelTitle(`"${r.query.toUpperCase()}"`, r.scorePct, r.trustedReviews, r.reviews.length);
+  setPanelTitle(`"${r.query.toUpperCase()}"`, r, r.reviews.length);
   chipPanel.hidden = false;
   verdictRow.style.display = 'none';
   highlightsListEl.style.display = 'none';
@@ -377,7 +503,9 @@ function renderReviewList(reviews: Review[]) {
   // with no exact offsets (e.g. a shown translation); else r.matchTerms wins.
   const fallback = (activePanel?.kind === 'highlight' ? [activePanel.chip.label] : activePanel?.kind === 'search' ? parseOrQuery(activePanel.result.query) : [])
     .flatMap((t) => t.split(/\s+/));
-  chipBody.replaceChildren(...sortedDisplayReviews(reviews).map((r) => {
+  const stances = panelStances();
+  const shown = stanceFilter && stances ? reviews.filter((r) => stances[r.reviewId] === stanceFilter) : reviews;
+  chipBody.replaceChildren(...sortedDisplayReviews(shown).map((r) => {
     const meta = el('div', 'review-meta');
     meta.append(el('span', 'review-stars', starString(r.stars)), el('span', 'review-age', reviewAge(r.timestamp)));
     const text = el('p', 'review-text');
@@ -388,15 +516,35 @@ function renderReviewList(reviews: Review[]) {
   }));
 }
 
-// One <li><span class="h-text {sentiment}"> per highlight, appended to ul.
+// One <li><span class="h-text {sentiment}"> per highlight, appended to ul —
+// with its receipt when Jev checked it: how many reviews make the point, a button
+// that opens them under the bullet.
 function renderHighlightList(ul: HTMLElement, highlights: Summary['highlights']) {
   for (const h of highlights) {
     const text = el('span', `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`);
     renderMarkdownInline(text, h.text ?? '');
     const li = el('li');
     li.appendChild(text);
+    if (h.support != null) li.appendChild(receipt(li, h.support, h.quotes ?? []));
     ul.appendChild(li);
   }
+}
+
+function receipt(li: HTMLElement, support: number, quotes: string[]): HTMLButtonElement {
+  const btn = el('button', 'receipt', `${support} reviews`);
+  btn.type = 'button';
+  btn.setAttribute('aria-expanded', 'false');
+  btn.title = 'Show the reviews that say this';
+  btn.addEventListener('click', () => {
+    const open = li.querySelector('.receipt-quotes');
+    btn.setAttribute('aria-expanded', String(!open));
+    if (open) { open.remove(); return; }
+    const box = el('div', 'receipt-quotes');
+    for (const q of quotes) box.appendChild(el('p', 'receipt-quote', q));
+    if (support > quotes.length) box.appendChild(el('span', 'micro', `+${support - quotes.length} more`));
+    li.appendChild(box);
+  });
+  return btn;
 }
 
 function renderChipSummary(summary: Summary) {
@@ -421,7 +569,7 @@ async function onHighlightClick(h: UiChip) {
   chipBody.replaceChildren(el('div', 'chip-loading', 'loading reviews…'));
   await ensureHighlightReviews(h);
   if (activePanel?.kind !== 'highlight' || activePanel.chip !== h) return;
-  setPanelTitle(h.label.toUpperCase(), h.score?.scorePct ?? 0, h.score?.trustedReviews ?? 0, (h as Chip).reviews?.length ?? h.count);
+  setPanelTitle(h.label.toUpperCase(), { scorePct: h.score?.scorePct ?? 0, trustedReviews: h.score?.trustedReviews ?? 0, stance: h.stance, of: h.of }, (h as Chip).reviews?.length ?? h.count);
   renderReviewList(h.reviews ?? []);
 }
 
@@ -504,13 +652,15 @@ async function runSearch(query: string, force = false) {
         // Per-page progress: same `Searching "x" · N reviews · P%` shape so
         // the user sees the search count climb instead of staring at a fixed
         // spinner.
-        setStatus(`Searching "${query}" · ${evt.totalReviews} reviews · ${evt.scorePct}%`);
+        setStatus(`Searching "${query}" · ${evt.totalReviews} reviews`);
       } else if (evt.type === 'search') {
         showSearchPanel(evt.result);
+        const o = opinionsFor(evt.result);
+        const said = o ? (o.sparse ? mentionsText(o.mentions) : `${o.pos} praise · ${o.neg} complain`) : `${evt.result.scorePct}%`;
         setStatus(
           evt.cached
-            ? `"${query}" cached · ${evt.result.totalReviews} reviews · ${evt.result.scorePct}%`
-            : `"${query}" · ${evt.result.totalReviews} reviews · ${evt.result.scorePct}% in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
+            ? `"${query}" cached · ${evt.result.totalReviews} reviews · ${said}`
+            : `"${query}" · ${evt.result.totalReviews} reviews · ${said} in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
         );
       }
     }
@@ -623,7 +773,9 @@ async function ensureHighlightReviews(h: UiChip): Promise<void> {
     if (!resp.ok || !ct.includes('json')) return;
     const data = await resp.json() as HighlightsResponse;
     if (!epoch.alive) return;
-    h.reviews ??= data.highlights?.find((c) => c.token === h.token)?.reviews;
+    const full = data.highlights?.find((c) => c.token === h.token);
+    h.reviews ??= full?.reviews;
+    h.stances ??= full?.stances;
   });
 }
 
@@ -750,6 +902,7 @@ function paintScore(data: PaintData) {
 // cache-miss `place` event flow through this before painting whatever data
 // they have. Subsequent `score-progress` / `preview` ticks just re-paint.
 function initResultPanel(featureId: string, resolvedUrl?: string) {
+  preferredBy = undefined;
   result.hidden = false;
   document.body.dataset.state = 'scored';
   beginPlace(featureId);
@@ -1063,6 +1216,7 @@ function renderValue(rating?: number) {
 
 function renderSummary(summary: Summary, epoch: PlaceEpoch) {
   if (!epoch.alive) return;
+  preferredBy = summary.preferredBy;
   renderValue(summary.valueForMoney);
   renderMarkdown($('verdict'), summary.verdict);
   resummarizeBtn.hidden = false;

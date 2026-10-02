@@ -1,7 +1,7 @@
 import { db, DB_PATH, LEGACY_JSON_PATH } from './db';
 import type { ScoreResult } from './gmaps';
 import type { Summary } from './llm';
-import { displayScore, normalizeQuestion, PAGE_SIZE, type AskSearch, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews, type Review, type SortStats, type TermCache } from '@truescore/gmaps-shared';
+import { displayScore, normalizeQuestion, PAGE_SIZE, type AskSearch, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews, type Review, type SortStats, type StanceResult, type TermCache } from '@truescore/gmaps-shared';
 
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
 // How long a cached review search — a whole query, or a single term — is served
@@ -70,7 +70,7 @@ export type SearchResult = {
   reviews: Array<{ reviewId: string; stars: number; reviewerReviewCount: number; timestamp: number | null; text: string }>;
   summary?: Summary;
   ts: number;
-};
+} & Partial<StanceResult>;
 
 db.run('CREATE TABLE IF NOT EXISTS entries (featureId TEXT PRIMARY KEY, data TEXT NOT NULL)');
 

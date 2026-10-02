@@ -5,13 +5,17 @@
 // server route handlers and a re-declared copy in the client.
 import type { UIMessage } from 'ai';
 import type { ChipMeta, PlaceMeta, RemovedReviews, Review, SortStats } from './index';
+import type { Answer, AnswerCounts, Stance, StanceResult } from './stance';
 
 // ---- payloads ----
 
 // A verdict bullet from the LLM: one concrete line + its sentiment. Named apart
 // from Chip so the two "highlights" (prose bullets vs scored topic chips) never
-// collide again.
-export type SummaryHighlight = { text: string; sentiment: string };
+// collide again. `support`: how many of the summarized reviews make the point,
+// as Jev read them (web/jev.ts), and `quotes` the first of those reviews — a
+// bullet fewer than two reviews make is dropped before it's ever shown. Both
+// absent on summaries Jev didn't check.
+export type SummaryHighlight = { text: string; sentiment: string; support?: number; quotes?: string[] };
 // `items`: specific things reviewers single out (dishes, animals, exhibits…),
 // as short label-search terms (e.g. "alfajores", "gorilla"). Rendered as their
 // own clickable chips below the topic chips, each auto-scored by a label search.
@@ -20,7 +24,9 @@ export type SummaryHighlight = { text: string; sentiment: string };
 // here precisely because it's a rival, so auto-scoring it as a feature misleads.
 // Both optional — older cached summaries predate them. valueForMoney is unset
 // when a truncated reply was cut before it (summary-parse.salvageStructured).
-export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney?: number; items?: string[]; alternatives?: string[] };
+// `preferredBy`: per alternative, how many reviews say they'd rather go there;
+// an alternative fewer than two reviews prefer is dropped. Absent when unchecked.
+export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney?: number; items?: string[]; alternatives?: string[]; preferredBy?: Record<string, number> };
 
 export type Score = {
   featureId: string;
@@ -39,9 +45,10 @@ export type PartialScore = Omit<Score, 'reviews'>;
 // reviews themselves — they run to megabytes, and no client read them for more.
 export type LookupScore = PartialScore & { latestReviewTs: number | null };
 
-// A topic chip with its scraped review score. (Formerly `Highlight` in both
-// highlights.ts and the client — the source of the collision.)
-export type Chip = ChipMeta & { fetched?: number; score?: SortStats; reviews?: Review[] };
+// A topic chip with its scraped review score, and what its trusted reviews say
+// about the topic (StanceResult) when Jev could read them. (Formerly `Highlight`
+// in both highlights.ts and the client — the source of the collision.)
+export type Chip = ChipMeta & { fetched?: number; score?: SortStats; reviews?: Review[] } & Partial<StanceResult>;
 
 export type SearchResult = {
   query: string;
@@ -50,7 +57,7 @@ export type SearchResult = {
   scorePct: number;
   reviews: Review[];
   summary?: Summary;
-};
+} & Partial<StanceResult>;
 
 // ---- /api/lookup (NDJSON stream) ----
 export type LookupPayload = {
@@ -117,7 +124,8 @@ export type SearchEvent =
 //
 // AskSearch is one of those Searches as a row: its query, matches found so far,
 // and once settled their TrueScore — `found: null` if it couldn't run.
-export type AskSearch = { query: string; found: number | null; done: boolean; scorePct?: number; trustedReviews?: number };
+// `answers`: how its matches answer the question, once Jev has read them.
+export type AskSearch = { query: string; found: number | null; done: boolean; scorePct?: number; trustedReviews?: number; answers?: AnswerCounts };
 export type AskSearchOutput = SearchMatches & { found: number };
 export type AskMessage = UIMessage<{ answeredAt?: number }, never, { searchReviews: { input: { query: string }; output: AskSearchOutput } }>;
 
@@ -131,6 +139,15 @@ export type PlaceItem = { featureId: string; name: string; scorePct: number; adj
 export type PlacesResponse = { places?: PlaceItem[]; error?: string };
 export type CachedResponse = { found: boolean; summary?: Summary; highlights?: Chip[]; highlightSummaries?: Record<string, Summary> };
 export type ContributeResponse = { ok?: boolean; error?: string };
+// Jev's read of texts the caller already holds — the extension's own searches,
+// chips and Ask matches: each one's stance on `topic`, or its answer to
+// `question`, aligned with `texts` (null where it couldn't be read).
+export type StanceRequest = { texts: string[]; topic?: string; question?: string };
+export type StanceResponse = { stances?: (Stance | null)[]; answers?: (Answer | null)[]; error?: string };
+// Which of `texts` make each summary point (indices, per point), and per rival
+// how many say they'd rather go there than `place`.
+export type ReceiptsRequest = { points: string[]; texts: string[]; place?: string; rivals?: string[] };
+export type ReceiptsResponse = { support?: number[][]; preferredBy?: number[]; error?: string };
 
 // ---- LLM provider selection (server-side; the popup threads its choice) ----
 // The full set of summarization providers and reasoning levels the server
