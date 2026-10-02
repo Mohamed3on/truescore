@@ -6,25 +6,19 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
 //
 // 1. /maps/preview/place RPC responses (chip tokens at [6][153][0]) — keyed by
 //    featureId so back-to-back navigations don't clobber each other.
-// 2. Botguard creds off Google's ListUgcPosts batchexecute request (bgkey/bgbind in
+// 2. Botguard creds off Google's ListUgcPosts batchexecute request (bgkey in the
 //    request headers, at/sessionId in the body). Google retired the legacy GET
 //    listugcposts endpoint; the only way to fetch reviews now is to replay this
 //    batchexecute. A capture carries the session (sessionId, at, authuser) that
-//    gmaps.ts caches per account; each replay's key is signed separately by Maps'
-//    own BotGuard (__truescoreSignMaps below).
+//    gmaps.ts keeps; each replay's key is signed separately by Maps' own BotGuard
+//    (__truescoreSignMaps below).
 (() => {
-  if (window.__truescorePreviewCapture) return;
-  window.__truescorePreviewCapture = true;
-  const cache: Record<string, { json: any; ts: number }> = window.__truescorePreviews ?? {};
+  const cache: Record<string, { json: any; ts: number }> = {};
   window.__truescorePreviews = cache;
 
   const MAX_ENTRIES = 20;
 
-  const isPreviewUrl = (u: unknown): boolean => {
-    if (!u) return false;
-    const s = typeof u === 'string' ? u : String(u);
-    return s.includes('/maps/preview/place?') || s.includes('/maps/preview/place%3F');
-  };
+  const isPreviewUrl = (u: string | URL) => String(u).includes('/maps/preview/place?');
 
   const featureIdFromUrl = (u: string): string | null => {
     const m = u.replace(/%3A/gi, ':').match(/!1s(0x[a-f0-9]+:0x[a-f0-9]+)/i);
@@ -45,9 +39,6 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
       document.dispatchEvent(new CustomEvent(PREVIEW_CAPTURED, { detail: { featureId } }));
     } catch {}
   };
-
-  // The only request carrying x-maps-bgkey is the review-list batchexecute, so that
-  // header alone identifies it; credsFromBatchExecute lifts sessionId + at from it.
 
   // Active half of the capture: nudge Maps into firing a review batchexecute on
   // demand and resolve when storeCreds next intercepts one. The consumer
@@ -78,17 +69,11 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
     return null;
   };
   // Google's own visual-element id for the Reviews tab (jslog "145620") is the
-  // same in every language; the English aria-label match we used to rely on
-  // silently missed every non-English UI (German "Rezensionen zu …"), so the tab
-  // never opened, Maps never fired a review batchexecute and no bgkey was ever
-  // captured — leaving the panel unbuilt. Keep the label match as a fallback in
-  // case the id is renamed.
-  const reviewsTab = (): HTMLElement | null =>
-    document.querySelector<HTMLElement>('button[role="tab"][jslog^="145620"]')
-    ?? document.querySelector<HTMLElement>('button[role="tab"][aria-label*="eview" i]');
+  // same in every language; an English aria-label match silently missed every
+  // non-English UI (German "Rezensionen zu …").
+  const reviewsTab = () => document.querySelector<HTMLElement>('button[role="tab"][jslog^="145620"]');
   const requestCapture = (): Promise<MapsCapturedCreds | null> => {
     if (captureInFlight) return captureInFlight;
-    const requestedAt = Date.now();
     captureInFlight = new Promise((resolve) => { captureResolve = resolve; });
     // Open the Reviews tab if needed, then scroll — Maps fires the bgkey-bearing
     // batchexecute when the list loads or paginates; a no-op click on an already-
@@ -107,13 +92,8 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
     nudgeOnce();
     setTimeout(nudgeOnce, 1200);
     setTimeout(nudgeOnce, 3000);
-    // On timeout, settle only with creds captured after this request — the
-    // caller asked precisely because anything older is suspect. settleCapture
-    // clears the timer, so it can never fire into a later request.
-    captureTimer = setTimeout(() => {
-      const c = window.__truescoreMapsCreds;
-      settleCapture(c && c.ts >= requestedAt ? c : null);
-    }, CAPTURE_WAIT_MS);
+    // A capture settles it at once (storeCreds); none by now and Maps isn't sending one.
+    captureTimer = setTimeout(() => settleCapture(null), CAPTURE_WAIT_MS);
     return captureInFlight;
   };
   window.__truescoreRequestMapsCreds = requestCapture;
@@ -129,20 +109,17 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
     return signOnce(request);
   };
 
-  const storeCreds = (urlStr: string, headers: Record<string, string>, body: unknown) => {
-    // Maps' own review request only. Our replays send the same header but no
-    // source-path, and capturing them re-saved a set (and its capture time) on every
-    // replay, so a stale one never gave way to a fresh one.
-    if (!urlStr.includes('batchexecute') || !urlStr.includes('source-path')) return;
-    const bgkey = headers['x-maps-bgkey'];
+  // Maps' own review request is the only one carrying x-maps-bgkey with a source-path
+  // (our replays send no source-path; re-saving them as captures kept a stale set
+  // from ever giving way to a fresh one). credsFromBatchExecute lifts sessionId + at.
+  const storeCreds = (url: string, req: Request, body: string) => {
+    const bgkey = req.headers.get('x-maps-bgkey');
     if (!bgkey) return;
-    const bgbind = headers['x-maps-bgbind'] || '';
-    const bodyStr = typeof body === 'string' ? body : '';
-    const { sessionId, at } = credsFromBatchExecute(bgkey, bgbind, bodyStr);
+    const { sessionId, at } = credsFromBatchExecute(bgkey, '', body);
     if (!sessionId) return;
     // The signed-in account Maps sent this as — the creds only replay as that account.
-    const authuser = new URL(urlStr, location.href).searchParams.get('authuser') ?? undefined;
-    const creds: MapsCapturedCreds = { bgkey, bgbind, sessionId, at, authuser, ts: Date.now() };
+    const authuser = new URL(url, location.href).searchParams.get('authuser') ?? undefined;
+    const creds: MapsCapturedCreds = { bgkey, bgbind: '', sessionId, at, authuser, ts: Date.now() };
     window.__truescoreMapsCreds = creds;
     document.dispatchEvent(new CustomEvent(MAPS_CREDS_CAPTURED, { detail: creds }));
     settleCapture(creds);
@@ -151,13 +128,12 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
   const origFetch = window.fetch;
   window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
     const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
-    // Gate on the URL before reading the request — Maps fires many fetches per
-    // interaction and only the review RPC carries creds. One Request reads any call
-    // shape: Maps now passes a bare Request (2026-10), headers and body on it rather
-    // than in init. Cloned, so the body Maps sends stays unread.
-    if (url.includes('batchexecute')) try {
+    // Maps sends its review request as a bare Request (2026-10), headers and body on
+    // it rather than in init; one Request reads any call shape. Cloned, so the body
+    // Maps sends stays unread.
+    if (url.includes('batchexecute') && url.includes('source-path')) try {
       const req = new Request(input instanceof Request ? input.clone() : input, init);
-      req.text().then((body) => storeCreds(url, Object.fromEntries(req.headers), body)).catch(() => {});
+      req.text().then((body) => storeCreds(url, req, body)).catch(() => {});
     } catch {}
     const promise = origFetch.call(this, input, init);
     if (isPreviewUrl(url)) {
@@ -166,24 +142,12 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
     return promise;
   };
 
+  // Maps fetches the place preview over XHR.
   const origOpen = XMLHttpRequest.prototype.open;
-  const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
-  const origSend = XMLHttpRequest.prototype.send;
-  type CapXHR = XMLHttpRequest & { __tsUrl?: string; __tsHeaders?: Record<string, string> };
-  (XMLHttpRequest.prototype as any).open = function (this: CapXHR, method: string, url: string | URL, ...rest: any[]) {
-    this.__tsUrl = String(url);
-    this.__tsHeaders = {};
+  (XMLHttpRequest.prototype as any).open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: any[]) {
     if (isPreviewUrl(url)) {
       this.addEventListener('load', () => { try { store(String(url), this.responseText); } catch {} });
     }
     return (origOpen as (...a: any[]) => void).call(this, method, url, ...rest);
-  };
-  (XMLHttpRequest.prototype as any).setRequestHeader = function (this: CapXHR, name: string, value: string) {
-    if (this.__tsHeaders) this.__tsHeaders[name.toLowerCase()] = value;
-    return origSetHeader.call(this, name, value);
-  };
-  (XMLHttpRequest.prototype as any).send = function (this: CapXHR, body?: Document | XMLHttpRequestBodyInit | null) {
-    try { if (this.__tsUrl) storeCreds(this.__tsUrl, this.__tsHeaders || {}, body); } catch {}
-    return origSend.call(this, body as any);
   };
 })();

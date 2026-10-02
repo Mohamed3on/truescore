@@ -693,14 +693,15 @@ Bun.serve({
           term = (body.query ?? '').trim();
           if (!term) return json({ error: 'empty query' }, 400);
           const entry = cache.get(featureId);
-          if (!entry) return json({ error: 'look up the place first' }, 404);
+          const doSummarize = !!body.summarize;
+          // A summary needs the place's row (its name, its removal notice); a search
+          // alone doesn't, and the extension searches places this server never looked up.
+          if (!entry && doSummarize) return json({ error: 'look up the place first' }, 404);
 
           const key = term.toLowerCase();
-          const prior = entry.searches?.[key];
+          const prior = entry?.searches?.[key];
           const cached = cache.searchServable(prior) ? prior : undefined;
-          const doSummarize = !!body.summarize;
           const force = !!body.force;
-          const placeName = entry.name;
 
           return ndjsonStream<SearchEvent>(async (write) => {
             try {
@@ -728,10 +729,10 @@ Bun.serve({
               const cacheable = mapsSessionHealthy();
               if (cacheable) await cache.putSearch(featureId, term, result);
 
-              if (doSummarize && (!result.summary || force)) {
+              if (entry && doSummarize && (!result.summary || force)) {
                 const reviewTexts = textReviewsFor(result.reviews);
                 if (reviewTexts.length) {
-                  result.summary = await summarize({ placeName, reviewTexts, removedReviews: entry.meta?.removedReviews }, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
+                  result.summary = await summarize({ placeName: entry.name, reviewTexts, removedReviews: entry.meta?.removedReviews }, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort));
                   write({ type: 'search-summary', summary: result.summary });
                   if (cacheable) await cache.putSearch(featureId, term, result);
                 }

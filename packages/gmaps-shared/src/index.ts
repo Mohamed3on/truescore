@@ -187,6 +187,12 @@ export const expandSearchTerms = (query: string): string[] =>
 export type MapsCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; hl?: string; authuser?: string };
 export type MapsReq = { url: string; init?: { method?: string; headers?: Record<string, string>; body?: string } };
 
+// The place a Maps URL is on: its last !3m…!1s data id.
+export const featureIdFromPlaceUrl = (url: string): string | null => {
+  const id = [...url.matchAll(/!3m\d+!1s(0x[a-f0-9]+(?:%3A|:)0x[a-f0-9]+)/gi)].pop()?.[1];
+  return id ? decodeURIComponent(id) : null;
+};
+
 // Lift the session-bound creds off a captured review batchexecute (the only request
 // carrying x-maps-bgkey). sessionId is the 81-tagged token in the bgbind or the f.req
 // body — ["<sid>",null,null,null,null,null,81]; `at` is a url-encoded body param.

@@ -2,7 +2,7 @@
 import { SCORE_CACHE_PREFIX } from './shared/cache-keys';
 import { createThrottledFetcher } from './shared/throttled-fetch';
 import { SERVER_SCORE_PORT, type ServerScoreMessage } from './shared/gmaps-bridge-protocol';
-import { readNdjson, type HighlightEvent, type HighlightsRequest, type HighlightsResponse, type LookupEvent, type Score } from '@truescore/gmaps-shared';
+import { featureIdFromPlaceUrl, readNdjson, type HighlightEvent, type HighlightsRequest, type HighlightsResponse, type LookupEvent, type Score, type SearchEvent, type SearchRequest } from '@truescore/gmaps-shared';
 
 // Drop rc_score_* entries older than 30 days. Registered on install/update
 // only — top-level chrome.alarms.create on every SW wake would reset the
@@ -12,8 +12,8 @@ const ENTRY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(SWEEP_ALARM, { periodInMinutes: 24 * 60 });
   // Config for seeding the server with a Maps session, retired 2026-09-29; the secret
-  // shouldn't outlive the feature.
-  void chrome.storage.local.remove(['rc_seed_url', 'rc_seed_secret']);
+  // shouldn't outlive the feature. The per-account Maps refusal memory, retired 2026-10-02.
+  void chrome.storage.local.remove(['rc_seed_url', 'rc_seed_secret', 'rc_maps_refused_until', 'rc_maps_refused_until_v2']);
 });
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== SWEEP_ALARM) return;
@@ -66,8 +66,8 @@ const imdbHistograms = async (ids: string[]): Promise<Record<string, number[]> |
   }
 };
 
-// Score a place through truescore's own Google session, for a browser whose
-// session Google refuses, then fetch its topic chips. /api/lookup is same-origin
+// Score a place through truescore's own Google session, for a tab that can't fetch
+// Maps reviews itself, then fetch its topic chips. /api/lookup is same-origin
 // only, so the content script can't call it — we hold the host permission and no
 // page CORS applies. Everything is posted back as it lands, so the panel fills in
 // as the server works.
@@ -105,14 +105,18 @@ const serverHighlights = async (featureId: string, post: Post): Promise<void> =>
   }
 };
 
-const serverScore = async (url: string, post: Post): Promise<void> => {
-  // Defence in depth behind the bridge: only a Maps place page is ever scored.
+// Defence in depth behind the bridge: only a Maps place page is ever looked up.
+const isMapsPlace = (url: string): boolean => {
   try {
     const u = new URL(url);
-    if (u.protocol !== 'https:' || u.hostname !== 'www.google.com' || !u.pathname.startsWith('/maps/place/')) return;
+    return u.protocol === 'https:' && u.hostname === 'www.google.com' && u.pathname.startsWith('/maps/place/');
   } catch {
-    return;
+    return false;
   }
+};
+
+const serverScore = async (url: string, post: Post): Promise<void> => {
+  if (!isMapsPlace(url)) return;
   let chips: Promise<void> | undefined;
   try {
     const res = await fetch(`${TRUESCORE_API_BASE}/api/lookup`, {
@@ -144,13 +148,35 @@ const serverScore = async (url: string, post: Post): Promise<void> => {
   await chips;
 };
 
+// Search a place's reviews on truescore's session, for a tab that can't: the running
+// match count as pages land, then the matches.
+const serverSearch = async (url: string, query: string, post: Post): Promise<void> => {
+  const featureId = isMapsPlace(url) && featureIdFromPlaceUrl(url);
+  if (!featureId) return;
+  try {
+    const res = await fetch(`${TRUESCORE_API_BASE}/api/search`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ featureId, query } satisfies SearchRequest),
+    });
+    if (!res.ok || !res.body) return;
+    for await (const ev of readNdjson<SearchEvent>(res.body)) {
+      if (ev.type === 'search-progress') post({ kind: 'found', found: ev.totalReviews });
+      if (ev.type === 'search') post({ kind: 'search', reviews: ev.result.reviews });
+    }
+  } catch (e) {
+    console.warn('[truescore] server search failed', e);
+  }
+};
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== SERVER_SCORE_PORT) return;
   let open = true;
   port.onDisconnect.addListener(() => { open = false; });
   port.onMessage.addListener((msg) => {
     if (typeof msg?.url !== 'string') return;
-    void serverScore(msg.url, (m) => { if (open) port.postMessage(m); })
+    const post: Post = (m) => { if (open) port.postMessage(m); };
+    void (typeof msg.query === 'string' ? serverSearch(msg.url, msg.query, post) : serverScore(msg.url, post))
       .finally(() => { if (open) port.disconnect(); });
   });
 });

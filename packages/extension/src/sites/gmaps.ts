@@ -22,6 +22,7 @@ import {
   collectToken,
   compileMatchRegex,
   expandSearchTerms,
+  featureIdFromPlaceUrl,
   histogramTotal,
   metaFromPreview,
   overallPctFromHistogram,
@@ -243,102 +244,42 @@ const store = createScoreStore({ storage: bridgeStorage, now: Date.now });
 // === Botguard creds for the ListUgcPosts batchexecute RPC ===
 // Google retired GET /maps/rpc/listugcposts; reviews now come only from a
 // batchexecute call needing a signed x-maps-bgkey. gmaps-capture owns lifting it
-// off Maps' own review XHR and nudging Maps to emit one on demand
+// off Maps' own review request and nudging Maps to emit one on demand
 // (window.__truescoreRequestMapsCreds). This is just the cache + consume path:
 // the session it carries outlives the page (each replay's key is signed per request
-// in tabTransport), so we keep one set per signed-in account (chrome.storage):
-// a set only replays as the account Maps minted it for, and Google can refuse one
-// account in a profile while another works.
+// in tabTransport), so the newest set is kept in chrome.storage.
 const MAPS_CREDS_KEY = 'rc_maps_creds';
-type CredsByAccount = Record<string, MapsCapturedCreds>;
-const accountOf = (c: { authuser?: string }) => c.authuser ?? '0';
-// The account this tab's Maps runs as, so the one a nudge captures a set for.
-const tabAccount = () => new URL(location.href).searchParams.get('authuser') ?? '0';
 // Seed from a capture that may have fired before this document_end script ran;
 // the MAPS_CREDS_CAPTURED listener owns every update after.
 let mapsCreds: MapsCapturedCreds | null = window.__truescoreMapsCreds ?? null;
-let savedCreds: CredsByAccount = {};
-let credsRetried = false; // one fresh-set nudge per place; reset in resetScores
-// Google refuses an account's replays outright (see the finish block). The block
-// sits on the account, so it outlives the page and the profile. Learning it again
-// costs a Reviews-tab nudge (the UI moving under the user) plus more replays under
-// the flagged account on every Maps page load, so it is persisted per account and
-// trusted for a while; the first page load after that probes once more, which is
-// how a lifted block gets noticed.
-// v2: every refusal recorded before replays were signed per request was Google
-// rejecting a reused key (2026-09-29), not the account.
-const REFUSED_KEY = 'rc_maps_refused_until_v2';
-const REFUSED_TTL_MS = 6 * 60 * 60 * 1000;
-// A set Maps minted this recently hasn't had time to expire, so a refusal is the only
-// reason it returns nothing.
-const FRESH_CREDS_MS = 10 * 60 * 1000;
-let refusedUntil: Record<string, number> = {};
-const isRefused = (account: string) => (refusedUntil[account] ?? 0) > Date.now();
-const credsLoad = Promise.all([
-  // Before sets were kept per account this key held one, replayed as the first account.
-  bridgeStorage.get<CredsByAccount | MapsCapturedCreds>(MAPS_CREDS_KEY).then((saved) => {
-    const legacy = saved && typeof saved.bgkey === 'string' ? saved as MapsCapturedCreds : null;
-    savedCreds = { ...(legacy ? { [accountOf(legacy)]: legacy } : saved as CredsByAccount), ...savedCreds };
-  }),
-  // A bare timestamp is the old profile-wide refusal, which can't say whose it was.
-  bridgeStorage.get<Record<string, number> | number>(REFUSED_KEY).then((saved) => {
-    if (saved && typeof saved === 'object') refusedUntil = { ...saved, ...refusedUntil };
-  }),
-]);
-const markCredsRefused = (creds: MapsCapturedCreds) => {
-  refusedUntil = { ...refusedUntil, [accountOf(creds)]: Date.now() + REFUSED_TTL_MS };
-  bridgeStorage.set(REFUSED_KEY, refusedUntil).catch(() => {});
-};
-// Both sorts finished without a single page on a place Google's own histogram
-// says has reviews — the replay was refused, not the place empty. Reset per place.
+const credsLoad = bridgeStorage.get<MapsCapturedCreds>(MAPS_CREDS_KEY).then((saved) => {
+  if (saved?.bgkey) mapsCreds ??= saved;
+});
+// This place's one nudge for a fresh set, shared by everything waiting on creds;
+// reset in resetScores. Once it has come back empty, the place goes to the server.
+let credsNudge: Promise<MapsCapturedCreds | null> | null = null;
+// This browser couldn't fetch the place's reviews, so the server scores it
+// (fetchServerScore). Reset per place.
 let scoringFailed = false;
 
-// The set to replay: this page's unless its account is refused, else the newest one
-// saved for an account that isn't. Any account reads the same public reviews.
-const currentCreds = (): MapsCapturedCreds | null =>
-  mapsCreds && !isRefused(accountOf(mapsCreds)) ? mapsCreds
-    : Object.values(savedCreds).filter((c) => !isRefused(accountOf(c))).sort((a, b) => b.ts - a.ts)[0] ?? null;
-// Nothing to replay and nothing a nudge could capture: every saved set's account is
-// refused, and so is this tab's. Only the server can score then.
-const credsRefused = () => !currentCreds() && isRefused(tabAccount());
-
 const invalidateCreds = (creds: MapsCapturedCreds) => {
-  if (mapsCreds?.bgkey === creds.bgkey) mapsCreds = null;
-  // Same MAIN world as gmaps-capture — its cache must go too, or the capture
-  // timeout would re-serve the creds being declared dead here.
+  if (mapsCreds?.bgkey !== creds.bgkey) return;
+  mapsCreds = null;
+  // Same MAIN world as gmaps-capture — its copy must go too, or the next nudge
+  // would take it as a capture and skip opening the Reviews tab.
   if (window.__truescoreMapsCreds?.bgkey === creds.bgkey) window.__truescoreMapsCreds = undefined;
-  const { [accountOf(creds)]: dead, ...rest } = savedCreds;
-  if (dead?.bgkey !== creds.bgkey) return;
-  savedCreds = rest;
-  bridgeStorage.set(MAPS_CREDS_KEY, savedCreds).catch(() => {});
+  bridgeStorage.set(MAPS_CREDS_KEY, null).catch(() => {});
 };
 
-// Usable creds: a saved set whose account isn't refused, else ask the capture layer
-// to nudge Maps into emitting one and resolve on the next intercept — unless this
-// tab's account is the refused one.
+// The saved set, else this place's nudge for Maps to emit a fresh one.
 const ensureCreds = async (): Promise<MapsCapturedCreds | null> => {
   await credsLoad;
-  const creds = currentCreds();
-  if (creds) return (mapsCreds = creds);
-  if (isRefused(tabAccount())) return null; // no nudge, no replay under a refused account
-  const captured = await window.__truescoreRequestMapsCreds?.();
-  return captured && !isRefused(accountOf(captured)) ? captured : null;
+  return mapsCreds ?? (credsNudge ??= window.__truescoreRequestMapsCreds!());
 };
 
 document.addEventListener(MAPS_CREDS_CAPTURED, (e) => {
-  const c = (e as CustomEvent).detail as MapsCapturedCreds;
-  if (!c?.bgkey) return;
-  savedCreds = { ...savedCreds, [accountOf(c)]: c };
-  bridgeStorage.set(MAPS_CREDS_KEY, savedCreds).catch(() => {});
-  // Saved either way, but only replayed when its account isn't refused and it doesn't
-  // displace another account's working set — switching could walk into a refusal.
-  const inUse = mapsCreds && !isRefused(accountOf(mapsCreds)) ? mapsCreds : null;
-  if (isRefused(accountOf(c)) || (inUse && accountOf(inUse) !== accountOf(c))) return;
-  mapsCreds = c;
-  // A fresh capture (auto-nudged or from the user opening Reviews) kicks off
-  // scoring if we haven't started a live fetch for this place yet — covers a
-  // cold cache and the expiry-recovery refetch.
-  if (shouldStartScoring()) startFetching();
+  mapsCreds = (e as CustomEvent).detail as MapsCapturedCreds;
+  bridgeStorage.set(MAPS_CREDS_KEY, mapsCreds).catch(() => {});
 });
 
 let highlightsState: HighlightsCache | null = null;
@@ -473,9 +414,9 @@ const hydrateFromCloud = (featureId: string) => {
   }).catch((e) => console.warn('[gmaps] cloud hydrate failed', e));
 };
 
-// Our own replays are refused when Google has flagged this browser session. The
-// server scrapes on its own session, so ask it for the number rather than
-// leaving the panel dead — the same lookup the web app runs.
+// This browser can't fetch the place's reviews (no creds, or every replay came back
+// empty). The server scrapes on its own session, so ask it for the number rather
+// than leaving the panel dead — the same lookup the web app runs.
 let serverScore: PartialScore | null = null;
 // Asked of the background worker, not fetched here: /api/lookup is same-origin
 // only (it triggers a real scrape), so a content-script POST is refused by CORS.
@@ -483,16 +424,18 @@ let serverScore: PartialScore | null = null;
 // as each update lands, then the place's topic chips one by one — reviews included,
 // so a chip opens without a Google session. A cold place's scrape and chip harvest
 // take minutes, far past the storage bridge's 5s budget.
-const SERVER_SCORE_TIMEOUT_MS = 300_000;
 let serverScoreId = 0;
 const fetchServerScore = (featureId: string): void => {
+  // Said up front: the panel shows it at once instead of sitting blank for the
+  // length of the server's scrape, and the score replaces it when it lands.
+  scoringFailed = true;
+  updateUI();
   const id = `s${++serverScoreId}`;
   // Whether the server's chips are filling the panel: not when it already had some
   // (the cloud cache, a run of our own).
   let chipsHere = false;
   const cleanup = () => {
     document.removeEventListener(SERVER_SCORE_RESULT, handler);
-    clearTimeout(timer);
     if (!chipsHere) return;
     if (highlightsComputingFor === featureId) highlightsComputingFor = null;
     highlightCandidates = [];
@@ -508,7 +451,6 @@ const fetchServerScore = (featureId: string): void => {
     if (getFeatureId() !== featureId) return;
     if (msg.kind === 'score') {
       serverScore = msg.score;
-      scoringFailed = false;
       updateUI();
       return;
     }
@@ -530,7 +472,6 @@ const fetchServerScore = (featureId: string): void => {
     }
     renderHighlights();
   };
-  const timer = setTimeout(cleanup, SERVER_SCORE_TIMEOUT_MS);
   document.addEventListener(SERVER_SCORE_RESULT, handler);
   document.dispatchEvent(new CustomEvent(SERVER_SCORE_GET, { detail: { id } }));
 };
@@ -587,7 +528,7 @@ const resetScores = () => {
   activeGoogleReviewCount = null;
   removedNoticeCheckedFor = null;
   appStateTriedFor = null;
-  credsRetried = false;
+  credsNudge = null;
   scoringFailed = false;
   serverScore = null;
   store.reset();
@@ -714,10 +655,7 @@ const injectSimpleScore = (placeDetailsElement: HTMLElement) => {
   placeDetailsElement.appendChild(newElement);
 };
 
-const getFeatureId = () => {
-  const matches = [...location.href.matchAll(/!3m\d+!1s(0x[a-f0-9]+(?:%3A|:)0x[a-f0-9]+)/gi)];
-  return matches.length ? decodeURIComponent(matches[matches.length - 1][1]) : null;
-};
+const getFeatureId = () => featureIdFromPlaceUrl(location.href);
 
 // document.documentElement.lang is a full locale on Maps (e.g. "en-ES"); the
 // batchexecute RPC wants a bare language in hl ("en-ES" as hl returned malformed
@@ -884,29 +822,40 @@ const fetchPlacePreviewActive = async (placeUrl: string): Promise<any | null> =>
 const fetchAllForToken = (featureId: string, token: string, creds: MapsCapturedCreds): Promise<Review[]> =>
   collectToken(featureId, token, tabTransport, { locale: localeFromDom(), creds });
 
+// The server's session searches when this tab can't, over the channel
+// fetchServerScore uses. The bridge searches the page's own place, so only while
+// that is still `featureId`.
+const serverSearch = (featureId: string, query: string, onFound?: (found: number) => void): Promise<Review[] | null> => new Promise((resolve) => {
+  if (getFeatureId() !== featureId) return resolve(null);
+  const id = `q${++serverScoreId}`;
+  let reviews: Review[] | null = null;
+  const handler = (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.id !== id) return;
+    const msg = detail.msg as ServerScoreMessage;
+    if (msg.kind === 'found') onFound?.(msg.found);
+    if (msg.kind === 'search') reviews = msg.reviews;
+    if (msg.kind !== 'end') return;
+    document.removeEventListener(SERVER_SCORE_RESULT, handler);
+    resolve(reviews);
+  };
+  document.addEventListener(SERVER_SCORE_RESULT, handler);
+  document.dispatchEvent(new CustomEvent(SERVER_SCORE_GET, { detail: { id, query } }));
+});
+
 // Gmail-style ` OR ` splits the query and each term expands to its
 // accent/hyphen/space spellings; collectSearchTerms runs one Google search per
 // term in parallel and merges by reviewId, so the count is the union. Needs the
-// captured bgkey like every other review fetch — null means creds are missing,
-// distinct from a genuine empty result: callers must not score/cache it as zero.
-// `onFound` gets the running match count as pages land.
+// captured bgkey like every other review fetch; without one the server searches.
+// null means neither could — distinct from a genuine empty result: callers must
+// not score/cache it as zero. `onFound` gets the running match count as pages land.
 const fetchAllForSearch = async (featureId: string, query: string, onFound?: (found: number) => void): Promise<Review[] | null> => {
   const creds = await ensureCreds();
-  if (!creds) return null;
+  if (!creds) return serverSearch(featureId, query, onFound);
   return collectSearchTerms(
     expandSearchTerms(query), (term, c) => buildSearchReq(featureId, term, creds, c), tabTransport,
     onFound && ((merged) => onFound(merged.length)), searchTermCache.forPlace(featureId),
   );
-};
-
-(window as any).__truescoreGmaps = {
-  ...((window as any).__truescoreGmaps || {}),
-  fetchLabelSearch: async (query: string) => {
-    const featureId = getFeatureId();
-    const trimmed = query.trim();
-    if (!featureId || !trimmed) return [];
-    return (await fetchAllForSearch(featureId, trimmed)) ?? [];
-  },
 };
 
 const computeHighlights = async (force = false) => {
@@ -916,8 +865,6 @@ const computeHighlights = async (force = false) => {
     renderHighlights();
     return;
   }
-  // Google refuses this browser's review fetches; truescore scores the chips instead.
-  if (credsRefused()) { fetchServerScore(featureId); return; }
   highlightsComputingFor = featureId;
   // True only while the user is still on the place this run started for — an
   // SPA navigation mid-fetch must not write this place's highlights into the
@@ -946,10 +893,8 @@ const computeHighlights = async (force = false) => {
     }
     const creds = await ensureCreds();
     if (!stillCurrent()) return;
-    if (!creds) {
-      if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'Open Reviews to enable';
-      return;
-    }
+    // This tab can't fetch reviews; the server scores the chips instead.
+    if (!creds) { fetchServerScore(featureId); return; }
 
     const items: Highlight[] = [];
     highlightsState = { items, ts: Date.now() };
@@ -990,9 +935,8 @@ const computeHighlights = async (force = false) => {
   } finally {
     if (highlightsComputingFor === featureId) highlightsComputingFor = null;
     // Resume parent's main-score fetches that we paused (creds are cached by now).
-    const resumeCreds = currentCreds();
-    if (resumeCreds) for (const k of pausedSorts) {
-      if (!fetchState[k].done) fetchAllReviews(k, resumeCreds);
+    if (mapsCreds) for (const k of pausedSorts) {
+      if (!fetchState[k].done) fetchAllReviews(k, mapsCreds);
     }
   }
 };
@@ -1200,40 +1144,17 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
   // cloud hydrate first so a cloud hit (with summaries) isn't clobbered by a
   // redundant recompute; computeHighlights no-ops if highlights already exist.
   if (fetchState.relevant.done && fetchState.newest.done) {
-    // No page back. Only this visit's fetches count: reviews restored from the score
-    // cache say nothing about the creds.
-    if (!SORT_KEYS.some((k) => fetchState[k].pageCount)) {
-      const counts = readHistogramCounts();
-      const listed = !!counts && histogramTotal(counts) > 0;
-      // Without listed reviews, once per place, so a review-less place doesn't loop.
-      if (listed || !credsRetried) {
-        // A set Maps minted minutes ago can't have expired, so nothing back under it
-        // for a place Google lists reviews for is Google refusing its account. (Seen
-        // in the wild: for some accounts the captured bgkey only validates the exact
-        // request body it was minted for, so our own paging params come back as an
-        // empty ListUgcPosts.) An older set may just have expired: drop it.
-        if (listed && Date.now() - creds.ts < FRESH_CREDS_MS) markCredsRefused(creds);
-        else invalidateCreds(creds);
-        const relaunch = () => { for (const k of SORT_KEYS) fetchState[k] = makeFetchState(); };
-        // Another account's saved set needs no nudge.
-        if (listed && currentCreds()) { relaunch(); startFetching(); return; }
-        // Else nudge Maps to mint a fresh one (the capture listener then refetches) —
-        // once per place, and never for a refused account.
-        if (!credsRetried && !isRefused(tabAccount())) {
-          credsRetried = true;
-          relaunch();
-          window.__truescoreRequestMapsCreds?.();
-          return;
-        }
-        // Nothing left to try. Flag it so the panel can say so — rendering nothing
-        // at all reads as a missing extension rather than a failed fetch.
-        if (listed) {
-          scoringFailed = true;
-          updateUI();
-          fetchServerScore(featureId);
-          return;
-        }
-      }
+    // No page back on a place Google's own histogram says has reviews: the set is
+    // dead. Drop it and refetch, which nudges Maps for a fresh one — once per place;
+    // a place whose nudge already ran goes to the server. Only this visit's fetches
+    // count: reviews restored from the score cache say nothing about the creds.
+    const counts = readHistogramCounts();
+    if (!SORT_KEYS.some((k) => fetchState[k].pageCount) && counts && histogramTotal(counts) > 0) {
+      invalidateCreds(creds);
+      if (credsNudge) { fetchServerScore(featureId); return; }
+      for (const k of SORT_KEYS) fetchState[k] = makeFetchState();
+      startFetching();
+      return;
     }
     const fid = getFeatureId();
     if (fid) store.persistIfReady(`${SCORE_CACHE_PREFIX}${fid}`).catch((e) => console.warn('[gmaps] persist score cache failed', e));
@@ -1244,18 +1165,16 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
 
 // Both sorts replay the batchexecute RPC, which needs a captured bgkey, so we
 // resolve creds once up front. ensureCreds nudges Maps' Reviews tab on a cold
-// cache; if nothing arrives the MAPS_CREDS_CAPTURED listener restarts us later.
+// cache; if nothing arrives, the server scores the place.
 let kickoffPending = false;
 // The single "should a scoring kickoff start?" predicate — shared by the
-// capture listener, the observer, and the guard below: on a place, with no
+// observer and the guard below: on a place the server isn't scoring, with no
 // fetch pending/in-flight/finished for it yet. (kickoffPending covers the async
 // ensureCreds window before isFetching flips. A sort paused by computeHighlights
-// has isFetching and done both false but must wait for that run's resume — our
-// own chip RPCs echo MAPS_CREDS_CAPTURED through the capture layer, which would
-// otherwise relaunch the sorts mid-pause.)
+// has isFetching and done both false but must wait for that run's resume.)
 const shouldStartScoring = (): boolean => {
   const featureId = getFeatureId();
-  return !!featureId && !credsRefused() && featureId !== highlightsComputingFor && !kickoffPending &&
+  return !!featureId && !scoringFailed && featureId !== highlightsComputingFor && !kickoffPending &&
     !fetchState.relevant.isFetching && !fetchState.newest.isFetching &&
     !fetchState.relevant.done && !fetchState.newest.done;
 };
@@ -1263,16 +1182,11 @@ const shouldStartScoring = (): boolean => {
 const startFetching = async () => {
   if (!shouldStartScoring()) return;
   kickoffPending = true;
-  const featureId = getFeatureId();
+  const featureId = getFeatureId()!;
   try {
     const creds = await ensureCreds();
     if (getFeatureId() !== featureId) return;
-    if (!creds) {
-      // A refusal remembered from an earlier page load: straight to the server,
-      // exactly as a later place in the same page would.
-      if (credsRefused() && featureId) { scoringFailed = true; updateUI(); fetchServerScore(featureId); }
-      return;
-    }
+    if (!creds) { fetchServerScore(featureId); return; }
     for (const key of SORT_KEYS) fetchAllReviews(key, creds);
   } finally {
     kickoffPending = false;
@@ -1603,7 +1517,7 @@ const runLabelSearch = async () => {
     const reviews = await fetchAllForSearch(featureId, query);
     if (seq !== labelSearchSeq) return;
     if (!reviews) {
-      res.textContent = 'Open Reviews to enable search';
+      res.textContent = "Couldn't search right now";
       return;
     }
     activeLabelSearch = { query, reviews, summary: searchSummaryCache[query.toLowerCase()] };
@@ -1924,7 +1838,7 @@ const updateUI = () => {
     els.pctEl.style.color = '#888';
     els.pctEl.style.textShadow = 'none';
     els.tooltip.textContent = scoringFailed
-      ? 'Google refused the review fetch for this session — reload the page to retry'
+      ? "This browser couldn't fetch Google's reviews — reload the page to retry"
       : totalCount === 0 ? 'Scoring…' : 'No reviews in this period';
     els.barFill.style.width = '0%';
     if (scoringFailed) {
@@ -1939,7 +1853,7 @@ const updateUI = () => {
     const relLabel = sortTotal('relevant') ? `${toPct(store.scorePct('relevant', currentOption))}%` : '—';
     const newLabel = sortTotal('newest') ? `${toPct(store.scorePct('newest', currentOption))}%` : '—';
     els.tooltip.textContent = usingServer
-      ? "Scored by truescore.mohamed3on.com — this browser's Google session is refusing review fetches"
+      ? "Scored by truescore.mohamed3on.com — this browser couldn't fetch Google's reviews"
       : adjusted
         ? `Raw: ${toPct(mergedPct)}% · Relevant: ${relLabel} · Newest: ${newLabel}`
         : `Relevant: ${relLabel} · Newest: ${newLabel}`;
@@ -2101,8 +2015,9 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
     limit(async () => {
       try {
         const reviews = await fetchAllForSearch(featureId, item);
-        // null = creds still missing: leave the chip pending — nothing may
-        // cache or persist a fake zero; the next render or stale-refresh retries.
+        // null = neither this tab nor the server could search: leave the chip
+        // pending — nothing may cache or persist a fake zero; the next render or
+        // stale-refresh retries.
         if (!reviews) return;
         // An empty result is display-only too: a dead session or a throttle
         // comes back empty just like an unmentioned item, and a persisted 0 would
@@ -2357,11 +2272,7 @@ const handleDomMutation = () => {
     labelSearchSeq++;
     document.querySelector('#reviews-container')?.remove();
     clearCardEls();
-    // Already known to be refused, so skip straight to the server. Flag it up
-    // front too: the panel then says so immediately instead of sitting blank for
-    // the length of the server's scrape, and the score replaces it when it lands.
-    if (credsRefused()) { scoringFailed = true; fetchServerScore(featureId); }
-    else startFetching();
+    startFetching();
     hydrateFromCloud(featureId);
     // Skip if live data already arrived — a stale disk read must not clobber a
     // fresh in-memory result. store.loadCache applies that guard, the still-
