@@ -213,6 +213,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     imdbHistograms(msg.ids.filter((id: unknown) => typeof id === 'string')).then(sendResponse);
     return true; // answered asynchronously
   }
+  // Jev's reads of reviews a site's script holds (shared/jev.ts), asked of the
+  // server with its password, which content scripts never see.
+  if (msg?.type === 'jev' && (msg.route === 'stance' || msg.route === 'receipts')) {
+    authHeaders()
+      .then((headers) => fetch(`${TRUESCORE_API_BASE}/api/${msg.route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(msg.body) }))
+      .then((r) => (r.ok ? r.json() : null), () => null)
+      .then(sendResponse);
+    return true;
+  }
 });
 
 // Booking.com: notify content script on tab update

@@ -4,8 +4,9 @@ import { cacheGet, cacheSet } from './cache';
 import { summarize } from './llm';
 import { findQA, loadQAs, removeQA, saveQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
-import type { AskSearch } from '@truescore/gmaps-shared';
+import { bySupport, type AskSearch } from '@truescore/gmaps-shared';
 import type { JSONSchema7 } from 'ai';
+import { readSupport, receiptButton } from './jev';
 
 // The betterAlternative rule every structured summary prompt shares (retail,
 // BJJ courses, hotels), so the "Better alternative" section means the same thing
@@ -39,9 +40,42 @@ export const keywordSummaryPrompt = (kw: string) =>
 // more reaches the rest by Searching.
 export const SAMPLE_MAX = 3000;
 
+// Summary points need the support of this many reviews to be shown — the
+// prompt's own "2+ reviewers" rule, enforced instead of trusted.
+const MIN_SUPPORT = 2;
+// Reviews a summary's points are checked against: the longest, as the summary
+// reads them first. Past this a point's count says how many it covers.
+const RECEIPT_REVIEWS = 200;
+const QUOTES_MAX = 20;
+type Receipt = { n: number; quotes: string[] };
+
+// The structured summary with its receipts, read by Jev on the server: each
+// praise, complaint and better alternative keeps how many reviews make it and
+// the first of them; one fewer than MIN_SUPPORT make is dropped before it's
+// ever shown. Unchanged when Jev can't read them.
+export const withReceipts = async (parsed: any, reviews: string[]) => {
+  const texts = reviews.slice(0, RECEIPT_REVIEWS);
+  const points: string[] = [...(parsed.praised ?? []), ...(parsed.complaints ?? []), ...(parsed.betterAlternative ? [parsed.betterAlternative] : [])];
+  const support = points.length ? await readSupport(points, texts) : null;
+  if (!support) return parsed;
+  const receipts: Record<string, Receipt> = Object.fromEntries(points.map((p, i) => [p, { n: support[i]!.length, quotes: support[i]!.slice(0, QUOTES_MAX).map((j) => texts[j]!) }]));
+  const made = (p: string) => receipts[p]!.n >= MIN_SUPPORT;
+  return {
+    ...parsed,
+    praised: (parsed.praised ?? []).filter(made),
+    complaints: (parsed.complaints ?? []).filter(made),
+    betterAlternative: parsed.betterAlternative && made(parsed.betterAlternative) ? parsed.betterAlternative : '',
+    receipts,
+    ...(reviews.length > texts.length ? { receiptsOf: reviews.length } : {}),
+  };
+};
+
+const receiptFor = (item: HTMLElement, { n, quotes }: Receipt, checkedOf: number | undefined) =>
+  receiptButton(item, n, quotes, checkedOf ? `Of the ${RECEIPT_REVIEWS} longest of ${checkedOf} reviews — show the ones that say this` : undefined);
+
 export const renderStructuredSummary = (
   container: HTMLElement,
-  { complaints, praised, conclusion, betterAlternative }: any,
+  { complaints, praised, conclusion, betterAlternative, receipts, receiptsOf }: any,
 ) => {
   container.textContent = '';
   if (conclusion) {
@@ -58,10 +92,13 @@ export const renderStructuredSummary = (
     heading.className = 'ars-section-title';
     heading.textContent = `${type === 'praised' ? '\u25B3' : '\u25BD'} ${title}`;
     section.appendChild(heading);
-    for (const item of items) {
+    // Most-backed first once checked.
+    const ordered = receipts ? bySupport(items.map((text) => ({ text, support: receipts[text]?.n }))).map((x) => x.text) : items;
+    for (const item of ordered) {
       const bullet = document.createElement('div');
       bullet.className = 'ars-section-item';
       renderMarkdownInline(bullet, item);
+      if (receipts?.[item]) bullet.appendChild(receiptFor(bullet, receipts[item], receiptsOf));
       section.appendChild(bullet);
     }
     container.appendChild(section);
@@ -78,6 +115,7 @@ export const renderStructuredSummary = (
     const item = document.createElement('div');
     item.className = 'ars-section-item';
     renderMarkdownInline(item, betterAlternative);
+    if (receipts?.[betterAlternative]) item.appendChild(receiptFor(item, receipts[betterAlternative], receiptsOf));
     section.appendChild(item);
     container.appendChild(section);
   }
@@ -259,7 +297,10 @@ export const buildSummarizeWidget = ({
     try {
       const reviews = await loadReviews();
       btn.textContent = '\u23F3 Summarizing\u2026';
-      const parsed = await llmSummarize(reviews, withContext(summaryPrompt, context));
+      const summary = await llmSummarize(reviews, withContext(summaryPrompt, context));
+      // Its points are checked against the reviews before any of them shows.
+      btn.textContent = '\u23F3 Checking it against the reviews\u2026';
+      const parsed = await withReceipts(summary, reviews);
       bumpRateLimit();
       summaryTs = Date.now();
       // Quota-full must not discard a summary the LLM call already paid for.

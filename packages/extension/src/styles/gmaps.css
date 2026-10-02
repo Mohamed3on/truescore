@@ -892,3 +892,9 @@
 #reviews-container::-webkit-scrollbar { width: 4px; }
 #reviews-container::-webkit-scrollbar-track { background: transparent; }
 #reviews-container::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 2px; }
+
+/* A topic split down the middle reads in brass, between the two. */
+.rc-chip-pct.mid,
+.rc-ask-search-pct.mid { color: #E8B86D; }
+/* Review filters (▲ praise / ▼ complain) in the panel's own green and red. */
+:root { --ts-praise: #4ADE80; --ts-complain: #F87171; }

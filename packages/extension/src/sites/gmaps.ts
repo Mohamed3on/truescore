@@ -4,6 +4,14 @@ import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEAR
 import { createScoreStore, type Period } from '../shared/score-store';
 import type { LLMProvider, ReasoningEffort } from '../shared/config';
 import { findQA, loadQAs, removeQA, saveQA } from '../shared/qa-history';
+import { markPressed, opinionFilters, opinionNumbers, opinionsEl, opinionsLabel, opinionsSlot, readAnswers, readStanceOf, receiptButton, type NumberStyle } from '../shared/jev';
+
+// The panel's own number styles, so stance numbers sit where the star share sat:
+// a chip's % and ·count; plain text in a panel title; the search header's colours.
+const TONE_HEX = { pos: '#4ADE80', mid: '#E8B86D', neg: '#F87171' } as const;
+const CHIP_NUMBERS: NumberStyle = { share: (t) => `rc-chip-pct ${t}`, net: 'rc-chip-count' };
+const TITLE_NUMBERS: NumberStyle = { share: () => 'ts-op-share', sparse: 'dash' };
+const HEADER_NUMBERS: NumberStyle = { ...TITLE_NUMBERS, color: (o) => TONE_HEX[opinionTone(o)] };
 import { DefaultChatTransport } from 'ai';
 import {
   type SummarizeRequest,
@@ -47,6 +55,17 @@ import {
   type SortKey,
   type SortStats,
   type Transport,
+  answersOf,
+  bySupport,
+  countAnswers,
+  opinionPct,
+  opinionsOf,
+  opinionTone,
+  tooFewMentions,
+  type AnswerCounts,
+  type Stance,
+  type StanceResult,
+  type SummaryHighlight,
 } from '@truescore/gmaps-shared';
 
 const SORT_KEYS = ['relevant', 'newest'] as const;
@@ -54,7 +73,7 @@ const MIN_PAGES_BEFORE_STABILIZE = 2;
 const HIGHLIGHT_FETCH_CONCURRENCY = 3;
 
 type FetchState = { isFetching: boolean; done: boolean; cursor: string; pageCount: number };
-type SummaryResult = { highlights?: { text: string; sentiment: string }[]; verdict?: string; valueForMoney?: number; items?: string[]; alternatives?: string[] };
+type SummaryResult = { highlights?: SummaryHighlight[]; verdict?: string; valueForMoney?: number; items?: string[]; alternatives?: string[] };
 type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
 type CardEls = {
   merged?: MergedEls;
@@ -91,7 +110,7 @@ type Highlight = {
   score?: HighlightStats;
   reviews?: Review[];
   summary?: SummaryResult;
-};
+} & Partial<StanceResult>;
 type HighlightCandidate = { label: string; count: number; token: string };
 type HighlightsCache = { items: Highlight[]; ts: number; newestHeadId?: string };
 let activeHighlight: Highlight | null = null;
@@ -908,8 +927,12 @@ const computeHighlights = async (force = false) => {
       try {
         const reviews = await fetchAllForToken(featureId, chip.token, creds);
         if (!stillCurrent()) return;
-        const item = { ...chip, fetched: reviews.length, score: statsForReviews(reviews), reviews };
+        const item: Highlight = { ...chip, fetched: reviews.length, score: statsForReviews(reviews), reviews };
         if (chipFetchFailed(item)) return;
+        // What its reviews say about the topic, read before the chip shows, so a
+        // star share never paints only to be replaced.
+        Object.assign(item, await readStanceOf(chip.label, reviews));
+        if (!stillCurrent()) return;
         items.push(item);
         highlightsState = { items: [...items], ts: Date.now() };
         saveHighlightsCache();
@@ -927,6 +950,9 @@ const computeHighlights = async (force = false) => {
       if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'No highlights';
       return;
     }
+    // The chips are final (their reads included): hand the button back to
+    // renderHighlights, which labels it Refresh, rather than leave "Computing N/N".
+    highlightsComputingFor = null;
     renderHighlights();
     pushContribution({ highlights: items });
   } catch (e) {
@@ -988,7 +1014,11 @@ type AskJob = { reviewTexts: string[]; filter: string | null; question: string; 
 // had us run — count climbing, then kept, and clicking opens it as a label
 // search — a reading pulse while the model works, the Answer's markdown as
 // it's written, and for a replayed Answer when it was written + Ask again.
-const mountAsk = (panel: HTMLElement, job: AskJob) => {
+// What each Search's matches say to the question, once Jev has read them:
+// settled, being read, or null (the row keeps its matches' TrueScore).
+type AnswersRead = AnswerCounts | Promise<AnswerCounts | null> | null;
+
+const mountAsk = (panel: HTMLElement, job: AskJob, reads = new Map<string, AnswersRead>()) => {
   panel.textContent = '';
   panel.className = 'rc-summary-panel';
   panel.style.display = 'block';
@@ -998,7 +1028,7 @@ const mountAsk = (panel: HTMLElement, job: AskJob) => {
   panel.append(rows, text, note);
   let shown: AskView | undefined;
   return (v: AskView) => {
-    if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map(askSearchRow));
+    if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map((s) => askSearchRow(s, reads.get(s.query))));
     if (v.text !== shown?.text) renderMarkdown(text, v.text);
     text.classList.toggle('rc-reading', !v.done && !v.text && v.searches.every((s) => s.done));
     if (v.answeredAt && !shown?.answeredAt) {
@@ -1017,19 +1047,31 @@ const mountAsk = (panel: HTMLElement, job: AskJob) => {
 
 // Run an Ask into `panel`, its Searches going through this tab's own Maps
 // session. `force` skips a replayed Answer (the server's day-long cache).
+// Each Search's matches are read for their answer as they come in, without
+// holding up the model; the settled view carries those reads for the replay.
 const askReviews = async (panel: HTMLElement, job: AskJob, force = false) => {
   const context = await llmContext();
-  const paint = mountAsk(panel, job);
+  const reads = new Map<string, AnswersRead>();
+  const paint = mountAsk(panel, job, reads);
   const ctrl = new AbortController();
   const search: SearchReviews = async (query, onFound) => {
     const reviews = await fetchAllForSearch(context.featureId, query, onFound);
     if (!reviews) return null;
     const { scorePct, trustedReviews } = statsForReviews(reviews);
-    return { texts: textReviewsFor(reviews), scorePct, trustedReviews };
+    const texts = textReviewsFor(reviews);
+    if (!reads.has(query)) {
+      reads.set(query, readAnswers(job.question, texts).then((a) => {
+        const counts = a && countAnswers(a);
+        reads.set(query, counts);
+        return counts;
+      }));
+    }
+    return { texts, scorePct, trustedReviews };
   };
   const transport = new DefaultChatTransport<AskMessage>({ api: `${TRUESCORE_API_BASE}/api/ask`, body: { ...context, reviewTexts: job.reviewTexts, filter: job.filter ?? undefined, force } });
   const settled = await runAsk(transport, job.question, search, (v) => (job.live() ? paint(v) : ctrl.abort()), ctrl.signal);
-  if (job.live()) job.onSettled?.(settled);
+  const searches = await Promise.all(settled.searches.map(async (s) => ({ ...s, answers: s.answers ?? (await reads.get(s.query)) ?? undefined })));
+  if (job.live()) job.onSettled?.({ ...settled, searches });
 };
 
 // The main ask's Recent questions, as one-click replays under the ask box like
@@ -1060,7 +1102,7 @@ const renderRecentQuestions = () => {
   }
 };
 
-const askSearchRow = (s: AskSearch) => {
+const askSearchRow = (s: AskSearch, read?: AnswersRead) => {
   const row = el('button', s.done ? 'rc-ask-search' : 'rc-ask-search live') as HTMLButtonElement;
   row.type = 'button';
   row.disabled = !s.done || !s.found;
@@ -1069,11 +1111,24 @@ const askSearchRow = (s: AskSearch) => {
     el('span', 'rc-ask-search-label', s.done ? 'Searched all reviews' : 'Searching all reviews'),
     el('span', 'rc-ask-search-terms', parseOrQuery(s.query).join(' · ')),
   );
-  // The matches' TrueScore, graded against the place's like the topic chips.
-  if (s.scorePct != null) {
+  // The matches' TrueScore, graded against the place's like the topic chips —
+  // or, once Jev has read them, what they say to the question.
+  const starShare = () => {
+    if (s.scorePct == null) return null;
     const overall = toPct(store.mergedStats(currentOption).mergedPct);
-    row.append(el('span', `rc-ask-search-pct ${chipPolarity(s.scorePct, overall)}`, s.trustedReviews ? `${s.scorePct}%` : '—'));
-  }
+    return el('span', `rc-ask-search-pct ${chipPolarity(s.scorePct, overall)}`, s.trustedReviews ? `${s.scorePct}%` : '—');
+  };
+  // The share alone, in the row's own % style: its count is the matches'.
+  const counts = (a: AnswerCounts) => {
+    const o = answersOf(a);
+    row.setAttribute('aria-label', `${parseOrQuery(s.query).join(', ')}: ${opinionsLabel(o)}`);
+    row.title = `${row.title} — ${o.title}`;
+    return opinionNumbers(o, { share: (t) => `rc-ask-search-pct ${t}` }, 'yes');
+  };
+  const answered = s.answers ?? read;
+  if (answered instanceof Promise) row.append(opinionsSlot(answered.then((a) => a && counts(a)), starShare));
+  else if (answered) row.append(...counts(answered));
+  else { const pct = starShare(); if (pct) row.append(pct); }
   row.append(el('span', 'rc-ask-search-count', s.found == null ? '—' : `·${addCommas(s.found)}`));
   row.onclick = () => triggerLabelSearchFor(s.query);
   return row;
@@ -1222,18 +1277,30 @@ const renderHighlights = () => {
   // Graded against the card's headline, which is the server's when it scored the place.
   const merged = store.mergedStats(currentOption);
   const overall = toPct(!merged.totalCount && serverScore && currentOption === 'total' ? serverScore.ratio ?? serverScore.scorePct / 100 : merged.mergedPct);
-  const sorted = sortChipsByImpact(items, overall);
+  // With every chip read, they're ordered by what reviewers say rather than by
+  // star share against the place's own score.
+  // A topic fewer than two reviews actually speak to is dropped, as a scored chip is.
+  const kept = items.filter((h) => !h.stance || !tooFewMentions(opinionsOf(h.stance)));
+  const sorted = kept.every((h) => h.stance)
+    ? sortChipsByImpact(kept.map((h) => { const o = opinionsOf(h.stance!); return { h, score: { scorePct: opinionPct(o) }, count: o.pos + o.neg }; }), 0).map((x) => x.h)
+    : sortChipsByImpact(kept, overall);
   for (const h of sorted) {
     const chip = el('button', 'rc-chip') as HTMLButtonElement;
     chip.type = 'button';
     const label = el('span', 'rc-chip-label', h.label);
     chip.appendChild(label);
-    if (h.score) {
-      const pctEl = el('span', `rc-chip-pct ${chipPolarity(h.score.scorePct, overall)}`, `${h.score.scorePct}%`);
-      chip.appendChild(pctEl);
+    if (h.stance) {
+      const o = opinionsOf(h.stance, h.of);
+      chip.append(...opinionNumbers(o, CHIP_NUMBERS));
+      chip.title = o.title;
+      chip.setAttribute('aria-label', `${h.label}: ${opinionsLabel(o)}`);
+    } else {
+      if (h.score) {
+        const pctEl = el('span', `rc-chip-pct ${chipPolarity(h.score.scorePct, overall)}`, `${h.score.scorePct}%`);
+        chip.appendChild(pctEl);
+      }
+      chip.appendChild(el('span', 'rc-chip-count', `·${h.count}`));
     }
-    const countEl = el('span', 'rc-chip-count', `·${h.count}`);
-    chip.appendChild(countEl);
     if (activeHighlight?.token === h.token) chip.classList.add('rc-chip-active');
     chip.onclick = () => onChipClick(h);
     list.appendChild(chip);
@@ -1308,16 +1375,46 @@ const renderReviewsInto = (container: HTMLElement, reviews: Review[], terms: str
   }
 };
 
+// The open chip's list, filtered to the stance its title's ▲/▼ picked (Esc or a
+// second press clears it).
+let chipFilter: Stance | null = null;
+// Esc clears whichever review filter is pressed — the chip panel's or a search's.
+let clearFilter: (() => void) | null = null;
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !clearFilter) return;
+  const clear = clearFilter;
+  clearFilter = null;
+  clear();
+});
+const byStance = (reviews: Review[], stances: Record<string, Stance> | undefined, filter: Stance | null) =>
+  filter && stances ? reviews.filter((r) => stances[r.reviewId] === filter) : reviews;
+
 const renderChipReviews = (h: Highlight) => {
   const body = cardEls.chipPanelBody;
   if (!body) return;
   body.textContent = '';
-  renderReviewsInto(body, h.reviews ?? [], [h.label]);
+  renderReviewsInto(body, byStance(h.reviews ?? [], h.stances, chipFilter), [h.label]);
 };
 
 const renderChipTitle = (title: HTMLElement, h: Highlight) => {
-  const score = h.score?.scorePct ?? 0;
-  title.textContent = `${h.label.toUpperCase()} · ${score}% · ${h.score?.trustedReviews ?? 0}/${h.reviews?.length ?? h.count}`;
+  const tail = ` · ${h.score?.trustedReviews ?? 0}/${h.reviews?.length ?? h.count}`;
+  if (!h.stance) {
+    title.textContent = `${h.label.toUpperCase()} · ${h.score?.scorePct ?? 0}%${tail}`;
+    return;
+  }
+  const o = opinionsOf(h.stance, h.of);
+  const said = opinionsEl(o, TITLE_NUMBERS);
+  said.setAttribute('aria-label', opinionsLabel(o));
+  if (!o.sparse && h.stances) {
+    const set = (stance: Stance | null) => {
+      chipFilter = stance;
+      clearFilter = stance ? () => set(null) : null;
+      markPressed(title, stance);
+      if (chipViewMode === 'reviews') renderChipReviews(h);
+    };
+    said.append(...opinionFilters(o, () => chipFilter, set));
+  }
+  title.replaceChildren(`${h.label.toUpperCase()} · `, said, tail);
 };
 
 // Reviews are not persisted (see saveHighlightsCache); fetch on demand after a
@@ -1334,6 +1431,7 @@ const ensureChipReviews = async (h: Highlight): Promise<void> => {
 
 const showChipPanel = (h: Highlight) => {
   activeHighlight = h;
+  chipFilter = null;
   const panel = cardEls.chipPanel;
   const title = cardEls.chipPanelTitle;
   const sumBtn = cardEls.chipSummarizeBtn;
@@ -1459,10 +1557,44 @@ const renderLabelSearchResult = () => {
   res.style.display = 'block';
   res.textContent = '';
   const header = el('div', 'rc-search-header');
-  const scoreEl = el('span', 'rc-search-score', score.trustedReviews ? `${score.scorePct}%` : '—');
-  scoreEl.style.color = score.trustedReviews ? color : '#888';
+  // What the matches say about the query, once Jev has read them — their
+  // share/net and ▲/▼ filters in the score's place, its space held until then;
+  // the star share when it can't.
+  const starShare = () => {
+    const pct = el('span', undefined, score.trustedReviews ? `${score.scorePct}%` : '—');
+    pct.style.color = score.trustedReviews ? color : '#888';
+    return pct;
+  };
+  let filter: Stance | null = null;
+  const stance = readStanceOf(query, reviews).then((read) => (read && activeLabelSearch?.query === query ? read : null));
+  // The share takes the old %'s place; the counts behind it are its tooltip, and
+  // the ▲/▼ filters follow the count line.
+  const scoreEl = el('span', 'rc-search-score');
+  scoreEl.appendChild(opinionsSlot(stance.then((read) => {
+    if (!read) return null;
+    const o = opinionsOf(read.stance, read.of);
+    scoreEl.title = o.title;
+    scoreEl.setAttribute('aria-label', opinionsLabel(o));
+    return opinionNumbers(o, HEADER_NUMBERS);
+  }), starShare));
+  const filters = el('span', 'ts-op-filters');
+  void stance.then((read) => {
+    if (!read) return;
+    const o = opinionsOf(read.stance, read.of);
+    if (o.sparse) return;
+    const set = (pick: Stance | null) => {
+      filter = pick;
+      clearFilter = pick ? () => set(null) : null;
+      markPressed(header, pick);
+      list.textContent = '';
+      renderReviewsInto(list, byStance(reviews, read.stances, pick), parseOrQuery(query));
+    };
+    filters.append(...opinionFilters(o, () => filter, set));
+    filters.classList.add('ts-op-in');
+  });
   header.appendChild(scoreEl);
   header.appendChild(el('span', 'rc-search-count', `${reviews.length} label-search reviews for "${query}"`));
+  header.appendChild(filters);
   res.appendChild(header);
 
   const sumBtn = el('button', 'rc-summarize-btn', `Summarize "${query}"`) as HTMLButtonElement;
@@ -2121,11 +2253,14 @@ const renderSummary = (panel: HTMLElement, result: SummaryResult) => {
     panel.appendChild(verdict);
   }
   if (result.highlights?.length) {
-    for (const h of result.highlights) {
+    // Most-backed first once checked.
+    for (const h of bySupport(result.highlights)) {
       const row = el('div', `rc-highlight ${h.sentiment}`);
       const text = el('span', 'rc-h-text');
       renderMarkdownInline(text, h.text ?? '');
       row.appendChild(text);
+      // How many reviews make the point (checked on the server), opened below.
+      if (h.support != null) row.appendChild(receiptButton(row, h.support, h.quotes ?? []));
       panel.appendChild(row);
     }
   }

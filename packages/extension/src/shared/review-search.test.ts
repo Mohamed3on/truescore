@@ -1,5 +1,12 @@
-import { test, expect, describe } from 'bun:test';
-import { buildSearchSection, buildReviewCard, localSearchAsk, queryTerms } from './review-search';
+import { test, expect, describe, mock } from 'bun:test';
+import type { Stance } from '@truescore/gmaps-shared';
+
+// Jev's read, stubbed: what the next search's matches say, or null — Jev unread,
+// the star share it always showed.
+let nextStances: ((texts: string[]) => Stance[]) | null = null;
+const jev = await import('./jev');
+await mock.module('./jev', () => ({ ...jev, readStances: async (_q: string, texts: string[]) => nextStances?.(texts) ?? null }));
+const { buildSearchSection, buildReviewCard, localSearchAsk, queryTerms } = await import('./review-search');
 
 type R = { rating: number; title: string; body: string };
 const review = (rating: number, title: string, body = ''): R => ({ rating, title, body });
@@ -15,6 +22,9 @@ const mount = (opts: Partial<Parameters<typeof buildSearchSection<R>>[0]> & { re
 
 // The section renders asynchronously (findMatches is awaited even locally), and
 // input is debounced — drive render() by dispatching and letting the timer run.
+// The header's read waits for the query to stand (STANCE_SETTLE_MS), so a test
+// of it waits longer.
+const SETTLED = 1200;
 const search = async (section: HTMLElement, query: string, ms = 400) => {
   const input = section.querySelector('.ars-search-input') as HTMLInputElement;
   input.value = query;
@@ -100,7 +110,7 @@ describe('buildSearchSection', () => {
 
   test('unrated reviews count as matches but stay out of the %-positive chip', async () => {
     const section = mount({ reviews: [review(5, 'battery a'), review(5, 'battery b'), review(1, 'battery c'), review(0, 'battery d')] });
-    await search(section, 'battery');
+    await search(section, 'battery', SETTLED);
     expect(section.querySelector('.ars-search-count')?.textContent).toBe('4');
     // (2 loved − 1 hated) / 3 rated, not / 4 matches.
     expect(section.querySelector('.ars-search-score')?.textContent).toBe('33%');
@@ -108,8 +118,34 @@ describe('buildSearchSection', () => {
 
   test('a match set with no ratings shows no chip', async () => {
     const section = mount({ reviews: [review(0, 'battery a')] });
+    await search(section, 'battery', SETTLED);
+    expect(section.querySelector('.ars-search-score')?.textContent).toBe('');
+  });
+
+  test('holds the score\'s place while the matches are read, then fills it once', async () => {
+    const section = mount({ reviews: [review(5, 'battery a'), review(1, 'battery b')] });
     await search(section, 'battery');
-    expect((section.querySelector('.ars-search-score') as HTMLElement).style.display).toBe('none');
+    expect(section.querySelector('.ars-search-score')?.textContent).toBe('…');
+    await new Promise((r) => setTimeout(r, SETTLED - 400));
+    expect(section.querySelector('.ars-search-score')?.textContent).toBe('0%');
+  });
+
+  test('read by Jev, the header shows what the matches say, and its counts filter the list', async () => {
+    // A 5★ review that complains about the battery counts as a complaint.
+    nextStances = (texts) => texts.map((t) => (t.includes('dies') ? 'complain' : t.includes('lasts') ? 'praise' : 'mixed'));
+    const section = mount({ reviews: [review(5, 'battery lasts'), review(5, 'battery dies fast'), review(4, 'battery lasts long'), review(3, 'battery is a battery')] });
+    await search(section, 'battery', SETTLED);
+    nextStances = null;
+    const score = section.querySelector<HTMLElement>('.ars-search-score')!;
+    expect(score.querySelector('.ts-op-share')?.textContent).toBe('67%');
+    expect(score.title).toBe('2 praise · 1 complain · 1 mixed or neutral');
+    const [up, down] = [...section.querySelectorAll<HTMLButtonElement>('.ars-search-summary .ts-op-filter')];
+    expect([up!.textContent, down!.textContent]).toEqual(['▲2', '▼1']);
+    down!.click();
+    expect(down!.getAttribute('aria-pressed')).toBe('true');
+    expect([...section.querySelectorAll('.ars-search-title')].map((t) => t.textContent)).toEqual(['battery dies fast']);
+    down!.click();
+    expect(section.querySelectorAll('.ars-search-review').length).toBe(4);
   });
 
   test('clearing the box hides the results', async () => {

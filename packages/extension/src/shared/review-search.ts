@@ -1,7 +1,8 @@
 import { addCommas, el, npsColor, npsStats } from './utils';
 import { llmSummarize, renderFreeFormAnswer } from './review-summary';
 import type { SearchAsk } from './review-ask';
-import { parseOrQuery, type SearchReviews } from '@truescore/gmaps-shared';
+import { countStances, opinionsOf, parseOrQuery, type SearchReviews, type Stance } from '@truescore/gmaps-shared';
+import { markPressed, opinionFilters, opinionNumbers, opinionsLabel, opinionsSlot, readStances } from './jev';
 
 // Gmail-style ` OR ` (any case) splits a query into lowercased terms; a review
 // matches if it contains ANY term. Shared by every panel's review search.
@@ -96,6 +97,9 @@ export const localSearchAsk = <T,>(
 };
 
 const MAX_RENDERED_RESULTS = 50;
+// How long a query must stand before its matches are read for what they say —
+// a pause, not a keystroke, is worth reading.
+const STANCE_SETTLE_MS = 700;
 const SEARCH_DEBOUNCE_MS = 120;
 // Remote searches cost a request per keystroke-burst, so they wait longer.
 const REMOTE_DEBOUNCE_MS = 350;
@@ -171,6 +175,13 @@ export const buildSearchSection = <T,>({
 
   type Match = { r: T; f: SearchReviewFields };
   let lastMatches: Match[] = [];
+  // What each listed match says about the query (by index), once read, and the
+  // stance the list is filtered to — set by the header's counts, cleared by a
+  // second press, by Esc, or by a new query.
+  let stances: Stance[] | null = null;
+  let filter: Stance | null = null;
+  let listTerms: string[] = [];
+  let listTotal = 0;
 
   const findMatches = async (terms: string[]): Promise<{ matches: Match[]; total: number }> => {
     if (!search) {
@@ -258,19 +269,49 @@ export const buildSearchSection = <T,>({
     lastMatches = matches;
 
     summary.textContent = '';
+    const filters = el('span', 'ts-op-filters');
     summary.append(
       el('span', 'ars-search-count', addCommas(matchTotal)),
-      document.createTextNode(` of ${addCommas(corpusSize)} reviews mention "${raw}"`),
+      document.createTextNode(` of ${addCommas(corpusSize)} reviews mention "${raw}" `),
+      filters,
     );
 
     const { nps, rated } = ratingStats(matches.map(({ f }) => f.rating));
-    if (rated) {
-      scoreChip.textContent = `${Math.round(nps)}%`;
-      scoreChip.style.color = npsColor(nps);
-      scoreChip.style.display = '';
-    } else {
-      scoreChip.style.display = 'none';
-    }
+    const starShare = () => {
+      if (!rated) return null;
+      const pct = el('span', undefined, `${Math.round(nps)}%`);
+      pct.style.color = npsColor(nps);
+      return pct;
+    };
+    // What the matches say about the query, read once the query has stood a
+    // moment: their share/net (and ▲/▼ filters) in the score's place, its space
+    // held until then; the star share when Jev can't read them.
+    stances = null;
+    filter = null;
+    const read = (async () => {
+      await new Promise((go) => setTimeout(go, STANCE_SETTLE_MS));
+      if (currentQuery !== raw || !matches.length) return null;
+      const labels = await readStances(raw, matches.map(({ f }) => [f.title, f.body].filter(Boolean).join('. ')));
+      if (!labels || currentQuery !== raw) return null;
+      stances = labels;
+      return opinionsOf(countStances(labels), matches.length);
+    })();
+    // The share takes the old %'s place, in its type and colour scale; the
+    // counts behind it are the tooltip, and the ▲/▼ filters join the line beside.
+    scoreChip.style.color = '';
+    scoreChip.style.display = '';
+    scoreChip.title = '';
+    scoreChip.replaceChildren(opinionsSlot(read.then((o) => {
+      if (!o) return null;
+      scoreChip.title = o.title;
+      scoreChip.setAttribute('aria-label', opinionsLabel(o));
+      return opinionNumbers(o, { share: () => 'ts-op-share', color: (x) => npsColor(x.share), sparse: 'dash' });
+    }), starShare));
+    void read.then((o) => {
+      if (!o || o.sparse || currentQuery !== raw) return;
+      filters.append(...opinionFilters(o, () => filter, setFilter));
+      filters.classList.add('ts-op-in');
+    });
 
     const cached = summaryCache.get(q);
     if (cached) renderCached(raw, cached);
@@ -279,24 +320,42 @@ export const buildSearchSection = <T,>({
     // After the branch above: both renderCached and hideSummary re-enable the button.
     sumBtn.disabled = matches.length === 0;
 
-    list.textContent = '';
-    if (!matches.length) {
-      list.appendChild(el('div', 'ars-search-empty', 'No matching reviews'));
-      return;
-    }
-    const shown = matches.slice(0, MAX_RENDERED_RESULTS);
-    for (const p of shown) list.appendChild(buildReviewCard(p.f, terms));
-    // matchTotal, not matches.length: a remote search reports every hit but
-    // only hands back its first page.
-    if (matchTotal > shown.length) {
-      list.appendChild(el('div', 'ars-search-truncated',
-        `Showing first ${shown.length} — refine the search to see more.`));
-    }
+    listTerms = terms;
+    listTotal = matchTotal;
+    renderList();
 
     if (mountSummarize) {
       const texts = matches.map((p) => toText(p.r)).filter(Boolean);
       if (texts.length) mountSummarize(sumHost, raw, texts);
     }
+  };
+
+  // The matches listed: every one, or those of the filtered stance.
+  const renderList = () => {
+    list.textContent = '';
+    const picked = filter && stances ? lastMatches.filter((_, i) => stances![i] === filter) : lastMatches;
+    if (!picked.length) {
+      list.appendChild(el('div', 'ars-search-empty', 'No matching reviews'));
+      return;
+    }
+    const shown = picked.slice(0, MAX_RENDERED_RESULTS);
+    for (const p of shown) list.appendChild(buildReviewCard(p.f, listTerms));
+    // listTotal, not picked.length: a remote search reports every hit but only
+    // hands back its first page.
+    const total = filter ? picked.length : listTotal;
+    if (total > shown.length) {
+      list.appendChild(el('div', 'ars-search-truncated',
+        `Showing first ${shown.length} — refine the search to see more.`));
+    }
+  };
+
+  // The list scrolls into view only when it's off screen.
+  const setFilter = (stance: Stance | null) => {
+    filter = stance;
+    markPressed(header, stance);
+    renderList();
+    const top = list.getBoundingClientRect().top;
+    if (top < 0 || top > window.innerHeight) list.scrollIntoView({ block: 'nearest' });
   };
 
   input.addEventListener('input', () => {
@@ -308,6 +367,13 @@ export const buildSearchSection = <T,>({
   // dead listeners on document.
   const onSearchKey = (e: KeyboardEvent) => {
     if (!input.isConnected) { document.removeEventListener('keydown', onSearchKey, true); return; }
+    // Esc clears a pressed filter — and goes no further, so the host page doesn't
+    // also take it (dm.de clears the field). Only from within the section.
+    if (e.key === 'Escape' && filter && (section.contains(document.activeElement) || document.activeElement === document.body)) {
+      e.stopPropagation();
+      setFilter(null);
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
       e.preventDefault();
       e.stopPropagation();
