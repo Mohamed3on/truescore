@@ -769,32 +769,17 @@ section#result::before {
 .chip.errored[disabled] { cursor: not-allowed; }
 .chip.errored:hover { background: var(--t5); }
 .chip .pct.prefer { color: var(--t2); font-weight: 500; }
-/* What a topic's reviews say, once Jev has read them: the share positive, then
-   the net with its sign, or "2 mentions" when too few take a side. Shared by
-   chips, the panel title (with ▲/▼ filters) and Ask rows. */
-.opinions {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  font-family: 'IBM Plex Mono', monospace;
-  font-weight: 600;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.op.pos { color: var(--pos); }
-.op.neg { color: var(--neg); }
-.op.mid { color: var(--mid); }
-.op.net { color: var(--t3); font-weight: 500; }
-.op.none { color: var(--t3); font-weight: 500; }
-/* A zero is no signal: muted, so the eye goes to the counts that matter. */
-.op.zero { color: var(--t4); }
-.op-filter:disabled { cursor: default; }
+/* In the panel title, a topic's share and net sit in the title's own type; the
+   share takes .pct's colours, the net is muted. */
+.opinions { display: inline-flex; align-items: baseline; gap: 6px; }
+.chip-panel-title .net { color: var(--t3); }
+.ask-search-pct.mid { color: var(--mid); }
 /* In the panel title each count filters the list below it. */
 .op-filter {
   font: inherit;
   letter-spacing: inherit;
   padding: 1px 6px;
-  margin: -1px 0;
+  margin: -2px 0;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -802,6 +787,11 @@ section#result::before {
   transition: transform 160ms ease-out, background-color 160ms ease-out, border-color 160ms ease-out;
 }
 .op-filter:active { transform: scale(0.97); }
+.op-filter.pos { color: var(--pos); }
+.op-filter.neg { color: var(--neg); }
+/* A zero is no signal: muted, and there's nothing to list behind it. */
+.op-filter.zero { color: var(--t4); }
+.op-filter:disabled { cursor: default; }
 .op-filter.pos[aria-pressed="true"] { background: rgba(74, 222, 128, 0.12); border-color: rgba(74, 222, 128, 0.5); }
 .op-filter.neg[aria-pressed="true"] { background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.5); }
 @media (hover: hover) and (pointer: fine) {

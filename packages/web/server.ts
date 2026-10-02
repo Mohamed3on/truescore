@@ -572,15 +572,21 @@ Bun.serve({
     // Read-only cache peek for the extension: returns summary/highlights/etc
     // if the place was already looked up via the web. Never triggers compute.
     '/api/cached': {
-      GET: (req) => {
+      GET: async (req) => {
         const featureId = new URL(req.url).searchParams.get('featureId');
         if (!featureId) return corsJson({ error: 'missing featureId' }, 400);
         const entry = cache.get(featureId);
         if (!entry) return corsJson({ found: false }, 404);
+        // Chips and a summary Jev hasn't read yet are read now (once, then kept),
+        // so the extension paints them with their counts and receipts first time.
+        const [highlights, summary] = await Promise.all([
+          cache.highlightsServable(entry) ? chipsWithStance(featureId, entry.highlights!) : undefined,
+          entry.summary && summaryWithReceipts(entry.summary, cachedSubject(entry), (s) => cache.putSummary(featureId, s)),
+        ]);
         return corsJson({
           found: true,
-          summary: entry.summary,
-          highlights: cache.highlightsServable(entry) ? entry.highlights : undefined,
+          summary: summary || undefined,
+          highlights,
           highlightSummaries: entry.highlightSummaries,
         } satisfies CachedResponse);
       },

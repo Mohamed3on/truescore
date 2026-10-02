@@ -6,7 +6,7 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
-  answersOf, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, opinionTone, signedNet, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
+  answersOf, bySupport, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, opinionTone, signedNet, tooFewMentions, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type SearchEvent, type SearchResult,
@@ -126,17 +126,15 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 // null keeps the star share it had before.
 const opinionsFor = (s: { stance?: StanceCounts; of?: number }): Opinions | null => (s.stance ? opinionsOf(s.stance, s.of) : null);
 
-// Opinions as every surface shows them: the share of those taking a side who are
-// positive ("77%", or "82% yes" for an Ask), then the net of them ("+37") — the
-// same order everywhere, so a column of them scans — or just the mentions when
-// too few take a side. The sign carries the polarity as well as the colour; the
-// counts behind them go in the tooltip and the accessible name.
-function opinionCounts(o: Opinions, word = ''): HTMLElement {
-  const span = el('span', 'opinions');
-  span.title = o.title;
-  if (o.sparse) span.append(el('span', 'op none', mentionsText(o.mentions)));
-  else span.append(el('span', `op ${opinionTone(o)}`, `${o.share}%${word && ` ${word}`}`), el('span', 'op net', `·${signedNet(o.net)}`));
-  return span;
+// Opinions in the surface's own number styles, where the star share sat: the
+// share of those taking a side who are positive in its % class, coloured by tone
+// ("77%", or "82% yes" for an Ask), then the net in its count class ("·+37") — or,
+// too few taking a side, just how many reviews speak to it (·N, or — with no count
+// class). The counts behind them go in the tooltip and the accessible name.
+function opinionNumbers(o: Opinions, pctCls: string, countCls?: string, word = ''): HTMLElement[] {
+  if (o.sparse) return [countCls ? el('span', countCls, `·${o.mentions}`) : el('span', pctCls, '—')];
+  const share = el('span', `${pctCls} ${opinionTone(o)}`, `${o.share}%${word && ` ${word}`}`);
+  return countCls ? [share, el('span', countCls, `·${signedNet(o.net)}`)] : [share];
 }
 const opinionsLabel = (label: string, o: Opinions) =>
   `${label}: ${o.sparse ? mentionsText(o.mentions) : `${o.share}% ${o.posWord}, net ${signedNet(o.net)} (${o.title})`}`;
@@ -153,7 +151,8 @@ function chip(spec: ChipSpec): HTMLButtonElement {
   if (spec.title) btn.title = spec.title;
   btn.append(el('span', 'label', spec.label));
   if (spec.opinions) {
-    btn.append(opinionCounts(spec.opinions));
+    btn.append(...opinionNumbers(spec.opinions, 'pct', 'count'));
+    btn.title = spec.opinions.title;
     btn.setAttribute('aria-label', opinionsLabel(spec.label, spec.opinions));
   } else {
     btn.append(el('span', `pct ${spec.pct.cls}`, spec.pct.text));
@@ -173,8 +172,12 @@ const chipOrder = (chips: UiChip[]): UiChip[] => {
   return sortChipsByImpact(ranked, 0).map((r) => r.c);
 };
 
+// A topic fewer than two reviews actually speak to is dropped, as a scored chip is.
+const spokenOf = (c: { stance?: StanceCounts }) => !c.stance || !tooFewMentions(opinionsOf(c.stance));
+
 function renderHighlights(highlights: UiChip[], sort = false) {
-  const list = sort ? chipOrder(highlights) : highlights;
+  const shown = highlights.filter(spokenOf);
+  const list = sort ? chipOrder(shown) : shown;
   highlightsList.replaceChildren(...list.map((h) => {
     const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
     const pct = state === 'done' && h.score
@@ -196,7 +199,7 @@ function renderHighlights(highlights: UiChip[], sort = false) {
 // click. Scores fill in inline; a chip that lands below 2 mentions drops out.
 function renderScored(kind: ScoredKind) {
   const g = scoredGroups[kind];
-  const scored = selectScoredChips(g.chips, (d) => d.result);
+  const scored = selectScoredChips(g.chips, (d) => d.result && (d.result.stance ? { totalReviews: opinionsOf(d.result.stance).mentions } : d.result));
   const pending = g.chips.filter((d) => d.state === 'loading');
   g.row.hidden = scored.length === 0 && pending.length === 0;
   g.list.replaceChildren(
@@ -280,10 +283,12 @@ const panelStances = (): Record<string, Stance> | undefined =>
   activePanel?.kind === 'highlight' ? activePanel.chip.stances : activePanel?.kind === 'search' ? activePanel.result.stances : undefined;
 
 function opinionFilters(o: Opinions): HTMLElement {
-  const box = opinionCounts(o);
+  const box = el('span', 'opinions');
+  box.title = o.title;
+  box.append(...opinionNumbers(o, 'pct', o.sparse ? undefined : 'net'));
   if (o.sparse) return box;
   const filter = (stance: Stance, cls: string, glyph: string, n: number, word: string) => {
-    const btn = el('button', `op op-filter ${cls}`, `${glyph}${n}`);
+    const btn = el('button', `op-filter ${cls}`, `${glyph}${n}`);
     btn.type = 'button';
     // Nothing to list behind a zero.
     btn.disabled = !n;
@@ -425,7 +430,9 @@ function askSearchRow(s: AskSearch, question: string): HTMLButtonElement {
   const counts = (a: AnswerCounts) => {
     const o = answersOf(a);
     row.setAttribute('aria-label', `${parseOrQuery(s.query).join(', ')}: ${opinionsLabel('answers', o)}`);
-    return opinionCounts(o, 'yes');
+    row.title = `${row.title} — ${o.title}`;
+    // The share alone, in the row's own % style: its count is the matches'.
+    return opinionNumbers(o, 'ask-search-pct', undefined, 'yes');
   };
   if (read instanceof Promise) {
     // Space held at the counts' width, filled once — a crossfade, never a tick-up.
@@ -433,10 +440,10 @@ function askSearchRow(s: AskSearch, question: string): HTMLButtonElement {
     row.append(slot);
     void read.then((a) => {
       if (!slot.isConnected) return;
-      slot.replaceChildren(a ? counts(a) : starShare(s));
+      slot.replaceChildren(...(a ? counts(a) : [starShare(s)]));
       slot.classList.add('op-in');
     });
-  } else if (read) row.append(counts(read));
+  } else if (read) row.append(...counts(read));
   // The matches' TrueScore, graded against the place's like the topic chips.
   else if (s.scorePct != null) row.append(starShare(s));
   row.append(el('span', 'ask-search-count', s.found == null ? '—' : `·${s.found}`));
@@ -452,7 +459,7 @@ const starShare = (s: AskSearch) => el('span', `ask-search-pct ${chipPolarity(s.
 // question and Search; null when it can't (the row keeps its TrueScore).
 function readAnswers(question: string, query: string, texts: string[]): void {
   const key = answersKey(question, query);
-  if (askAnswers.has(key)) return;
+  if (askAnswers.has(key) || !texts.length) return;
   const read = postJson<StanceResponse>('/api/stance', { question, texts: texts.slice(0, MAX_JUDGED) } satisfies StanceRequest)
     .then((r) => (r.answers ? countAnswers(r.answers) : null), () => null)
     .then((a) => { askAnswers.set(key, a); return a; });
@@ -521,7 +528,8 @@ function renderReviewList(reviews: Review[]) {
 // with its receipt when Jev checked it: how many reviews make the point, a button
 // that opens them under the bullet.
 function renderHighlightList(ul: HTMLElement, highlights: Summary['highlights']) {
-  for (const h of highlights) {
+  // Most-backed first once checked.
+  for (const h of bySupport(highlights)) {
     const text = el('span', `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`);
     renderMarkdownInline(text, h.text ?? '');
     const li = el('li');

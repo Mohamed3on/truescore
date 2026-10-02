@@ -24,9 +24,11 @@ const tally = <K extends string>(keys: readonly K[], values: Iterable<K | null |
 export const countStances = (stances: Iterable<Stance | null | undefined>): StanceCounts => tally(STANCES, stances);
 export const countAnswers = (answers: Iterable<Answer | null | undefined>): AnswerCounts => tally(ANSWERS, answers);
 
-// Fewer opinions than this and a split reads surer than it is, so the mentions
-// are shown instead ("2 mentions").
+// Fewer opinions than this and a split reads surer than it is, so only how many
+// reviews speak to the subject is shown. A chip fewer reviews than this speak to
+// at all is dropped — the rule the scored chips already keep (selectScoredChips).
 export const MIN_OPINIONS = 2;
+export const tooFewMentions = (o: { mentions: number }) => o.mentions < MIN_OPINIONS;
 
 // Reviews read per chip, Search or Ask row — a guard, not a sample: chips run to
 // ~160 and most searches far fewer. Past it the first are read (a chip's newest,
@@ -91,11 +93,17 @@ export type StanceResult = { stance: StanceCounts; stances: Record<string, Stanc
 // star-share chips grade against the place's overall score instead
 // (chipPolarity); a topic's own praise-vs-complaint has no baseline to beat.
 export const opinionTone = (o: Opinions): 'pos' | 'mid' | 'neg' => (o.share >= 60 ? 'pos' : o.share <= 40 ? 'neg' : 'mid');
+export type Tone = ReturnType<typeof opinionTone>;
 // Net with its sign, as a vote count reads: +37, −5, 0.
 export const signedNet = (n: number): string => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
 
 // The net of an opinion split on the −100..100 scale the chips sort by
 // (sortChipsByImpact), so a stance chip ranks among star-share ones.
+// Summary bullets by how many reviews make them, most first; unchecked ones
+// keep their order.
+export const bySupport = <T extends { support?: number }>(items: T[]): T[] =>
+  items.every((h) => h.support != null) ? [...items].sort((a, b) => b.support! - a.support!) : items;
+
 export const opinionPct = (o: Opinions): number => {
   const sided = o.pos + o.neg;
   return sided ? Math.round(((o.pos - o.neg) / sided) * 100) : 0;
