@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "TrueScore",
   "version": "1.54.1",
-  "description": "Cut through inflated ratings. See what's actually good on Amazon, Airbnb, Booking, IMDB, Letterboxd, Google Maps, Goodreads, and more.",
+  "description": "Cut through inflated ratings. See what's actually good on Amazon, Airbnb, Booking, IMDb, Letterboxd, Google Maps, Goodreads & more.",
   "author": "Mohamed Oun",
   "icons": {
     "16": "icons/icon-16.png",
