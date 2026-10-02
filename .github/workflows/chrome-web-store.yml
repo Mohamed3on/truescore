@@ -1,0 +1,34 @@
+name: Publish to Chrome Web Store
+
+# Submits the build for review whenever the store is behind it (see
+# packages/extension/publish-chrome-web-store.ts). Runs after each release, and
+# daily: a release that lands while an earlier version is still in review gets
+# submitted once that review clears.
+on:
+  workflow_run:
+    workflows: ['Release extension']
+    types: [completed]
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+concurrency: chrome-web-store
+
+jobs:
+  publish:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      # For workflow_run this checks out the tip of main, which includes the
+      # version semantic-release stamped into src/manifest.json.
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run build:extension
+
+      - run: bun packages/extension/publish-chrome-web-store.ts packages/extension/truescore hajnplajhbfkhbafmfndlkceelijglcl
+        env:
+          CWS_SERVICE_ACCOUNT_KEY: ${{ secrets.CWS_SERVICE_ACCOUNT_KEY }}
