@@ -26,6 +26,7 @@ import {
   type SummarizeRequest,
   type SummarizeResponse,
 } from '@truescore/gmaps-shared';
+import type { BunRequest, Serve, Server } from 'bun';
 import { resolvePlace } from './resolve';
 import { mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch, type ScoreResult } from './gmaps';
@@ -55,10 +56,50 @@ const corsOptions = () => new Response(null, {
   headers: {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, x-truescore-key',
     'Access-Control-Max-Age': '86400',
   },
 });
+
+// A shared password keeps the API to the people it's been given to: the web app
+// sends the cookie /login sets, the extension a header. Unset (local dev) leaves
+// everything open.
+const PASSWORD = process.env.TRUESCORE_PASSWORD;
+const PASSWORD_COOKIE = 'truescore-key';
+const authed = (req: BunRequest) =>
+  !PASSWORD || req.headers.get('x-truescore-key') === PASSWORD || req.cookies.get(PASSWORD_COOKIE) === PASSWORD;
+
+// Every /api route but its CORS preflight needs the password, so a route added
+// later is locked without anyone remembering to. The seed-secret routes keep
+// their own check.
+const SEED_ROUTES = new Set(['/api/maps-creds', '/api/maps-creds/renew']);
+type Handler = (req: BunRequest, server: Server<undefined>) => Response | Promise<Response>;
+const lock = (handler: Handler): Handler => (req, server) =>
+  authed(req) ? handler(req, server) : corsJson({ error: 'TrueScore password required' }, 401);
+function lockApi<R extends string>(routes: Serve.Routes<undefined, R>): Serve.Routes<undefined, R> {
+  const all = routes as unknown as Record<string, Handler | Record<string, Handler>>;
+  for (const [path, route] of Object.entries(all)) {
+    if (!path.startsWith('/api/') || SEED_ROUTES.has(path)) continue;
+    if (typeof route === 'function') all[path] = lock(route);
+    else for (const [method, handler] of Object.entries(route)) if (method !== 'OPTIONS') route[method] = lock(handler);
+  }
+  return routes;
+}
+
+// The web app's sign-in: one password box. It sets the cookie for a year and goes
+// back to the page that sent us here, never off this site.
+const loginPage = (wrong = false) => new Response(`<!doctype html>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrueScore</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px system-ui}form{display:grid;gap:10px;width:min(300px,85vw)}input,button{font:inherit;padding:10px;border:1px solid #ccc;border-radius:8px}p{margin:0;color:#c00}</style>
+<form method="post">
+<input type="password" name="password" placeholder="Password" autocomplete="current-password" required autofocus>
+${wrong ? '<p>Wrong password</p>' : ''}<button>Sign in</button>
+</form>`, { status: wrong ? 401 : 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+const nextPath = (req: Request) => {
+  const next = new URL(new URL(req.url).searchParams.get('next') ?? '/', 'https://truescore.invalid');
+  return next.origin === 'https://truescore.invalid' ? next.pathname + next.search : '/';
+};
 
 // Translate proxy / upstream errors into something users can act on, instead
 // of surfacing raw "googleFetch 502 for https://…" strings. Unknown errors
@@ -439,8 +480,16 @@ Bun.serve({
   // drop a few times a month. Cloudflare's 100s origin read timeout is the real
   // ceiling, so outlast it rather than cut in first.
   idleTimeout: 120,
-  routes: {
+  routes: lockApi({
     '/': index,
+    '/login': {
+      GET: () => loginPage(),
+      POST: async (req) => {
+        if ((await req.formData()).get('password') !== PASSWORD) return loginPage(true);
+        req.cookies.set(PASSWORD_COOKIE, PASSWORD, { maxAge: 365 * 86400, httpOnly: true, secure: true, sameSite: 'lax', path: '/' });
+        return new Response(null, { status: 303, headers: { Location: nextPath(req) } });
+      },
+    },
     '/api/lookup': {
       POST: async (req) => {
         try {
@@ -475,8 +524,9 @@ Bun.serve({
       },
       POST: () => json({ error: 'seeding retired: the server mints and signs its own session' }, 410),
     },
-    // Public health for the web client's reseed banner: whether the server has a
-    // usable Maps session right now. Just a boolean — no secret, no timing.
+    // Health for the web client's reseed banner: whether the server has a usable
+    // Maps session right now. Just a boolean — no timing. Its 401 sends the web
+    // client to /login.
     '/api/session-health': {
       GET: () => json({ healthy: mapsSessionHealthy() }),
     },
@@ -506,6 +556,8 @@ Bun.serve({
           highlightSummaries: entry.highlightSummaries,
         } satisfies CachedResponse);
       },
+      // The password header makes the extension's GET a preflighted one.
+      OPTIONS: corsOptions,
     },
     // Extension uploads what it just generated so the next visitor (any
     // client) gets the cached summary/highlights without recompute. Creates
@@ -800,7 +852,7 @@ Bun.serve({
       },
       OPTIONS: corsOptions,
     },
-  },
+  }),
   development: { hmr: false, console: true },
 });
 

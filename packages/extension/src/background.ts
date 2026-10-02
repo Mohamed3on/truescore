@@ -2,6 +2,7 @@
 import { SCORE_CACHE_PREFIX } from './shared/cache-keys';
 import { createThrottledFetcher } from './shared/throttled-fetch';
 import { SERVER_SCORE_PORT, type ServerScoreMessage } from './shared/gmaps-bridge-protocol';
+import { getTruescorePassword } from './shared/config';
 import { featureIdFromPlaceUrl, readNdjson, type HighlightEvent, type HighlightsRequest, type HighlightsResponse, type LookupEvent, type Score, type SearchEvent, type SearchRequest } from '@truescore/gmaps-shared';
 
 // Drop rc_score_* entries older than 30 days. Registered on install/update
@@ -74,6 +75,32 @@ const imdbHistograms = async (ids: string[]): Promise<Record<string, number[]> |
 const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
 type Post = (msg: ServerScoreMessage) => void;
 
+// The server's shared password (set in the popup) rides every call to it.
+const authHeaders = async (): Promise<Record<string, string>> => {
+  const key = await getTruescorePassword();
+  return key ? { 'x-truescore-key': key } : {};
+};
+
+// MAIN-world gmaps.ts calls the server too, but it can't be handed the password:
+// any script on the page could read it. So the browser adds the header to calls
+// from Google's pages instead, a rule kept in step with the popup's field.
+const PASSWORD_RULE_ID = 1;
+const syncPasswordRule = async () => {
+  const key = await getTruescorePassword();
+  await chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: [PASSWORD_RULE_ID],
+    addRules: key ? [{
+      id: PASSWORD_RULE_ID,
+      action: { type: 'modifyHeaders', requestHeaders: [{ header: 'x-truescore-key', operation: 'set', value: key }] },
+      condition: { urlFilter: `|${TRUESCORE_API_BASE}/api/`, initiatorDomains: ['google.com'], resourceTypes: ['xmlhttprequest'] },
+    }] : [],
+  });
+};
+chrome.runtime.onInstalled.addListener(syncPasswordRule);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && changes.truescorePassword) void syncPasswordRule();
+});
+
 // Chips carry their reviews, so a chip opens without a Google session. A place
 // whose chips the server hasn't harvested yet answers 202 while it warms them, so
 // poll on the web client's schedule; each `pending` post also keeps this worker
@@ -84,7 +111,7 @@ const serverHighlights = async (featureId: string, post: Post): Promise<void> =>
   for (let poll = 0; poll < HIGHLIGHTS_MAX_POLLS; poll++) {
     const res = await fetch(`${TRUESCORE_API_BASE}/api/highlights`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...await authHeaders() },
       body: JSON.stringify({ featureId } satisfies HighlightsRequest),
     });
     if (res.status === 202) {
@@ -121,7 +148,7 @@ const serverScore = async (url: string, post: Post): Promise<void> => {
   try {
     const res = await fetch(`${TRUESCORE_API_BASE}/api/lookup`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...await authHeaders() },
       body: JSON.stringify({ url }),
     });
     if (!res.ok || !res.body) return;
@@ -156,7 +183,7 @@ const serverSearch = async (url: string, query: string, post: Post): Promise<voi
   try {
     const res = await fetch(`${TRUESCORE_API_BASE}/api/search`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...await authHeaders() },
       body: JSON.stringify({ featureId, query } satisfies SearchRequest),
     });
     if (!res.ok || !res.body) return;

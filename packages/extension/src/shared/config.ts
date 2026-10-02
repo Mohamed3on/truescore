@@ -13,6 +13,9 @@ const storedKey = async (name: string): Promise<string> => {
   }
 };
 
+// The truescore server's shared password, set in the popup.
+export const getTruescorePassword = (): Promise<string> => storedKey('truescorePassword');
+
 // gpt-6-luna reasoning effort, set in the popup. ReasoningEffort and its
 // validation list are the canonical ones from gmaps-shared/wire.ts (shared with
 // the server), re-exported here so the rest of the extension keeps importing

@@ -10,7 +10,7 @@ TLS: Cloudflare edge (Flexible mode — edge ↔ origin is plain HTTP)
 | | |
 |---|---|
 | App dir | `/opt/truescore` |
-| .env | `/opt/truescore/.env` (PORT=80, Decodo creds, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `LLM_PROVIDER`, paths) |
+| .env | `/opt/truescore/.env` (PORT=80, Decodo creds, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `LLM_PROVIDER`, `TRUESCORE_PASSWORD`, paths) |
 | Code/cache state | `/var/lib/truescore/{cache.sqlite,cookies.json}` (legacy `cache.json` migrated on first start) |
 | systemd unit | `/etc/systemd/system/truescore.service` |
 | Service user | `truescore` |
@@ -135,11 +135,20 @@ SERVER=root@65.108.153.112 ./deploy/sync.sh
 
 This rsyncs source (excluding `.env`, `node_modules`, `.git`, `deploy/`), runs `bun install` on the server, and restarts the service. Each box keeps its own `.env`.
 
+## Password
+
+Every `/api/*` route needs `TRUESCORE_PASSWORD` (except CORS preflights and the seed-secret routes): the web app gets a year-long cookie from `/login`, the extension sends it as `x-truescore-key` (set in its popup), and so does anything you curl. A scripted client on Tencent Cloud was using the open API as a free review scraper through the proxy. Unset = open (local dev). Rotate it with the line below, then everyone signs in again and re-enters it in the popup:
+
+```bash
+ssh root@65.108.153.112 'sed -i "s/^TRUESCORE_PASSWORD=.*/TRUESCORE_PASSWORD=<new>/" /opt/truescore/.env && systemctl restart truescore'
+```
+
 ## End-to-end smoke test
 
 ```bash
 curl -sS -X POST https://truescore.mohamed3on.com/api/lookup \
   -H 'Content-Type: application/json' \
+  -H 'x-truescore-key: <password>' \
   -d '{"url":"https://maps.app.goo.gl/L3iA21n3V1yp7F6M9"}' | jq .name,.score.scorePct,.histogram
 ```
 

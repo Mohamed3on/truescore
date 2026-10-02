@@ -62,6 +62,7 @@ const FIELDS = [
   { id: 'apikey', storageKey: 'geminiApiKey' },
   { id: 'openai-key', storageKey: 'openaiApiKey' },
   { id: 'deepseek-key', storageKey: 'deepseekApiKey' },
+  { id: 'truescore-key', storageKey: 'truescorePassword' },
 ];
 
 for (const { id, storageKey } of FIELDS) {

@@ -51,10 +51,11 @@ jobs:
         # Hit the live service over SSH against localhost. Cloudflare serves the
         # runner IP a 403 managed challenge, and the origin is firewalled to
         # Cloudflare IPs, so SSH is the only path in. Retry to ride out the cold
-        # first lookup (cookie bake + Google fetch via the residential proxy).
+        # first lookup (cookie bake + Google fetch via the residential proxy). The
+        # API wants the shared password, read from the box's own .env.
         run: |
           for i in $(seq 1 6); do
-            if ssh root@65.108.153.112 'curl -s --max-time 30 -X POST http://localhost/api/lookup -H "Content-Type: application/json" -d "{\"url\":\"https://www.google.com/maps/place/Eiffel+Tower/@48.8583701,2.2922873,17z/data=!4m6!3m5!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0\"}" | grep -qE "\"scorePct\":[0-9]+"'; then
+            if ssh root@65.108.153.112 'curl -s --max-time 30 -X POST http://localhost/api/lookup -H "Content-Type: application/json" -H "x-truescore-key: $(sed -n s/^TRUESCORE_PASSWORD=//p /opt/truescore/.env)" -d "{\"url\":\"https://www.google.com/maps/place/Eiffel+Tower/@48.8583701,2.2922873,17z/data=!4m6!3m5!1s0x47e66e2964e34e2d:0x8ddca9ee380ef7e0\"}" | grep -qE "\"scorePct\":[0-9]+"'; then
               echo "smoke test passed (attempt $i)"; exit 0
             fi
             echo "attempt $i failed — retrying in 10s"; sleep 10

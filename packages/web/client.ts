@@ -95,6 +95,8 @@ const sessionBanner = $('sessionBanner') as HTMLElement;
 async function refreshSessionHealth() {
   try {
     const r = await fetch('/api/session-health', { cache: 'no-store' });
+    // Not signed in (or the password changed): sign in, then come back here.
+    if (r.status === 401) location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
     if (!r.ok) return;
     const { healthy } = (await r.json()) as { healthy: boolean };
     sessionBanner.hidden = healthy;
