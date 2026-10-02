@@ -4,7 +4,7 @@
   "type": "module",
   "workspaces": ["packages/*"],
   "scripts": {
-    "build:extension": "bun --cwd packages/extension run build",
+    "build:extension": "bun run --cwd packages/extension build",
     "deploy:web": "SERVER=root@65.108.153.112 ./deploy/sync.sh",
     "check": "bun test && tsgo -p packages/gmaps-shared && tsgo -p packages/web && tsgo -p packages/extension",
     "prepare": "git config core.hooksPath .githooks || true"
