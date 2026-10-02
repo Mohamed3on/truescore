@@ -6,7 +6,7 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
 //
 // 1. /maps/preview/place RPC responses (chip tokens at [6][153][0]) — keyed by
 //    featureId so back-to-back navigations don't clobber each other.
-// 2. Botguard creds off Google's ListUgcPosts batchexecute XHR (bgkey/bgbind in
+// 2. Botguard creds off Google's ListUgcPosts batchexecute request (bgkey/bgbind in
 //    request headers, at/sessionId in the body). Google retired the legacy GET
 //    listugcposts endpoint; the only way to fetch reviews now is to replay this
 //    batchexecute. A capture carries the session (sessionId, at, authuser) that
@@ -44,16 +44,6 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
       }
       document.dispatchEvent(new CustomEvent(PREVIEW_CAPTURED, { detail: { featureId } }));
     } catch {}
-  };
-
-  // Normalise fetch's many header shapes (Headers | [k,v][] | object) to lowercase keys.
-  const headerMap = (hh: any): Record<string, string> => {
-    const h: Record<string, string> = {};
-    if (!hh) return h;
-    if (typeof hh.forEach === 'function' && !Array.isArray(hh)) hh.forEach((v: string, k: string) => (h[k.toLowerCase()] = v));
-    else if (Array.isArray(hh)) for (const [k, v] of hh) h[String(k).toLowerCase()] = v;
-    else for (const k of Object.keys(hh)) h[k.toLowerCase()] = hh[k];
-    return h;
   };
 
   // The only request carrying x-maps-bgkey is the review-list batchexecute, so that
@@ -161,9 +151,14 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
   const origFetch = window.fetch;
   window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
     const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
-    // Gate on the URL before normalising headers — Maps fires many fetches per
-    // interaction and only the review RPC carries creds.
-    if (url.includes('batchexecute')) try { storeCreds(url, headerMap(init?.headers), init?.body); } catch {}
+    // Gate on the URL before reading the request — Maps fires many fetches per
+    // interaction and only the review RPC carries creds. One Request reads any call
+    // shape: Maps now passes a bare Request (2026-10), headers and body on it rather
+    // than in init. Cloned, so the body Maps sends stays unread.
+    if (url.includes('batchexecute')) try {
+      const req = new Request(input instanceof Request ? input.clone() : input, init);
+      req.text().then((body) => storeCreds(url, Object.fromEntries(req.headers), body)).catch(() => {});
+    } catch {}
     const promise = origFetch.call(this, input, init);
     if (isPreviewUrl(url)) {
       promise.then((r) => r.clone().text()).then((t) => store(url, t)).catch(() => {});
