@@ -171,8 +171,15 @@ export const markPressed = (root: Element, stance: Stance | null) =>
   root.querySelectorAll<HTMLButtonElement>('.ts-op-filter').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.stance === stance)));
 
 // A summary bullet's receipt: how many reviews make its point; a press opens
-// them below it. `title` says what was checked when it wasn't every review.
-export const receiptButton = (item: HTMLElement, n: number, quotes: string[], title = 'Show the reviews that say this'): HTMLButtonElement => {
+// them below it. `title` says what was checked when it wasn't every review;
+// `renderQuote` draws a review as the site's own card, else it shows as text.
+export const receiptButton = (
+  item: HTMLElement,
+  n: number,
+  quotes: string[],
+  title = 'Show the reviews that say this',
+  renderQuote?: (text: string) => HTMLElement | null,
+): HTMLButtonElement => {
   ensureJevStyles();
   const btn = el('button', 'ars-receipt', `${n} reviews`) as HTMLButtonElement;
   btn.type = 'button';
@@ -183,7 +190,7 @@ export const receiptButton = (item: HTMLElement, n: number, quotes: string[], ti
     btn.setAttribute('aria-expanded', String(!open));
     if (open) { open.remove(); return; }
     const box = el('div', 'ars-receipt-quotes');
-    for (const q of quotes) box.appendChild(el('p', 'ars-receipt-quote', q));
+    for (const q of quotes) box.appendChild(renderQuote?.(q) ?? el('p', 'ars-receipt-quote', q));
     if (n > quotes.length) box.appendChild(el('span', 'ars-receipt-more', `+${n - quotes.length} more`));
     item.appendChild(box);
   });

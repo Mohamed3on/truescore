@@ -70,12 +70,15 @@ export const withReceipts = async (parsed: any, reviews: string[]) => {
   };
 };
 
-const receiptFor = (item: HTMLElement, { n, quotes }: Receipt, checkedOf: number | undefined) =>
-  receiptButton(item, n, quotes, checkedOf ? `Of the ${RECEIPT_REVIEWS} longest of ${checkedOf} reviews — show the ones that say this` : undefined);
+type RenderQuote = (text: string) => HTMLElement | null;
+
+const receiptFor = (item: HTMLElement, { n, quotes }: Receipt, checkedOf: number | undefined, renderQuote?: RenderQuote) =>
+  receiptButton(item, n, quotes, checkedOf ? `Of the ${RECEIPT_REVIEWS} longest of ${checkedOf} reviews — show the ones that say this` : undefined, renderQuote);
 
 export const renderStructuredSummary = (
   container: HTMLElement,
   { complaints, praised, conclusion, betterAlternative, receipts, receiptsOf }: any,
+  renderQuote?: RenderQuote,
 ) => {
   container.textContent = '';
   if (conclusion) {
@@ -98,7 +101,7 @@ export const renderStructuredSummary = (
       const bullet = document.createElement('div');
       bullet.className = 'ars-section-item';
       renderMarkdownInline(bullet, item);
-      if (receipts?.[item]) bullet.appendChild(receiptFor(bullet, receipts[item], receiptsOf));
+      if (receipts?.[item]) bullet.appendChild(receiptFor(bullet, receipts[item], receiptsOf, renderQuote));
       section.appendChild(bullet);
     }
     container.appendChild(section);
@@ -115,7 +118,7 @@ export const renderStructuredSummary = (
     const item = document.createElement('div');
     item.className = 'ars-section-item';
     renderMarkdownInline(item, betterAlternative);
-    if (receipts?.[betterAlternative]) item.appendChild(receiptFor(item, receipts[betterAlternative], receiptsOf));
+    if (receipts?.[betterAlternative]) item.appendChild(receiptFor(item, receipts[betterAlternative], receiptsOf, renderQuote));
     section.appendChild(item);
     container.appendChild(section);
   }
@@ -191,6 +194,9 @@ interface SummarizeWidgetOpts {
   // Lets an Ask Search every review before it answers; without it an Ask is
   // one pass over fetchReviews.
   searchAsk?: SearchAsk;
+  // Draws one of fetchReviews' texts as the site's review card, for a summary
+  // point's receipts; without it they show as the plain text.
+  renderQuote?: RenderQuote;
 }
 
 const collectAlternates = (prefix: string, currentKey: string): AlternateEntry[] => {
@@ -236,6 +242,7 @@ export const buildSummarizeWidget = ({
   alternates,
   autoSummarize,
   searchAsk,
+  renderQuote,
 }: SummarizeWidgetOpts) => {
   const questionRow = document.createElement('div');
   questionRow.className = 'ars-question-row';
@@ -305,7 +312,7 @@ export const buildSummarizeWidget = ({
       summaryTs = Date.now();
       // Quota-full must not discard a summary the LLM call already paid for.
       try { localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta })); } catch {}
-      renderStructuredSummary(summaryPanel, parsed);
+      renderStructuredSummary(summaryPanel, parsed, renderQuote);
       summaryPanel.style.display = 'block';
       panelMode = 'summary';
     } catch (e: any) {
@@ -412,7 +419,7 @@ export const buildSummarizeWidget = ({
   }
   if (cached?.parsed) {
     summaryTs = cached.ts;
-    renderStructuredSummary(summaryPanel, cached.parsed);
+    renderStructuredSummary(summaryPanel, cached.parsed, renderQuote);
     summaryPanel.style.display = 'block';
     panelMode = 'summary';
   }

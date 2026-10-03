@@ -2,7 +2,7 @@ import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget } from '../shared/review-summary';
 import { courseContext, SUMMARY_PROMPT } from './bjjfanatics-prompt';
-import { buildSearchSection } from '../shared/review-search';
+import { buildReviewCard, buildSearchSection } from '../shared/review-search';
 import { createIslandShell } from '../shared/score-island';
 
 const STAMPED_API_KEY = '8a204db0-ec09-48cf-baed-db3ca2ef99e6';
@@ -153,11 +153,18 @@ const reviewToText = (r: StampedReview): string => {
   return [meta && `[${meta}]`, head].filter(Boolean).join(' ').trim();
 };
 
+// A reviewer's answers as a card's meta line reads them: "Blue belt · age 26-32 · 1-3 yrs training".
+const optionText = ({ message = '', value = '' }: { message?: string; value?: string }) =>
+  /rank|belt/i.test(message) ? `${value.charAt(0).toUpperCase()}${value.slice(1).toLowerCase()} belt`
+  : /years/i.test(message) ? `${value} yrs training`
+  : /old|age/i.test(message) ? `age ${value}`
+  : value;
+
 const cardFields = (r: StampedReview) => ({
   rating: r.reviewRating,
   title: r.reviewTitle,
   body: r.reviewMessage,
-  meta: (r.reviewOptionsList || []).map(o => o.value).filter(Boolean).join(' · '),
+  meta: (r.reviewOptionsList || []).filter(o => o.value).map(optionText).join(' · '),
 });
 
 const FILTERED_SUMMARY_PROMPT = `Summarize these BJJ instructional course reviews. Lead with the bottom line — what most reviewers walk away with. Cite specific volumes, parts, chapters, techniques, sweeps, or positions by name when reviewers mention them. Ignore shipping, delivery, packaging, and seller issues — focus only on the course content. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
@@ -212,6 +219,8 @@ const buildPanel = (
     exampleQuery: 'guard OR mount',
   }));
 
+  // A receipt's reviews show as the search's cards, not the model's "[Ranking: …] Title: body" text.
+  const byText = new Map(bundle.reviews.map((r) => [reviewToText(r), r]));
   buildSummarizeWidget({
     wrapper,
     cacheKey: `bjj-summary-${info.id}`,
@@ -219,6 +228,10 @@ const buildPanel = (
     context: courseContent ? courseContext(courseContent) : undefined,
     fetchReviews: async () => bundle.reviews.map(reviewToText).filter(Boolean),
     autoSummarize,
+    renderQuote: (text) => {
+      const r = byText.get(text);
+      return r ? buildReviewCard(cardFields(r), []) : null;
+    },
   });
 
   return wrapper;

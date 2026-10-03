@@ -53,3 +53,23 @@ test('a promised auto-summarize waits for its answer, and a no spends no call', 
     delete (globalThis as any).chrome;
   }
 });
+
+test("a receipt's reviews show as the site's cards, and as text when it has none", async () => {
+  const { buildSummarizeWidget } = await import('./review-summary');
+  const cacheKey = 'review-summary-test-receipt-cards';
+  const quotes = ['[Ranking: BLUE] Great: Very detailed', 'an unmatched review text'];
+  localStorage.setItem(cacheKey, JSON.stringify({ parsed: { ...PARSED, receipts: { 'Lasts long': { n: 2, quotes } } }, ts: 1 }));
+  const wrapper = document.createElement('div');
+  buildSummarizeWidget({
+    wrapper,
+    cacheKey,
+    summaryPrompt: 'p',
+    fetchReviews: async () => quotes,
+    renderQuote: (text) => (text === quotes[0] ? Object.assign(document.createElement('div'), { className: 'card', textContent: 'Great' }) : null),
+  });
+
+  (wrapper.querySelector('.ars-receipt') as HTMLButtonElement).click();
+  const box = wrapper.querySelector('.ars-receipt-quotes')!;
+  expect([...box.children].map((c) => c.className)).toEqual(['card', 'ars-receipt-quote']);
+  expect(box.textContent).not.toContain('[Ranking');
+});
