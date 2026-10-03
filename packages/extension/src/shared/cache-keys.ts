@@ -8,5 +8,5 @@ export const HIGHLIGHTS_CACHE_PREFIX = 'rc_highlights_';
 export const SEARCH_SUMMARY_CACHE_PREFIX = 'rc_search_summary_';
 // Per-place auto-search scores for the standout + alternative chips, with the
 // newest review id at compute time so they re-run when reviews drift (like
-// highlights).
-export const SCORE_GROUP_CACHE_PREFIX = 'rc_scored_';
+// highlights). v2 entries carry what the reviews say about each item.
+export const SCORE_GROUP_CACHE_PREFIX = 'rc_scored_v2_';

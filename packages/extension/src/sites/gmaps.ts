@@ -122,8 +122,10 @@ let labelSearchSeq = 0;
 // `${featureId}|${item}` so re-renders reuse a score instead of refetching.
 // `scoredCtx` holds each group's current items so a score landing late can
 // rebuild that chip row (filter to ≥2 mentions, sort by count) without a full
-// summary re-render.
-const standoutScoreCache = new Map<string, SortStats>();
+// summary re-render. Each score carries what its reviews say about the item
+// when Jev could read them, as the topic chips do.
+type ScoredStats = SortStats & Partial<Pick<StanceResult, 'stance' | 'of'>>;
+const standoutScoreCache = new Map<string, ScoredStats>();
 const standoutScoreInflight = new Set<string>();
 // Zero-scores minted for failed searches (so the chip drops out instead of
 // pulsing forever) are display-only — a transient blip must not persist as a
@@ -2067,7 +2069,7 @@ const scoredCtx: Record<ScoredKind, { items: string[]; featureId: string } | nul
 
 const paintScoredChip = (pct: HTMLElement, count: HTMLElement, stats: SortStats, overall: number) => {
   pct.textContent = `${stats.scorePct}%`;
-  // Binary green/red like the topic chips, not getDiffColor's relative gradient —
+  // Unread, binary green/red like the topic chips, not getDiffColor's relative gradient —
   // that can't reach green when the place overall is already high.
   pct.style.color = chipPolarity(stats.scorePct, overall) === 'pos' ? '#4ADE80' : '#F87171';
   count.textContent = `·${stats.totalReviews}`;
@@ -2112,7 +2114,8 @@ const redrawScored = (kind: ScoredKind) => {
   section.textContent = '';
   const overall = toPct(store.mergedStats(currentOption).mergedPct);
   const rows = items.map((item) => ({ item, stats: standoutScoreCache.get(`${featureId}|${item.toLowerCase()}`) }));
-  const scored = selectScoredChips(rows, (x) => x.stats);
+  // Read, an item counts the reviews that actually speak to it.
+  const scored = selectScoredChips(rows, (x) => x.stats && (x.stats.stance ? { totalReviews: opinionsOf(x.stats.stance).mentions } : x.stats));
   const pending = rows.filter((x) => !x.stats);
   if (!scored.length && !pending.length) { section.style.display = 'none'; return; }
   section.style.display = '';
@@ -2122,7 +2125,12 @@ const redrawScored = (kind: ScoredKind) => {
     const chip = el('button', `rc-chip ${cfg.chipClass}`) as HTMLButtonElement;
     chip.type = 'button';
     chip.appendChild(el('span', 'rc-chip-label', item));
-    if (stats) {
+    if (stats?.stance) {
+      const o = opinionsOf(stats.stance, stats.of);
+      chip.append(...opinionNumbers(o, CHIP_NUMBERS));
+      chip.title = o.title;
+      chip.setAttribute('aria-label', `${item}: ${opinionsLabel(o)}`);
+    } else if (stats) {
       const pct = el('span', 'rc-chip-pct');
       const count = el('span', 'rc-chip-count');
       paintScoredChip(pct, count, stats, overall);
@@ -2156,7 +2164,9 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
         // hide the chip until new reviews land.
         if (reviews.length) standoutScoreTransient.delete(key);
         else standoutScoreTransient.add(key);
-        standoutScoreCache.set(key, statsForReviews(reviews));
+        // Read before the chip shows, so a star share never paints only to be replaced.
+        const read = await readStanceOf(item, reviews);
+        standoutScoreCache.set(key, { ...statsForReviews(reviews), ...(read && { stance: read.stance, of: read.of }) });
         standoutReviewsCache.set(key, reviews);
         saveScoredCache();
         if (getFeatureId() === featureId) redrawScored(kind);

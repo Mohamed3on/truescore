@@ -693,7 +693,7 @@
 }
 
 /* Standouts section — its own block right under Highlights (rc-standout-chip
-   reuses .rc-chip; % is colored inline). */
+   reuses .rc-chip; % takes .rc-chip-pct's tones once read, else is colored inline). */
 .rc-standouts {
   margin-top: 12px;
   padding-top: 10px;
