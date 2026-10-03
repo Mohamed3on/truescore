@@ -26,7 +26,8 @@ describe('opinionsOf', () => {
   test('tone follows the share positive; the sort key is the net share', () => {
     const o = opinionsOf({ praise: 4, complain: 12, mixed: 0, off: 0 });
     expect(opinionTone(o)).toBe('neg');
-    expect(opinionTone(opinionsOf({ praise: 53, complain: 16, mixed: 0, off: 0 }))).toBe('pos');
+    expect(opinionTone(opinionsOf({ praise: 4, complain: 1, mixed: 0, off: 0 }))).toBe('pos');
+    expect(opinionTone(opinionsOf({ praise: 53, complain: 16, mixed: 0, off: 0 }))).toBe('mid');
     expect(opinionTone(opinionsOf({ praise: 5, complain: 5, mixed: 0, off: 0 }))).toBe('mid');
     expect(opinionPct(o)).toBe(-50);
     expect(opinionPct(opinionsOf({ praise: 0, complain: 0, mixed: 3, off: 0 }))).toBe(0);

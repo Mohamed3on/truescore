@@ -92,7 +92,9 @@ export type StanceResult = { stance: StanceCounts; stances: Record<string, Stanc
 // How an opinion split reads: mostly positive, mostly negative, or split. The
 // star-share chips grade against the place's overall score instead
 // (chipPolarity); a topic's own praise-vs-complaint has no baseline to beat.
-export const opinionTone = (o: Opinions): 'pos' | 'mid' | 'neg' => (o.share >= 60 ? 'pos' : o.share <= 40 ? 'neg' : 'mid');
+// Positive from 80%, a net of +60 among those taking a side, the bar a TrueScore
+// clears to read green: shares bunch near 100%, and at 60% nine in ten read green.
+export const opinionTone = (o: Opinions): 'pos' | 'mid' | 'neg' => (o.share >= 80 ? 'pos' : o.share <= 40 ? 'neg' : 'mid');
 export type Tone = ReturnType<typeof opinionTone>;
 // Net with its sign, as a vote count reads: +37, −5, 0.
 export const signedNet = (n: number): string => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
