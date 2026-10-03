@@ -126,7 +126,7 @@ function debugDetails(stats: any) {
   return wrap;
 }
 
-const WINNER_MSG = '★ Nothing similar scores higher.';
+const winnerMsg = (since = '') => `★ Nothing similar${since} scores higher.`;
 
 function winnerBanner(message: string, listName?: string | null, listLink?: string | null) {
   const winner = el('div', 'lbx-winner');
@@ -185,6 +185,16 @@ const saveIgnored = (slug: string, ignore: boolean) =>
     if (ignore) ignored.add(slug); else ignored.delete(slug);
     return chrome.storage.local.set({ [IGNORED_KEY]: [...ignored] });
   }).catch(() => {});
+
+// The oldest release year Similar Picks shows, or null for any — user intent too,
+// kept beside the ignored films.
+const MIN_YEAR_KEY = 'lbx_min_year';
+
+const loadMinYear = () =>
+  chrome.storage.local.get(MIN_YEAR_KEY).then(({ [MIN_YEAR_KEY]: year }) => (typeof year === 'number' ? year : null)).catch(() => null);
+
+const saveMinYear = (year: number | null) =>
+  (year ? chrome.storage.local.set({ [MIN_YEAR_KEY]: year }) : chrome.storage.local.remove(MIN_YEAR_KEY)).catch(() => {});
 
 // =============================================================================
 // Fetching
@@ -725,7 +735,7 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
 function startSimilarPicks(currentSlug: string, currentRuntime: number) {
   const section = el('section', 'lbx-similar');
   section.append(el('span', 'lbx-progress', 'Finding similar picks...'));
-  return { section, found: findSimilarPicks(currentSlug, currentRuntime, section), ignored: loadIgnored() };
+  return { section, found: findSimilarPicks(currentSlug, currentRuntime, section), ignored: loadIgnored(), minYear: loadMinYear() };
 }
 
 /**
@@ -736,13 +746,15 @@ function startSimilarPicks(currentSlug: string, currentRuntime: number) {
  * its own ratings land, so a long list checks off film by film. A better pick
  * whose recent % also holds up against the current film's is highlighted.
  * Films the user has ignored move to a collapsed drawer and stop counting
- * towards the winner check; restoring one from the drawer undoes that.
+ * towards the winner check; restoring one from the drawer undoes that. Films
+ * released before the user's minimum year are left out altogether, unchecked.
  */
 async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, currentPromise: Promise<{ score: number; ratio: number | null; adjusted: number | null }>, anchor: HTMLElement) {
   const similarSection = picks.section;
   anchor.after(similarSection);
 
   const [result, ignored, current] = await Promise.all([picks.found, picks.ignored, currentPromise]);
+  let minYear = await picks.minYear;
 
   similarSection.textContent = '';
   if (result.error) {
@@ -765,7 +777,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     // No reference means no verdict, which is not the same as nothing beating it.
     similarSection.append(films.length
       ? el('span', 'lbx-progress', 'Not enough data on this film to compare similar picks.')
-      : winnerBanner(WINNER_MSG, result.listName, result.listLink));
+      : winnerBanner(winnerMsg(), result.listName, result.listLink));
     if (stats) similarSection.append(debugDetails(stats));
     return;
   }
@@ -776,28 +788,43 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
   const header = el('h3', 'lbx-similar-header', 'Similar Picks');
   const sourceLink = el('a', 'lbx-similar-source', `From: ${result.listName}`) as HTMLAnchorElement;
   sourceLink.href = result.listLink;
+  // The minimum year shares the source's line: "since [1990] · 6 hidden".
+  const yearInput = el('input', 'lbx-year-input') as HTMLInputElement;
+  yearInput.type = 'number';
+  yearInput.placeholder = 'any';
+  yearInput.value = minYear ? String(minYear) : '';
+  const hiddenNote = el('span');
+  const yearFilter = el('label', 'lbx-year', 'since ');
+  yearFilter.append(yearInput, hiddenNote);
+  const sourceRow = el('div', 'lbx-similar-source-row');
+  sourceRow.append(sourceLink, yearFilter);
   const list = el('ul', 'lbx-similar-list');
   const belowToggle = el('div', 'lbx-fold-toggle');
   const below = el('ul', 'lbx-similar-list lbx-below-list');
   const drawerToggle = el('div', 'lbx-fold-toggle');
   const drawer = el('ul', 'lbx-similar-list lbx-ignored-list');
-  similarSection.append(banner, header, sourceLink, list, belowToggle, below, drawerToggle, drawer);
+  similarSection.append(banner, header, sourceRow, list, belowToggle, below, drawerToggle, drawer);
 
-  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; adjusted: number | null; settled: boolean };
+  type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; adjusted: number | null; settled: boolean; checking?: Promise<void> };
   const items = new Map<string, Entry>();
   let belowOpen = false;
   let drawerOpen = false;
   let drawerRevealed = false;
+  // A film whose year never loaded stays in.
+  const shown = (film: any) => !minYear || !film.year || +film.year >= minYear;
 
-  /** Re-entrant render — reruns as each film's check lands and on every ignore toggle. */
+  /** Re-entrant render — reruns as each film's check lands and on every ignore or year change. */
   const paint = () => {
     let passCount = 0;
     let ignoredCount = 0;
     let pendingCount = 0;
+    let hiddenCount = 0;
     // Appending in adjusted order re-sorts both lists; an entry still being checked
     // carries its score, so unchecked films keep the initial score order.
     const ordered = [...items.values()].sort((a, b) => (b.adjusted ?? -Infinity) - (a.adjusted ?? -Infinity));
     for (const entry of ordered) {
+      // Too old: off every list and out of every count but its own.
+      if (!shown(entry.film)) { hiddenCount++; entry.element.remove(); continue; }
       const isIgnored = ignored.has(entry.film.slug);
       if (isIgnored) ignoredCount++;
       else if (entry.passes) passCount++;
@@ -812,7 +839,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     }
 
     // The films that lost are receipts, not results: one folded line each way.
-    const belowCount = items.size - ignoredCount - passCount - pendingCount;
+    const belowCount = items.size - hiddenCount - ignoredCount - passCount - pendingCount;
     belowToggle.hidden = belowCount === 0;
     if (!belowToggle.hidden) belowToggle.textContent = `${belowOpen ? '▼' : '▶'} ${belowCount} didn’t reach ${addCommas(threshold!)}`;
     below.hidden = belowToggle.hidden || !belowOpen;
@@ -821,12 +848,18 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     drawerToggle.textContent = `${drawerOpen ? '▼' : '▶'} ${ignoredCount} ignored`;
     drawer.hidden = !drawerOpen || ignoredCount === 0;
 
+    hiddenNote.textContent = hiddenCount ? ` · ${hiddenCount} hidden` : '';
+
     const isWinner = pendingCount === 0 && passCount === 0;
     banner.hidden = !isWinner;
     header.hidden = isWinner;
     sourceLink.hidden = isWinner;
+    // The banner names the list; the year stays while it hides films to bring back.
+    sourceRow.hidden = isWinner && !hiddenCount;
     if (isWinner) {
-      bannerText.textContent = ignoredCount === items.size ? '★ Every similar film is ignored.' : WINNER_MSG;
+      const since = hiddenCount ? ` since ${minYear}` : '';
+      bannerText.textContent = ignoredCount && ignoredCount === items.size - hiddenCount
+        ? `★ Every similar film${since} is ignored.` : winnerMsg(since);
     } else {
       // The heading carries the count, so no row has to repeat the threshold.
       header.textContent = pendingCount ? 'Similar Picks'
@@ -836,6 +869,12 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
 
   belowToggle.addEventListener('click', () => { belowOpen = !belowOpen; paint(); });
   drawerToggle.addEventListener('click', () => { drawerOpen = !drawerOpen; paint(); });
+  yearInput.addEventListener('change', () => {
+    minYear = parseInt(yearInput.value, 10) || null;
+    saveMinYear(minYear);
+    paint();
+    checkShown();
+  });
 
   const toggleIgnored = (slug: string) => {
     if (ignored.has(slug)) {
@@ -901,7 +940,9 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     if (!entry.passes) entry.element.classList.add('lbx-excluded');
     paint();
   };
-  await Promise.all(films.map(check));
+  // A hidden film's check — a run of review-page fetches — waits until it's shown.
+  const checkShown = () => Promise.all([...items.values()].filter((e) => shown(e.film)).map((e) => (e.checking ??= check(e.film))));
+  await checkShown();
 
   if (stats) similarSection.append(debugDetails(stats));
 }

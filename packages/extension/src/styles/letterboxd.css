@@ -67,13 +67,48 @@
   text-transform: uppercase;
   margin: 0 0 .75rem 0;
 }
-.lbx-similar-source {
-  display: block;
+/* The source list, and the minimum year at the line's end — alone under a winner banner. */
+.lbx-similar-source-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .5rem;
   color: #678;
   font-size: .8rem;
   margin-bottom: .75rem;
+}
+.lbx-similar-source {
+  min-width: 0;
+  color: inherit;
   text-decoration: none;
 }
+/* A <label>, which Letterboxd sets white, 13px and spaced below. */
+.lbx-year {
+  flex: none;
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.lbx-year-input {
+  width: 4.5ch;
+  margin: 0;
+  padding: 0 0 1px;
+  font: inherit;
+  color: #def;
+  text-align: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #456;
+  border-radius: 0;
+  outline: none;
+  appearance: textfield;
+  transition: border-color .15s ease;
+}
+.lbx-year-input::-webkit-inner-spin-button,
+.lbx-year-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.lbx-year-input::placeholder { color: #567; }
+.lbx-year-input:focus { border-color: #00e054; }
 .lbx-similar-list {
   list-style: none;
   padding: 0;
