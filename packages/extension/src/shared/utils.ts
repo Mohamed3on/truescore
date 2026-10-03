@@ -1,4 +1,4 @@
-import { mdInline, mdToHtml, netScore } from '@truescore/gmaps-shared';
+import { mdInline, mdToHtml, netScore, type Tone } from '@truescore/gmaps-shared';
 
 export const addCommas = (x: number | string): string =>
   String(x).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -9,6 +9,11 @@ export const npsColor = (nps: number, lightness = 35): string => {
   const hue = Math.min(120, Math.max(0, (nps - 50) * 3));
   return `hsl(${hue}, 70%, ${lightness}%)`;
 };
+
+// An opinion share's tone (opinionTone) in the same palette: green, amber, red,
+// so the retail sites grade it in the three bands the Maps surfaces use.
+const TONE_HUE: Record<Tone, number> = { pos: 120, mid: 40, neg: 0 };
+export const toneColor = (tone: Tone, lightness = 35): string => `hsl(${TONE_HUE[tone]}, 70%, ${lightness}%)`;
 
 // Net sentiment from 5★/1★ counts: `nps` is the net-positive share as a
 // -100..100 percentage, `score` weights it by volume and keeps its sign (see

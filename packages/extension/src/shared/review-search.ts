@@ -1,7 +1,7 @@
-import { addCommas, el, npsColor, npsStats } from './utils';
+import { addCommas, el, npsColor, npsStats, toneColor } from './utils';
 import { llmSummarize, renderFreeFormAnswer } from './review-summary';
 import type { SearchAsk } from './review-ask';
-import { countStances, opinionsOf, parseOrQuery, type SearchReviews, type Stance } from '@truescore/gmaps-shared';
+import { countStances, opinionsOf, opinionTone, parseOrQuery, type SearchReviews, type Stance } from '@truescore/gmaps-shared';
 import { markPressed, opinionFilters, opinionNumbers, opinionsLabel, opinionsSlot, readStances } from './jev';
 
 // Gmail-style ` OR ` (any case) splits a query into lowercased terms; a review
@@ -296,7 +296,7 @@ export const buildSearchSection = <T,>({
       stances = labels;
       return opinionsOf(countStances(labels), matches.length);
     })();
-    // The share takes the old %'s place, in its type and colour scale; the
+    // The share takes the old %'s place, in its type, coloured by tone; the
     // counts behind it are the tooltip, and the ▲/▼ filters join the line beside.
     scoreChip.style.color = '';
     scoreChip.style.display = '';
@@ -305,7 +305,7 @@ export const buildSearchSection = <T,>({
       if (!o) return null;
       scoreChip.title = o.title;
       scoreChip.setAttribute('aria-label', opinionsLabel(o));
-      return opinionNumbers(o, { share: () => 'ts-op-share', color: (x) => npsColor(x.share), sparse: 'dash' });
+      return opinionNumbers(o, { share: () => 'ts-op-share', color: (x) => toneColor(opinionTone(x)), sparse: 'dash' });
     }), starShare));
     void read.then((o) => {
       if (!o || o.sparse || currentQuery !== raw) return;

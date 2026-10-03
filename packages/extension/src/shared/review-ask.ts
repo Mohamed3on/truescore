@@ -1,7 +1,7 @@
-import { answersOf, askViewOf, countAnswers, parseOrQuery, runAsk, type AnswerCounts, type AskSearch, type AskView, type SearchReviews } from '@truescore/gmaps-shared';
+import { answersOf, askViewOf, countAnswers, opinionTone, parseOrQuery, runAsk, type AnswerCounts, type AskSearch, type AskView, type SearchReviews } from '@truescore/gmaps-shared';
 import { opinionNumbers, opinionsLabel, opinionsSlot, readAnswers } from './jev';
 import { askTransport } from './llm';
-import { addCommas, el, npsColor, renderMarkdown } from './utils';
+import { addCommas, el, npsColor, renderMarkdown, toneColor } from './utils';
 
 // What lets a page's Ask Search every one of its reviews (see searchWith);
 // `open` shows a Search's reviews, e.g. by running it in the search box.
@@ -34,7 +34,7 @@ const searchRow = (s: AskSearch, open?: (query: string) => void, read?: Read) =>
     const o = answersOf(a);
     row.setAttribute('aria-label', `${parseOrQuery(s.query).join(', ')}: ${opinionsLabel(o)}`);
     row.title = `${row.title} — ${o.title}`;
-    return opinionNumbers(o, { share: () => 'ars-ask-search-pct', color: (x) => npsColor(x.share) }, 'yes');
+    return opinionNumbers(o, { share: () => 'ars-ask-search-pct', color: (x) => toneColor(opinionTone(x)) }, 'yes');
   };
   const answered = s.answers ?? read;
   if (answered instanceof Promise) row.append(opinionsSlot(answered.then((a) => a && counts(a)), starShare));
