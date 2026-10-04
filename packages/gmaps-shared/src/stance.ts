@@ -12,12 +12,13 @@ export type Stance = (typeof STANCES)[number];
 export type StanceCounts = Record<Stance, number>;
 // A review's stance as its card marks it, beside its stars: the filters' ▲ and ▼,
 // a ● for mixed or neutral, a hollow ○ for not about it. All four are in every
-// system font's core set, so they render at one size wherever they show.
-export const STANCE_MARKS: Record<Stance, { text: string; label: string }> = {
-  praise: { text: '▲', label: 'Praises it' },
-  complain: { text: '▼', label: 'Complains about it' },
-  mixed: { text: '●', label: 'Mixed or neutral' },
-  off: { text: '○', label: 'Not about it' },
+// system font's core set, so they render at one size wherever they show. The
+// label names the subject where the surface knows it ("Praises bibimbap").
+export const STANCE_MARKS: Record<Stance, { text: string; label: (subject: string) => string }> = {
+  praise: { text: '▲', label: (s) => `Praises ${s}` },
+  complain: { text: '▼', label: (s) => `Complains about ${s}` },
+  mixed: { text: '●', label: (s) => `Mixed or neutral on ${s}` },
+  off: { text: '○', label: (s) => `Not about ${s}` },
 };
 
 // A review's answer to an Ask's question.

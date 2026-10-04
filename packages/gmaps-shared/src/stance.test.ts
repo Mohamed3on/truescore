@@ -46,7 +46,8 @@ describe('answersOf', () => {
 
 describe('reviewMark', () => {
   test("a read review shows its stance; an untrusted author's, never read, says why", () => {
-    expect(reviewMark('praise', 7)).toMatchObject({ cls: 'praise', text: '▲' });
+    expect(reviewMark('praise', 7)).toMatchObject({ cls: 'praise', text: '▲', label: 'Praises it' });
+    expect(reviewMark('complain', 7, 'bibimbap')?.label).toBe('Complains about bibimbap');
     expect(reviewMark('mixed')?.text).toBe('●');
     expect(reviewMark(undefined, 1)).toMatchObject({ cls: 'untrusted', text: 'untrusted · 1 review' });
     expect(reviewMark(undefined, 2)?.text).toBe('untrusted · 2 reviews');

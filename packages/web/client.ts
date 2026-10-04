@@ -6,7 +6,7 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
-  answersOf, bySupport, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, opinionTone, reviewMark, signedNet, tooFewMentions, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
+  answersOf, bySupport, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type SearchEvent, type SearchResult,
@@ -43,6 +43,7 @@ const searchBtn = $('searchBtn') as HTMLButtonElement;
 const searchRefreshBtn = $('searchRefreshBtn') as HTMLButtonElement;
 const chipPanel = $('chipPanel') as HTMLElement;
 const chipPanelTitle = $('chipPanelTitle') as HTMLElement;
+const chipPanelFigure = $('chipPanelFigure') as HTMLElement;
 const chipBody = $('chipBody') as HTMLElement;
 const chipSummarizeBtn = $('chipSummarize') as HTMLButtonElement;
 const chipCloseBtn = $('chipClose') as HTMLButtonElement;
@@ -139,6 +140,14 @@ function opinionNumbers(o: Opinions, pctCls: string, countCls?: string, word = '
 const opinionsLabel = (label: string, o: Opinions) =>
   `${label}: ${o.sparse ? mentionsText(o.mentions) : `${o.share}% ${o.posWord}, net ${signedNet(o.net)} (${o.title})`}`;
 
+// A topic's opinions as counts, never a share: ▲praise ▼complain with the zeros
+// left out, or ●N when every review that speaks to it is mixed. Two praises
+// read as two, not as a 100% that outshines thirty-eight.
+function opinionCounts(o: Opinions): HTMLElement[] {
+  const counts = [o.pos && el('span', 'pct pos', `▲${o.pos}`), o.neg && el('span', 'pct neg', `▼${o.neg}`)].filter((c): c is HTMLSpanElement => !!c);
+  return counts.length ? counts : [el('span', 'pct mid', `●${o.mentions}`)];
+}
+
 // The one chip-button shape shared by highlights, scored groups, and pending
 // placeholders: label · <pct span> · optional ·count, or label · opinion counts
 // once Jev has read the reviews. `pct` is the middle span's {text, class};
@@ -151,9 +160,9 @@ function chip(spec: ChipSpec): HTMLButtonElement {
   if (spec.title) btn.title = spec.title;
   btn.append(el('span', 'label', spec.label));
   if (spec.opinions) {
-    btn.append(...opinionNumbers(spec.opinions, 'pct', 'count'));
+    btn.append(...opinionCounts(spec.opinions));
     btn.title = spec.opinions.title;
-    btn.setAttribute('aria-label', opinionsLabel(spec.label, spec.opinions));
+    btn.setAttribute('aria-label', `${spec.label}: ${spec.opinions.title}`);
   } else {
     btn.append(el('span', `pct ${spec.pct.cls}`, spec.pct.text));
     if (spec.count != null) btn.append(el('span', 'count', `·${spec.count}`));
@@ -176,6 +185,8 @@ const chipOrder = (chips: UiChip[]): UiChip[] => {
 const spokenOf = (c: { stance?: StanceCounts }) => !c.stance || !tooFewMentions(opinionsOf(c.stance));
 
 function renderHighlights(highlights: UiChip[], sort = false) {
+  topicLabels = new Set(highlights.map((h) => h.label.toLowerCase()));
+  if (scoredGroups.standouts.chips.length) renderScored('standouts');
   const shown = highlights.filter(spokenOf);
   const list = sort ? chipOrder(shown) : shown;
   highlightsList.replaceChildren(...list.map((h) => {
@@ -197,10 +208,15 @@ function renderHighlights(highlights: UiChip[], sort = false) {
 // being scored show immediately as pulsing "…" placeholders, scored ones (≥2
 // mentions, most-mentioned first) show their score and open the search panel on
 // click. Scores fill in inline; a chip that lands below 2 mentions drops out.
+// A standout naming a topic chip would show one subject twice, with two sets of
+// numbers from two review sets (Google's topic vs a word search); the topic stays.
+let topicLabels = new Set<string>();
+
 function renderScored(kind: ScoredKind) {
   const g = scoredGroups[kind];
-  const scored = selectScoredChips(g.chips, (d) => d.result && (d.result.stance ? { totalReviews: opinionsOf(d.result.stance).mentions } : d.result));
-  const pending = g.chips.filter((d) => d.state === 'loading');
+  const chips = kind === 'standouts' ? g.chips.filter((d) => !topicLabels.has(d.item.toLowerCase())) : g.chips;
+  const scored = selectScoredChips(chips, (d) => d.result && (d.result.stance ? { totalReviews: opinionsOf(d.result.stance).mentions } : d.result));
+  const pending = chips.filter((d) => d.state === 'loading');
   g.row.hidden = scored.length === 0 && pending.length === 0;
   g.list.replaceChildren(
     ...scored.map((d) => {
@@ -260,19 +276,21 @@ function showHighlightsLoading(msg: string) {
 function setActiveChip(token?: string) {
   highlightsList.querySelectorAll<HTMLButtonElement>('.chip').forEach((c) => {
     c.classList.toggle('active', c.dataset.token === token);
+    c.setAttribute('aria-pressed', String(c.dataset.token === token));
   });
 }
 
-// The panel's subject: its label, then what its reviews say — each count a
-// filter on the list below, pressed again or Esc to clear — or, unread, its star
-// share; then how many reviews it rests on.
+// The panel's subject on top, then its figure: what its reviews say as counts —
+// each a filter on the list below, pressed again or Esc to clear — or, unread,
+// its star share; then the trusted reviews they come from (the rest are folded
+// at the end of the list, see renderReviewList).
 type PanelStats = { scorePct: number; trustedReviews: number; stance?: StanceCounts; of?: number };
-function setPanelTitle(label: string, s: PanelStats, total: number) {
-  const o = opinionsFor(s);
-  chipPanelTitle.replaceChildren(
-    el('span', undefined, label), ' · ',
-    ...(o ? [opinionFilters(o)] : [el('span', `pct ${chipPolarity(s.scorePct, currentMergedPct)}`, `${s.scorePct}%`)]),
-    el('span', 'nowrap', ` · ${s.trustedReviews} trusted of ${total}`),
+function setPanelTitle(label: string, s: PanelStats) {
+  chipPanelTitle.textContent = label;
+  chipPanelFigure.title = s.stance ? opinionsOf(s.stance, s.of).title : '';
+  chipPanelFigure.replaceChildren(
+    ...(s.stance ? opinionFilters(s.stance) : [el('span', `pct ${chipPolarity(s.scorePct, currentMergedPct)}`, `${s.scorePct}%`)]),
+    el('span', 'op-base', `of ${s.trustedReviews} trusted`),
   );
 }
 
@@ -282,46 +300,52 @@ let stanceFilter: Stance | null = null;
 const panelStances = (): Record<string, Stance> | undefined =>
   activePanel?.kind === 'highlight' ? activePanel.chip.stances : activePanel?.kind === 'search' ? activePanel.result.stances : undefined;
 
-function opinionFilters(o: Opinions): HTMLElement {
-  const box = el('span', 'opinions');
-  box.title = o.title;
-  box.append(...opinionNumbers(o, 'pct', o.sparse ? undefined : 'net'));
-  if (o.sparse) return box;
-  const filter = (stance: Stance, cls: string, glyph: string, n: number, word: string) => {
-    const btn = el('button', `op-filter ${cls}`, `${glyph}${n}`);
+// Every stance a filter, in the marks the cards wear: ▲ and ▼ always, a zero
+// greyed out with nothing behind it; ● and ○ only when some review takes them.
+const FILTERS: { stance: Stance; cls: string; word: string }[] = [
+  { stance: 'praise', cls: 'pos', word: 'praise it' },
+  { stance: 'complain', cls: 'neg', word: 'complain about it' },
+  { stance: 'mixed', cls: 'mid', word: 'mixed or neutral' },
+  { stance: 'off', cls: 'off', word: 'not about it' },
+];
+function opinionFilters(c: StanceCounts): HTMLButtonElement[] {
+  return FILTERS.filter((f) => c[f.stance] || f.cls === 'pos' || f.cls === 'neg').map(({ stance, cls, word }) => {
+    const n = c[stance];
+    const btn = el('button', `op-filter ${cls}`, `${STANCE_MARKS[stance].text}${n}`);
     btn.type = 'button';
-    // Nothing to list behind a zero.
+    btn.dataset.stance = stance;
     btn.disabled = !n;
     btn.classList.toggle('zero', !n);
-    btn.setAttribute('aria-label', `${n} ${word} — show only these reviews`);
+    btn.setAttribute('aria-label', `${n} ${word}: show only these reviews`);
     btn.setAttribute('aria-pressed', String(stanceFilter === stance));
     btn.addEventListener('click', () => setStanceFilter(stanceFilter === stance ? null : stance));
     return btn;
-  };
-  box.append(filter('praise', 'pos', '▲', o.pos, 'praise'), filter('complain', 'neg', '▼', o.neg, 'complain'));
-  return box;
+  });
 }
 
 // Instant, with no animation: it's a frequent action. The list only scrolls into
 // view when it's off screen.
 function setStanceFilter(stance: Stance | null) {
   stanceFilter = stance;
-  chipPanelTitle.querySelectorAll<HTMLButtonElement>('.op-filter').forEach((b) => {
-    b.setAttribute('aria-pressed', String(b.classList.contains(stance === 'praise' ? 'pos' : 'neg') && !!stance));
-  });
+  chipPanelFigure.querySelectorAll<HTMLButtonElement>('.op-filter').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.stance === stance)));
   renderReviewList(panelReviews() ?? []);
   const top = chipBody.getBoundingClientRect().top;
   if (top < 0 || top > window.innerHeight) chipBody.scrollIntoView({ block: 'nearest' });
 }
+// Esc clears a filter first, then closes the panel (but not from a half-typed question).
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && stanceFilter && !chipPanel.hidden) setStanceFilter(null);
+  if (e.key !== 'Escape' || chipPanel.hidden) return;
+  if (stanceFilter) setStanceFilter(null);
+  else if (!(e.target instanceof HTMLInputElement)) closeChipPanel();
 });
+const scrollBehavior = (): ScrollBehavior => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 
 function showChipPanel(h: UiChip) {
   activePanel = { kind: 'highlight', chip: h };
   stanceFilter = null;
+  untrustedOpen = false;
   setActiveChip(h.token);
-  setPanelTitle(h.label.toUpperCase(), { scorePct: h.score?.scorePct ?? 0, trustedReviews: h.score?.trustedReviews ?? 0, stance: h.stance, of: h.of }, h.reviews?.length ?? h.count);
+  setPanelTitle(h.label.toUpperCase(), { scorePct: h.score?.scorePct ?? 0, trustedReviews: h.score?.trustedReviews ?? 0, stance: h.stance, of: h.of });
   renderReviewList(h.reviews ?? []);
   chipPanel.hidden = false;
   verdictRow.style.display = 'none';
@@ -330,7 +354,8 @@ function showChipPanel(h: UiChip) {
   chipSummarizeBtn.disabled = false;
   chipSummarizeBtn.textContent = 'SUMMARIZE';
   chipQuestionInput.value = '';
-  chipPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  chipPanelTitle.focus({ preventScroll: true });
+  chipPanel.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' });
 }
 
 function closeChipPanel() {
@@ -469,8 +494,9 @@ function readAnswers(question: string, query: string, texts: string[]): void {
 function showSearchPanel(r: SearchResult) {
   activePanel = { kind: 'search', result: r };
   stanceFilter = null;
+  untrustedOpen = false;
   setActiveChip(undefined);
-  setPanelTitle(`"${r.query.toUpperCase()}"`, r, r.reviews.length);
+  setPanelTitle(`"${r.query.toUpperCase()}"`, r);
   chipPanel.hidden = false;
   verdictRow.style.display = 'none';
   highlightsListEl.style.display = 'none';
@@ -484,7 +510,8 @@ function showSearchPanel(r: SearchResult) {
     chipSummarizeBtn.textContent = 'SUMMARIZE';
     renderReviewList(r.reviews);
   }
-  chipPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  chipPanelTitle.focus({ preventScroll: true });
+  chipPanel.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' });
 }
 
 // Fill `target` with `text`, wrapping case-insensitive occurrences of `terms`
@@ -506,8 +533,8 @@ function highlightInto(target: HTMLElement, text: string, terms: string[]) {
 }
 
 // A listed review's mark after its stars (reviewMark); none when it wasn't read.
-function stanceMark(stance: Stance | undefined, authorReviews: number): HTMLElement[] {
-  const m = reviewMark(stance, authorReviews);
+function stanceMark(stance: Stance | undefined, authorReviews: number, subject: string): HTMLElement[] {
+  const m = reviewMark(stance, authorReviews, subject);
   if (!m) return [];
   const { text, label } = m;
   const mark = el('span', `review-stance ${m.cls}`, text);
@@ -517,6 +544,24 @@ function stanceMark(stance: Stance | undefined, authorReviews: number): HTMLElem
   return [mark];
 }
 
+// Whether the panel's untrusted reviews are unfolded; each new subject starts folded.
+let untrustedOpen = false;
+
+function reviewCard(r: Review, stance: Stance | undefined, subject: string, terms: string[]): HTMLLIElement {
+  const stars = el('span', 'review-stars', starString(r.stars));
+  stars.setAttribute('role', 'img');
+  stars.setAttribute('aria-label', `${r.stars} star${r.stars === 1 ? '' : 's'}`);
+  const meta = el('div', 'review-meta');
+  meta.append(stars, ...stanceMark(stance, r.reviewerReviewCount, subject), el('span', 'review-age', reviewAge(r.timestamp)));
+  const text = el('p', 'review-text');
+  highlightInto(text, r.text, r.matchTerms?.length ? r.matchTerms : terms);
+  const card = el('li', isTrusted(r.reviewerReviewCount) ? 'review-card' : 'review-card untrusted');
+  card.append(meta, text);
+  return card;
+}
+
+// The reviews the score counts come first. The untrusted ones, which it skips and
+// Jev never reads, fold into one row after them that says why.
 function renderReviewList(reviews: Review[]) {
   // Same precedence as askChipPanel's `filter`: a chip search by its label, a
   // text search by its query — tokenized to words. Only the fallback for reviews
@@ -524,16 +569,32 @@ function renderReviewList(reviews: Review[]) {
   const fallback = (activePanel?.kind === 'highlight' ? [activePanel.chip.label] : activePanel?.kind === 'search' ? parseOrQuery(activePanel.result.query) : [])
     .flatMap((t) => t.split(/\s+/));
   const stances = panelStances();
-  const shown = stanceFilter && stances ? reviews.filter((r) => stances[r.reviewId] === stanceFilter) : reviews;
-  chipBody.replaceChildren(...sortedDisplayReviews(shown).map((r) => {
-    const meta = el('div', 'review-meta');
-    meta.append(el('span', 'review-stars', starString(r.stars)), ...stanceMark(stances?.[r.reviewId], r.reviewerReviewCount), el('span', 'review-age', reviewAge(r.timestamp)));
-    const text = el('p', 'review-text');
-    highlightInto(text, r.text, r.matchTerms?.length ? r.matchTerms : fallback);
-    const card = el('div', 'review-card');
-    card.append(meta, text);
-    return card;
-  }));
+  const subject = panelFilter()?.toLowerCase() ?? 'it';
+  const shown = sortedDisplayReviews(stanceFilter && stances ? reviews.filter((r) => stances[r.reviewId] === stanceFilter) : reviews);
+  const list = (rs: Review[]) => {
+    const ul = el('ul', 'review-list');
+    ul.append(...rs.map((r) => reviewCard(r, stances?.[r.reviewId], subject, fallback)));
+    return ul;
+  };
+  const trusted = shown.filter((r) => isTrusted(r.reviewerReviewCount));
+  const untrusted = shown.filter((r) => !isTrusted(r.reviewerReviewCount));
+  const n = untrusted.length;
+  const why = `Their authors have fewer than ${TRUSTED_MIN_REVIEWS} reviews, so the score skips them.`;
+  if (!shown.length) chipBody.replaceChildren(el('div', 'chip-loading', 'No reviews with text to show'));
+  else if (!trusted.length) chipBody.replaceChildren(el('p', 'untrusted-why', `All ${n} untrusted. ${why}`), list(untrusted));
+  else if (!n) chipBody.replaceChildren(list(trusted));
+  else {
+    const fold = el('button', 'untrusted-fold');
+    fold.type = 'button';
+    fold.setAttribute('aria-expanded', String(untrustedOpen));
+    fold.append(el('span', 'untrusted-count', `${untrustedOpen ? 'Hide' : 'Show'} ${n} untrusted review${n === 1 ? '' : 's'}`), el('span', 'untrusted-why', why));
+    fold.addEventListener('click', () => {
+      untrustedOpen = !untrustedOpen;
+      renderReviewList(reviews);
+      chipBody.querySelector<HTMLButtonElement>('.untrusted-fold')?.focus({ preventScroll: true });
+    });
+    chipBody.replaceChildren(list(trusted), fold, ...(untrustedOpen ? [list(untrusted)] : []));
+  }
 }
 
 // One <li><span class="h-text {sentiment}"> per highlight, appended to ul —
@@ -590,7 +651,7 @@ async function onHighlightClick(h: UiChip) {
   chipBody.replaceChildren(el('div', 'chip-loading', 'loading reviews…'));
   await ensureHighlightReviews(h);
   if (activePanel?.kind !== 'highlight' || activePanel.chip !== h) return;
-  setPanelTitle(h.label.toUpperCase(), { scorePct: h.score?.scorePct ?? 0, trustedReviews: h.score?.trustedReviews ?? 0, stance: h.stance, of: h.of }, (h as Chip).reviews?.length ?? h.count);
+  setPanelTitle(h.label.toUpperCase(), { scorePct: h.score?.scorePct ?? 0, trustedReviews: h.score?.trustedReviews ?? 0, stance: h.stance, of: h.of });
   renderReviewList(h.reviews ?? []);
 }
 

@@ -145,15 +145,18 @@
       <button id="searchBtn" class="ghost-btn" type="submit">SEARCH</button>
       <button id="searchRefreshBtn" class="ghost-btn" type="button" hidden title="Re-run search ignoring cache">↻</button>
     </form>
-    <div id="chipPanel" class="chip-panel" hidden>
+    <div id="chipPanel" class="chip-panel" role="region" aria-labelledby="chipPanelTitle" hidden>
       <div class="chip-panel-header">
-        <span class="chip-panel-title" id="chipPanelTitle"></span>
-        <button id="chipSummarize" class="ghost-btn" type="button">SUMMARIZE</button>
-        <button id="chipClose" class="ghost-btn" type="button">✕</button>
+        <div class="chip-panel-top">
+          <span class="chip-panel-title" id="chipPanelTitle" tabindex="-1"></span>
+          <button id="chipClose" class="ghost-btn chip-close" type="button" aria-label="Close" title="Close">✕</button>
+        </div>
+        <div id="chipPanelFigure" class="opinions"></div>
       </div>
       <form id="chipAskForm" class="ask">
         <input id="chipQuestion" placeholder="Ask about these reviews…" autocomplete="off">
         <button id="chipAskBtn" type="submit">ASK</button>
+        <button id="chipSummarize" class="ghost-btn" type="button">SUMMARIZE</button>
       </form>
       <div id="chipBody" class="chip-body"></div>
     </div>

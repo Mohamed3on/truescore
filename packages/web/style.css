@@ -316,6 +316,8 @@ button {
   padding: 12px 18px;
 }
 button:disabled { opacity: 0.4; cursor: wait; }
+/* Keyboard focus, in the one interactive accent; a click shows none. */
+button:focus-visible { outline: 1px solid rgba(109, 211, 206, 0.6); outline-offset: 2px; }
 
 section#result {
   background: var(--surface);
@@ -323,7 +325,9 @@ section#result {
   border-radius: 16px;
   padding: 20px;
   position: relative;
-  overflow: hidden;
+  /* clip, not hidden: hidden makes a scroll box, which pins the panel header's
+     sticky to this section instead of the viewport. */
+  overflow: clip;
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   animation: fade 480ms var(--ease);
@@ -614,8 +618,8 @@ section#result::before {
 .ghost-btn {
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 500;
-  font-size: 9px;
-  letter-spacing: 0.12em;
+  font-size: 11px;
+  letter-spacing: 0.08em;
   background: transparent;
   color: var(--t3);
   border: 1px solid var(--hairline);
@@ -626,6 +630,7 @@ section#result::before {
 }
 .ghost-btn:hover:not(:disabled) { color: var(--t1); border-color: var(--t4); }
 .ghost-btn:disabled { opacity: 0.4; cursor: wait; }
+@media (pointer: coarse) { .ghost-btn { min-height: 40px; } }
 
 .chip-panel {
   margin-bottom: 18px;
@@ -635,39 +640,84 @@ section#result::before {
   border-radius: 12px;
   animation: fade 320ms var(--ease);
 }
+/* The subject and its counts stay in view while its reviews scroll beneath.
+   Opaque (the panel's 6% wash over the result glass, flattened) and pulled out
+   over the panel's padding, so nothing shows past its edges. */
 .chip-panel-header {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: -14px -14px 12px;
+  padding: 10px 14px 12px;
+  background: #1c1e25;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 12px 12px 0 0;
 }
+.chip-panel-top { display: flex; align-items: center; gap: 12px; }
 .chip-panel-title {
   flex: 1;
+  min-width: 0;
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 500;
   font-size: 11px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
   color: var(--t2);
-  font-variant-numeric: tabular-nums;
-  min-width: 0;
+  overflow-wrap: anywhere;
 }
-.chip-panel-title .nowrap { white-space: nowrap; }
-.chip-panel-title .pct {
+.chip-panel-title:focus { outline: none; }
+.chip-close { width: 40px; height: 40px; padding: 0; font-size: 13px; }
+/* The figure: a filter per stance, then the trusted base they count. */
+.chip-panel-header .opinions { margin-top: 6px; }
+.chip-panel-header .pct {
+  font-family: 'IBM Plex Mono', monospace;
   font-weight: 600;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
   color: var(--t1);
 }
-.chip-panel-title .pct.pos { color: var(--pos); }
-.chip-panel-title .pct.neg { color: var(--neg); }
-.chip-panel-title .pct.mid { color: var(--mid); }
+.chip-panel-header .pct.pos { color: var(--pos); }
+.chip-panel-header .pct.neg { color: var(--neg); }
+.chip-panel-header .pct.mid { color: var(--mid); }
 .chip-body { display: flex; flex-direction: column; gap: 10px; }
-.chip-panel .ask { padding-top: 0; border-top: none; margin-bottom: 12px; }
+/* Ask and Summarize, the two AI actions on these reviews, share a row away from
+   the close button; Summarize wraps under Ask where the row is too narrow. */
+.chip-panel .ask { padding-top: 0; border-top: none; margin-bottom: 12px; flex-wrap: wrap; }
+#chipQuestion { flex: 1 1 10rem; }
+#chipSummarize { margin-left: auto; }
 .chip-body .answer { margin-top: 0; }
-.review-card {
+/* Reviews are ruled rows, not boxes inside the panel's box. */
+.review-list { list-style: none; margin: 0; padding: 0; }
+.review-card { padding: 12px 0; border-top: 1px solid var(--hairline); }
+.review-list > .review-card:first-child { border-top: none; padding-top: 2px; }
+.review-card.untrusted .review-text { color: var(--t3); }
+/* The reviews the score skips, folded after the ones it counts, saying why. */
+.untrusted-fold {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  min-height: 44px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: transparent;
+  border: 1px solid var(--hairline);
   border-radius: 8px;
+  color: var(--t2);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-align: left;
+}
+.untrusted-why {
+  margin: 0;
+  font-family: 'Sora', sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  letter-spacing: 0;
+  line-height: 1.45;
+  color: var(--t3);
+}
+@media (hover: hover) and (pointer: fine) {
+  .untrusted-fold:hover { border-color: var(--t4); color: var(--t1); }
 }
 .review-meta {
   display: flex;
@@ -675,18 +725,18 @@ section#result::before {
   align-items: center;
   margin-bottom: 6px;
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.06em;
   color: var(--t3);
 }
 .review-stars { color: var(--gold); letter-spacing: 0.1em; font-size: 11px; }
 .review-age { color: var(--t3); }
-.review-stance { margin: 0 auto 0 8px; font-size: 10px; line-height: 1; }
+.review-stance { margin: 0 auto 0 8px; font-size: 11px; line-height: 1; }
 .review-stance.praise { color: var(--pos); }
 .review-stance.complain { color: var(--neg); }
 .review-stance.mixed { color: var(--mid); }
-.review-stance.off { color: var(--t4); }
+.review-stance.off { color: var(--t3); }
 /* Untracked so "untrusted · 2 reviews" keeps to one line on a 360pt phone. */
 .review-stance.untrusted { color: var(--t3); letter-spacing: 0; }
 .review-text {
@@ -749,7 +799,10 @@ section#result::before {
   font-weight: 400;
   transition: background 200ms var(--ease), border-color 200ms var(--ease);
 }
-.chip:hover { background: rgba(255, 255, 255, 0.1); }
+@media (hover: hover) and (pointer: fine) {
+  .chip:hover { background: rgba(255, 255, 255, 0.1); }
+  .chip.errored:hover { background: var(--t5); }
+}
 .chip.active {
   border-color: rgba(109, 211, 206, 0.5);
   background: rgba(109, 211, 206, 0.1);
@@ -774,35 +827,48 @@ section#result::before {
 .chip[disabled] { opacity: 0.55; cursor: default; }
 .chip.loading[disabled] { cursor: wait; }
 .chip.errored[disabled] { cursor: not-allowed; }
-.chip.errored:hover { background: var(--t5); }
 .chip .pct.prefer { color: var(--t2); font-weight: 500; }
-/* In the panel title, a topic's share and net sit in the title's own type; the
-   share takes .pct's colours, the net is muted. */
-.opinions { display: inline-flex; align-items: baseline; gap: 6px; }
-.chip-panel-title .net { color: var(--t3); }
+.opinions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* The trusted reviews the counts come from, of all that mention the subject. */
+.op-base {
+  margin-left: 2px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--t3);
+  font-variant-numeric: tabular-nums;
+}
 .ask-search-pct.mid { color: var(--mid); }
-/* In the panel title each count filters the list below it. */
+/* The panel's figure: each count filters the list below it, in the mark the
+   cards wear. Sized for a thumb. */
 .op-filter {
-  font: inherit;
-  letter-spacing: inherit;
-  padding: 1px 6px;
-  margin: -2px 0;
+  min-height: 40px;
+  padding: 0 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
   cursor: pointer;
   transition: transform 160ms ease-out, background-color 160ms ease-out, border-color 160ms ease-out;
 }
 .op-filter:active { transform: scale(0.97); }
 .op-filter.pos { color: var(--pos); }
 .op-filter.neg { color: var(--neg); }
+.op-filter.mid { color: var(--mid); }
+.op-filter.off { color: var(--t3); }
 /* A zero is no signal: muted, and there's nothing to list behind it. */
 .op-filter.zero { color: var(--t4); }
-.op-filter:disabled { cursor: default; }
-.op-filter.pos[aria-pressed="true"] { background: rgba(74, 222, 128, 0.12); border-color: rgba(74, 222, 128, 0.5); }
-.op-filter.neg[aria-pressed="true"] { background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.5); }
+.op-filter:disabled { cursor: default; opacity: 1; }
+.op-filter[aria-pressed="true"] {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-color: color-mix(in srgb, currentColor 50%, transparent);
+}
 @media (hover: hover) and (pointer: fine) {
-  .op-filter:hover { background: var(--t5); border-color: var(--hairline); }
+  .op-filter:hover:not(:disabled) { background: var(--t5); border-color: var(--t4); }
 }
 /* An Ask row's counts arrive after the row: the slot holds their space and
    fills once, fading in rather than ticking up. */
@@ -996,6 +1062,7 @@ section#result::before {
 @keyframes enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes enter-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
+  .chip-panel { animation: none; }
   .receipt-quotes { animation-name: enter-fade; }
   .op-slot.op-in > * { animation-name: enter-fade; }
 }

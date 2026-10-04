@@ -36,12 +36,12 @@ export const isTrusted = (reviewerReviewCount: number) => reviewerReviewCount >=
 // (STANCE_MARKS), or, when its author isn't trusted, why it has none (no score
 // counts it, so Jev never reads it), in Google's own "· N reviews" style. Null
 // when it simply wasn't read; `authorReviews` is absent where trust doesn't apply.
-export const reviewMark = (stance: Stance | undefined, authorReviews?: number): { cls: string; text: string; label: string } | null => {
+export const reviewMark = (stance: Stance | undefined, authorReviews?: number, subject = 'it'): { cls: string; text: string; label: string } | null => {
   if (authorReviews != null && !isTrusted(authorReviews)) {
     const n = `${authorReviews} review${authorReviews === 1 ? '' : 's'}`;
     return { cls: 'untrusted', text: `untrusted · ${n}`, label: `Not counted or read: its author has ${n}, and TrueScore trusts authors with ${TRUSTED_MIN_REVIEWS}+` };
   }
-  return stance ? { cls: stance, ...STANCE_MARKS[stance] } : null;
+  return stance ? { cls: stance, text: STANCE_MARKS[stance].text, label: STANCE_MARKS[stance].label(subject) } : null;
 };
 export const starScore = (stars: number): number => (stars === 5 ? 1 : stars === 1 ? -1 : 0);
 
