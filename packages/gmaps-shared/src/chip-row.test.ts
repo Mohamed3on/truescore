@@ -34,9 +34,14 @@ describe('chipRowOrder', () => {
   const read = (praise: number, complain: number): StanceCounts => ({ praise, complain, mixed: 0, off: 0 });
   const keys = (chips: { key: string }[]) => chips.map((c) => c.key);
 
-  test('keeps its order while anything loads, newcomers joining at the end, loading ones last', () => {
+  test('keeps its order while anything loads, newcomers joining at the end ranked, loading ones last', () => {
     const chips = [chip('a', 'done', 90), chip('b', 'loading'), chip('c', 'done', 10), chip('d', 'loading'), chip('e', 'done', 100)];
-    expect(keys(chipRowOrder(chips, ['b', 'a', 'gone'], false, 50))).toEqual(['b', 'a', 'c', 'e', 'd']);
+    expect(keys(chipRowOrder(chips, ['b', 'a', 'gone'], false, 50))).toEqual(['b', 'a', 'e', 'c', 'd']);
+  });
+
+  test('a first paint while something loads is already ranked', () => {
+    const chips = [chip('meh', 'done', 0, 10, read(3, 5)), chip('soon', 'loading'), chip('bbq', 'done', 80, 70, read(63, 5))];
+    expect(keys(chipRowOrder(chips, [], false, 50))).toEqual(['bbq', 'meh', 'soon']);
   });
 
   test('sorts once everything is in, by what reviewers say when every chip is read', () => {

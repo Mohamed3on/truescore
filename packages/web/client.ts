@@ -193,13 +193,17 @@ function topicChip(h: UiChip, state: ChipState): HTMLButtonElement {
   const pct = state === 'done' && h.score
     ? { text: `${h.score.scorePct}%`, cls: chipPolarity(h.score.scorePct, currentMergedPct) }
     : state === 'error' ? { text: '✗', cls: 'neg' } : { text: '…', cls: 'chip-pending' };
-  return chip({
+  const b = chip({
     label: h.label, pct, count: h.count, token: h.token, opinions: state === 'done' ? opinionsFor(h) : null,
     cls: state === 'loading' ? 'loading' : state === 'error' ? 'errored' : undefined,
     title: state === 'error' && h.error ? h.error : undefined,
     disabled: state !== 'done',
     onClick: state === 'done' ? () => onHighlightClick(h) : undefined,
   });
+  // Built open: added once it's on screen, .chip's transition would fade the
+  // open look in again on every render.
+  b.classList.toggle('active', activePanel?.kind === 'highlight' && activePanel.chip.token === h.token);
+  return b;
 }
 
 const standoutChip = (item: string, r: SearchResult) => chip({
@@ -237,12 +241,13 @@ function renderTopics() {
   for (const h of currentHighlights) {
     const key = h.label.toLowerCase();
     const s = standouts.get(key);
-    standouts.delete(key);
     const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
     const view = state === 'done' && s?.result ? pooledView(h, s.result) : h;
     if (state === 'loading' || s?.state === 'loading' || !view) settled = false;
     const c = view ?? h;
+    // Dropped, a topic leaves its standout, if any, to show on its own.
     if (state === 'done' && !spokenOf(c)) continue;
+    standouts.delete(key);
     entries.push({ key, state, stance: c.stance, score: c.score, count: c.count, chip: () => topicChip(c, state) });
   }
   for (const [key, d] of standouts) {

@@ -130,7 +130,10 @@ let labelSearchSeq = 0;
 // topic — the pooled chip's numbers (pooledView), so a reload paints it as it was.
 type ScoredStats = SortStats & Partial<Pick<StanceResult, 'stance' | 'of'>> & { pooled?: Pick<Highlight, 'token' | 'count' | 'score' | 'stance' | 'of'> };
 const standoutScoreCache = new Map<string, ScoredStats>();
-const standoutScoreInflight = new Set<string>();
+const standoutScoreInflight = new Map<string, Promise<void>>();
+// Scores from before the place's newest review: still shown while they're
+// re-scored, never saved as current (refreshStaleScores).
+const standoutScoreStale = new Set<string>();
 // Zero-scores minted for failed searches (so the chip drops out instead of
 // pulsing forever) are display-only — a transient blip must not persist as a
 // permanent 0%, so saveScoredCache skips these keys.
@@ -955,14 +958,16 @@ const computeHighlights = async (force = false) => {
     })));
 
     if (!stillCurrent()) return;
+    // The chips are final (their reads included): candidates that never landed
+    // drop out, and the button goes back to renderHighlights — Refresh, rather
+    // than "Computing N/N".
+    highlightCandidates = [];
+    highlightsComputingFor = null;
+    renderHighlights();
     if (!items.length) {
       if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'No highlights';
       return;
     }
-    // The chips are final (their reads included): hand the button back to
-    // renderHighlights, which labels it Refresh, rather than leave "Computing N/N".
-    highlightsComputingFor = null;
-    renderHighlights();
     pushContribution({ highlights: items });
   } catch (e) {
     console.error('[highlights] error:', e);
@@ -1308,11 +1313,12 @@ const renderHighlights = () => {
   // Candidates whose score hasn't landed yet — pulsing placeholders until their
   // fetch resolves.
   const loading = highlightCandidates.filter((c) => !scoredTokens.has(c.token));
-  // computeHighlights owns the button label ('Computing X/N', 'No highlights').
+  // computeHighlights owns the button while it runs. After, it's a click away
+  // from a retry, keeping its word for an empty run ('No highlights').
   const computing = highlightsComputingFor === getFeatureId();
-  if (btn && !computing && (items.length || loading.length)) {
+  if (btn && !computing) {
     btn.disabled = false;
-    btn.textContent = 'Refresh';
+    if (items.length || loading.length) btn.textContent = 'Refresh';
   }
   // Graded against the card's headline, which is the server's when it scored the place.
   const merged = store.mergedStats(currentOption);
@@ -1325,12 +1331,13 @@ const renderHighlights = () => {
   for (const h of items) {
     const key = h.label.toLowerCase();
     const item = standouts.get(key);
-    standouts.delete(key);
     const view = ctx && item && standoutScoreCache.has(at(key)) ? pooledView(h, ctx.featureId, item) : h;
     if (!view || (item && standoutScoreInflight.has(at(key)))) settled = false;
     const c = view ?? h;
-    // A topic fewer than two reviews actually speak to is dropped, as a scored chip is.
+    // A topic fewer than two reviews actually speak to is dropped, as a scored
+    // chip is; its standout, if any, still shows on its own.
     if (c.stance && tooFewMentions(opinionsOf(c.stance))) continue;
+    standouts.delete(key);
     const chip = chipEl(c.label, c, overall, () => onChipClick(c));
     if (activeHighlight?.token === c.token) chip.classList.add('rc-chip-active');
     rows.push({ ...c, key, state: 'done', el: chip });
@@ -1342,12 +1349,13 @@ const renderHighlights = () => {
   }
   for (const [key, item] of standouts) {
     const stats = standoutScoreCache.get(at(key));
+    // Scoring, or re-scoring with its old score showing: the row holds its order.
+    const scoring = standoutScoreInflight.has(at(key));
+    if (scoring) settled = false;
     const search = () => triggerLabelSearchFor(item);
     if (!stats) {
       // One whose search couldn't run at all is left out.
-      if (!standoutScoreInflight.has(at(key))) continue;
-      settled = false;
-      rows.push({ key, state: 'loading', count: 0, el: pendingChip(item, undefined, search) });
+      if (scoring) rows.push({ key, state: 'loading', count: 0, el: pendingChip(item, undefined, search) });
     } else if (stats.stance ? !tooFewMentions(opinionsOf(stats.stance)) : stats.totalReviews >= SCORED_CHIP_MIN_REVIEWS) {
       const c = itemStats(stats);
       rows.push({ ...c, key, state: 'done', el: chipEl(item, c, overall, search) });
@@ -1499,14 +1507,22 @@ const renderChipTitle = (title: HTMLElement, h: Highlight) => {
 
 // Reviews are not persisted (see saveHighlightsCache); fetch on demand after a
 // refresh so the chip panel and Summarize have data to work with. A pooled chip
-// painted from its kept numbers gets both sides, pooled.
-const ensureChipReviews = async (h: Highlight): Promise<void> => {
-  if (h.reviews) return;
+// painted from its kept numbers gets both sides, pooled. One fetch per chip at a
+// time: the panel and a forming pool can ask for the same one.
+const chipFetches = new WeakMap<Highlight, Promise<void>>();
+const ensureChipReviews = (h: Highlight): Promise<void> => {
+  if (h.reviews) return Promise.resolve();
+  let run = chipFetches.get(h);
+  if (!run) chipFetches.set(h, (run = fetchChipReviews(h).finally(() => chipFetches.delete(h))));
+  return run;
+};
+const fetchChipReviews = async (h: Highlight): Promise<void> => {
   const pool = poolSides.get(h);
   if (pool) {
     await Promise.all([ensureChipReviews(pool.h), ensureScored(pool.featureId, [pool.item], 'standouts', true)]);
+    // Without the standout's side, the topic's own.
     const s = standoutReviewsCache.get(`${pool.featureId}|${pool.item.toLowerCase()}`);
-    if (pool.h.reviews && s) Object.assign(h, pooledReads(pool.h, s));
+    if (pool.h.reviews) Object.assign(h, pooledReads(pool.h, s ?? { stances: {} }));
     return;
   }
   const featureId = getFeatureId();
@@ -2208,15 +2224,17 @@ const redrawScored = (kind: ScoredKind) => {
 };
 
 // `withReviews` searches again for an item scored on an earlier visit, whose
-// reviews weren't kept: a topic it names pools them.
+// reviews weren't kept: a topic it names pools them. An item already being
+// scored isn't searched twice; its run is waited on instead.
 const ensureScored = (featureId: string, items: string[], kind: ScoredKind, withReviews = false) => {
   const limit = createLimiter(HIGHLIGHT_FETCH_CONCURRENCY);
   const runs: Promise<void>[] = [];
   for (const item of items) {
     const key = `${featureId}|${item.toLowerCase()}`;
-    if ((withReviews ? standoutReviewsCache : standoutScoreCache).has(key) || standoutScoreInflight.has(key)) continue;
-    standoutScoreInflight.add(key);
-    runs.push(limit(async () => {
+    const running = standoutScoreInflight.get(key);
+    if (running) { runs.push(running); continue; }
+    if ((withReviews ? standoutReviewsCache : standoutScoreCache).has(key) && !standoutScoreStale.has(key)) continue;
+    const run = limit(async () => {
       try {
         const reviews = await fetchAllForSearch(featureId, item);
         // null = neither this tab nor the server could search: leave the chip
@@ -2225,26 +2243,34 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
         if (!reviews) return;
         // An empty result is display-only too: a dead session or a throttle
         // comes back empty just like an unmentioned item, and a persisted 0 would
-        // hide the chip until new reviews land.
+        // hide the chip until new reviews land. Where an earlier search found
+        // reviews, its score stays.
+        if (!reviews.length && standoutScoreCache.has(key) && !standoutScoreTransient.has(key)) return;
         if (reviews.length) standoutScoreTransient.delete(key);
         else standoutScoreTransient.add(key);
         // Read before the chip shows, so a star share never paints only to be replaced.
         const read = await readStanceOf(item, reviews);
         standoutScoreCache.set(key, { ...statsForReviews(reviews), ...(read && { stance: read.stance, of: read.of }), pooled: standoutScoreCache.get(key)?.pooled });
         standoutReviewsCache.set(key, { reviews, stances: read?.stances });
+        standoutScoreStale.delete(key);
         saveScoredCache();
         if (getFeatureId() === featureId) redrawScored(kind);
       } catch (e) {
         console.error(`[${kind}] score failed for`, item, e);
         // Resolve to zero so the chip drops out (like a no-mention item) instead
-        // of pulsing "…" forever — this session only, never persisted.
-        standoutScoreTransient.add(key);
-        standoutScoreCache.set(key, statsForReviews([]));
+        // of pulsing "…" forever — this session only, never persisted. A score
+        // already showing stays.
+        if (!standoutScoreCache.has(key)) {
+          standoutScoreTransient.add(key);
+          standoutScoreCache.set(key, statsForReviews([]));
+        }
         if (getFeatureId() === featureId) redrawScored(kind);
       } finally {
         standoutScoreInflight.delete(key);
       }
-    }));
+    });
+    standoutScoreInflight.set(key, run);
+    runs.push(run);
   }
   return Promise.all(runs);
 };
@@ -2280,20 +2306,21 @@ const saveScoredCache = () => {
   try {
     const prefix = `${lastFeatureId}|`;
     const scores: Record<string, SortStats> = {};
-    for (const [k, v] of standoutScoreCache) if (k.startsWith(prefix) && !standoutScoreTransient.has(k)) scores[k.slice(prefix.length)] = v;
+    for (const [k, v] of standoutScoreCache) if (k.startsWith(prefix) && !standoutScoreTransient.has(k) && !standoutScoreStale.has(k)) scores[k.slice(prefix.length)] = v;
     if (!Object.keys(scores).length) return;
     scoredCacheHeadId = store.newestHeadId() ?? scoredCacheHeadId;
     localStorage.setItem(getScoredCacheKey(), JSON.stringify({ scores, newestHeadId: scoredCacheHeadId }));
   } catch {}
 };
-// New reviews since these scores were computed → drop this place's cached scores
-// and re-score whatever groups are showing.
+// New reviews since these scores were computed → re-score whatever groups are
+// showing, their old scores on screen until the new ones land, so the row stays
+// put.
 const refreshStaleScores = () => {
   const live = store.newestHeadId();
   const featureId = getFeatureId();
   if (live == null || scoredCacheHeadId == null || scoredCacheHeadId === live || !featureId) return;
   const prefix = `${featureId}|`;
-  for (const k of [...standoutScoreCache.keys()]) if (k.startsWith(prefix)) standoutScoreCache.delete(k);
+  for (const k of standoutScoreCache.keys()) if (k.startsWith(prefix)) standoutScoreStale.add(k);
   for (const k of [...standoutReviewsCache.keys()]) if (k.startsWith(prefix)) standoutReviewsCache.delete(k);
   searchTermCache.dropPlace(featureId);
   scoredCacheHeadId = live;

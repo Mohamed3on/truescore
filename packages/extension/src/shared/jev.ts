@@ -21,8 +21,11 @@ const inPage = !viaWorker && typeof location !== 'undefined' && /(^|\.)google\.[
 const OFF_MS = 10 * 60_000;
 let offUntil = 0;
 
+// Whether Jev can be asked right now.
+const reachable = () => Date.now() >= offUntil && (viaWorker || inPage);
+
 const post = async <T,>(route: 'stance' | 'receipts', body: unknown): Promise<T | null> => {
-  if (Date.now() < offUntil || (!viaWorker && !inPage)) return null;
+  if (!reachable()) return null;
   try {
     const r = inPage
       ? await fetch(`${TRUESCORE_API_BASE}/api/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -69,10 +72,11 @@ export const readAnswers = (question: string, texts: string[]): Promise<Answer[]
 
 // A Maps chip's or Search's reviews read for their stance on `topic`: the trusted
 // ones with text, the same reviews its TrueScore counts (as the server reads them).
+// None of those, and Jev reachable: read, with no review speaking to it.
 export const readStanceOf = async (topic: string, reviews: Review[]): Promise<StanceResult | null> => {
   const readable = reviews.filter((r) => isTrusted(r.reviewerReviewCount) && r.text.trim().length > 1);
   const read = readable.slice(0, MAX_JUDGED);
-  if (!read.length) return null;
+  if (!read.length) return reachable() ? { stance: countStances([]), stances: {} } : null;
   const labels = await readStances(topic, read.map((r) => r.text));
   if (!labels) return null;
   return { stance: countStances(labels), stances: Object.fromEntries(read.map((r, i) => [r.reviewId, labels[i]!])), ...(readable.length > read.length ? { of: readable.length } : {}) };

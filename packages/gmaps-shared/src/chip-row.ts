@@ -26,25 +26,23 @@ export const pooledReads = (a: Reads, b: Reads) => {
 };
 
 // The row's order. While anything is still loading it keeps the order it had
-// (`prev`, by key), newcomers joining at the end, loading ones last, so nothing
-// moves under a thumb. Once everything is in it sorts once: by what reviewers say
-// when every chip is read (the praise share among those taking a side, weighted
-// by how many do), else by star share against the place's own score. Any that
-// failed go last.
+// (`prev`, by key), so nothing moves under a thumb; newcomers join at the end,
+// ranked among themselves. Once everything is in it sorts once. Ranked: by what
+// reviewers say when every chip is read (the praise share among those taking a
+// side, weighted by how many do), else by star share against the place's own
+// score; then any that failed, then any still loading.
 export type RowChip = ChipLike & { key: string; state: ChipState; stance?: StanceCounts };
 export const chipRowOrder = <T extends RowChip>(chips: T[], prev: string[], settled: boolean, overallPct: number): T[] => {
-  if (!settled) {
-    const byKey = new Map(chips.map((c) => [c.key, c]));
-    return [
-      ...prev.flatMap((k) => byKey.get(k) ?? []),
-      ...chips.filter((c) => !prev.includes(c.key)).sort((a, b) => Number(a.state === 'loading') - Number(b.state === 'loading')),
-    ];
-  }
-  const done = chips.filter((c) => c.state === 'done');
-  const sorted = done.every((c) => c.stance)
-    ? sortChipsByImpact(done.map((c) => { const o = opinionsOf(c.stance!); return { c, score: { scorePct: opinionPct(o) }, count: o.pos + o.neg }; }), 0).map((r) => r.c)
-    : sortChipsByImpact(done, overallPct);
-  return [...sorted, ...chips.filter((c) => c.state !== 'done')];
+  const rank = (cs: T[]) => {
+    const done = cs.filter((c) => c.state === 'done');
+    const sorted = done.every((c) => c.stance)
+      ? sortChipsByImpact(done.map((c) => { const o = opinionsOf(c.stance!); return { c, score: { scorePct: opinionPct(o) }, count: o.pos + o.neg }; }), 0).map((r) => r.c)
+      : sortChipsByImpact(done, overallPct);
+    return [...sorted, ...cs.filter((c) => c.state === 'error'), ...cs.filter((c) => c.state === 'loading')];
+  };
+  if (settled) return rank(chips);
+  const byKey = new Map(chips.map((c) => [c.key, c]));
+  return [...prev.flatMap((k) => byKey.get(k) ?? []), ...rank(chips.filter((c) => !prev.includes(c.key)))];
 };
 
 // Swap a row's chips. One that moved glides from where it was, and one new to a
