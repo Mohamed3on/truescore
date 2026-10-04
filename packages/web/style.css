@@ -665,13 +665,13 @@ section#result::before {
   overflow-wrap: anywhere;
 }
 .chip-panel-title:focus { outline: none; }
-.chip-close { width: 40px; height: 40px; padding: 0; font-size: 13px; }
+.chip-close { position: relative; width: 28px; height: 28px; min-height: 0; padding: 0; font-size: 12px; }
 /* The figure: a filter per stance, then the trusted base they count. */
-.chip-panel-header .opinions { margin-top: 6px; }
+.chip-panel-header .opinions { margin-top: 8px; }
 .chip-panel-header .pct {
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 600;
-  font-size: 16px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--t1);
 }
@@ -840,18 +840,19 @@ section#result::before {
 }
 .ask-search-pct.mid { color: var(--mid); }
 /* The panel's figure: each count filters the list below it, in the mark the
-   cards wear. Sized for a thumb. */
+   cards wear. Pills the size of the topic chips' counts. */
 .op-filter {
-  min-height: 40px;
-  padding: 0 10px;
+  position: relative;
+  padding: 5px 10px;
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 600;
-  font-size: 16px;
+  font-size: 12px;
+  line-height: 1;
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
-  background: transparent;
+  background: var(--t5);
   border: 1px solid var(--hairline);
-  border-radius: 8px;
+  border-radius: 999px;
   cursor: pointer;
   transition: transform 160ms ease-out, background-color 160ms ease-out, border-color 160ms ease-out;
 }
@@ -868,7 +869,12 @@ section#result::before {
   border-color: color-mix(in srgb, currentColor 50%, transparent);
 }
 @media (hover: hover) and (pointer: fine) {
-  .op-filter:hover:not(:disabled) { background: var(--t5); border-color: var(--t4); }
+  .op-filter:hover:not(:disabled) { border-color: var(--t4); }
+}
+/* A thumb gets a 40px target around the small marks it sees. */
+@media (pointer: coarse) {
+  .op-filter::before, .chip-close::before { content: ''; position: absolute; inset: -9px -3px; }
+  .chip-close::before { inset: -6px; }
 }
 /* An Ask row's counts arrive after the row: the slot holds their space and
    fills once, fading in rather than ticking up. */
