@@ -187,8 +187,10 @@ async function listOptionsOf(thread: Thread, question: string, { provider, reaso
 
 // Why each Option is rated as it is, a line each, written while Jev counts:
 // from the comments that name it (the ones Jev reads), for the Options two or
-// more people name. Streamed as written and kept for the same comments; a
-// failure costs nothing else, since the counts are the Tally.
+// more people name. The model writes them in order, so the most-named come
+// first: the top of the Tally is what's read first, and its counts aren't in
+// yet to rank by. Streamed as written and kept for the same comments; a failure
+// costs nothing else, since the counts are the Tally.
 db.run('CREATE TABLE IF NOT EXISTS tally_reasons (k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER NOT NULL)');
 const getReasons = db.prepare<{ v: string }, [string]>('SELECT v FROM tally_reasons WHERE k = ?');
 const putReasons = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO tally_reasons (k, v, ts) VALUES (?, ?, ?)');
@@ -196,11 +198,14 @@ const QUOTE_CHARS = 800;
 
 async function reasonsOf(thread: Thread, question: string, options: ThreadOption[], { provider, reasoningEffort }: LlmOverrides, write: (e: TallyEvent) => void): Promise<void> {
   const index = new Map<ThreadComment, number>();
-  const groups = options.flatMap((o) => {
-    const named = naming(thread, ownNames(o, options));
-    if (new Set(named.map(personOf)).size < MIN_TALLY_PEOPLE) return [];
-    return [{ key: keyOf(o.name), option: o.name, comments: named.map((c) => index.get(c) ?? index.set(c, index.size).get(c)!) }];
-  });
+  const groups = options
+    .map((o) => {
+      const named = naming(thread, ownNames(o, options));
+      return { o, named, people: new Set(named.map(personOf)).size, upvotes: named.reduce((n, c) => n + c.score, 0) };
+    })
+    .filter((g) => g.people >= MIN_TALLY_PEOPLE)
+    .sort((a, b) => b.people - a.people || b.upvotes - a.upvotes)
+    .map(({ o, named }) => ({ key: keyOf(o.name), option: o.name, comments: named.map((c) => index.get(c) ?? index.set(c, index.size).get(c)!) }));
   if (!groups.length) return;
   const comments = [...index.keys()].map((c) => c.body.replace(/\s+/g, ' ').slice(0, QUOTE_CHARS));
   const k = `${thread.id}:${provider ?? ''}:${Bun.hash(reasonsRequest(question, comments, groups).prompt).toString(36)}`;
