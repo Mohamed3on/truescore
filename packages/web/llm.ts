@@ -256,18 +256,21 @@ export async function listOptions(question: string, comments: string[], onOption
 // Tally beside it. Reasons, never counts. One field per
 // Option, under its key: given a list, the model wrote one line per course and
 // every line after it landed on the next Option.
-type ReasonGroup = { key: string; option: string; comments: string[] };
-export const reasonsRequest = (question: string, groups: ReasonGroup[]) => ({
+// Each comment goes in once, numbered, and each Option lists the numbers of
+// the comments naming it: a comment naming three Options isn't paid for three
+// times.
+type ReasonGroup = { key: string; option: string; comments: number[] };
+export const reasonsRequest = (question: string, comments: string[], groups: ReasonGroup[]) => ({
   maxOutputTokens: 4096,
   schema: z.object(Object.fromEntries(groups.map((g) => [g.key, z.string()]))),
-  prompt: `Question:\n${question}\n\n---\n\n${groups.map((g) => `${g.key} (${g.option}):\n${g.comments.join('\n')}`).join('\n\n')}\n\n---\n\nUnder each option's key, say in one line of at most 20 words why these comments rate it well or badly: what they like about it and what they warn about, in their own reasons, not general knowledge. Describe the option; don't address the asker. No counts, shares or votes: those are shown beside it.`,
+  prompt: `Question:\n${question}\n\n---\n\nComments:\n\n${comments.map((c, i) => `[${i + 1}] ${c}`).join('\n\n')}\n\n---\n\nOptions, each with the comments that name it:\n${groups.map((g) => `${g.key} (${g.option}): ${g.comments.map((i) => i + 1).join(', ')}`).join('\n')}\n\nUnder each option's key, say in one line of at most 20 words why its comments rate it well or badly: what they like about it and what they warn about, in their own reasons, not general knowledge. Describe the option; don't address the asker. No counts, shares or votes: those are shown beside it.`,
 });
 
 // Streams each line to `onReason` once the model has started the next key (the
 // model writes them in the schema's order), the last when it ends.
-export async function explainOptions(question: string, groups: ReasonGroup[], onReason: (key: string, why: string) => void, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Record<string, string>> {
+export async function explainOptions(question: string, comments: string[], groups: ReasonGroup[], onReason: (key: string, why: string) => void, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Record<string, string>> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
-  const writing = streamObject({ model, providerOptions, ...reasonsRequest(question, groups) });
+  const writing = streamObject({ model, providerOptions, ...reasonsRequest(question, comments, groups) });
   const keys = groups.map((g) => g.key);
   let sent = 0;
   for await (const partial of writing.partialObjectStream) {

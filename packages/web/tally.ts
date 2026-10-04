@@ -195,17 +195,19 @@ const putReasons = db.prepare<void, [string, string, number]>('INSERT OR REPLACE
 const QUOTE_CHARS = 800;
 
 async function reasonsOf(thread: Thread, question: string, options: ThreadOption[], { provider, reasoningEffort }: LlmOverrides, write: (e: TallyEvent) => void): Promise<void> {
+  const index = new Map<ThreadComment, number>();
   const groups = options.flatMap((o) => {
-    const comments = naming(thread, ownNames(o, options));
-    return new Set(comments.map(personOf)).size < MIN_TALLY_PEOPLE ? []
-      : [{ key: keyOf(o.name), option: o.name, comments: comments.map((c) => `- ${c.body.replace(/\s+/g, ' ').slice(0, QUOTE_CHARS)}`) }];
+    const named = naming(thread, ownNames(o, options));
+    if (new Set(named.map(personOf)).size < MIN_TALLY_PEOPLE) return [];
+    return [{ key: keyOf(o.name), option: o.name, comments: named.map((c) => index.get(c) ?? index.set(c, index.size).get(c)!) }];
   });
   if (!groups.length) return;
-  const k = `${thread.id}:${provider ?? ''}:${Bun.hash(reasonsRequest(question, groups).prompt).toString(36)}`;
+  const comments = [...index.keys()].map((c) => c.body.replace(/\s+/g, ' ').slice(0, QUOTE_CHARS));
+  const k = `${thread.id}:${provider ?? ''}:${Bun.hash(reasonsRequest(question, comments, groups).prompt).toString(36)}`;
   const hit = getReasons.get(k);
   if (hit) return void Object.entries(JSON.parse(hit.v) as Record<string, string>).forEach(([key, text]) => write({ type: 'why', key, text }));
   try {
-    const reasons = await explainOptions(question, groups, (key, text) => { if (text.trim()) write({ type: 'why', key, text: text.trim() }); }, provider, reasoningEffort);
+    const reasons = await explainOptions(question, comments, groups, (key, text) => { if (text.trim()) write({ type: 'why', key, text: text.trim() }); }, provider, reasoningEffort);
     putReasons.run(k, JSON.stringify(reasons), Date.now());
   } catch (e) {
     console.warn('[tally] reasons failed:', e instanceof Error ? e.message : e);
