@@ -46,6 +46,8 @@ const STYLES = `
   .ts-air-card-work { font-size: 14px; line-height: 18px; font-weight: 400; color: #6a6a6a; text-wrap: balance; }
   .ts-air-reviews { box-sizing: border-box; width: 100%; margin: 18px 0 0; }
   .ts-air-reviews-note { color: #78716c; font-size: 12px; line-height: 1.5; }
+  .ts-air-reviews .ars-receipt-quotes { box-sizing: border-box; width: min(100%, 72ch); max-height: 26rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .ts-air-reviews .ars-receipt-quote { overflow-wrap: anywhere; }
   @media (max-width: 520px) { .ts-air-reviews .ars-question-row { flex-wrap: wrap; } .ts-air-reviews .ars-question-input { flex-basis: 100%; } }
   @media (prefers-reduced-motion: reduce) { .ts-air-card { transform: none !important; } }
 `;
@@ -116,20 +118,29 @@ const listingId = location.pathname.match(/^\/rooms\/(\d+)/)?.[1];
 if (listingId) {
   const wrapper = createIslandShell();
   wrapper.classList.add('ts-air-reviews');
-  const note = el('div', 'ts-air-reviews-note', 'Summarize up to 100 guest reviews, including the lowest rated.');
+  const note = el('div', 'ts-air-reviews-note', 'Loading up to 100 guest reviews, including the lowest rated…');
   wrapper.append(note);
   let pendingReviews: ReturnType<typeof fetchAirbnbReviewSample> | null = null;
+  const loadReviewSample = () => {
+    pendingReviews ??= fetchAirbnbReviewSample(listingId).then((sample) => {
+      note.textContent = `Read ${sample.sampled} written reviews, including ${sample.lowRated} below five stars, from ${addCommas(sample.total)} total reviews.`;
+      return sample;
+    }).catch((error) => {
+      pendingReviews = null;
+      note.textContent = 'Reviews could not be loaded. Summarize will retry.';
+      throw error;
+    });
+    return pendingReviews;
+  };
   buildSummarizeWidget({
     wrapper,
-    cacheKey: `airbnb-summary-v1-${listingId}`,
+    cacheKey: `airbnb-summary-v2-${listingId}`,
     summaryPrompt: SUMMARY_PROMPT,
     questionPlaceholder: 'Ask about this stay…',
     questionPrompt: 'Answer using only these Airbnb guest reviews. Give concrete details, pay attention to low-rated reviews, and note when guests disagree.',
     fetchReviews: async () => {
       if (!(await getActiveLLM()).key) throw new Error('Set an AI key in the TrueScore popup to summarize reviews.');
-      pendingReviews ??= fetchAirbnbReviewSample(listingId).catch((error) => { pendingReviews = null; throw error; });
-      const sample = await pendingReviews;
-      note.textContent = `Read ${sample.sampled} written reviews, including ${sample.lowRated} below five stars, from ${addCommas(sample.total)} total reviews.`;
+      const sample = await loadReviewSample();
       return sample.texts;
     },
   });
@@ -143,4 +154,5 @@ if (listingId) {
     const observer = new MutationObserver(() => { if (mountReviews()) observer.disconnect(); });
     observer.observe(document.body, { childList: true, subtree: true });
   }
+  void loadReviewSample().catch(() => {});
 }

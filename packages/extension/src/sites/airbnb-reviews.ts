@@ -2,7 +2,13 @@ const REVIEWS_HASH = 'cfdc3ffbe997a618795fc5a8f9a9b484054ce9be68c8788cd2ffda9999
 const PAGE_SIZE = 50; // Airbnb caps a reviews query at 50, even when asked for 100.
 const MAX_REVIEW_CHARS = 1500;
 
-type Review = { id?: string; rating?: number; comments?: string | null };
+type Review = {
+  id?: string;
+  rating?: number;
+  comments?: string | null;
+  localizedReview?: { comments?: string | null } | null;
+  localizedCommentV2?: { comments?: string | null } | null;
+};
 type ReviewPage = { reviews: Review[]; metadata?: { reviewsCount?: number } };
 export type AirbnbReviewSample = { texts: string[]; sampled: number; lowRated: number; total: number };
 
@@ -19,7 +25,7 @@ export const selectAirbnbReviewSample = (lowest: Review[], relevant: Review[], t
   for (const review of [...lowest, ...relevant]) {
     if (!review.id || seen.has(review.id)) continue;
     seen.add(review.id);
-    const text = reviewText(review.comments || '');
+    const text = reviewText(review.localizedReview?.comments || review.localizedCommentV2?.comments || review.comments || '');
     if (!text || !review.rating) continue;
     if (review.rating < 5) lowRated++;
     texts.push(`${review.rating}★ ${text}`);
@@ -36,9 +42,10 @@ const getApiKey = (): string | null => {
 const reviewPage = async (id: string, apiKey: string, sort: 'RATING_ASC' | 'BEST_QUALITY'): Promise<ReviewPage> => {
   const url = new URL(`/api/v3/StaysPdpReviewsQuery/${REVIEWS_HASH}`, location.origin);
   url.searchParams.set('operationName', 'StaysPdpReviewsQuery');
+  url.searchParams.set('locale', document.documentElement.lang || 'en');
   url.searchParams.set('variables', JSON.stringify({
     id: btoa(`StayListing:${id}`),
-    pdpReviewsRequest: { limit: PAGE_SIZE, offset: '0', first: PAGE_SIZE, sortingPreference: sort },
+    pdpReviewsRequest: { fieldSelector: 'for_p3_translation_only', forPreview: false, showingTranslationButton: false, limit: PAGE_SIZE, offset: '0', first: PAGE_SIZE, sortingPreference: sort },
   }));
   url.searchParams.set('extensions', JSON.stringify({ persistedQuery: { version: 1, sha256Hash: REVIEWS_HASH } }));
   const response = await fetch(url, {
