@@ -109,8 +109,8 @@ const pending = new Map<string, Promise<string | null>>();
 // One judgement per text — memoised, the rest asked in batches with each text
 // inside its own question. All or nothing: a count missing a failed batch would
 // understate, so any failure returns null and the caller keeps its old display.
-// `ask` builds the question for one text, `read` its answer.
-async function judge<T extends string>(kind: string, about: string, state: Record<string, unknown>, texts: string[], ask: (text: string) => Question, read: (answer: any) => T | undefined): Promise<T[] | null> {
+// `ask` builds the question for one text (and its index), `read` its answer.
+async function judge<T extends string>(kind: string, about: string, state: Record<string, unknown>, texts: string[], ask: (text: string, i: number) => Question, read: (answer: any) => T | undefined): Promise<T[] | null> {
   if (!jevAvailable()) return null;
   const memo = texts.map((t) => memoKey(kind, about, t));
   const out: (T | null)[] = memo.map((k) => (getMemo.get(k)?.v as T | undefined) ?? null);
@@ -127,7 +127,7 @@ async function judge<T extends string>(kind: string, about: string, state: Recor
   });
   const clipped = texts.map(clip);
   await Promise.all(batches(todo, clipped).map(async (batch) => {
-    const answers = await evaluate(kind, state, Object.fromEntries(batch.map((i, j) => [`r${j}`, ask(clipped[i]!)])));
+    const answers = await evaluate(kind, state, Object.fromEntries(batch.map((i, j) => [`r${j}`, ask(clipped[i]!, i)])));
     const now = Date.now();
     for (const [j, i] of batch.entries()) {
       const v = answers ? read(answers[`r${j}`]) : undefined;
@@ -147,6 +147,33 @@ const yesNo = (a: any): '1' | '0' | undefined => (typeof a?.noul === 'number' ? 
 export const stancesFor = (topic: string, texts: string[]): Promise<Stance[] | null> =>
   judge('stance', topic, { topic }, texts,
     (review) => choice({ question: 'How does this review talk about `topic`?', review }, STANCE_CRITERIA), inCriteria(STANCE_CRITERIA));
+
+// What each comment says of an Option (see web/tally.ts), as an answer to the
+// Thread's question and read with the comment it replies to, so a bare "this"
+// carries its parent's stance. `option` describes it for the model; `name` keys
+// the memo, so a re-listing that words the description differently reads nothing
+// twice.
+const OPTION_CRITERIA = {
+  praise: 'Recommends it to the asker, or speaks well of it as an answer',
+  complain: 'Advises against it, or speaks badly of it',
+  mixed: 'Speaks both well and badly of it, recommends it with a caveat that it may not suit what the asker needs, or mentions it without recommending it either way',
+  off: 'Never speaks of it, not even in other words (a nickname, a misspelling, one of their products), or speaks only of a different thing with a similar name',
+};
+const REPLY_CRITERIA = {
+  praise: 'Recommends it to the asker or speaks well of it, including by agreeing with `replying_to` where that recommends it ("this", "+1", "same")',
+  complain: 'Advises against it or speaks badly of it, including by disagreeing with `replying_to` where that recommends it',
+  mixed: 'Speaks both well and badly of it, recommends it with a caveat that it may not suit what the asker needs, or mentions it without recommending it either way',
+  off: 'Never speaks of it, neither in its own words nor by agreeing or disagreeing with `replying_to` about it, or speaks only of a different thing with a similar name',
+};
+export const optionStancesFor = (thread: string, name: string, option: string, comments: { text: string; parent?: string }[]): Promise<Stance[] | null> =>
+  judge('option', `${thread}\u0000${name}`, { thread, option }, comments.map((c) => `${c.parent ?? ''}\u0000${c.text}`),
+    (_, i) => {
+      const { text, parent } = comments[i]!;
+      return parent
+        ? choice({ question: 'How does this comment, a reply to `replying_to`, speak of `option` as an answer to `thread`?', comment: clip(text), replying_to: clip(parent) }, REPLY_CRITERIA)
+        : choice({ question: 'How does this comment speak of `option` as an answer to `thread`?', comment: clip(text) }, OPTION_CRITERIA);
+    },
+    inCriteria(OPTION_CRITERIA));
 
 // Each text's answer to an Ask's `question`.
 export const answersFor = (question: string, texts: string[]): Promise<Answer[] | null> =>

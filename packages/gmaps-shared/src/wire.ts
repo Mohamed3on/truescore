@@ -6,6 +6,7 @@
 import type { UIMessage } from 'ai';
 import type { ChipMeta, PlaceMeta, RemovedReviews, Review, SortStats } from './index';
 import type { Answer, AnswerCounts, Stance, StanceResult } from './stance';
+import type { Thread } from './thread';
 
 // ---- payloads ----
 
@@ -114,6 +115,23 @@ export type SearchEvent =
   | { type: 'search-summary'; summary: Summary }
   | { type: 'error'; error: string };
 
+// ---- /api/tally (NDJSON stream) ----
+// A Reddit Thread's Tally (CONTEXT.md). The model lists the Options first, then
+// each streams once Jev has read every comment naming it. `reads`: what each
+// counted comment says of it, by comment id, the comments behind its count. A
+// count holds each commenter once (for, against, or `mixed` when they say both
+// or neither), and the upvotes of the comments for and against.
+export type TallyCount = { for: number; against: number; mixed: number; upFor: number; upAgainst: number };
+export type TitleTally = { key: string; name: string; count: TallyCount; reads: Record<string, Stance> };
+// An Option with the narrower ones named under it (an instructor's courses).
+export type OptionTally = TitleTally & { titles: TitleTally[] };
+export type ListedOption = { key: string; name: string; titles: { key: string; name: string }[] };
+export type TallyEvent =
+  | { type: 'options'; options: ListedOption[] }
+  | { type: 'option'; option: OptionTally }
+  | { type: 'done' }
+  | { type: 'error'; error: string };
+
 // ---- /api/ask (AI SDK UI message stream) ----
 // An Ask is a chat: the question, then the model's message. Calling
 // searchReviews ends a round; the client runs the Search its own way and sends
@@ -183,6 +201,8 @@ export type SearchRequest = { featureId: string; query: string; force?: boolean;
 export type SearchMatches = { texts: string[]; scorePct: number; trustedReviews: number };
 // `messages`: the Ask so far (see AskMessage). `force`: skip a replayed Answer.
 export type AskRequest = { messages: AskMessage[]; featureId?: string; name?: string; reviewTexts?: string[]; filter?: string; removedReviews?: RemovedReviews | null; force?: boolean } & LlmOverrides;
+// The Thread as the page loaded it (threadFromListing).
+export type TallyRequest = { thread: Thread } & LlmOverrides;
 // `score` omits the per-review array — the web only needs the numbers to paint,
 // and a place's reviews run to megabytes. It is the extension's RAW score: the
 // removal penalty is applied by whoever renders, off their own preview meta, so

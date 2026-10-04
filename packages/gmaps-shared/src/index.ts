@@ -702,6 +702,9 @@ export * from './markdown';
 // What reviews say about a topic or a question, as Jev reads them on the server.
 export * from './stance';
 
+// A Reddit Thread as a Tally reads it.
+export * from './thread';
+
 // The topic row: topic chips and standouts pooled, ranked and animated alike.
 export * from './chip-row';
 

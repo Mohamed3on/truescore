@@ -32,6 +32,8 @@ import {
   type Summary,
   type SummarizeRequest,
   type SummarizeResponse,
+  type TallyEvent,
+  type TallyRequest,
 } from '@truescore/gmaps-shared';
 import type { BunRequest, Serve, Server } from 'bun';
 import { resolvePlace } from './resolve';
@@ -48,6 +50,7 @@ import index from './index.html';
 import login from './login.html';
 import { errStatus, NoReviews, resolveSubject, type Subject } from './summary-subject';
 import { answersFor, hasReceipts, jevAvailable, mentioning, preferredCount, stanceOfReviews, stancesFor, supportFor, withReceipts } from './jev';
+import { tallyThread, threadOf } from './tally';
 
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -880,6 +883,25 @@ Bun.serve({
           return corsJson({ support, preferredBy: preferredBy as number[] } satisfies ReceiptsResponse);
         } catch (e) {
           console.error('[receipts]', e);
+          return corsJson(errBody(e), 400);
+        }
+      },
+      OPTIONS: corsOptions,
+    },
+    // A Reddit Thread's Tally (see TallyEvent), for the extension: the Thread is
+    // what the page loaded, since Reddit turns this server away. 503 when Jev is
+    // off: without its reads there are no counts, and the model never counts.
+    '/api/tally': {
+      POST: async (req) => {
+        try {
+          const body = await req.json() as TallyRequest;
+          const thread = threadOf(body.thread);
+          if (!thread) return corsJson({ error: 'missing thread' }, 400);
+          if (!jevAvailable()) return corsJson({ error: 'unavailable' }, 503);
+          const overrides = { provider: parseProvider(body.provider), reasoningEffort: parseReasoningEffort(body.reasoningEffort) };
+          return ndjsonStream<TallyEvent>((write) => tallyThread(thread, write, overrides), { 'Access-Control-Allow-Origin': '*' });
+        } catch (e) {
+          console.error('[tally]', e);
           return corsJson(errBody(e), 400);
         }
       },

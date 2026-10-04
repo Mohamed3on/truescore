@@ -205,3 +205,38 @@ export async function ask({ placeName, reviewTexts, removedReviews }: Subject, m
     onFinish: ({ usage }) => report(provider, 'ask', usage),
   });
 }
+
+// ---- A Reddit Thread's Options (the Tally, CONTEXT.md) ----
+
+// Shape-only like HIGHLIGHTS_SCHEMA: what each field holds lives in the prompt.
+const OPTIONS_SCHEMA = z.object({
+  options: z.array(z.object({
+    name: z.string(),
+    aliases: z.array(z.string()),
+    titles: z.array(z.object({ name: z.string(), aliases: z.array(z.string()) })),
+  })),
+});
+export type ThreadOption = z.infer<typeof OPTIONS_SCHEMA>['options'][number];
+
+// The listing call's exact prompt, schema and output cap. The model only names
+// the Options and how the thread writes them; it never counts. Jev reads every
+// comment naming one (web/tally.ts), so a title's aliases must not repeat its
+// maker's, or every mention of the maker would be read as one of the title.
+export const optionsRequest = (question: string, comments: string[]) => ({
+  maxOutputTokens: 8192,
+  schema: OPTIONS_SCHEMA,
+  prompt: `Question:\n${question}\n\n---\n\nAnswers:\n\n${comments.join('\n\n')}\n\n---\n\nList the Options these answers recommend or warn against: the things the asker could choose, such as a product, a course, a place or a service. Include one even if a single answer names it, and one they only warn against.
+
+Use two levels when the answers name makers: each Option is the maker (a brand, a creator, a company) and its titles are the specific products, courses or models named under it. A thing with no maker named in the thread is an Option of its own, with no titles. Give each name in its usual full form ("Sony"; "WH-1000XM5").
+
+aliases: every other way the answers write it, exactly as written: first names, surnames, nicknames, abbreviations, misspellings, partial titles ("Sony's", "Sonys"; "XM5", "1000xm5"), so that searching for any of them finds every answer speaking of it. A title's aliases never include its maker's name alone, and an alias that could just as well mean another Option or title (a first name two of them share, a title two makers both use) is left out.
+
+Not Options: stores and marketplaces, general advice ("try before you buy"), kinds of thing ("wireless ones", "an open-back pair"), or the asker's own situation. Each Option and title once.`,
+});
+
+export async function listOptions(question: string, comments: string[], provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
+  const { model, providerOptions } = providerFor(provider, reasoningEffort);
+  const r = await generateObject({ model, providerOptions, ...optionsRequest(question, comments) });
+  report(provider, 'options', r.usage);
+  return r.object.options;
+}
