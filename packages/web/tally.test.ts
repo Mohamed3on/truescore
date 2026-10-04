@@ -34,6 +34,16 @@ describe('naming', () => {
     expect(naming(asked, ['Bose']).map((c) => c.id)).toEqual(['a']);
   });
 
+  test("a reply speaks of a title through its parent only when the parent names none of its rivals", () => {
+    const thread = threadWith([
+      comment('a', 'My Pixel 8 Pro is still great'),
+      comment('b', '8a here, works well', { parentId: 'a' }),
+      comment('c', 'Pixels hold value: I sold an 8 Pro and an 8a for good money'),
+      comment('d', 'agreed', { parentId: 'c' }),
+    ]);
+    expect(naming(thread, ['Pixel 8 Pro', '8 Pro'], ['Pixel 8a', '8a']).map((c) => c.id)).toEqual(['a', 'b', 'c']);
+  });
+
   test("only counted comments are read, though an uncounted one still lends its name to replies", () => {
     const thread = threadWith([
       comment('a', 'Bose', { score: 0 }),
@@ -124,6 +134,22 @@ describe('tallyOption', () => {
     expect(asked.find((q) => q.comment === 'The XM5 are great')).not.toHaveProperty('replying_to');
     expect(asked.some((q) => q.comment === 'Bose is the best')).toBe(false);
     expect(requests[0]!.state.option).toContain('WH-1000XM5');
+  });
+
+  test("a reply takes a title from its parent only when the parent names none of the maker's other titles", async () => {
+    const thread = threadWith([
+      comment('a', 'My Pixel 8 Pro is great'),
+      comment('b', 'same', { parentId: 'a' }),
+      comment('c', 'Pixels are great: I sold an 8 Pro and an 8a for good money'),
+      comment('d', 'same', { parentId: 'c' }),
+    ]);
+    const google = { name: 'Google', aliases: ['Pixel', 'Pixels'], titles: [{ name: 'Pixel 8 Pro', aliases: ['8 Pro'] }, { name: 'Pixel 8', aliases: [] }, { name: 'Pixel 8a', aliases: ['8a'] }] };
+    const t = await tallyOption(thread, 'Best phone?', google);
+    // b agrees with a, which names the 8 Pro alone (the Pixel 8 inside its name
+    // is no rival); d agrees with c, a case for Pixels made with two models.
+    expect(t!.titles.find((x) => x.name === 'Pixel 8 Pro')!.reads).toEqual({ a: 'praise', b: 'praise', c: 'praise' });
+    expect(t!.titles.find((x) => x.name === 'Pixel 8a')!.reads).toEqual({ c: 'praise' });
+    expect(t!.reads.d).toBe('praise');
   });
 
   test("two makers' titles of one name are read apart", async () => {

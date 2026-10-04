@@ -4,26 +4,29 @@
 // (fixtures/reddit/*.json) holds the page's raw `.json` listing, what each
 // comment says of each Option (`labels`), and every way the thread writes each
 // Option (`aliases`); the expected Tally is counted from the labels by the same
-// countOf the server uses.
+// countOf the server uses, for each Option and each of its titles.
 //
 //   bun evals/tally.ts                     # every fixture, on the production model
 //   bun evals/tally.ts --fixture=1p54awz   # just fixtures whose name contains it
 //   bun evals/tally.ts --provider=gemini   # the listing on another provider
 //   bun evals/tally.ts --why               # + each comment the reads and the labels disagree on
+//   bun evals/tally.ts --db=/tmp/ab.sqlite # reuse a run's listings and reads: a
+//                                          # second run re-reads only what changed
 //
 // Needs OPENAI_API_KEY (or the provider's key) and TYPESAFE_API_KEY. Runs on a
-// fresh sqlite file, so nothing listed or read before is reused.
+// fresh sqlite file unless --db names one, so nothing listed or read before is
+// reused.
 import { readdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { stripAccents, threadFromListing, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread } from '@truescore/gmaps-shared';
 
-process.env.TRUESCORE_CACHE_DB_PATH = join(tmpdir(), `truescore-tally-eval-${process.pid}.sqlite`);
+const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+process.env.TRUESCORE_CACHE_DB_PATH = arg('db') ?? join(tmpdir(), `truescore-tally-eval-${process.pid}.sqlite`);
 const { combine, countOf, tallyThread } = await import('../tally');
 const { spent } = await import('../jev');
 const { setOnUsage } = await import('../llm');
 
-const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const provider = (arg('provider') ?? 'openai') as 'openai' | 'gemini' | 'deepseek';
 const DIR = join(import.meta.dir, 'fixtures/reddit');
 
@@ -35,18 +38,19 @@ const speakers = (c: TallyCount) => c.for + c.against + c.mixed;
 const net = (c: TallyCount) => c.for - c.against;
 
 // The labels counted as the server counts Jev's reads: what each counted comment
-// says of each Option, its titles' stances included.
-const expectedOf = (thread: Thread, labels: Record<string, Label[]>) => {
+// says of each thing `subject` names, an Option (its titles' stances included)
+// or a title, among those named by two people or more, ranked.
+const expectedOf = (thread: Thread, labels: Record<string, Label[]>, subject: (l: Label) => string | null) => {
   const counted = new Set(thread.comments.filter((c) => !c.bot && c.score >= 1).map((c) => c.id));
-  const byOption = new Map<string, Record<string, Stance[]>>();
+  const bySubject = new Map<string, Record<string, Stance[]>>();
   for (const [id, ls] of Object.entries(labels)) {
     if (!counted.has(id)) continue;
-    for (const l of ls) ((byOption.get(l.option) ?? byOption.set(l.option, {}).get(l.option)!)[id] ??= []).push(l.stance);
+    for (const l of ls) { const k = subject(l); if (k) ((bySubject.get(k) ?? bySubject.set(k, {}).get(k)!)[id] ??= []).push(l.stance); }
   }
-  return [...byOption].map(([name, said]) => {
+  return [...bySubject].map(([name, said]) => {
     const reads = Object.fromEntries(Object.entries(said).map(([id, s]) => [id, combine(s)!]));
     return { name, reads, count: countOf(thread, reads) };
-  });
+  }).filter((o) => speakers(o.count) >= 2).sort((a, b) => net(b.count) - net(a.count) || a.count.against - b.count.against);
 };
 
 // A listed Option is the labelled one when their names, or a name and one of
@@ -61,14 +65,14 @@ const pad = (s: string | number, n: number) => String(s).padEnd(n);
 const fmt = (c?: TallyCount) => (c ? `${c.for}-${c.against}${c.mixed ? ` (${c.mixed}m)` : ''}` : '—');
 
 const files = readdirSync(DIR).filter((f) => f.endsWith('.json') && (!arg('fixture') || f.includes(arg('fixture')!)));
-const totals = { expected: 0, found: 0, extra: 0, countErr: 0, top1: 0, top5: 0, threads: 0 };
+const totals = { expected: 0, found: 0, extra: 0, countErr: 0, top1: 0, top5: 0, threads: 0, titles: 0, titlesFound: 0, titleErr: 0 };
 let llmIn = 0, llmOut = 0;
 setOnUsage((u) => { llmIn += u.inputTokens; llmOut += u.outputTokens; });
 
 for (const file of files) {
   const fx: Fixture = await Bun.file(join(DIR, file)).json();
   const thread = threadFromListing(fx.listing);
-  const expected = expectedOf(thread, fx.labels).filter((o) => speakers(o.count) >= 2).sort((a, b) => net(b.count) - net(a.count) || a.count.against - b.count.against);
+  const expected = expectedOf(thread, fx.labels, (l) => l.option);
   const t0 = performance.now();
   let listedAt = 0;
   const produced: OptionTally[] = [];
@@ -87,22 +91,34 @@ for (const file of files) {
     if (match) used.add(match);
     return { o, match };
   });
+  // Each labelled title, sought among its Option's match's titles.
+  const titleRows = new Map(rows.map(({ o, match }) => [o, expectedOf(thread, fx.labels, (l) => (l.option === o.name ? l.title : null)).map((t) => ({
+    o: t,
+    match: match?.titles.filter((p) => sameThing(p.name, [t.name, ...(fx.aliases[`${o.name} / ${t.name}`] ?? [])])).sort((a, b) => speakers(b.count) - speakers(a.count))[0],
+  }))]));
+  const titles = [...titleRows.values()].flat();
   const extra = produced.filter((p) => !used.has(p) && speakers(p.count) >= 2);
   const ranked = [...produced].filter((p) => speakers(p.count) >= 2).sort((a, b) => net(b.count) - net(a.count) || a.count.against - b.count.against);
   const top = (n: number) => new Set(ranked.slice(0, n));
   const found = rows.filter((r) => r.match);
-  const countErr = found.reduce((s, { o, match }) => s + Math.abs(o.count.for - match!.count.for) + Math.abs(o.count.against - match!.count.against), 0);
+  const titlesFound = titles.filter((r) => r.match);
+  const errOf = (rs: { o: { count: TallyCount }; match?: { count: TallyCount } }[]) =>
+    rs.reduce((s, { o, match }) => s + Math.abs(o.count.for - match!.count.for) + Math.abs(o.count.against - match!.count.against), 0);
+  const countErr = errOf(found), titleErr = errOf(titlesFound);
   const top5 = rows.slice(0, 5).filter((r) => r.match && top(5).has(r.match)).length;
   const top1 = rows[0]?.match && ranked[0] === rows[0].match ? 1 : 0;
 
   console.log(`\n${file}: ${thread.title}`);
   console.log(`  ${thread.comments.length} comments · first option at ${(listedAt / 1000).toFixed(1)}s · done in ${(took / 1000).toFixed(1)}s · ${produced.length} options listed${error ? ` · ERROR ${error}` : ''}`);
   console.log(`  ${pad('expected option (people for-against)', 44)}${pad('expected', 10)}${pad('produced', 12)}as`);
-  for (const { o, match } of rows) console.log(`  ${pad(o.name, 44)}${pad(fmt(o.count), 10)}${pad(fmt(match?.count), 12)}${match?.name ?? 'MISSING'}`);
+  for (const { o, match } of rows) {
+    console.log(`  ${pad(o.name, 44)}${pad(fmt(o.count), 10)}${pad(fmt(match?.count), 12)}${match?.name ?? 'MISSING'}`);
+    for (const t of titleRows.get(o)!) console.log(`    ${pad(t.o.name, 42)}${pad(fmt(t.o.count), 10)}${pad(fmt(t.match?.count), 12)}${t.match?.name ?? 'MISSING'}`);
+  }
   for (const p of extra) console.log(`  ${pad('(not labelled)', 44)}${pad('', 10)}${pad(fmt(p.count), 12)}${p.name}`);
   if (process.argv.includes('--why')) {
     const byId = new Map(thread.comments.map((c) => [c.id, c]));
-    for (const { o, match } of found) {
+    for (const { o, match } of [...found, ...titlesFound]) {
       const ids = new Set([...Object.keys(o.reads), ...Object.keys(match!.reads)]);
       for (const id of ids) {
         const want = o.reads[id], got = match!.reads[id];
@@ -113,13 +129,15 @@ for (const file of files) {
       }
     }
   }
-  console.log(`  found ${found.length}/${rows.length} · count error ${countErr} people · #1 ${top1 ? 'right' : 'WRONG'} · top-5 overlap ${top5}/${Math.min(5, rows.length)}`);
+  console.log(`  found ${found.length}/${rows.length} · count error ${countErr} people · #1 ${top1 ? 'right' : 'WRONG'} · top-5 overlap ${top5}/${Math.min(5, rows.length)} · titles found ${titlesFound.length}/${titles.length}, count error ${titleErr} people`);
   Object.assign(totals, {
     expected: totals.expected + rows.length, found: totals.found + found.length, extra: totals.extra + extra.length,
     countErr: totals.countErr + countErr, top1: totals.top1 + top1, top5: totals.top5 + top5, threads: totals.threads + 1,
+    titles: totals.titles + titles.length, titlesFound: totals.titlesFound + titlesFound.length, titleErr: totals.titleErr + titleErr,
   });
 }
 
 const jevTokens = Object.values(spent).reduce((a, n) => a + n, 0);
 console.log(`\n${totals.threads} threads · options found ${totals.found}/${totals.expected} · unlabelled extras ${totals.extra} · count error ${totals.countErr} people · #1 right ${totals.top1}/${totals.threads} · top-5 overlap ${totals.top5}`);
+console.log(`titles found ${totals.titlesFound}/${totals.titles} · count error ${totals.titleErr} people`);
 console.log(`cost: LLM ${llmIn} in / ${llmOut} out tokens (${provider}) · Jev ${jevTokens} in tokens ($${((jevTokens * 0.042) / 1e6).toFixed(4)})`);

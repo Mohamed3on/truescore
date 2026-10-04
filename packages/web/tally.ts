@@ -45,17 +45,23 @@ const keyOf = (name: string) => words(name).trim().replace(/ /g, '-');
 // The counted comments that name any of `names`, or reply to a comment (or, at
 // the top, a post) that does: a bare "this" speaks of what its parent named.
 // Only the parent: a reply further down a side conversation ("does it fold
-// flat?") can't be told apart from talk of another Option. Only these are
-// read, so the rest of a thread costs nothing.
-export const naming = (thread: Thread, names: string[]): ThreadComment[] => {
-  const needles = [...new Set(names.map(words))].filter((n) => n.trim().length > 1);
-  const says = (text: string) => needles.some((n) => text.includes(n));
+// flat?") can't be told apart from talk of another Option. Nor a parent that
+// names one of `rivals` too (a title's siblings): a reply to a brand's case
+// made with three of its models speaks of the brand, and Jev would hand its
+// agreement to each model. Only these are read, so the rest of a thread costs
+// nothing.
+export const naming = (thread: Thread, names: string[], rivals: string[] = []): ThreadComment[] => {
+  const sayer = (ns: string[]) => {
+    const needles = [...new Set(ns.map(words))].filter((n) => n.trim().length > 1);
+    return (text: string) => needles.some((n) => text.includes(n));
+  };
+  const says = sayer(names), rival = sayer(rivals);
   const byId = new Map(thread.comments.map((c) => [c.id, c]));
   const inPost = says(words(`${thread.title} ${thread.text}`));
   return thread.comments.filter((c) => {
     if (!countsInTally(c)) return false;
-    const parent = c.parentId ? byId.get(c.parentId) : undefined;
-    return says(words(c.body)) || (parent ? says(words(parent.body)) : !c.parentId && inPost);
+    const parent = c.parentId ? words(byId.get(c.parentId)?.body ?? '') : undefined;
+    return says(words(c.body)) || (parent !== undefined ? says(parent) && !rival(parent) : !c.parentId && inPost);
   });
 };
 
@@ -119,9 +125,9 @@ export const telling = (mine: string[], others: string[]): string[] => {
 // Jev's reads of the comments naming something, kept where they speak of it.
 // `name` keys the memo, so it holds the maker for a title: two makers' courses
 // can share a name.
-async function readsOf(thread: Thread, question: string, name: string, names: string[], description: string, others: string): Promise<Record<string, Stance> | null> {
+async function readsOf(thread: Thread, question: string, name: string, names: string[], description: string, others: string, rivals?: string[]): Promise<Record<string, Stance> | null> {
   const byId = new Map(thread.comments.map((c) => [c.id, c]));
-  const comments = naming(thread, names);
+  const comments = naming(thread, names, rivals);
   const stances = await optionStancesFor(question, name, description, others,
     comments.map((c) => ({ text: c.body, parent: c.parentId ? byId.get(c.parentId)?.body : undefined })));
   return stances && Object.fromEntries(comments.flatMap((c, i) => (stances[i] === 'off' ? [] : [[c.id, stances[i]!]])));
@@ -134,15 +140,22 @@ export const listedOf = (o: ThreadOption): ListedOption => {
 
 // One Option's Tally among the thread's `all`, null when Jev couldn't read it
 // all. A stance on one of its titles counts for the Option too (CONTEXT.md:
-// Option).
+// Option). A title's `others` add its maker's other titles and the maker at
+// large, so a reply naming a sibling ("8a here" under a Pixel 8 Pro) or
+// speaking of the whole brand reads as not about it.
 export async function tallyOption(thread: Thread, question: string, o: ThreadOption, all: ThreadOption[] = [o]): Promise<OptionTally | null> {
   const rest = all.filter((x) => x !== o);
-  const others = rest.map((x) => x.name).join(', ');
+  const others = rest.map((x) => x.name);
   const [own, ...titles] = await Promise.all([
-    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others),
-    ...o.titles.map((t) => readsOf(thread, question, `${o.name} / ${t.name}`,
-      telling([t.name, ...t.aliases], [...rest.flatMap(namesOf), ...o.titles.filter((x) => x !== t).flatMap((x) => [x.name, ...x.aliases])]),
-      `${titleOf(o, t)}${also(t.aliases)}`, others)),
+    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others.join(', ')),
+    ...o.titles.map((t) => {
+      const mine = [t.name, ...t.aliases];
+      const siblings = o.titles.filter((x) => x !== t);
+      const theirs = siblings.flatMap((x) => [x.name, ...x.aliases]);
+      return readsOf(thread, question, titleOf(o, t), telling(mine, [...rest.flatMap(namesOf), ...theirs]),
+        `${titleOf(o, t)}${also(t.aliases)}`, [...siblings.map((x) => titleOf(o, x)), `${o.name} in general`, ...others].join(', '),
+        telling(theirs, mine));
+    }),
   ]);
   if (!own || titles.some((r) => !r)) return null;
   const reads = Object.fromEntries([...new Set([own, ...titles].flatMap((r) => Object.keys(r!)))]
