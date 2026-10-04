@@ -1,7 +1,7 @@
-import { countsInTally, stripAccents, type ListedOption, type LlmOverrides, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type ThreadComment } from '@truescore/gmaps-shared';
+import { countsInTally, MIN_TALLY_PEOPLE, speakersOf, STANCE_MARKS, stripAccents, type ListedOption, type LlmOverrides, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type ThreadComment } from '@truescore/gmaps-shared';
 import { db } from './db';
 import { optionStancesFor } from './jev';
-import { listOptions, optionsRequest, type ThreadOption } from './llm';
+import { explainOptions, listOptions, optionsRequest, reasonsRequest, type ThreadOption } from './llm';
 
 // A Reddit Thread's Tally (CONTEXT.md). The model lists the Options and how the
 // thread writes them; Jev reads what each comment naming one says of it; the
@@ -181,10 +181,38 @@ async function listOptionsOf(thread: Thread, question: string, { provider, reaso
   putOptions.run(k, JSON.stringify(await listOptions(question, bodies, onOption, provider, reasoningEffort)), Date.now());
 }
 
+// Why each shown Option is rated as it is, a line each from the comments behind
+// its count, streamed as written and kept for the same comments and reads. A
+// failure costs nothing else: the counts are the Tally.
+db.run('CREATE TABLE IF NOT EXISTS tally_reasons (k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER NOT NULL)');
+const getReasons = db.prepare<{ v: string }, [string]>('SELECT v FROM tally_reasons WHERE k = ?');
+const putReasons = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO tally_reasons (k, v, ts) VALUES (?, ?, ?)');
+const QUOTE_CHARS = 800;
+
+async function reasonsOf(thread: Thread, question: string, tallies: OptionTally[], { provider, reasoningEffort }: LlmOverrides, write: (e: TallyEvent) => void): Promise<void> {
+  const byId = new Map(thread.comments.map((c) => [c.id, c]));
+  const groups = tallies.filter((t) => speakersOf(t.count) >= MIN_TALLY_PEOPLE).map((t) => ({
+    key: t.key,
+    option: t.name,
+    comments: Object.entries(t.reads).map(([id, s]) => `${STANCE_MARKS[s].text} ${byId.get(id)!.body.replace(/\s+/g, ' ').slice(0, QUOTE_CHARS)}`),
+  }));
+  if (!groups.length) return;
+  const k = `${thread.id}:${provider ?? ''}:${Bun.hash(reasonsRequest(question, groups).prompt).toString(36)}`;
+  const hit = getReasons.get(k);
+  if (hit) return void Object.entries(JSON.parse(hit.v) as Record<string, string>).forEach(([key, text]) => write({ type: 'why', key, text }));
+  try {
+    const reasons = await explainOptions(question, groups, (key, text) => { if (text.trim()) write({ type: 'why', key, text: text.trim() }); }, provider, reasoningEffort);
+    putReasons.run(k, JSON.stringify(reasons), Date.now());
+  } catch (e) {
+    console.warn('[tally] reasons failed:', e instanceof Error ? e.message : e);
+  }
+}
+
 // The whole Tally as a stream: each Option as soon as the model names it, then
-// each count once Jev has read it. Counting waits for the whole list, since a
-// name only picks comments once it's known no other Option shares it. Throws
-// when Jev couldn't read every comment, after streaming what it could.
+// each count once Jev has read it, then why each is rated as it is. Counting
+// waits for the whole list, since a name only picks comments once it's known no
+// other Option shares it. Throws when Jev couldn't read every comment, after
+// streaming what it could.
 export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void, overrides: LlmOverrides = {}): Promise<void> {
   const question = questionOf(thread);
   const options: ThreadOption[] = [];
@@ -201,5 +229,6 @@ export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void
     return t;
   }));
   if (tallies.some((t) => !t)) throw new Error("Couldn't read every comment right now — try again");
+  await reasonsOf(thread, question, tallies as OptionTally[], overrides, write);
   write({ type: 'done' });
 }

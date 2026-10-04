@@ -122,6 +122,10 @@ export type SearchEvent =
 // count holds each commenter once (for, against, or `mixed` when they say both
 // or neither), and the upvotes of the comments for and against.
 export type TallyCount = { for: number; against: number; mixed: number; upFor: number; upAgainst: number };
+// Fewer people than this speak of an Option and the drawer folds it into
+// "named once", with no reason written for it.
+export const MIN_TALLY_PEOPLE = 2;
+export const speakersOf = (c: TallyCount) => c.for + c.against + c.mixed;
 export type TitleTally = { key: string; name: string; count: TallyCount; reads: Record<string, Stance> };
 // An Option with the narrower ones named under it (an instructor's courses).
 export type OptionTally = TitleTally & { titles: TitleTally[] };
@@ -129,6 +133,9 @@ export type ListedOption = { key: string; name: string; titles: { key: string; n
 export type TallyEvent =
   | { type: 'listed'; option: ListedOption }
   | { type: 'option'; option: OptionTally }
+  // Why people back or warn against an Option, in a line, written from the
+  // comments behind its count once every Option is counted.
+  | { type: 'why'; key: string; text: string }
   | { type: 'done' }
   | { type: 'error'; error: string };
 

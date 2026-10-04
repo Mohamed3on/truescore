@@ -250,3 +250,34 @@ export async function listOptions(question: string, comments: string[], onOption
   report(provider, 'options', await listing.usage);
   return options;
 }
+
+// Why people back or warn against each Option, in a line, written only from
+// the comments that count for it (each marked ▲ for, ▼ against, ● mixed), so it
+// can't drift from the Tally beside it. Reasons, never counts. One field per
+// Option, under its key: given a list, the model wrote one line per course and
+// every line after it landed on the next Option.
+type ReasonGroup = { key: string; option: string; comments: string[] };
+export const reasonsRequest = (question: string, groups: ReasonGroup[]) => ({
+  maxOutputTokens: 4096,
+  schema: z.object(Object.fromEntries(groups.map((g) => [g.key, z.string()]))),
+  prompt: `Question:\n${question}\n\n---\n\n${groups.map((g) => `${g.key} (${g.option}):\n${g.comments.join('\n')}`).join('\n\n')}\n\n---\n\nUnder each option's key, say in one line of at most 20 words why these comments rate it well or badly: what they like about it and what they warn about, in their own reasons, not general knowledge. Describe the option; don't address the asker. No counts, shares or votes: those are shown beside it.`,
+});
+
+// Streams each line to `onReason` once the model has started the next key (the
+// model writes them in the schema's order), the last when it ends.
+export async function explainOptions(question: string, groups: ReasonGroup[], onReason: (key: string, why: string) => void, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Record<string, string>> {
+  const { model, providerOptions } = providerFor(provider, reasoningEffort);
+  const writing = streamObject({ model, providerOptions, ...reasonsRequest(question, groups) });
+  const keys = groups.map((g) => g.key);
+  let sent = 0;
+  for await (const partial of writing.partialObjectStream) {
+    while (sent < keys.length - 1 && (partial as Record<string, unknown>)[keys[sent + 1]!] !== undefined) {
+      onReason(keys[sent]!, String((partial as Record<string, unknown>)[keys[sent]!] ?? ''));
+      sent++;
+    }
+  }
+  const reasons = (await writing.object) as Record<string, string>;
+  while (sent < keys.length) { onReason(keys[sent]!, reasons[keys[sent]!] ?? ''); sent++; }
+  report(provider, 'reasons', await writing.usage);
+  return reasons;
+}
