@@ -68,7 +68,7 @@ setOnUsage((u) => { llmIn += u.inputTokens; llmOut += u.outputTokens; });
 for (const file of files) {
   const fx: Fixture = await Bun.file(join(DIR, file)).json();
   const thread = threadFromListing(fx.listing);
-  const expected = expectedOf(thread, fx.labels).filter((o) => speakers(o.count) >= 2).sort((a, b) => net(b.count) - net(a.count) || b.count.for - a.count.for);
+  const expected = expectedOf(thread, fx.labels).filter((o) => speakers(o.count) >= 2).sort((a, b) => net(b.count) - net(a.count) || a.count.against - b.count.against);
   const t0 = performance.now();
   let listedAt = 0;
   const produced: OptionTally[] = [];
@@ -88,7 +88,7 @@ for (const file of files) {
     return { o, match };
   });
   const extra = produced.filter((p) => !used.has(p) && speakers(p.count) >= 2);
-  const ranked = [...produced].filter((p) => speakers(p.count) >= 2).sort((a, b) => net(b.count) - net(a.count) || b.count.for - a.count.for);
+  const ranked = [...produced].filter((p) => speakers(p.count) >= 2).sort((a, b) => net(b.count) - net(a.count) || a.count.against - b.count.against);
   const top = (n: number) => new Set(ranked.slice(0, n));
   const found = rows.filter((r) => r.match);
   const countErr = found.reduce((s, { o, match }) => s + Math.abs(o.count.for - match!.count.for) + Math.abs(o.count.against - match!.count.against), 0);

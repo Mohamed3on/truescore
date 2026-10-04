@@ -46,7 +46,9 @@ const net = (c: TallyCount) => { const [a, b] = sides(c); return a - b; };
 // Fewer people than this speak of an Option and it folds into "named once".
 const MIN_PEOPLE = 2;
 const speakers = (c: TallyCount) => c.for + c.against + c.mixed;
-const byStanding = (a: TallyCount, b: TallyCount) => net(b) - net(a) || sides(b)[0] - sides(a)[0] || b.upFor - a.upFor;
+// Equal nets rank the less contested first (6–0 above 10–4): the one with fewer
+// against, which is the one with the higher share for.
+const byStanding = (a: TallyCount, b: TallyCount) => net(b) - net(a) || sides(a)[1] - sides(b)[1] || b.upFor - a.upFor;
 
 const figures = (c: TallyCount) => {
   const [a, b] = sides(c);
