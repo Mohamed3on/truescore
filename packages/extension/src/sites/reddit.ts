@@ -4,7 +4,7 @@
 // until the post's "tally" link or Alt+T asks. Old reddit gets the link among
 // the post's buttons and marks the counted comments in the thread; new Reddit a
 // pill under the post and the drawer alone.
-import { countsInTally, replaceChips, signedNet, STANCE_MARKS, threadFromListing, type ListedOption, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type TitleTally } from '@truescore/gmaps-shared';
+import { countsInTally, MIN_TALLY_PEOPLE, replaceChips, signedNet, speakersOf, STANCE_MARKS, threadFromListing, type ListedOption, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type TitleTally } from '@truescore/gmaps-shared';
 import { requestTally, tallyReady } from '../shared/tally';
 import { el } from '../shared/utils';
 
@@ -14,7 +14,8 @@ const button = (className: string, text?: string) => {
   return b;
 };
 
-type Row = { listed: ListedOption; tally?: OptionTally };
+// `why`: a line on why people rate it as they do, once the server has written it.
+type Row = { listed: ListedOption; tally?: OptionTally; why?: string };
 // The shortcut, as the keyboard labels it.
 const KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌥T' : 'Alt+T';
 type View = 'people' | 'upvotes';
@@ -43,9 +44,6 @@ let stop: (() => void) | null = null;
 
 const sides = (c: TallyCount): [number, number] => (view === 'people' ? [c.for, c.against] : [c.upFor, c.upAgainst]);
 const net = (c: TallyCount) => { const [a, b] = sides(c); return a - b; };
-// Fewer people than this speak of an Option and it folds into "named once".
-const MIN_PEOPLE = 2;
-const speakers = (c: TallyCount) => c.for + c.against + c.mixed;
 // Equal nets rank the less contested first (6–0 above 10–4): the one with fewer
 // against, which is the one with the higher share for.
 const byStanding = (a: TallyCount, b: TallyCount) => net(b) - net(a) || sides(a)[1] - sides(b)[1] || b.upFor - a.upFor;
@@ -202,7 +200,8 @@ const DRAWER_CSS = `:host { all: initial !important; }
 .ts-tally-opt,
 .ts-tally-title,
 .ts-tally-receipt { display: flex; align-items: baseline; gap: 8px; width: 100%; }
-.ts-tally-opt { padding: 8px 16px; }
+.ts-tally-opt { padding: 8px 16px; flex-wrap: wrap; }
+.ts-tally-why { flex-basis: 100%; color: var(--ts-ink-2); font-size: 11.5px; line-height: 1.4; }
 .ts-tally-opt:disabled { cursor: default; }
 .ts-tally-opt:hover:not(:disabled),
 .ts-tally-title:hover,
@@ -295,6 +294,7 @@ const rowEl = (row: Row) => {
   const head = button('ts-tally-opt');
   head.setAttribute('aria-expanded', String(isOpen));
   head.append(el('span', 'ts-tally-name', listed.name), tally ? figures(tally.count) : el('span', 'ts-tally-pending', 'reading…'));
+  if (row.why) head.append(el('span', 'ts-tally-why', row.why));
   head.disabled = !tally;
   head.addEventListener('click', () => {
     openKey = isOpen ? null : listed.key;
@@ -304,7 +304,7 @@ const rowEl = (row: Row) => {
   li.replaceChildren(head);
   if (isOpen) {
     const detail = el('div', 'ts-tally-detail');
-    const counted = tally.titles.filter((t) => speakers(t.count) > 0).sort((a, b) => byStanding(a.count, b.count));
+    const counted = tally.titles.filter((t) => speakersOf(t.count) > 0).sort((a, b) => byStanding(a.count, b.count));
     if (counted.length) {
       const titles = el('ul', 'ts-tally-titles');
       titles.append(...counted.map(titleRow));
@@ -318,14 +318,14 @@ const rowEl = (row: Row) => {
 };
 
 // An Option the model listed but no counted comment turns out to speak of isn't shown.
-const shown = () => rows.filter((r) => !r.tally || speakers(r.tally.count) > 0);
+const shown = () => rows.filter((r) => !r.tally || speakersOf(r.tally.count) > 0);
 
 const statusText = () => {
   const read = thread?.comments.filter(countsInTally).length ?? 0;
   const counted = rows.filter((r) => r.tally).length;
   const options = shown().length;
   if (phase === 'listing') return thread ? `Listing the options in ${read} comments…` : 'Loading the comments…';
-  if (phase === 'reading') return `Reading ${read} comments · ${counted} of ${rows.length} options counted…`;
+  if (phase === 'reading') return counted < rows.length || !rows.length ? `Reading ${read} comments · ${counted} of ${rows.length} options counted…` : 'Summing up why each is rated as it is…';
   if (phase === 'done') return options ? `${options} options · ${read} comments` : `No options to tally in ${read} comments`;
   return '';
 };
@@ -340,9 +340,9 @@ function render() {
     failBox.append(el('span', '', failure), retry);
   }
   const visible = shown();
-  const counted = visible.filter((r) => r.tally && speakers(r.tally.count) >= MIN_PEOPLE).sort((a, b) => byStanding(a.tally!.count, b.tally!.count));
+  const counted = visible.filter((r) => r.tally && speakersOf(r.tally.count) >= MIN_TALLY_PEOPLE).sort((a, b) => byStanding(a.tally!.count, b.tally!.count));
   const pending = visible.filter((r) => !r.tally);
-  const folded = visible.filter((r) => r.tally && speakers(r.tally.count) < MIN_PEOPLE).sort((a, b) => byStanding(a.tally!.count, b.tally!.count));
+  const folded = visible.filter((r) => r.tally && speakersOf(r.tally.count) < MIN_TALLY_PEOPLE).sort((a, b) => byStanding(a.tally!.count, b.tally!.count));
   replaceChips(list, [...counted, ...pending].map((r) => ({ key: r.listed.key, el: rowEl(r) })));
   onceList.replaceChildren(...folded.map(rowEl));
   onceLabel.textContent = `Named by one person · ${folded.length}`;
@@ -359,6 +359,9 @@ const onEvent = (e: TallyEvent) => {
   } else if (e.type === 'option') {
     const row = rows.find((r) => r.listed.key === e.option.key);
     if (row) row.tally = e.option;
+  } else if (e.type === 'why') {
+    const row = rows.find((r) => r.listed.key === e.key);
+    if (row) row.why = e.text;
   } else if (e.type === 'done') {
     phase = 'done';
   } else {
