@@ -23,11 +23,14 @@ export type SummaryHighlight = { text: string; sentiment: string; support?: numb
 // `alternatives`: proper names of OTHER places reviewers point to as somewhere
 // they'd go instead — kept apart from `items` because such a place scores low
 // here precisely because it's a rival, so auto-scoring it as a feature misleads.
-// Both optional — older cached summaries predate them. valueForMoney is unset
-// when a truncated reply was cut before it (summary-parse.salvageStructured).
+// Both optional — older cached summaries predate them.
+// `valueVotes`: how many reviews give each verdict on the price, a word of the
+// value rail or 'off' for none (web/jev.ts), and `valueForMoney` where those
+// that judge it put it on the rail, on average (1–5), unset when fewer than two
+// do. Both absent when unchecked.
 // `preferredBy`: per alternative, how many reviews say they'd rather go there;
 // an alternative fewer than two reviews prefer is dropped. Absent when unchecked.
-export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney?: number; items?: string[]; alternatives?: string[]; preferredBy?: Record<string, number> };
+export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney?: number; valueVotes?: Record<string, number>; items?: string[]; alternatives?: string[]; preferredBy?: Record<string, number> };
 
 export type Score = {
   featureId: string;

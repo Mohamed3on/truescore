@@ -7,26 +7,20 @@
 // the whole summary.
 //
 // The two summary shapes are genuinely different (the server extracts
-// highlights/items/alternatives/valueForMoney, the extension
+// highlights/items/alternatives, the extension
 // complaints/praised/conclusion/betterAlternative), so what is shared is not a
 // salvage *result* but the field readers underneath it. Each side builds its own
 // salvage on these; both stop throwing.
 //
 // Deliberately regex, not a streaming JSON parser: the input is malformed by
 // definition, and a parser that could handle it would be a bigger thing to trust
-// than the four readers below.
+// than the three readers below.
 
 /** Every `"field": "…"` string value. Undefined when the field never appeared. */
 export const salvageString = (text: string, field: string): string | undefined => {
   const m = text.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
   if (!m?.[1]) return undefined;
   try { return JSON.parse(`"${m[1]}"`) as string; } catch { return m[1]; }
-};
-
-/** A `"field": 12` numeric value. Undefined when absent or unreadable. */
-export const salvageNumber = (text: string, field: string): number | undefined => {
-  const m = text.match(new RegExp(`"${field}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`));
-  return m ? Number(m[1]) : undefined;
 };
 
 /**

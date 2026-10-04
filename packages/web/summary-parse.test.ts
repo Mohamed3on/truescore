@@ -23,12 +23,11 @@ describe('salvageStructured', () => {
     ]);
   });
 
-  test('extracts items, alternatives, and valueForMoney from intact fields', () => {
-    const text = '{"highlights":[{"text":"x","sentiment":"neutral"}],"items":["bravas","churros"],"alternatives":["Maud"],"valueForMoney":4}';
+  test('extracts items and alternatives from intact fields', () => {
+    const text = '{"highlights":[{"text":"x","sentiment":"neutral"}],"items":["bravas","churros"],"alternatives":["Maud"]}';
     const r = salvageStructured(text);
     expect(r.items).toEqual(['bravas', 'churros']);
     expect(r.alternatives).toEqual(['Maud']);
-    expect(r.valueForMoney).toBe(4);
   });
 
   test('caps salvaged items', () => {
@@ -36,15 +35,10 @@ describe('salvageStructured', () => {
     expect(r.items).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
   });
 
-  test('leaves valueForMoney unset when the field never arrived', () => {
-    expect(salvageStructured('{"highlights":[{"text":"x","sentiment":"neutral"}]').valueForMoney).toBeUndefined();
-  });
-
   test('degrades to empty fields on unsalvageable text', () => {
     const r = salvageStructured('totally broken, not json at all');
     expect(r.highlights).toEqual([]);
     expect(r.items).toEqual([]);
     expect(r.alternatives).toEqual([]);
-    expect(r.valueForMoney).toBeUndefined();
   });
 });

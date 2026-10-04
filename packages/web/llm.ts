@@ -86,9 +86,10 @@ const NOTES = `On factual disagreements (price, hours), trust the more recent re
 // Deliberately shape-only (plus the sentiment enum): an eval'd attempt to move
 // the field instructions into .describe() + min/max bounds regressed both
 // providers — nano leaked reasoning into items and named cities as
-// alternatives, gemini's highlights shrank and valueForMoney came back
-// Infinity. Field semantics and content hygiene (no duplicates, no placeholder
-// entries) live in structuredRequest's prompt; the code only caps the fan-out (capItems).
+// alternatives, gemini's highlights shrank. Field semantics and content hygiene
+// (no duplicates, no placeholder entries) live in structuredRequest's prompt;
+// the code only caps the fan-out (capItems). Value for money isn't asked for:
+// Jev reads it off each review's verdict on the price (jev.ts withReceipts).
 const HIGHLIGHTS_SCHEMA = z.object({
   highlights: z.array(
     z.object({
@@ -98,7 +99,6 @@ const HIGHLIGHTS_SCHEMA = z.object({
   ),
   items: z.array(z.string()),
   alternatives: z.array(z.string()),
-  valueForMoney: z.number().int(),
 });
 
 const reviewBlock = (texts: string[]) => texts.join('\n\n');
@@ -115,7 +115,7 @@ export const structuredRequest = ({ placeName, reviewTexts, removedReviews }: Su
   return {
     maxOutputTokens: 8192,
     schema: HIGHLIGHTS_SCHEMA,
-    prompt: `${reviewBlock(reviewTexts)}\n\n---\n\nExtract highlights about ${subjectOf(placeName, filterQuery)} and rate value for money 1-5 from pricing mentions.
+    prompt: `${reviewBlock(reviewTexts)}\n\n---\n\nExtract highlights about ${subjectOf(placeName, filterQuery)}.
 
 Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
 

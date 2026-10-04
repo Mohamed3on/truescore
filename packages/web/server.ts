@@ -677,7 +677,7 @@ Bun.serve({
           });
 
           // Its receipts are read before it's returned: a bullet never shows only to be dropped.
-          const summary = await withReceipts(await summarize(subject, filter, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
+          const summary = await withReceipts(summarize(subject, filter, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
           if (!filter && entry) await cache.putSummary(featureId, summary);
           return corsJson({ summary, cached: false } satisfies SummarizeResponse);
         } catch (e) {
@@ -764,7 +764,7 @@ Bun.serve({
             hint: 'pass reviewTexts in the body or run highlights first',
           });
 
-          const summary = await withReceipts(await summarize(subject, label, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
+          const summary = await withReceipts(summarize(subject, label, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
           if (entry) await cache.putHighlightSummary(featureId, token, summary);
           return corsJson({ summary, label, cached: false } satisfies HighlightSummaryResponse);
         } catch (e) {
@@ -829,7 +829,7 @@ Bun.serve({
                 const reviewTexts = textReviewsFor(result.reviews);
                 if (reviewTexts.length) {
                   const subject = { placeName: entry.name, reviewTexts, removedReviews: entry.meta?.removedReviews };
-                  result.summary = await withReceipts(await summarize(subject, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
+                  result.summary = await withReceipts(summarize(subject, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
                   write({ type: 'search-summary', summary: result.summary });
                   if (cacheable) await cache.putSearch(featureId, term, result);
                 }

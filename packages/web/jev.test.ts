@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { Review, Summary } from '@truescore/gmaps-shared';
-import { answersFor, setJevClient, stanceOfReviews, stancesFor, withReceipts } from './jev';
+import { answersFor, hasReceipts, setJevClient, stanceOfReviews, stancesFor, withReceipts } from './jev';
 
 // A fake Jev: answers each question by a rule over the review text inside it,
 // and records every request so a test can see what was asked and how batched.
@@ -111,6 +111,39 @@ describe('withReceipts', () => {
     const checked = await withReceipts(summary(['Rival Zoo', 'Other Zoo']), { placeName: 'Aquarium', reviewTexts });
     expect(checked.alternatives).toEqual(['Rival Zoo']);
     expect(checked.preferredBy).toEqual({ 'Rival Zoo': 2 });
+  });
+
+  // A review's verdict on the price by its words; bullets by pointRule.
+  const priceRule = (review: string, state: any, q: any) =>
+    q.type === 'choice'
+      ? { choice: /rip-off/.test(review) ? 'overpriced' : /worth it/.test(review) ? 'fair' : /great value/.test(review) ? 'good' : 'off' }
+      : pointRule(review, state);
+
+  test('value for money is where the reviews that judge the price sit on the rail, each verdict counted', async () => {
+    setJevClient(fake(priceRule));
+    const reviewTexts = [uniq('penguins, great value'), uniq('penguins worth it'), uniq('a rip-off'), uniq('parking was hard')];
+    const checked = await withReceipts(summary(), { placeName: 'Aquarium', reviewTexts });
+    expect(checked.valueForMoney).toBeCloseTo((4 + 3 + 1) / 3);
+    expect(checked.valueVotes).toEqual({ overpriced: 1, pricey: 0, fair: 1, good: 1, bargain: 0, off: 1 });
+    expect(requests.find((r) => r.state.place)!.state).toEqual({ place: 'Aquarium' });
+    expect(hasReceipts(checked)).toBe(true);
+  });
+
+  test('fewer than two reviews judging the price leave it unrated, over any rating the summary had', async () => {
+    setJevClient(fake(priceRule));
+    const checked = await withReceipts({ ...summary(), valueForMoney: 5 }, { placeName: 'Aquarium', reviewTexts: [uniq('penguins, great value'), uniq('penguins!')] });
+    expect(checked.valueForMoney).toBeUndefined();
+    expect(checked.valueVotes!.good).toBe(1);
+  });
+
+  test('the price is read while the summary is still being written', async () => {
+    setJevClient(fake(priceRule));
+    let write!: (s: Summary) => void;
+    const checking = withReceipts(new Promise<Summary>((resolve) => { write = resolve; }), { placeName: 'Aquarium', reviewTexts: [uniq('a rip-off')] });
+    await Bun.sleep(0);
+    expect(requests.map((r) => Object.keys(r.state))).toEqual([['place']]);
+    write(summary());
+    expect((await checking).valueVotes!.overpriced).toBe(1);
   });
 
   test('unchanged when Jev cannot check it', async () => {
