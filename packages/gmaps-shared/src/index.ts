@@ -702,6 +702,9 @@ export * from './markdown';
 // What reviews say about a topic or a question, as Jev reads them on the server.
 export * from './stance';
 
+// The topic row: topic chips and standouts pooled, ranked and animated alike.
+export * from './chip-row';
+
 // Reading fields out of JSON a model didn't finish writing — both packages hit
 // the same truncation against the same providers.
 export * from './json-salvage';

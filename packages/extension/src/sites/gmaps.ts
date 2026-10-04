@@ -41,7 +41,6 @@ import {
   reviewAge,
   displayScore,
   selectScoredChips,
-  sortChipsByImpact,
   sortedDisplayReviews,
   starString,
   statsForReviews,
@@ -58,10 +57,15 @@ import {
   answersOf,
   bySupport,
   countAnswers,
-  opinionPct,
   opinionsOf,
   opinionTone,
   tooFewMentions,
+  chipRowOrder,
+  pooledReads,
+  replaceChips,
+  SCORED_CHIP_MIN_REVIEWS,
+  type ChipState,
+  type StanceCounts,
   type AnswerCounts,
   type Stance,
   type StanceResult,
@@ -88,7 +92,6 @@ type CardEls = {
   highlightsList?: HTMLElement;
   highlightsBtn?: HTMLButtonElement;
   highlightsStale?: HTMLElement;
-  standoutsSection?: HTMLElement;
   alternativesSection?: HTMLElement;
   removedNotice?: HTMLElement;
   chipPanel?: HTMLElement;
@@ -131,10 +134,12 @@ const standoutScoreInflight = new Set<string>();
 // pulsing forever) are display-only — a transient blip must not persist as a
 // permanent 0%, so saveScoredCache skips these keys.
 const standoutScoreTransient = new Set<string>();
-// The reviews fetched to score each chip, kept (in-memory) so clicking the chip
-// reuses them instead of re-running the same label search. Not persisted —
-// reviews are heavy; after a reload the first click refetches.
-const standoutReviewsCache = new Map<string, Review[]>();
+// The reviews fetched to score each chip, with Jev's reads of them, kept
+// (in-memory) so clicking the chip reuses them instead of re-running the same
+// label search, and a topic it names pools them. Not persisted — reviews are
+// heavy; after a reload the first click refetches.
+type ItemReviews = { reviews: Review[]; stances?: Record<string, Stance> };
+const standoutReviewsCache = new Map<string, ItemReviews>();
 // Each label-search term's matches (in-memory, per place), so a query sharing
 // terms with an earlier one — an Ask's `dog OR Hund` after a typed `dog`, a
 // standout chip re-scored — only searches its new terms. Dropped with the
@@ -545,6 +550,7 @@ const resetScores = () => {
   staleHistogramKey = lastHistogramKey;
   lastHistogramKey = null;
   highlightCandidates = [];
+  topicOrder = [];
   activeRemovedReviews = null;
   activeGoogleReviewCount = null;
   removedNoticeCheckedFor = null;
@@ -1253,70 +1259,128 @@ const startFetching = async () => {
 const cardEls: CardEls = {};
 const clearCardEls = () => { for (const k of Object.keys(cardEls) as (keyof CardEls)[]) delete cardEls[k]; };
 
+// A chip in the topic row or the alternatives' row: its label, then what its
+// reviews say once Jev has read them, else its star share graded against the
+// place's own score, then how many reviews it has.
+type ChipStats = { stance?: StanceCounts; of?: number; score?: { scorePct: number }; count: number };
+const chipEl = (label: string, c: ChipStats, overall: number, onClick: () => void, cls?: string) => {
+  const chip = el('button', cls ? `rc-chip ${cls}` : 'rc-chip') as HTMLButtonElement;
+  chip.type = 'button';
+  chip.appendChild(el('span', 'rc-chip-label', label));
+  if (c.stance) {
+    const o = opinionsOf(c.stance, c.of);
+    chip.append(...opinionNumbers(o, CHIP_NUMBERS));
+    chip.title = o.title;
+    chip.setAttribute('aria-label', `${label}: ${opinionsLabel(o)}`);
+  } else {
+    if (c.score) chip.appendChild(el('span', `rc-chip-pct ${chipPolarity(c.score.scorePct, overall)}`, `${c.score.scorePct}%`));
+    chip.appendChild(el('span', 'rc-chip-count', `·${c.count}`));
+  }
+  chip.onclick = onClick;
+  return chip;
+};
+// One still scoring, its "…" pulsing until the score lands. A label search's
+// can be run before then; a topic's waits.
+const pendingChip = (label: string, count?: number, onClick?: () => void, cls?: string) => {
+  const chip = el('button', cls ? `rc-chip ${cls} rc-chip-pending` : 'rc-chip rc-chip-pending') as HTMLButtonElement;
+  chip.type = 'button';
+  chip.appendChild(el('span', 'rc-chip-label', label));
+  chip.appendChild(el('span', 'rc-chip-pct rc-chip-scoring', '…'));
+  if (count != null) chip.appendChild(el('span', 'rc-chip-count', `·${count}`));
+  if (onClick) chip.onclick = onClick;
+  else chip.disabled = true;
+  return chip;
+};
+const itemStats = (s: ScoredStats): ChipStats => ({ stance: s.stance, of: s.of, score: s, count: s.totalReviews });
+
+// Topic chips and standouts share one row, ranked together: Jev reads both the
+// same way, so one order fits both, and a standout naming a topic pools into it
+// (pooledView). While anything is still loading the row keeps its order,
+// newcomers joining at the end; once everything is in it sorts once (chipRowOrder).
+let topicOrder: string[] = [];
 const renderHighlights = () => {
   const list = cardEls.highlightsList;
   const btn = cardEls.highlightsBtn;
   if (!list) return;
-  while (list.firstChild) list.removeChild(list.firstChild);
   const items = highlightsState?.items ?? [];
   const scoredTokens = new Set(items.map((i) => i.token));
-  // Candidates whose score hasn't landed yet — rendered after the scored chips
-  // as pulsing placeholders, then replaced inline once their fetch resolves.
+  // Candidates whose score hasn't landed yet — pulsing placeholders until their
+  // fetch resolves.
   const loading = highlightCandidates.filter((c) => !scoredTokens.has(c.token));
-  // computeHighlights owns the button label ('Computing X/N') while it runs.
+  // computeHighlights owns the button label ('Computing X/N', 'No highlights').
   const computing = highlightsComputingFor === getFeatureId();
-  if (!items.length && !loading.length) {
-    if (btn && !computing) {
-      btn.disabled = false;
-      btn.textContent = 'Compute Highlights';
-    }
-    return;
-  }
-  if (btn && !computing) {
+  if (btn && !computing && (items.length || loading.length)) {
     btn.disabled = false;
     btn.textContent = 'Refresh';
   }
   // Graded against the card's headline, which is the server's when it scored the place.
   const merged = store.mergedStats(currentOption);
   const overall = toPct(!merged.totalCount && serverScore && currentOption === 'total' ? serverScore.ratio ?? serverScore.scorePct / 100 : merged.mergedPct);
-  // With every chip read, they're ordered by what reviewers say rather than by
-  // star share against the place's own score.
-  // A topic fewer than two reviews actually speak to is dropped, as a scored chip is.
-  const kept = items.filter((h) => !h.stance || !tooFewMentions(opinionsOf(h.stance)));
-  const sorted = kept.every((h) => h.stance)
-    ? sortChipsByImpact(kept.map((h) => { const o = opinionsOf(h.stance!); return { h, score: { scorePct: opinionPct(o) }, count: o.pos + o.neg }; }), 0).map((x) => x.h)
-    : sortChipsByImpact(kept, overall);
-  for (const h of sorted) {
-    const chip = el('button', 'rc-chip') as HTMLButtonElement;
-    chip.type = 'button';
-    const label = el('span', 'rc-chip-label', h.label);
-    chip.appendChild(label);
-    if (h.stance) {
-      const o = opinionsOf(h.stance, h.of);
-      chip.append(...opinionNumbers(o, CHIP_NUMBERS));
-      chip.title = o.title;
-      chip.setAttribute('aria-label', `${h.label}: ${opinionsLabel(o)}`);
-    } else {
-      if (h.score) {
-        const pctEl = el('span', `rc-chip-pct ${chipPolarity(h.score.scorePct, overall)}`, `${h.score.scorePct}%`);
-        chip.appendChild(pctEl);
-      }
-      chip.appendChild(el('span', 'rc-chip-count', `·${h.count}`));
-    }
-    if (activeHighlight?.token === h.token) chip.classList.add('rc-chip-active');
-    chip.onclick = () => onChipClick(h);
-    list.appendChild(chip);
+  const ctx = scoredCtx.standouts?.featureId === getFeatureId() ? scoredCtx.standouts : null;
+  const standouts = new Map(ctx?.items.map((item) => [item.toLowerCase(), item]));
+  const at = (key: string) => `${ctx?.featureId}|${key}`;
+  const rows: (ChipStats & { key: string; state: ChipState; el: HTMLButtonElement })[] = [];
+  let settled = !computing;
+  for (const h of items) {
+    const key = h.label.toLowerCase();
+    const item = standouts.get(key);
+    standouts.delete(key);
+    const view = ctx && item && standoutScoreCache.has(at(key)) ? pooledView(h, ctx.featureId, item) : h;
+    if (!view || (item && standoutScoreInflight.has(at(key)))) settled = false;
+    const c = view ?? h;
+    // A topic fewer than two reviews actually speak to is dropped, as a scored chip is.
+    if (c.stance && tooFewMentions(opinionsOf(c.stance))) continue;
+    const chip = chipEl(c.label, c, overall, () => onChipClick(c));
+    if (activeHighlight?.token === c.token) chip.classList.add('rc-chip-active');
+    rows.push({ ...c, key, state: 'done', el: chip });
   }
   for (const c of loading) {
-    const chip = el('button', 'rc-chip rc-chip-pending') as HTMLButtonElement;
-    chip.type = 'button';
-    chip.disabled = true;
-    chip.appendChild(el('span', 'rc-chip-label', c.label));
-    chip.appendChild(el('span', 'rc-chip-pct rc-chip-scoring', '…'));
-    chip.appendChild(el('span', 'rc-chip-count', `·${c.count}`));
-    list.appendChild(chip);
+    const key = c.label.toLowerCase();
+    standouts.delete(key);
+    rows.push({ key, state: 'loading', count: c.count, el: pendingChip(c.label, c.count) });
   }
+  for (const [key, item] of standouts) {
+    const stats = standoutScoreCache.get(at(key));
+    const search = () => triggerLabelSearchFor(item);
+    if (!stats) {
+      // One whose search couldn't run at all is left out.
+      if (!standoutScoreInflight.has(at(key))) continue;
+      settled = false;
+      rows.push({ key, state: 'loading', count: 0, el: pendingChip(item, undefined, search) });
+    } else if (stats.stance ? !tooFewMentions(opinionsOf(stats.stance)) : stats.totalReviews >= SCORED_CHIP_MIN_REVIEWS) {
+      const c = itemStats(stats);
+      rows.push({ ...c, key, state: 'done', el: chipEl(item, c, overall, search) });
+    }
+  }
+  const order = chipRowOrder(rows, topicOrder, settled, overall);
+  topicOrder = order.map((r) => r.key);
+  replaceChips(list, order);
   updateHighlightsStaleBadge();
+};
+
+// A topic and a standout naming the same thing, pooled into one chip
+// (pooledReads). Neither keeps its reviews across a reload, so a missing side is
+// fetched first, the topic showing as it was until then — and staying so if it
+// never comes.
+const poolFetches = new WeakMap<Highlight, 'waiting' | 'done'>();
+const pooledViews = new WeakMap<Highlight, { s: ItemReviews; view: Highlight }>();
+const pooledView = (h: Highlight, featureId: string, item: string): Highlight | null => {
+  const s = standoutReviewsCache.get(`${featureId}|${item.toLowerCase()}`);
+  if (!h.reviews || !s) {
+    const fetched = poolFetches.get(h);
+    if (fetched === 'done') return h;
+    if (!fetched) {
+      poolFetches.set(h, 'waiting');
+      void Promise.all([ensureChipReviews(h), ensureScored(featureId, [item], 'standouts', true)])
+        .finally(() => { poolFetches.set(h, 'done'); renderHighlights(); });
+    }
+    return null;
+  }
+  const kept = pooledViews.get(h);
+  if (kept?.s === s) return kept.view;
+  const view = { ...h, ...pooledReads(h, s) };
+  pooledViews.set(h, { s, view });
+  return view;
 };
 
 const onChipClick = (h: Highlight) => {
@@ -1508,6 +1572,9 @@ const summarizeActiveChip = async () => {
   try {
     const result = await summarizeReviews(texts, h.label);
     h.summary = result;
+    // A pooled chip's summary is its topic's (pooledView copies the topic chip).
+    const topic = highlightsState?.items.find((x) => x.token === h.token);
+    if (topic) topic.summary = result;
     saveHighlightsCache();
     body.className = 'rc-chip-body';
     renderSummary(body, result);
@@ -1804,15 +1871,8 @@ const createUIElements = () => {
   cardEls.highlightsStale = hlStale;
   if (highlightsState && highlightsState.items.length) renderHighlights();
 
-  // Standouts (praised items from the summary) sit right under Highlights — both
-  // are scored topic chips, so they read as one group. Populated by renderSummary.
-  const soSec = el('div', 'rc-standouts');
-  soSec.style.display = 'none';
-  c.appendChild(soSec);
-  cardEls.standoutsSection = soSec;
-
-  // Better-alternatives chips, directly under Standouts — same chip group, but
-  // their own labelled row. Populated by renderSummary.
+  // Better-alternatives chips, directly under the topic row the standouts join —
+  // the same kind of chip, but their own labelled row. Populated by renderSummary.
   const altSec = el('div', 'rc-alternatives');
   altSec.style.display = 'none';
   c.appendChild(altSec);
@@ -2064,22 +2124,11 @@ const updateUI = () => {
 
 // Standouts (praised items) and Better-alternatives (rival places) are the same
 // kind of chip group: each item is a label-search term, auto-scored by a label
-// search, shown with its score, most-mentioned first; clicking pre-fills the
-// searchbox and runs that search. They differ only in section/label/classes.
-const SCORED_GROUPS = {
-  standouts: { label: 'Standouts', labelClass: 'rc-standouts-label', listClass: 'rc-standouts-list', chipClass: 'rc-standout-chip', section: () => cardEls.standoutsSection },
-  alternatives: { label: 'Better alternatives', labelClass: 'rc-alternatives-label', listClass: 'rc-alternatives-list', chipClass: 'rc-alternative-chip', section: () => cardEls.alternativesSection },
-} as const;
-type ScoredKind = keyof typeof SCORED_GROUPS;
+// search; clicking pre-fills the searchbox and runs that search. Standouts join
+// the topic chips' row (renderHighlights); alternatives keep a labelled row of
+// their own, most-mentioned first.
+type ScoredKind = 'standouts' | 'alternatives';
 const scoredCtx: Record<ScoredKind, { items: string[]; featureId: string } | null> = { standouts: null, alternatives: null };
-
-const paintScoredChip = (pct: HTMLElement, count: HTMLElement, stats: SortStats, overall: number) => {
-  pct.textContent = `${stats.scorePct}%`;
-  // Unread, binary green/red like the topic chips, not getDiffColor's relative gradient —
-  // that can't reach green when the place overall is already high.
-  pct.style.color = chipPolarity(stats.scorePct, overall) === 'pos' ? '#4ADE80' : '#F87171';
-  count.textContent = `·${stats.totalReviews}`;
-};
 
 const triggerLabelSearchFor = (item: string) => {
   const input = cardEls.searchInput;
@@ -2088,7 +2137,7 @@ const triggerLabelSearchFor = (item: string) => {
   input.value = item;
   input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   const featureId = getFeatureId();
-  const cached = featureId ? standoutReviewsCache.get(`${featureId}|${item.toLowerCase()}`) : undefined;
+  const cached = featureId ? standoutReviewsCache.get(`${featureId}|${item.toLowerCase()}`)?.reviews : undefined;
   if (cached?.length) {
     // Reuse the reviews already fetched to score this chip — no second search.
     labelSearchSeq++;
@@ -2099,10 +2148,11 @@ const triggerLabelSearchFor = (item: string) => {
   }
 };
 
-// Drop a group's section — no summary, or none of its items cleared the ≥2 gate.
+// Drop a group — no summary, or none of its items cleared the ≥2 gate.
 const clearScored = (kind: ScoredKind) => {
   scoredCtx[kind] = null;
-  const section = SCORED_GROUPS[kind].section();
+  if (kind === 'standouts') return renderHighlights();
+  const section = cardEls.alternativesSection;
   if (section) { section.textContent = ''; section.style.display = 'none'; }
 };
 
@@ -2112,8 +2162,8 @@ const clearScored = (kind: ScoredKind) => {
 // each label search resolves, so scores fill in inline and a chip that lands
 // below 2 mentions drops out. Hidden only once nothing is left to show.
 const redrawScored = (kind: ScoredKind) => {
-  const cfg = SCORED_GROUPS[kind];
-  const section = cfg.section();
+  if (kind === 'standouts') return renderHighlights();
+  const section = cardEls.alternativesSection;
   const ctx = scoredCtx[kind];
   if (!section || !ctx) return;
   const { items, featureId } = ctx;
@@ -2125,40 +2175,25 @@ const redrawScored = (kind: ScoredKind) => {
   const pending = rows.filter((x) => !x.stats);
   if (!scored.length && !pending.length) { section.style.display = 'none'; return; }
   section.style.display = '';
-  section.appendChild(el('span', cfg.labelClass, cfg.label));
-  const list = el('div', cfg.listClass);
+  section.appendChild(el('span', 'rc-alternatives-label', 'Better alternatives'));
+  const list = el('div', 'rc-alternatives-list');
   for (const { item, stats } of [...scored, ...pending]) {
-    const chip = el('button', `rc-chip ${cfg.chipClass}`) as HTMLButtonElement;
-    chip.type = 'button';
-    chip.appendChild(el('span', 'rc-chip-label', item));
-    if (stats?.stance) {
-      const o = opinionsOf(stats.stance, stats.of);
-      chip.append(...opinionNumbers(o, CHIP_NUMBERS));
-      chip.title = o.title;
-      chip.setAttribute('aria-label', `${item}: ${opinionsLabel(o)}`);
-    } else if (stats) {
-      const pct = el('span', 'rc-chip-pct');
-      const count = el('span', 'rc-chip-count');
-      paintScoredChip(pct, count, stats, overall);
-      chip.appendChild(pct);
-      chip.appendChild(count);
-    } else {
-      chip.classList.add('rc-chip-pending');
-      chip.appendChild(el('span', 'rc-chip-pct rc-chip-scoring', '…'));
-    }
-    chip.onclick = () => triggerLabelSearchFor(item);
-    list.appendChild(chip);
+    const search = () => triggerLabelSearchFor(item);
+    list.appendChild(stats ? chipEl(item, itemStats(stats), overall, search, 'rc-alternative-chip') : pendingChip(item, undefined, search, 'rc-alternative-chip'));
   }
   section.appendChild(list);
 };
 
-const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
+// `withReviews` searches again for an item scored on an earlier visit, whose
+// reviews weren't kept: a topic it names pools them.
+const ensureScored = (featureId: string, items: string[], kind: ScoredKind, withReviews = false) => {
   const limit = createLimiter(HIGHLIGHT_FETCH_CONCURRENCY);
+  const runs: Promise<void>[] = [];
   for (const item of items) {
     const key = `${featureId}|${item.toLowerCase()}`;
-    if (standoutScoreCache.has(key) || standoutScoreInflight.has(key)) continue;
+    if ((withReviews ? standoutReviewsCache : standoutScoreCache).has(key) || standoutScoreInflight.has(key)) continue;
     standoutScoreInflight.add(key);
-    limit(async () => {
+    runs.push(limit(async () => {
       try {
         const reviews = await fetchAllForSearch(featureId, item);
         // null = neither this tab nor the server could search: leave the chip
@@ -2173,7 +2208,7 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
         // Read before the chip shows, so a star share never paints only to be replaced.
         const read = await readStanceOf(item, reviews);
         standoutScoreCache.set(key, { ...statsForReviews(reviews), ...(read && { stance: read.stance, of: read.of }) });
-        standoutReviewsCache.set(key, reviews);
+        standoutReviewsCache.set(key, { reviews, stances: read?.stances });
         saveScoredCache();
         if (getFeatureId() === featureId) redrawScored(kind);
       } catch (e) {
@@ -2186,15 +2221,18 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind) => {
       } finally {
         standoutScoreInflight.delete(key);
       }
-    });
+    }));
   }
+  return Promise.all(runs);
 };
 
 const renderScoredGroup = (kind: ScoredKind, items: string[]) => {
   const featureId = getFeatureId();
   scoredCtx[kind] = featureId ? { items, featureId } : null;
-  redrawScored(kind);
+  // Scoring starts first, so the redraw tells an item still scoring from one
+  // whose search couldn't run.
   if (featureId) ensureScored(featureId, items, kind);
+  redrawScored(kind);
 };
 
 // Persist the chip auto-search scores per place, like the highlights cache, so

@@ -692,29 +692,6 @@
   animation: rc-pulse 1.4s ease-in-out infinite;
 }
 
-/* Standouts section — its own block right under Highlights (rc-standout-chip
-   reuses .rc-chip; % takes .rc-chip-pct's tones once read, else is colored inline). */
-.rc-standouts {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-.rc-standouts-label {
-  display: block;
-  font-family: 'IBM Plex Mono', monospace;
-  font-weight: 500;
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.5);
-  margin-bottom: 8px;
-}
-.rc-standouts-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
 /* Better-alternative places (rival venues reviewers name) — chips that run a
    label search on click, like the standouts, but in their own row and never
    auto-scored. A teal-tinted border marks them apart from the standout chips. */
