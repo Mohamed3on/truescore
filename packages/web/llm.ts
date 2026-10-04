@@ -86,10 +86,9 @@ const NOTES = `On factual disagreements (price, hours), trust the more recent re
 // Deliberately shape-only (plus the sentiment enum): an eval'd attempt to move
 // the field instructions into .describe() + min/max bounds regressed both
 // providers — nano leaked reasoning into items and named cities as
-// alternatives, gemini's highlights shrank. Field semantics and content hygiene
-// (no duplicates, no placeholder entries) live in structuredRequest's prompt;
-// the code only caps the fan-out (capItems). Value for money isn't asked for:
-// Jev reads it off each review's verdict on the price (jev.ts withReceipts).
+// alternatives, gemini's highlights shrank and valueForMoney came back
+// Infinity. Field semantics and content hygiene (no duplicates, no placeholder
+// entries) live in structuredRequest's prompt; the code only caps the fan-out (capItems).
 const HIGHLIGHTS_SCHEMA = z.object({
   highlights: z.array(
     z.object({
@@ -99,6 +98,7 @@ const HIGHLIGHTS_SCHEMA = z.object({
   ),
   items: z.array(z.string()),
   alternatives: z.array(z.string()),
+  valueForMoney: z.number().int().nullable(),
 });
 
 const reviewBlock = (texts: string[]) => texts.join('\n\n');
@@ -115,9 +115,17 @@ export const structuredRequest = ({ placeName, reviewTexts, removedReviews }: Su
   return {
     maxOutputTokens: 8192,
     schema: HIGHLIGHTS_SCHEMA,
-    prompt: `${reviewBlock(reviewTexts)}\n\n---\n\nExtract highlights about ${subjectOf(placeName, filterQuery)}.
+    prompt: `${reviewBlock(reviewTexts)}\n\n---\n\nExtract highlights about ${subjectOf(placeName, filterQuery)} and rate its value for money.
 
 Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
+
+valueForMoney: what reviewers say about the price for what they got, from the reviews alone, never general knowledge:
+1 overpriced: it costs too much for what you get (a rip-off, not worth the money)
+2 pricey: expensive, without saying whether it's worth it
+3 fair: the price matches what you get (fair, reasonable, or expensive but worth it)
+4 good: you get a lot for the price (good or great value)
+5 bargain: very cheap for what you get (a steal)
+Weigh every review that judges the price by how many say each; when they're split, land between the sides. A price named without a verdict ("€14 for brunch") doesn't judge it. null when fewer than two reviews judge the price.
 
 Also list items: up to ${MAX_SCORED_ITEMS} concrete things reviewers single out as what this place is known for — animals, exhibits, rides, dishes, products, a viewpoint, a named feature, anything specific people come for. Give each as a short label-search keyword biased toward recall: the term is searched against all reviews, so prefer the broadest word reviewers actually repeat — a term only one or two reviews contain makes a useless chip. One word when possible; drop prices, sizes, and qualifiers ("brunch menu €14" → "brunch", "Western Lowland Gorilla" → "gorilla"). Spell normally — never glue words together ("patatas bravas" → "bravas", not "patatasbravas"). Split a compound like "salmon avocado toast" into "salmon", "avocado". Keep a phrase only when the bare word is too ambiguous to search ("dirty" alone catches "dirty table", so "dirty burger"; "dulce de leche", not "leche"). Skip generic qualities every place has — service, staff, cleanliness, value. These must be things at THIS place. Empty list if nothing specific stands out.
 
@@ -156,7 +164,7 @@ ${NOTES}${removal ? `\n\n${removal}` : ''}`;
     generateObject({ model, providerOptions, ...structuredRequest({ placeName, reviewTexts, removedReviews }, filterQuery) })
       .then((r) => {
         report(provider, 'structured', r.usage);
-        return { ...r.object, items: capItems(r.object.items), alternatives: capItems(r.object.alternatives) };
+        return { ...r.object, valueForMoney: r.object.valueForMoney ?? undefined, items: capItems(r.object.items), alternatives: capItems(r.object.alternatives) };
       })
       .catch((e) => {
         if (NoObjectGeneratedError.isInstance(e) && e.text) return salvageStructured(e.text);

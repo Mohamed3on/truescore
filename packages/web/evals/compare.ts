@@ -110,6 +110,7 @@ const block = (r: Run) => {
     `**Highlights:**\n${hl || '  (none)'}`,
     `**Items:** ${(s.items ?? []).join(', ') || '—'}`,
     `**Alternatives:** ${(s.alternatives ?? []).join(', ') || '—'}`,
+    `**Value for money:** ${s.valueForMoney ? `${s.valueForMoney}/5` : 'unrated'}`,
   ].join('\n\n');
 };
 

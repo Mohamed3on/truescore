@@ -1,9 +1,9 @@
 import { test, expect, describe } from 'bun:test';
-import { parseOrSalvage, salvageObjects, salvageString, salvageStringArray } from './json-salvage';
+import { parseOrSalvage, salvageNumber, salvageObjects, salvageString, salvageStringArray } from './json-salvage';
 
 // The real failure: a structured call hits maxOutputTokens mid-array, so the
 // text is not valid JSON and JSON.parse discards everything the model did say.
-const TRUNCATED = `{"conclusion":"Holds up well, but the strap frays.","praised":["battery life","screen brightness","build qualit`;
+const TRUNCATED = `{"conclusion":"Holds up well, but the strap frays.","valueForMoney":4,"praised":["battery life","screen brightness","build qualit`;
 
 describe('salvageStringArray', () => {
   test('reads a complete array', () => {
@@ -28,13 +28,15 @@ describe('salvageStringArray', () => {
   });
 });
 
-describe('salvageString', () => {
-  test('reads a string out of the partial text', () => {
+describe('salvageString / salvageNumber', () => {
+  test('read scalars out of the partial text', () => {
     expect(salvageString(TRUNCATED, 'conclusion')).toBe('Holds up well, but the strap frays.');
+    expect(salvageNumber(TRUNCATED, 'valueForMoney')).toBe(4);
   });
 
   test('undefined when the field never appeared', () => {
     expect(salvageString(TRUNCATED, 'betterAlternative')).toBeUndefined();
+    expect(salvageNumber(TRUNCATED, 'rating')).toBeUndefined();
   });
 });
 

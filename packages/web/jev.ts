@@ -1,5 +1,5 @@
 import { choice, noul, TypeSafeClient, type Question } from '@typesafe-ai/sdk';
-import { countStances, isTrusted, MAX_JUDGED, MIN_OPINIONS, stripAccents, type Answer, type Review, type Stance, type StanceResult, type Summary } from '@truescore/gmaps-shared';
+import { countStances, isTrusted, MAX_JUDGED, stripAccents, type Answer, type Review, type Stance, type StanceResult, type Summary } from '@truescore/gmaps-shared';
 import { db } from './db';
 import type { Subject } from './summary-subject';
 
@@ -187,35 +187,6 @@ export const answersFor = (question: string, texts: string[]): Promise<Answer[] 
   judge('answer', question, { question }, texts,
     (review) => choice({ question: 'What does this review say in answer to `question`?', review }, ANSWER_CRITERIA), inCriteria(ANSWER_CRITERIA));
 
-// A review's verdict on the price, as a word of the value rail
-// (valueForMoneyScale) — listed in its order, Overpriced to Bargain — or 'off'
-// when it gives none. The memo is keyed by these criteria, so changed ones read
-// everything afresh.
-const VALUE_CRITERIA = {
-  overpriced: 'Says it costs too much for what you get: overpriced, a rip-off, not worth the money',
-  pricey: 'Says it is expensive or pricey, without saying whether it is worth it',
-  fair: 'Says the price matches what you get: fair, reasonable, or expensive but worth it',
-  good: 'Says you get a lot for the price: good or great value for money',
-  bargain: 'Says it costs very little for what you get: very cheap, a steal, a bargain',
-  off: "Doesn't judge the price or value for money, even if it names a price or calls the place worth a visit",
-};
-export type ValueVote = keyof typeof VALUE_CRITERIA;
-const VALUE_READ = Bun.hash(JSON.stringify(VALUE_CRITERIA)).toString(36);
-export const valuesFor = (place: string, texts: string[]): Promise<ValueVote[] | null> =>
-  judge('value', `${place}\u0000${VALUE_READ}`, { place: place || 'this place' }, texts,
-    (review) => choice({ question: 'What does this review say about the value for money of `place`?', review }, VALUE_CRITERIA), inCriteria(VALUE_CRITERIA));
-
-// How many reviews give each verdict, and where those that judge the price put
-// it on the rail, on average (1–5) — unset when fewer than MIN_OPINIONS do.
-export const valueOf = (verdicts: ValueVote[]): Pick<Summary, 'valueForMoney' | 'valueVotes'> => {
-  const words = Object.keys(VALUE_CRITERIA) as ValueVote[];
-  const rail = verdicts.filter((v) => v !== 'off').map((v) => words.indexOf(v) + 1);
-  return {
-    valueForMoney: rail.length >= MIN_OPINIONS ? rail.reduce((a, n) => a + n, 0) / rail.length : undefined,
-    valueVotes: Object.fromEntries(words.map((w) => [w, verdicts.filter((v) => v === w).length])),
-  };
-};
-
 // A chip's or a Search's reviews read for their stance on `topic`: the trusted
 // ones with text, the same reviews its TrueScore counts, up to MAX_JUDGED. Null
 // when Jev couldn't read them all.
@@ -269,33 +240,28 @@ export const mentioning = (texts: string[], name: string): string[] => {
 // A summary with its receipts: each bullet carries how many reviews make its
 // point and the first of them, a bullet fewer than MIN_SUPPORT make is dropped,
 // and an alternative stays only if as many reviews say they'd rather go there.
-// Its value for money is what the reviews say of the price (valueOf).
 // Unchanged when Jev can't check it — the summary shows as it always did.
-export async function withReceipts(written: Summary | Promise<Summary>, { placeName, reviewTexts }: Subject): Promise<Summary> {
+export async function withReceipts(summary: Summary, { placeName, reviewTexts }: Subject): Promise<Summary> {
   // Google hands some reviews over twice; a point is made once per reviewer.
   const texts = [...new Set(reviewTexts)];
-  // The price needs no summary, so it's read while the summary is written.
-  const [summary, verdicts] = await Promise.all([written, valuesFor(placeName, texts)]);
-  const priced = verdicts ? { ...summary, ...valueOf(verdicts) } : summary;
   const alternatives = summary.alternatives ?? [];
   const [support, preferred] = await Promise.all([
     supportFor(summary.highlights.map((h) => h.text), texts),
     Promise.all(alternatives.map((alt) => preferredCount(placeName, alt, mentioning(texts, alt)))),
   ]);
-  if (!support) return priced;
+  if (!support) return summary;
   const highlights = summary.highlights
     .map((h, k) => ({ ...h, support: support[k]!.length, quotes: support[k]!.slice(0, QUOTES_MAX).map((i) => undated(texts[i]!)) }))
     .filter((h) => h.support >= MIN_SUPPORT);
   const checked = preferred.every((n) => n != null);
   const kept = checked ? alternatives.filter((_, i) => preferred[i]! >= MIN_SUPPORT) : alternatives;
   return {
-    ...priced,
+    ...summary,
     highlights,
     alternatives: kept,
     ...(checked ? { preferredBy: Object.fromEntries(kept.map((alt) => [alt, preferred[alternatives.indexOf(alt)]!])) } : {}),
   };
 }
 
-// Whether a summary already carries its receipts (summaries cached before Jev,
-// or before it read the price, don't).
-export const hasReceipts = (summary: Summary): boolean => summary.valueVotes != null && summary.highlights.every((h) => h.support != null);
+// Whether a summary already carries its receipts (summaries cached before Jev don't).
+export const hasReceipts = (summary: Summary): boolean => summary.highlights.every((h) => h.support != null);
