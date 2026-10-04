@@ -903,14 +903,6 @@ section#result::before {
   text-transform: uppercase;
 }
 
-/* Praised-standout chips reuse .chip / .highlights-list; only the section needs styling. */
-.standouts-row {
-  margin-bottom: 18px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--hairline);
-}
-.standouts-header { margin-bottom: 10px; }
-
 /* Better-alternative places (rival venues reviewers name) — pill links, kept
    apart from the scored standout chips since they're never scored here. */
 .alternatives-row { margin: 14px 0; }

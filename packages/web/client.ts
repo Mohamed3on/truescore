@@ -6,7 +6,7 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
-  answersOf, bySupport, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
+  answersOf, bySupport, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, countStances, mergeByReviewId, statsForReviews, SCORED_CHIP_MIN_REVIEWS, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type SearchEvent, type SearchResult,
@@ -16,7 +16,7 @@ import {
 
 // Client-only: the wire Chip plus per-chip UI status while its score streams.
 type ChipState = 'loading' | 'done' | 'error';
-type UiChip = Chip & { state?: ChipState; error?: string };
+type UiChip = Chip & { state?: ChipState; error?: string; pooled?: boolean };
 
 const $ = (id: string) => document.getElementById(id)!;
 
@@ -33,8 +33,6 @@ const resummarizeBtn = $('resummarize') as HTMLButtonElement;
 const highlightsRow = $('highlightsRow') as HTMLElement;
 const highlightsList = $('highlightsList') as HTMLElement;
 const highlightsRefreshBtn = $('highlightsRefresh') as HTMLButtonElement;
-const standoutsRow = $('standoutsRow') as HTMLElement;
-const standoutsList = $('standoutsList') as HTMLElement;
 const alternativesRow = $('alternativesRow') as HTMLElement;
 const alternativesList = $('alternativesList') as HTMLElement;
 const searchForm = $('searchForm') as HTMLFormElement;
@@ -76,11 +74,11 @@ let currentHighlights: UiChip[] = [];
 
 // Standouts (praised items) and Better-alternatives (rival places) are the same
 // kind of group: each item is auto-scored by its own label search (a SearchResult
-// once scored), shown with its score, most-mentioned first; clicking opens it in
-// the search panel. They differ only in which row/list they render into.
+// once scored); clicking one opens it in the search panel. Standouts join the
+// topic chips' row (renderTopics); alternatives keep a row of their own.
 type ScoredChip = { item: string; state: ChipState; result?: SearchResult };
 const scoredGroups = {
-  standouts: { chips: [] as ScoredChip[], row: standoutsRow, list: standoutsList, chipClass: '' },
+  standouts: { chips: [] as ScoredChip[] },
   alternatives: { chips: [] as ScoredChip[], row: alternativesRow, list: alternativesList, chipClass: 'alternative-chip' },
 };
 type ScoredKind = keyof typeof scoredGroups;
@@ -172,58 +170,169 @@ function chip(spec: ChipSpec): HTMLButtonElement {
   return btn;
 }
 
-// With every chip read, they're ordered by what reviewers say — more praise than
-// complaints first, then the most lopsided and most discussed — instead of by
-// star share against the place's own score.
-const chipOrder = (chips: UiChip[]): UiChip[] => {
-  if (!chips.every((c) => c.stance)) return sortChipsByImpact(chips, currentMergedPct);
-  const ranked = chips.map((c) => { const o = opinionsOf(c.stance!); return { c, score: { scorePct: opinionPct(o) }, count: o.pos + o.neg }; });
-  return sortChipsByImpact(ranked, 0).map((r) => r.c);
-};
-
 // A topic fewer than two reviews actually speak to is dropped, as a scored chip is.
 const spokenOf = (c: { stance?: StanceCounts }) => !c.stance || !tooFewMentions(opinionsOf(c.stance));
 
-function renderHighlights(highlights: UiChip[], sort = false) {
-  topicLabels = new Set(highlights.map((h) => h.label.toLowerCase()));
-  if (scoredGroups.standouts.chips.length) renderScored('standouts');
-  const shown = highlights.filter(spokenOf);
-  const list = sort ? chipOrder(shown) : shown;
-  highlightsList.replaceChildren(...list.map((h) => {
-    const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
-    const pct = state === 'done' && h.score
-      ? { text: `${h.score.scorePct}%`, cls: chipPolarity(h.score.scorePct, currentMergedPct) }
-      : state === 'error' ? { text: '✗', cls: 'neg' } : { text: '…', cls: 'chip-pending' };
-    return chip({
-      label: h.label, pct, count: h.count, token: h.token, opinions: state === 'done' ? opinionsFor(h) : null,
-      cls: state === 'loading' ? 'loading' : state === 'error' ? 'errored' : undefined,
-      title: state === 'error' && h.error ? h.error : undefined,
-      disabled: state !== 'done',
-      onClick: state === 'done' ? () => onHighlightClick(h) : undefined,
-    });
-  }));
+// Topic chips and standouts share one row, ranked together: Jev reads both the
+// same way, so one order fits both. A standout naming a topic pools into it (see
+// pooledView). While anything is still loading the row keeps its order, newcomers
+// joining at the end, so nothing moves under a thumb; once everything is in it
+// sorts once — by what reviewers say when every chip is read, else by star share.
+type TopicEntry = { key: string; state: ChipState; stance?: StanceCounts; scorePct: number; count: number; chip: () => HTMLButtonElement };
+let topicOrder: string[] = [];
+// What the row says while it has no topic chips ("finding topics…").
+let topicsNote: string | null = null;
+
+const sortTopics = (entries: TopicEntry[]): TopicEntry[] => {
+  const read = entries.every((e) => e.stance);
+  const ranked = entries.map((e) => {
+    if (!read) return { e, score: { scorePct: e.scorePct }, count: e.count };
+    const o = opinionsOf(e.stance!);
+    return { e, score: { scorePct: opinionPct(o) }, count: o.pos + o.neg };
+  });
+  return sortChipsByImpact(ranked, read ? 0 : currentMergedPct).map((r) => r.e);
+};
+
+function topicChip(h: UiChip, state: ChipState): HTMLButtonElement {
+  const pct = state === 'done' && h.score
+    ? { text: `${h.score.scorePct}%`, cls: chipPolarity(h.score.scorePct, currentMergedPct) }
+    : state === 'error' ? { text: '✗', cls: 'neg' } : { text: '…', cls: 'chip-pending' };
+  return chip({
+    label: h.label, pct, count: h.count, token: h.token, opinions: state === 'done' ? opinionsFor(h) : null,
+    cls: state === 'loading' ? 'loading' : state === 'error' ? 'errored' : undefined,
+    title: state === 'error' && h.error ? h.error : undefined,
+    disabled: state !== 'done',
+    onClick: state === 'done' ? () => onHighlightClick(h) : undefined,
+  });
 }
 
-// Render a scored group's chips, progressive-enhancement style: items still
+const standoutChip = (item: string, r: SearchResult) => chip({
+  label: item, count: r.totalReviews, opinions: opinionsFor(r), onClick: () => showSearchPanel(r),
+  pct: { text: r.trustedReviews ? `${r.scorePct}%` : '—', cls: chipPolarity(r.scorePct, currentMergedPct) },
+});
+
+// A topic and a standout naming the same thing, pooled into one chip: both review
+// sets, each review once, with Jev's reads of both (asked the same question, so
+// nothing is read twice). A looked-up place ships its chips without reviews, so a
+// topic's are fetched first and the chip is null until they land; a topic whose
+// reviews never come stays as it was.
+const poolFetches = new WeakMap<UiChip, 'waiting' | 'done'>();
+const pooledViews = new WeakMap<UiChip, { r: SearchResult; view: UiChip }>();
+function pooledView(h: UiChip, r: SearchResult): UiChip | null {
+  if (!h.reviews) {
+    const fetched = poolFetches.get(h);
+    if (fetched === 'done') return h;
+    if (!fetched) {
+      poolFetches.set(h, 'waiting');
+      void ensureHighlightReviews(h).finally(() => { poolFetches.set(h, 'done'); renderTopics(); });
+    }
+    return null;
+  }
+  const kept = pooledViews.get(h);
+  if (kept?.r === r) return kept.view;
+  const reviews = mergeByReviewId(h.reviews, r.reviews);
+  const stances = h.stances && r.stances ? { ...r.stances, ...h.stances } : undefined;
+  const readable = reviews.filter((x) => isTrusted(x.reviewerReviewCount) && x.text.trim().length > 1).length;
+  const of = stances && readable > Object.keys(stances).length ? readable : undefined;
+  const view: UiChip = { ...h, reviews, stances, stance: stances && countStances(Object.values(stances)), of, score: statsForReviews(reviews), count: reviews.length, pooled: true };
+  pooledViews.set(h, { r, view });
+  return view;
+}
+
+function renderTopics() {
+  const standouts = new Map(scoredGroups.standouts.chips.map((d) => [d.item.toLowerCase(), d]));
+  const entries: TopicEntry[] = [];
+  let settled = true;
+  for (const h of currentHighlights) {
+    const key = h.label.toLowerCase();
+    const s = standouts.get(key);
+    standouts.delete(key);
+    const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
+    const view = state === 'done' && s?.result ? pooledView(h, s.result) : h;
+    if (state === 'loading' || s?.state === 'loading' || !view) settled = false;
+    const c = view ?? h;
+    if (state === 'done' && !spokenOf(c)) continue;
+    entries.push({ key, state, stance: c.stance, scorePct: c.score?.scorePct ?? 0, count: c.count, chip: () => topicChip(c, state) });
+  }
+  for (const [key, d] of standouts) {
+    const r = d.result;
+    if (d.state === 'loading') {
+      settled = false;
+      entries.push({ key, state: 'loading', scorePct: 0, count: 0, chip: () => chip({ label: d.item, pct: { text: '…', cls: 'chip-pending' }, cls: 'loading', disabled: true }) });
+    } else if (r && (r.stance ? !tooFewMentions(opinionsOf(r.stance)) : r.totalReviews >= SCORED_CHIP_MIN_REVIEWS)) {
+      entries.push({ key, state: 'done', stance: r.stance, scorePct: r.scorePct, count: r.totalReviews, chip: () => standoutChip(d.item, r) });
+    }
+  }
+  const byKey = new Map(entries.map((e) => [e.key, e]));
+  const order = settled
+    ? [...sortTopics(entries.filter((e) => e.state === 'done')), ...entries.filter((e) => e.state !== 'done')]
+    : [
+        ...topicOrder.flatMap((k) => byKey.get(k) ?? []),
+        ...entries.filter((e) => !topicOrder.includes(e.key)).sort((a, b) => Number(a.state === 'loading') - Number(b.state === 'loading')),
+      ];
+  topicOrder = order.map((e) => e.key);
+  const before = highlightsRow.hidden ? null : chipPlaces(highlightsList);
+  highlightsList.replaceChildren(
+    ...order.map((e) => { const b = e.chip(); b.dataset.key = e.key; return b; }),
+    ...(topicsNote ? [el('span', 'chip-loading', topicsNote)] : []),
+  );
+  highlightsRow.hidden = !order.length && !topicsNote;
+  if (before) animateArrivals(highlightsList, before);
+  setActiveChip(activePanel?.kind === 'highlight' ? activePanel.chip.token : undefined);
+}
+
+// The row between renders: a chip that moved glides from where it was, and one
+// new to a row already on screen rises in, staggered, so standouts landing late
+// slot in rather than pop. A chip re-rendered mid-entrance carries on from where
+// it was. Nothing animates on the row's first paint; with reduced motion, nothing
+// moves and newcomers only fade.
+type ChipPlace = { rect: DOMRect; opacity: number };
+const chipPlaces = (list: HTMLElement) => new Map<string, ChipPlace>(
+  [...list.querySelectorAll<HTMLElement>('[data-key]')].map((c) => [c.dataset.key!, { rect: c.getBoundingClientRect(), opacity: Number(getComputedStyle(c).opacity) }]),
+);
+function animateArrivals(list: HTMLElement, before: Map<string, ChipPlace>) {
+  if (!before.size) return;
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const easing = getComputedStyle(document.documentElement).getPropertyValue('--ease').trim();
+  const chips = [...list.querySelectorAll<HTMLElement>('[data-key]')].map((c) => ({ c, now: c.getBoundingClientRect(), was: before.get(c.dataset.key!) }));
+  let arriving = 0;
+  for (const { c, now, was } of chips) {
+    if (!was) {
+      c.animate(still ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 300, delay: 50 * arriving++, easing, fill: 'backwards' });
+      continue;
+    }
+    const dx = still ? 0 : was.rect.left - now.left;
+    const dy = still ? 0 : was.rect.top - now.top;
+    if (dx || dy || was.opacity < 1) {
+      c.animate([{ transform: `translate(${dx}px, ${dy}px)`, opacity: was.opacity }, { transform: 'none', opacity: 1 }], { duration: 250, easing });
+    }
+  }
+}
+
+function renderHighlights(highlights: UiChip[]) {
+  currentHighlights = highlights;
+  topicsNote = null;
+  renderTopics();
+}
+
+// Render the alternatives' chips, progressive-enhancement style: items still
 // being scored show immediately as pulsing "…" placeholders, scored ones (≥2
 // mentions, most-mentioned first) show their score and open the search panel on
 // click. Scores fill in inline; a chip that lands below 2 mentions drops out.
-// A standout naming a topic chip would show one subject twice, with two sets of
-// numbers from two review sets (Google's topic vs a word search); the topic stays.
-let topicLabels = new Set<string>();
-
+// Standouts render in the topics row instead.
 function renderScored(kind: ScoredKind) {
+  if (kind === 'standouts') return renderTopics();
   const g = scoredGroups[kind];
-  const chips = kind === 'standouts' ? g.chips.filter((d) => !topicLabels.has(d.item.toLowerCase())) : g.chips;
-  const scored = selectScoredChips(chips, (d) => d.result && (d.result.stance ? { totalReviews: opinionsOf(d.result.stance).mentions } : d.result));
-  const pending = chips.filter((d) => d.state === 'loading');
+  const scored = selectScoredChips(g.chips, (d) => d.result && (d.result.stance ? { totalReviews: opinionsOf(d.result.stance).mentions } : d.result));
+  const pending = g.chips.filter((d) => d.state === 'loading');
   g.row.hidden = scored.length === 0 && pending.length === 0;
   g.list.replaceChildren(
     ...scored.map((d) => {
       const r = d.result!;
       // A better alternative reads as how many say they'd rather go there, once
-      // the summary's receipts are in; a standout, as what its mentions say.
-      const prefer = kind === 'alternatives' ? preferredBy?.[d.item] : undefined;
+      // the summary's receipts are in.
+      const prefer = preferredBy?.[d.item];
       return chip({
         label: d.item, cls: g.chipClass || undefined, count: r.totalReviews,
         pct: prefer != null ? { text: `${prefer} prefer it`, cls: 'prefer' } : { text: r.trustedReviews ? `${r.scorePct}%` : '—', cls: chipPolarity(r.scorePct, currentMergedPct) },
@@ -269,12 +378,14 @@ function clearScored(kind: ScoredKind) {
 }
 
 function showHighlightsLoading(msg: string) {
-  highlightsRow.hidden = false;
-  highlightsList.replaceChildren(el('span', 'chip-loading', msg));
+  currentHighlights = [];
+  topicsNote = msg;
+  renderTopics();
 }
 
+// The open topic's chip; a standout (no token) never shows as open.
 function setActiveChip(token?: string) {
-  highlightsList.querySelectorAll<HTMLButtonElement>('.chip').forEach((c) => {
+  highlightsList.querySelectorAll<HTMLButtonElement>('.chip[data-token]').forEach((c) => {
     c.classList.toggle('active', c.dataset.token === token);
     c.setAttribute('aria-pressed', String(c.dataset.token === token));
   });
@@ -666,6 +777,8 @@ async function summarizeActiveChip() {
   try {
     const data = await postJson<{ summary?: Summary; cached?: boolean }>('/api/highlight-summary', {
       featureId: epoch.featureId, token: h.token,
+      // A pooled chip's summary reads both review sets, as its list shows them.
+      ...(h.pooled ? { reviewTexts: textReviewsFor(h.reviews ?? []) } : {}),
     } satisfies HighlightSummaryRequest);
     if (!epoch.alive) return;
     if (data.summary) {
@@ -807,11 +920,11 @@ async function loadHighlights(force = false) {
         continue;
       }
       if (!resp.ok) {
-        if (resp.status === 404) { highlightsRow.hidden = true; return; } // no topic chips for this place
+        if (resp.status === 404) { renderHighlights([]); return; } // no topic chips for this place
         throw new Error(data.error || `request failed (${resp.status})`);
       }
       if (data.highlights?.length) showHighlights(data.highlights);
-      else highlightsRow.hidden = true;
+      else renderHighlights([]);
       return;
     } catch (e) {
       if (!superseded()) giveUpOnHighlights(`couldn't load highlights — ${e instanceof Error ? e.message : String(e)}`);
@@ -830,9 +943,7 @@ function giveUpOnHighlights(msg: string) {
 }
 
 function showHighlights(highlights: UiChip[]) {
-  highlightsRow.hidden = false;
-  currentHighlights = highlights;
-  renderHighlights(highlights, true);
+  renderHighlights(highlights);
   highlightsRefreshBtn.hidden = false;
 }
 
@@ -890,7 +1001,7 @@ async function consumeHighlightStream(body: ReadableStream<Uint8Array>, supersed
       }
       case 'done':
         lastFailures = evt.failures;
-        renderHighlights([...chipMap.values()], true);
+        renderHighlights([...chipMap.values()]);
         break;
       case 'error':
         throw new Error(evt.error || 'highlights failed');
@@ -994,7 +1105,8 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   renderValue();
   $('verdict').textContent = '';
   resummarizeBtn.hidden = true;
-  highlightsRow.hidden = true;
+  currentHighlights = [];
+  topicsNote = null;
   clearScored('standouts');
   clearScored('alternatives');
   chipPanel.hidden = true;
@@ -1080,7 +1192,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number,
         flashIfChanged($('scorePct'), prevScore);
         flashIfChanged($('reviewsLabel'), prevReviews);
         if (currentHighlights.length) {
-          renderHighlights(currentHighlights, true);
+          renderHighlights(currentHighlights);
           if (activePanel?.kind === 'highlight') setActiveChip(activePanel.chip.token);
         }
         const diff = evt.score.totalReviews - cachedTotal;
