@@ -76,6 +76,15 @@ describe('rankChildren', () => {
     expect(scored).toEqual([]);
     expect(rest.length).toBe(2);
   });
+
+  test('keeps a nested carousel together instead of ranking it as one card', () => {
+    const a = wrap(card(40));
+    const carousel = grid(card(90), card(80));
+    const b = wrap(card(60));
+    const result = rankChildren(grid(a, carousel, b), (child) => child.querySelectorAll('.card').length <= 1);
+    expect(result.scored).toEqual([b, a]);
+    expect(result.rest).toEqual([carousel]);
+  });
 });
 
 // --- structuralContainers: discovery ---------------------------------------

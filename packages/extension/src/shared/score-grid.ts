@@ -122,10 +122,14 @@ const bearer = (child: Element): Element | null =>
 // order, and the sunk — cards scored below 0, known hated, which belong under
 // anything still unknown rather than above it. This is the ranking the grid
 // applies each frame — exposed so the selection can be tested without a live grid.
-export const rankChildren = (container: Element): { scored: Element[]; rest: Element[]; sunk: Element[] } => {
+export const rankChildren = (container: Element, rankableChild: (child: Element) => boolean = () => true): { scored: Element[]; rest: Element[]; sunk: Element[] } => {
   const ranked: { child: Element; score: number }[] = [];
   const rest: Element[] = [];
   for (const child of [...container.children]) {
+    if (!rankableChild(child)) {
+      rest.push(child);
+      continue;
+    }
     const nps = bearer(child)?.getAttribute('data-nps');
     if (nps != null) ranked.push({ child, score: parseFloat(nps) });
     else rest.push(child);
@@ -205,6 +209,9 @@ export interface ScoreGridOpts {
   placeBadge: (card: Element, badge: HTMLElement) => void;
   // Container discovery. Defaults to `structuralContainers(cardSelector)`.
   discover?: (cards: Element[]) => Iterable<Element>;
+  // Keep host-inserted groups (such as Airbnb's "similar dates" carousel)
+  // together, even when they contain scored cards of their own.
+  rankableChild?: (child: Element) => boolean;
   // Sort application. Defaults to `orderByCssBand` — the only strategy safe on
   // hosts that re-render or recreate card wrappers, because its resort makes no
   // childList mutations (the persisted-badge path below re-sorts on every
@@ -226,6 +233,7 @@ export const setupScoreGrid = ({
   idOf,
   placeBadge,
   discover,
+  rankableChild,
   applyOrder = orderByCssBand,
 }: ScoreGridOpts): void => {
   const discoverContainers = discover ?? structuralContainers(cardSelector);
@@ -237,7 +245,7 @@ export const setupScoreGrid = ({
     const containers = new Set(discoverContainers(cards));
     picks = [];
     for (const container of containers) {
-      const { scored, rest, sunk } = rankChildren(container);
+      const { scored, rest, sunk } = rankChildren(container, rankableChild);
       if (scored.length + sunk.length < 2) continue; // nothing to rank against
       applyOrder(container, scored, rest, sunk);
       picks.push(...markBestRatios(scored.map(bearer)).map((badge) => badge.closest(cardSelector)));

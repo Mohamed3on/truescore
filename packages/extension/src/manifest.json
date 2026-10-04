@@ -22,6 +22,26 @@
   "content_scripts": [
     {
       "matches": [
+        "*://www.airbnb.com/s/*/homes*",
+        "*://www.airbnb.co.uk/s/*/homes*",
+        "*://www.airbnb.ie/s/*/homes*",
+        "*://www.airbnb.de/s/*/homes*",
+        "*://www.airbnb.at/s/*/homes*",
+        "*://www.airbnb.ch/s/*/homes*",
+        "*://www.airbnb.fr/s/*/homes*",
+        "*://www.airbnb.be/s/*/homes*",
+        "*://www.airbnb.nl/s/*/homes*",
+        "*://www.airbnb.es/s/*/homes*",
+        "*://www.airbnb.it/s/*/homes*",
+        "*://www.airbnb.pt/s/*/homes*",
+        "*://www.airbnb.ca/s/*/homes*",
+        "*://www.airbnb.com.au/s/*/homes*"
+      ],
+      "js": ["sites/airbnb-search.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
         "*://www.airbnb.com/rooms/*",
         "*://www.airbnb.co.uk/rooms/*",
         "*://www.airbnb.ie/rooms/*",
@@ -38,6 +58,7 @@
         "*://www.airbnb.com.au/rooms/*"
       ],
       "js": ["sites/airbnb.js"],
+      "css": ["sites/amazon-product.css"],
       "run_at": "document_idle"
     },
     {

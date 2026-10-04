@@ -1,14 +1,21 @@
-import { netScore } from '@truescore/gmaps-shared';
 import { addCommas, el } from '../shared/utils';
+import { airbnbStats, type AirbnbStats } from '../shared/airbnb-stats';
+import { getActiveLLM } from '../shared/config';
+import { betterAlternativeRule, buildSummarizeWidget } from '../shared/review-summary';
+import { createIslandShell } from '../shared/score-island';
+import { fetchAirbnbReviewSample } from './airbnb-reviews';
 
-// The score rides Airbnb's own "★ 4.0 · 3 reviews" line as one more item; its working opens
-// in a card on hover.
+// The listing score sits in a distinct panel near Airbnb's own rating. Its
+// working opens on hover or keyboard focus.
 const STYLES = `
-  .ts-air-line { display: inline-flex; }
-  .ts-air-dot { margin: 0 4px 0 0; }
-  .ts-air-score { position: relative; display: inline-flex; align-items: baseline; gap: 5px; color: #6a6a6a; font-weight: 400; font-variant-numeric: tabular-nums; cursor: default; }
-  .ts-air-score > b { font-weight: 600; color: #222; text-decoration: underline dotted rgba(34, 34, 34, .35); text-underline-offset: 3px; }
-  .ts-air-caption { margin-top: 12px; font-size: 14px; line-height: 18px; }
+  .ts-air-score { position: relative; display: inline-grid; grid-template-columns: auto auto; align-items: center; column-gap: 24px; row-gap: 2px; max-width: 100%; box-sizing: border-box; padding: 13px 16px; border: 1px solid #cce5d2; border-left: 4px solid #247a43; border-radius: 12px; background: #f3faf5; color: #173e2b; font-variant-numeric: tabular-nums; cursor: default; }
+  .ts-air-label { font-size: 11px; line-height: 15px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .ts-air-value { grid-column: 2; grid-row: 1 / 3; font-size: 32px; line-height: 1; font-weight: 750; }
+  .ts-air-meta { font-size: 14px; line-height: 19px; color: #42624c; }
+  .ts-air-score[data-tone="negative"] { border-color: #f0cece; border-left-color: #b44444; background: #fff6f6; color: #742727; }
+  .ts-air-score[data-tone="negative"] .ts-air-meta { color: #815353; }
+  .ts-air-score:focus-visible { outline: 3px solid #247a43; outline-offset: 3px; }
+  .ts-air-caption { margin-top: 12px; }
   .ts-air-card {
     position: absolute;
     top: calc(100% + 10px);
@@ -30,68 +37,51 @@ const STYLES = `
     pointer-events: none;
     transition: opacity 100ms ease-out, transform 100ms ease-out;
   }
-  .ts-air-score:hover .ts-air-card {
+  .ts-air-score:is(:hover, :focus-visible) .ts-air-card {
     opacity: 1;
     transform: none;
     transition: opacity 160ms cubic-bezier(.23, 1, .32, 1) 80ms, transform 160ms cubic-bezier(.23, 1, .32, 1) 80ms;
   }
   .ts-air-card-head { font-size: 16px; line-height: 20px; font-weight: 600; color: #222; }
   .ts-air-card-work { font-size: 14px; line-height: 18px; font-weight: 400; color: #6a6a6a; text-wrap: balance; }
+  .ts-air-reviews { box-sizing: border-box; width: 100%; margin: 18px 0 0; }
+  .ts-air-reviews-note { color: #78716c; font-size: 12px; line-height: 1.5; }
+  @media (max-width: 520px) { .ts-air-reviews .ars-question-row { flex-wrap: wrap; } .ts-air-reviews .ars-question-input { flex-basis: 100%; } }
   @media (prefers-reduced-motion: reduce) { .ts-air-card { transform: none !important; } }
 `;
 
-type Quality = {
-  ratingDistribution?: { label: string; percentage: number }[];
-  listingRatingStats?: { overallRatingStats?: { ratingCount?: string } };
-};
+const SUMMARY_PROMPT = `Analyze this Airbnb listing's guest reviews. The sample deliberately includes the lowest-rated reviews and Airbnb's most relevant reviews; each review begins with its star rating.
 
-// The page data's quality object holds this listing's own stats: the per-star shares behind
-// its "Overall rating" bars and its review count. (hostRatingCount beside them is the host's
-// total across every listing.) Reading data, not Airbnb's generated class names, is what keeps
-// the count from silently reading 0 when those names change.
-const findQuality = (o: any): Quality | null => {
-  if (!o || typeof o !== 'object') return null;
-  if (o.ratingDistribution && o.listingRatingStats) return o;
-  for (const v of Object.values(o)) {
-    const q = findQuality(v);
-    if (q) return q;
-  }
-  return null;
-};
+Focus especially on recurring complaints in the low-rated reviews. Identify specific problems with the room, cleanliness, sleep, noise, amenities, host, check-in, location, or value. Include a complaint only when at least two independent guests describe it; distinguish a repeated pattern from a single bad stay. If guests disagree, say so. Rank complaints by how often and how seriously they affect a stay.
 
-const getStats = () => {
-  let quality: Quality | null = null;
-  try { quality = findQuality(JSON.parse(document.getElementById('data-deferred-state-0')?.textContent || 'null')); } catch {}
-  const count = Number(quality?.listingRatingStats?.overallRatingStats?.ratingCount);
-  if (!count) return null;
-  const stars = (label: string) => Math.round((quality!.ratingDistribution!.find((d) => d.label === label)?.percentage ?? 0) * count);
-  const five = stars('5');
-  const one = stars('1');
-  return { count, five, one, score: netScore(five - one, count) };
-};
+Also cover the concrete positives that guests repeatedly describe, drawing from the whole sample. Avoid generic praise. Do not let the larger number of five-star reviews drown out substantiated complaints. Do not claim this sample represents every review or infer a percentage from it.
 
-const buildScore = ({ count, five, one, score }: NonNullable<ReturnType<typeof getStats>>) => {
+${betterAlternativeRule('nearby Airbnb stay')}
+
+Conclusion: 2–4 sentences on who this stay suits, its strongest recurring qualities, and the main repeated issue to check before booking. If few low-rated reviews have written comments, say that the evidence for complaints is limited.`;
+
+const buildScore = ({ count, five, one, score }: AirbnbStats) => {
   const card = el('span', 'ts-air-card');
   card.append(
     el('span', 'ts-air-card-head', `TrueScore ${addCommas(score)}`),
     el('span', 'ts-air-card-work', `Net loved: 5★ minus 1★, over all ${addCommas(count)} reviews`),
     el('span', 'ts-air-card-work', `(${addCommas(five)} − ${addCommas(one)})² ÷ ${addCommas(count)} reviews = ${addCommas(score)}`),
   );
-  const item = el('span', 'ts-air-score', 'TrueScore ');
-  item.append(el('b', undefined, addCommas(score)), el('span', undefined, `· ${Math.round(((five - one) / count) * 100)}% net loved`), card);
+  const item = el('div', 'ts-air-score');
+  item.dataset.tone = five < one ? 'negative' : 'positive';
+  item.setAttribute('role', 'group');
+  item.tabIndex = 0;
+  item.append(
+    el('span', 'ts-air-label', 'TrueScore'),
+    el('strong', 'ts-air-value', addCommas(score)),
+    el('span', 'ts-air-meta', `${Math.round(((five - one) / count) * 100)}% net loved · ${addCommas(count)} reviews`),
+    card,
+  );
   return item;
 };
 
-// Standard listings show "★ 4.0 · 3 reviews" under the title; guest favourites show a box
-// instead (the overview then has no reviews link), so the score captions that box.
+// Keep the score beside the overview rather than tucked into the host rating line.
 const place = (item: HTMLElement): boolean => {
-  const line = document.querySelector('[data-section-id="OVERVIEW_DEFAULT_V2"] a[href*="/reviews"]')?.parentElement;
-  if (line) {
-    const wrap = el('span', 'ts-air-line');
-    wrap.append(el('span', 'ts-air-dot', '·'), item);
-    line.append(wrap);
-    return true;
-  }
   const banner = document.querySelector('[data-section-id="GUEST_FAVORITE_BANNER"]');
   if (banner?.textContent?.trim()) {
     const caption = el('div', 'ts-air-caption');
@@ -99,17 +89,58 @@ const place = (item: HTMLElement): boolean => {
     banner.append(caption);
     return true;
   }
+  const overview = document.querySelector('[data-section-id="OVERVIEW_DEFAULT_V2"]');
+  if (overview) {
+    const caption = el('div', 'ts-air-caption');
+    caption.append(item);
+    overview.append(caption);
+    return true;
+  }
   return false;
 };
 
-const stats = getStats();
+const style = document.createElement('style');
+style.textContent = STYLES;
+document.head.append(style);
+
+const stats = airbnbStats(document.getElementById('data-deferred-state-0')?.textContent || 'null');
 if (stats) {
-  const style = document.createElement('style');
-  style.textContent = STYLES;
-  document.head.append(style);
   const item = buildScore(stats);
   if (!place(item)) {
     const observer = new MutationObserver(() => { if (place(item)) observer.disconnect(); });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+}
+
+const listingId = location.pathname.match(/^\/rooms\/(\d+)/)?.[1];
+if (listingId) {
+  const wrapper = createIslandShell();
+  wrapper.classList.add('ts-air-reviews');
+  const note = el('div', 'ts-air-reviews-note', 'Summarize up to 100 guest reviews, including the lowest rated.');
+  wrapper.append(note);
+  let pendingReviews: ReturnType<typeof fetchAirbnbReviewSample> | null = null;
+  buildSummarizeWidget({
+    wrapper,
+    cacheKey: `airbnb-summary-v1-${listingId}`,
+    summaryPrompt: SUMMARY_PROMPT,
+    questionPlaceholder: 'Ask about this stay…',
+    questionPrompt: 'Answer using only these Airbnb guest reviews. Give concrete details, pay attention to low-rated reviews, and note when guests disagree.',
+    fetchReviews: async () => {
+      if (!(await getActiveLLM()).key) throw new Error('Set an AI key in the TrueScore popup to summarize reviews.');
+      pendingReviews ??= fetchAirbnbReviewSample(listingId).catch((error) => { pendingReviews = null; throw error; });
+      const sample = await pendingReviews;
+      note.textContent = `Read ${sample.sampled} written reviews, including ${sample.lowRated} below five stars, from ${addCommas(sample.total)} total reviews.`;
+      return sample.texts;
+    },
+  });
+  const mountReviews = (): boolean => {
+    const section = document.querySelector('[data-section-id="REVIEWS_DEFAULT"]');
+    if (!section) return false;
+    section.before(wrapper);
+    return true;
+  };
+  if (!mountReviews()) {
+    const observer = new MutationObserver(() => { if (mountReviews()) observer.disconnect(); });
     observer.observe(document.body, { childList: true, subtree: true });
   }
 }

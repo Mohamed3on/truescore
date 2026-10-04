@@ -12,6 +12,7 @@ mkdirSync(`${OUT}/popup`, { recursive: true });
 await esbuild.build({
   entryPoints: [
     'src/sites/airbnb.ts',
+    'src/sites/airbnb-search.ts',
     'src/sites/amazon-search.ts',
     'src/sites/amazon-product.ts',
     'src/sites/booking-search.ts',
