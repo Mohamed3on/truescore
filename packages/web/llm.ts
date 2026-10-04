@@ -1,6 +1,6 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { convertToModelMessages, generateObject, generateText, NoObjectGeneratedError, streamText } from 'ai';
+import { convertToModelMessages, generateObject, generateText, NoObjectGeneratedError, streamObject, streamText } from 'ai';
 import { z } from 'zod';
 import { LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, type AskMessage, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
 import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
@@ -229,14 +229,24 @@ export const optionsRequest = (question: string, comments: string[]) => ({
 
 Use two levels when the answers name makers: each Option is the maker (a brand, a creator, a company) and its titles are the specific products, courses or models named under it. A thing with no maker named in the thread is an Option of its own, with no titles. Give each name in its usual full form ("Sony"; "WH-1000XM5").
 
-aliases: every other way the answers write it, exactly as written: first names, surnames, nicknames, abbreviations, misspellings, partial titles ("Sony's", "Sonys"; "XM5", "1000xm5"), so that searching for any of them finds every answer speaking of it. A title's aliases never include its maker's name alone, and an alias that could just as well mean another Option or title (a first name two of them share, a title two makers both use) is left out.
+aliases: every other way the answers write it, exactly as written: first names, surnames, nicknames, abbreviations, misspellings, partial titles ("Sonys", "Soni"; "XM5", "1000xm5"), so that searching for any of them finds every answer speaking of it. Skip variants that differ only in capital letters or punctuation ("sony", "Sony's", "WH 1000XM5"): the search already matches those. A title's aliases never include its maker's name alone, and an alias that could just as well mean another Option or title (a first name two of them share, a title two makers both use) is left out.
 
 Not Options: stores and marketplaces, general advice ("try before you buy"), kinds of thing ("wireless ones", "an open-back pair"), or the asker's own situation. Each Option and title once.`,
 });
 
-export async function listOptions(question: string, comments: string[], provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
+// Streams the listing: each Option goes to `onOption` once the model has moved
+// on to the next one (the last when the list ends), so counting it can start
+// while the rest are still being written.
+export async function listOptions(question: string, comments: string[], onOption: (o: Partial<ThreadOption>) => void, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
-  const r = await generateObject({ model, providerOptions, ...optionsRequest(question, comments) });
-  report(provider, 'options', r.usage);
-  return r.object.options;
+  const listing = streamObject({ model, providerOptions, ...optionsRequest(question, comments) });
+  let sent = 0;
+  for await (const partial of listing.partialObjectStream) {
+    const options = partial.options ?? [];
+    while (sent < options.length - 1) onOption(options[sent++] as Partial<ThreadOption>);
+  }
+  const { options } = await listing.object;
+  while (sent < options.length) onOption(options[sent++]!);
+  report(provider, 'options', await listing.usage);
+  return options;
 }

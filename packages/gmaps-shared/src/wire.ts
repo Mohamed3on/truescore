@@ -116,8 +116,8 @@ export type SearchEvent =
   | { type: 'error'; error: string };
 
 // ---- /api/tally (NDJSON stream) ----
-// A Reddit Thread's Tally (CONTEXT.md). The model lists the Options first, then
-// each streams once Jev has read every comment naming it. `reads`: what each
+// A Reddit Thread's Tally (CONTEXT.md). Each Option streams as the model names
+// it (`listed`), then again once Jev has read every comment naming it. `reads`: what each
 // counted comment says of it, by comment id, the comments behind its count. A
 // count holds each commenter once (for, against, or `mixed` when they say both
 // or neither), and the upvotes of the comments for and against.
@@ -127,7 +127,7 @@ export type TitleTally = { key: string; name: string; count: TallyCount; reads: 
 export type OptionTally = TitleTally & { titles: TitleTally[] };
 export type ListedOption = { key: string; name: string; titles: { key: string; name: string }[] };
 export type TallyEvent =
-  | { type: 'options'; options: ListedOption[] }
+  | { type: 'listed'; option: ListedOption }
   | { type: 'option'; option: OptionTally }
   | { type: 'done' }
   | { type: 'error'; error: string };

@@ -74,7 +74,7 @@ for (const file of files) {
   const produced: OptionTally[] = [];
   let error = '';
   await tallyThread(thread, (e: TallyEvent) => {
-    if (e.type === 'options') listedAt = performance.now() - t0;
+    if (e.type === 'listed' && !listedAt) listedAt = performance.now() - t0;
     if (e.type === 'option') produced.push(e.option);
   }, { provider }).catch((e) => { error = e instanceof Error ? e.message : String(e); });
   const took = performance.now() - t0;
@@ -96,7 +96,7 @@ for (const file of files) {
   const top1 = rows[0]?.match && ranked[0] === rows[0].match ? 1 : 0;
 
   console.log(`\n${file}: ${thread.title}`);
-  console.log(`  ${thread.comments.length} comments · listed in ${(listedAt / 1000).toFixed(1)}s · done in ${(took / 1000).toFixed(1)}s · ${produced.length} options listed${error ? ` · ERROR ${error}` : ''}`);
+  console.log(`  ${thread.comments.length} comments · first option at ${(listedAt / 1000).toFixed(1)}s · done in ${(took / 1000).toFixed(1)}s · ${produced.length} options listed${error ? ` · ERROR ${error}` : ''}`);
   console.log(`  ${pad('expected option (people for-against)', 44)}${pad('expected', 10)}${pad('produced', 12)}as`);
   for (const { o, match } of rows) console.log(`  ${pad(o.name, 44)}${pad(fmt(o.count), 10)}${pad(fmt(match?.count), 12)}${match?.name ?? 'MISSING'}`);
   for (const p of extra) console.log(`  ${pad('(not labelled)', 44)}${pad('', 10)}${pad(fmt(p.count), 12)}${p.name}`);

@@ -138,11 +138,18 @@ export async function tallyOption(thread: Thread, question: string, o: ThreadOpt
   };
 }
 
-// Each Option and title once, by name.
+// Each title once, by name, and only the fields the schema promises: a streamed
+// Option is checked by nothing until the list ends.
 const distinct = <T extends { name: string }>(items: T[]) => {
   const seen = new Set<string>();
   return items.filter((i) => { const k = keyOf(i.name); return !!k && !seen.has(k) && !!seen.add(k); });
 };
+const strings = (v: unknown) => (Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : []);
+const tidy = (o: Partial<ThreadOption>): ThreadOption => ({
+  name: o.name ?? '',
+  aliases: strings(o.aliases),
+  titles: distinct((o.titles ?? []).flatMap((t) => (typeof t?.name === 'string' ? [{ name: t.name, aliases: strings(t.aliases) }] : []))),
+});
 
 // The Options are listed once per set of comments: the same page reopened lists
 // nothing again (and Jev's reads are kept, jev_memo), a thread that has grown is
@@ -151,31 +158,34 @@ db.run('CREATE TABLE IF NOT EXISTS tally_options (k TEXT PRIMARY KEY, v TEXT NOT
 const getOptions = db.prepare<{ v: string }, [string]>('SELECT v FROM tally_options WHERE k = ?');
 const putOptions = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO tally_options (k, v, ts) VALUES (?, ?, ?)');
 
-async function optionsFor(thread: Thread, question: string, { provider, reasoningEffort }: LlmOverrides): Promise<ThreadOption[]> {
+async function listOptionsOf(thread: Thread, question: string, { provider, reasoningEffort }: LlmOverrides, onOption: (o: Partial<ThreadOption>) => void): Promise<void> {
   const counted = thread.comments.filter(countsInTally);
   const k = `${thread.id}:${provider ?? ''}:${Bun.hash(counted.map((c) => c.id).sort().join(',')).toString(36)}`;
   const hit = getOptions.get(k);
-  if (hit) return JSON.parse(hit.v);
+  if (hit) return void (JSON.parse(hit.v) as ThreadOption[]).forEach(onOption);
   let chars = 0;
   const bodies = counted.map((c) => c.body).filter((b) => (chars += b.length) <= LIST_CHARS);
-  const options = distinct(await listOptions(question, bodies, provider, reasoningEffort))
-    .map((o) => ({ ...o, titles: distinct(o.titles) }));
-  putOptions.run(k, JSON.stringify(options), Date.now());
-  return options;
+  putOptions.run(k, JSON.stringify(await listOptions(question, bodies, onOption, provider, reasoningEffort)), Date.now());
 }
 
-// The whole Tally as a stream: the Options as soon as they're listed, then each
-// as its count lands. Throws when Jev couldn't read every comment, after
-// streaming the Options it could.
+// The whole Tally as a stream: each Option as soon as the model names it, its
+// count as soon as Jev has read it, while the model is still naming the rest.
+// Throws when Jev couldn't read every comment, after streaming what it could.
 export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void, overrides: LlmOverrides = {}): Promise<void> {
   const question = questionOf(thread);
-  const options = await optionsFor(thread, question, overrides);
-  write({ type: 'options', options: options.map(listedOf) });
-  const tallies = await Promise.all(options.map(async (o) => {
-    const t = await tallyOption(thread, question, o);
-    if (t) write({ type: 'option', option: t });
-    return t;
-  }));
-  if (tallies.some((t) => !t)) throw new Error("Couldn't read every comment right now — try again");
+  const seen = new Set<string>();
+  const counting: Promise<OptionTally | null>[] = [];
+  await listOptionsOf(thread, question, overrides, (raw) => {
+    const o = tidy(raw);
+    const key = keyOf(o.name);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    write({ type: 'listed', option: listedOf(o) });
+    counting.push(tallyOption(thread, question, o).then((t) => {
+      if (t) write({ type: 'option', option: t });
+      return t;
+    }));
+  });
+  if ((await Promise.all(counting)).some((t) => !t)) throw new Error("Couldn't read every comment right now — try again");
   write({ type: 'done' });
 }
