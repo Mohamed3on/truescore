@@ -1,4 +1,4 @@
-import { countsInTally, MIN_TALLY_PEOPLE, speakersOf, STANCE_MARKS, stripAccents, type ListedOption, type LlmOverrides, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type ThreadComment } from '@truescore/gmaps-shared';
+import { countsInTally, MIN_TALLY_PEOPLE, stripAccents, type ListedOption, type LlmOverrides, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type ThreadComment } from '@truescore/gmaps-shared';
 import { db } from './db';
 import { optionStancesFor } from './jev';
 import { explainOptions, listOptions, optionsRequest, reasonsRequest, type ThreadOption } from './llm';
@@ -71,17 +71,19 @@ export const combine = (stances: Iterable<Stance | undefined>): Stance | undefin
   return praise && complain ? 'mixed' : praise ? 'praise' : complain ? 'complain' : mixed ? 'mixed' : undefined;
 };
 
-// Each commenter once, by what their comments say together (comments by
-// deleted accounts can't be told apart, so each is its own person), and the
-// upvotes of the comments for and against. `reads` holds counted comments only.
+// Each commenter once, by what their comments say together, and the upvotes of
+// the comments for and against. `reads` holds counted comments only.
+// Who wrote a comment: comments by deleted accounts can't be told apart, so
+// each is its own person.
+const personOf = (c: ThreadComment) => (c.author === '[deleted]' ? `[deleted]:${c.id}` : c.author);
+
 export const countOf = (thread: Thread, reads: Record<string, Stance>): TallyCount => {
   const people = new Map<string, Stance[]>();
   const count: TallyCount = { for: 0, against: 0, mixed: 0, upFor: 0, upAgainst: 0 };
   for (const c of thread.comments) {
     const s = reads[c.id];
     if (!s || s === 'off') continue;
-    const who = c.author === '[deleted]' ? `[deleted]:${c.id}` : c.author;
-    people.set(who, [...(people.get(who) ?? []), s]);
+    people.set(personOf(c), [...(people.get(personOf(c)) ?? []), s]);
     if (s === 'praise') count.upFor += c.score;
     else if (s === 'complain') count.upAgainst += c.score;
   }
@@ -102,6 +104,8 @@ const titleOf = (o: ThreadOption, t: Title) => `${o.name}'s ${t.name}`;
 const describeOption = (o: ThreadOption) =>
   `${o.name}${o.titles.length ? ` (including ${o.titles.map((t) => titleOf(o, t)).join(', ')})` : ''}${also(o.aliases)}`;
 const namesOf = (o: ThreadOption) => [o.name, ...o.aliases, ...o.titles.flatMap((t) => [t.name, ...t.aliases])];
+// The names that pick an Option's comments among the thread's `all` (telling).
+const ownNames = (o: ThreadOption, all: ThreadOption[]) => telling(namesOf(o), all.filter((x) => x !== o).flatMap(namesOf));
 
 // The names that pick a thing's comments: its own, less any that a name of
 // something else holds ("twin" beside a Zoe Twin, "mount" beside Danaher's 4x4
@@ -135,7 +139,7 @@ export async function tallyOption(thread: Thread, question: string, o: ThreadOpt
   const rest = all.filter((x) => x !== o);
   const others = rest.map((x) => x.name).join(', ');
   const [own, ...titles] = await Promise.all([
-    readsOf(thread, question, o.name, telling(namesOf(o), rest.flatMap(namesOf)), describeOption(o), others),
+    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others),
     ...o.titles.map((t) => readsOf(thread, question, `${o.name} / ${t.name}`,
       telling([t.name, ...t.aliases], [...rest.flatMap(namesOf), ...o.titles.filter((x) => x !== t).flatMap((x) => [x.name, ...x.aliases])]),
       `${titleOf(o, t)}${also(t.aliases)}`, others)),
@@ -181,21 +185,21 @@ async function listOptionsOf(thread: Thread, question: string, { provider, reaso
   putOptions.run(k, JSON.stringify(await listOptions(question, bodies, onOption, provider, reasoningEffort)), Date.now());
 }
 
-// Why each shown Option is rated as it is, a line each from the comments behind
-// its count, streamed as written and kept for the same comments and reads. A
-// failure costs nothing else: the counts are the Tally.
+// Why each Option is rated as it is, a line each, written while Jev counts:
+// from the comments that name it (the ones Jev reads), for the Options two or
+// more people name. Streamed as written and kept for the same comments; a
+// failure costs nothing else, since the counts are the Tally.
 db.run('CREATE TABLE IF NOT EXISTS tally_reasons (k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER NOT NULL)');
 const getReasons = db.prepare<{ v: string }, [string]>('SELECT v FROM tally_reasons WHERE k = ?');
 const putReasons = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO tally_reasons (k, v, ts) VALUES (?, ?, ?)');
 const QUOTE_CHARS = 800;
 
-async function reasonsOf(thread: Thread, question: string, tallies: OptionTally[], { provider, reasoningEffort }: LlmOverrides, write: (e: TallyEvent) => void): Promise<void> {
-  const byId = new Map(thread.comments.map((c) => [c.id, c]));
-  const groups = tallies.filter((t) => speakersOf(t.count) >= MIN_TALLY_PEOPLE).map((t) => ({
-    key: t.key,
-    option: t.name,
-    comments: Object.entries(t.reads).map(([id, s]) => `${STANCE_MARKS[s].text} ${byId.get(id)!.body.replace(/\s+/g, ' ').slice(0, QUOTE_CHARS)}`),
-  }));
+async function reasonsOf(thread: Thread, question: string, options: ThreadOption[], { provider, reasoningEffort }: LlmOverrides, write: (e: TallyEvent) => void): Promise<void> {
+  const groups = options.flatMap((o) => {
+    const comments = naming(thread, ownNames(o, options));
+    return new Set(comments.map(personOf)).size < MIN_TALLY_PEOPLE ? []
+      : [{ key: keyOf(o.name), option: o.name, comments: comments.map((c) => `- ${c.body.replace(/\s+/g, ' ').slice(0, QUOTE_CHARS)}`) }];
+  });
   if (!groups.length) return;
   const k = `${thread.id}:${provider ?? ''}:${Bun.hash(reasonsRequest(question, groups).prompt).toString(36)}`;
   const hit = getReasons.get(k);
@@ -209,10 +213,10 @@ async function reasonsOf(thread: Thread, question: string, tallies: OptionTally[
 }
 
 // The whole Tally as a stream: each Option as soon as the model names it, then
-// each count once Jev has read it, then why each is rated as it is. Counting
-// waits for the whole list, since a name only picks comments once it's known no
-// other Option shares it. Throws when Jev couldn't read every comment, after
-// streaming what it could.
+// each count once Jev has read it, and alongside, why each is rated as it is.
+// Counting waits for the whole list, since a name only picks comments once it's
+// known no other Option shares it. Throws when Jev couldn't read every comment,
+// after streaming what it could.
 export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void, overrides: LlmOverrides = {}): Promise<void> {
   const question = questionOf(thread);
   const options: ThreadOption[] = [];
@@ -223,12 +227,14 @@ export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void
     options.push(o);
     write({ type: 'listed', option: listedOf(o) });
   });
-  const tallies = await Promise.all(options.map(async (o) => {
-    const t = await tallyOption(thread, question, o, options);
-    if (t) write({ type: 'option', option: t });
-    return t;
-  }));
+  const [tallies] = await Promise.all([
+    Promise.all(options.map(async (o) => {
+      const t = await tallyOption(thread, question, o, options);
+      if (t) write({ type: 'option', option: t });
+      return t;
+    })),
+    reasonsOf(thread, question, options, overrides, write),
+  ]);
   if (tallies.some((t) => !t)) throw new Error("Couldn't read every comment right now — try again");
-  await reasonsOf(thread, question, tallies as OptionTally[], overrides, write);
   write({ type: 'done' });
 }

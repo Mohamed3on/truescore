@@ -252,8 +252,8 @@ export async function listOptions(question: string, comments: string[], onOption
 }
 
 // Why people back or warn against each Option, in a line, written only from
-// the comments that count for it (each marked ▲ for, ▼ against, ● mixed), so it
-// can't drift from the Tally beside it. Reasons, never counts. One field per
+// the comments that name it (the ones Jev reads), so it can't stray from the
+// Tally beside it. Reasons, never counts. One field per
 // Option, under its key: given a list, the model wrote one line per course and
 // every line after it landed on the next Option.
 type ReasonGroup = { key: string; option: string; comments: string[] };
