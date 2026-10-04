@@ -35,6 +35,7 @@ await esbuild.build({
     'src/sites/gmaps-capture.ts',
     'src/sites/imdb.ts',
     'src/sites/letterboxd.ts',
+    'src/sites/reddit.ts',
     'src/sites/transfermarkt.ts',
   ],
   bundle: true,
@@ -74,5 +75,6 @@ cpSync('src/styles/gmaps.css', `${OUT}/sites/gmaps.css`);
 cpSync('src/styles/booking-hotel.css', `${OUT}/sites/booking-hotel.css`);
 cpSync('src/styles/letterboxd.css', `${OUT}/sites/letterboxd.css`);
 cpSync('src/styles/imdb.css', `${OUT}/sites/imdb.css`);
+cpSync('src/styles/reddit.css', `${OUT}/sites/reddit.css`);
 
 console.log(`Build complete → ./${OUT}/`);

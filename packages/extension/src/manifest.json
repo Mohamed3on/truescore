@@ -203,6 +203,12 @@
       "matches": ["*://www.transfermarkt.com/*", "*://www.transfermarkt.de/*"],
       "js": ["sites/transfermarkt.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://www.reddit.com/*", "*://old.reddit.com/*"],
+      "js": ["sites/reddit.js"],
+      "css": ["sites/reddit.css"],
+      "run_at": "document_end"
     }
   ],
   "action": {
