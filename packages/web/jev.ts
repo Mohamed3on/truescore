@@ -150,23 +150,57 @@ export const stancesFor = (topic: string, texts: string[]): Promise<Stance[] | n
 
 // What each comment says of an Option (see web/tally.ts), as an answer to the
 // Thread's question and read with the comment it replies to, so a bare "this"
-// carries its parent's stance. `option` describes it for the model; `name` keys
-// the memo, so a re-listing that words the description differently reads nothing
-// twice.
+// carries its parent's stance. `option` describes it for the model and `others`
+// names the thread's other Options, so talk of one of them, however alike its
+// name, reads as not about this one. Each answer says what it covers, what
+// belongs to a neighbour and a few examples: the options Jev confused as plain
+// strings (praise read as mixed, thanks read as agreement, a gripe about every
+// instructional read as one about this one). The memo is keyed by `name` and
+// these criteria, so a re-listing that words the description differently reads
+// nothing twice, and changed criteria read everything afresh.
 const OPTION_CRITERIA = {
-  praise: 'Recommends it to the asker, or speaks well of it as an answer',
-  complain: 'Advises against it, or speaks badly of it',
-  mixed: 'Speaks both well and badly of it, recommends it with a caveat that it may not suit what the asker needs, or mentions it without recommending it either way',
-  off: 'Never speaks of it, not even in other words (a nickname, a misspelling, one of their products), or speaks only of a different thing with a similar name',
+  praise: {
+    what: 'Recommends it to the asker or speaks well of it',
+    includes: 'naming it as an answer; a recommendation with a small caveat',
+    not_for: 'weighing a drawback without settling (mixed); speaking only of one of `others` (off)',
+    examples: ['Go with this one.', 'Love mine. A bit pricey, but worth it.'],
+  },
+  complain: {
+    what: 'Advises against it or speaks badly of it in particular',
+    not_for: 'a gripe about a whole kind of thing it belongs to, or a question (off)',
+    examples: ['Skip it, mine broke in a month.', 'Not worth the money.'],
+  },
+  mixed: {
+    what: 'Weighs a drawback that matters for what the asker needs against its good points without settling, or mentions it without a verdict',
+    examples: ["It's great, but too heavy for what you described.", 'I own one.', 'Thinking of getting it.'],
+  },
+  off: {
+    what: 'Never speaks of it',
+    includes: 'speaking only of one of `others`, even one with a similar name; speaking only of a whole kind of thing; only asking a question',
+    examples: ['Do any of these work for small cars?', 'Most of these are overpriced.'],
+  },
 };
 const REPLY_CRITERIA = {
-  praise: 'Recommends it to the asker or speaks well of it, including by agreeing with `replying_to` where that recommends it ("this", "+1", "same")',
-  complain: 'Advises against it or speaks badly of it, including by disagreeing with `replying_to` where that recommends it',
-  mixed: 'Speaks both well and badly of it, recommends it with a caveat that it may not suit what the asker needs, or mentions it without recommending it either way',
-  off: 'Never speaks of it, neither in its own words nor by agreeing or disagreeing with `replying_to` about it, or speaks only of a different thing with a similar name',
+  praise: {
+    ...OPTION_CRITERIA.praise,
+    includes: 'agreeing with `replying_to` where that recommends it; naming it as an answer; a recommendation with a small caveat',
+    examples: ['This.', '+1, mine has been great.', 'Seconded.'],
+  },
+  complain: {
+    ...OPTION_CRITERIA.complain,
+    includes: 'disagreeing with `replying_to` where that recommends it',
+    examples: ['Hard disagree, it fell apart on me.', 'Skip it, mine broke in a month.'],
+  },
+  mixed: OPTION_CRITERIA.mixed,
+  off: {
+    what: 'Never speaks of it, neither in its own words nor by agreeing or disagreeing with `replying_to` about it',
+    includes: 'thanking `replying_to` or asking it something; speaking only of one of `others`',
+    examples: ['Thanks!', 'Does it fit in a small car?'],
+  },
 };
-export const optionStancesFor = (thread: string, name: string, option: string, comments: { text: string; parent?: string }[]): Promise<Stance[] | null> =>
-  judge('option', `${thread}\u0000${name}`, { thread, option }, comments.map((c) => `${c.parent ?? ''}\u0000${c.text}`),
+const OPTION_READ = Bun.hash(JSON.stringify([OPTION_CRITERIA, REPLY_CRITERIA])).toString(36);
+export const optionStancesFor = (thread: string, name: string, option: string, others: string, comments: { text: string; parent?: string }[]): Promise<Stance[] | null> =>
+  judge('option', `${thread}\u0000${name}\u0000${OPTION_READ}`, { thread, option, others }, comments.map((c) => `${c.parent ?? ''}\u0000${c.text}`),
     (_, i) => {
       const { text, parent } = comments[i]!;
       return parent

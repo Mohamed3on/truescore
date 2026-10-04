@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { Thread, ThreadComment } from '@truescore/gmaps-shared';
 import { setJevClient } from './jev';
-import { combine, countOf, naming, tallyOption, threadOf } from './tally';
+import { combine, countOf, naming, tallyOption, telling, threadOf } from './tally';
 
 let n = 0;
 const comment = (id: string, body: string, more: Partial<ThreadComment> = {}): ThreadComment =>
@@ -19,7 +19,7 @@ describe('naming', () => {
     expect(naming(thread, ['Sony']).map((c) => c.id)).toEqual(['a', 'b', 'c']);
   });
 
-  test('a reply below a comment naming it speaks of it too, as does an answer to a post that names it', () => {
+  test('a reply to a comment naming it speaks of it too, as does an answer to a post that names it', () => {
     const thread = threadWith([
       comment('a', 'Bose QC'),
       comment('b', 'this', { parentId: 'a' }),
@@ -28,7 +28,8 @@ describe('naming', () => {
       comment('e', 'this', { parentId: 'd' }),
       comment('f', 'this', { parentId: 'gone' }),
     ]);
-    expect(naming(thread, ['Bose']).map((c) => c.id)).toEqual(['a', 'b', 'c']);
+    // c answers b, a bare "this": too far down to know it's about Bose.
+    expect(naming(thread, ['Bose']).map((c) => c.id)).toEqual(['a', 'b']);
     const asked = threadWith([comment('a', 'go for the first')], 'Bose or Sony?');
     expect(naming(asked, ['Bose']).map((c) => c.id)).toEqual(['a']);
   });
@@ -40,6 +41,15 @@ describe('naming', () => {
       comment('c', 'Bose', { bot: true }),
     ]);
     expect(naming(thread, ['Bose']).map((c) => c.id)).toEqual(['b']);
+  });
+});
+
+describe('telling', () => {
+  test("drops a name another thing's name holds, keeping the ones only it has", () => {
+    // Bombi's "Twin" would match every "Zoe Twin"; "Bombi Twin" can't.
+    expect(telling(['Bombi', 'Twin', 'Bombi Twin'], ['Zoe', 'Zoe Twin'])).toEqual(['Bombi', 'Bombi Twin']);
+    expect(telling(['Gordon Ryan', 'Mount'], ["Danaher's 4x4 Mount"])).toEqual(['Gordon Ryan']);
+    expect(telling(['Sony'], ['Bose'])).toEqual(['Sony']);
   });
 });
 
