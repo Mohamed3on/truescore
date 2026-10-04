@@ -2,7 +2,7 @@ import { addCommas, el, npsColor, npsStats, toneColor } from './utils';
 import { llmSummarize, renderFreeFormAnswer } from './review-summary';
 import type { SearchAsk } from './review-ask';
 import { countStances, opinionsOf, opinionTone, parseOrQuery, type SearchReviews, type Stance } from '@truescore/gmaps-shared';
-import { markPressed, opinionFilters, opinionNumbers, opinionsLabel, opinionsSlot, readStances } from './jev';
+import { markPressed, opinionFilters, opinionNumbers, opinionsLabel, opinionsSlot, readStances, stanceMark } from './jev';
 
 // Gmail-style ` OR ` (any case) splits a query into lowercased terms; a review
 // matches if it contains ANY term. Shared by every panel's review search.
@@ -308,7 +308,10 @@ export const buildSearchSection = <T,>({
       return opinionNumbers(o, { share: () => 'ts-op-share', color: (x) => toneColor(opinionTone(x)), sparse: 'dash' });
     }), starShare));
     void read.then((o) => {
-      if (!o || o.sparse || currentQuery !== raw) return;
+      if (!o || currentQuery !== raw) return;
+      // Each listed review marked with what it says, once read.
+      renderList();
+      if (o.sparse) return;
       filters.append(...opinionFilters(o, () => filter, setFilter));
       filters.classList.add('ts-op-in');
     });
@@ -333,13 +336,14 @@ export const buildSearchSection = <T,>({
   // The matches listed: every one, or those of the filtered stance.
   const renderList = () => {
     list.textContent = '';
-    const picked = filter && stances ? lastMatches.filter((_, i) => stances![i] === filter) : lastMatches;
+    const marked = lastMatches.map((m, i) => ({ ...m, stance: stances?.[i] }));
+    const picked = filter && stances ? marked.filter((m) => m.stance === filter) : marked;
     if (!picked.length) {
       list.appendChild(el('div', 'ars-search-empty', 'No matching reviews'));
       return;
     }
     const shown = picked.slice(0, MAX_RENDERED_RESULTS);
-    for (const p of shown) list.appendChild(buildReviewCard(p.f, listTerms));
+    for (const p of shown) list.appendChild(buildReviewCard(p.f, listTerms, p.stance));
     // listTotal, not picked.length: a remote search reports every hit but only
     // hands back its first page.
     const total = filter ? picked.length : listTotal;
@@ -389,11 +393,12 @@ export const buildSearchSection = <T,>({
 
 // One review card in a `.ars-search-list`: stars + meta header, then the
 // highlighted title and body.
-export const buildReviewCard = (r: SearchReviewFields, terms: string[]) => {
+export const buildReviewCard = (r: SearchReviewFields, terms: string[], stance?: Stance) => {
   const card = el('div', 'ars-search-review');
   const head = el('div', 'ars-search-review-head');
   const rating = Math.max(0, Math.min(5, Math.round(r.rating || 0)));
   head.appendChild(el('span', 'ars-search-stars', '★'.repeat(rating) + '☆'.repeat(5 - rating)));
+  head.append(...stanceMark(stance));
   if (r.meta) head.appendChild(el('span', 'ars-search-meta', r.meta));
   card.appendChild(head);
   if (r.title) {

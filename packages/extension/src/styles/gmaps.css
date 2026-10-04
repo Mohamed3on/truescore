@@ -816,6 +816,8 @@
 }
 .rc-review-stars { color: #E8B86D; letter-spacing: 0.1em; font-size: 10px; }
 .rc-review-age { color: rgba(255, 255, 255, 0.3); }
+/* What the review says about the chip or search, right after its stars. */
+.rc-review-meta .ts-stance { margin: 0 auto 0 6px; }
 .rc-review-text {
   font-family: 'Sora', system-ui, sans-serif;
   font-size: 12px;
@@ -896,5 +898,5 @@
 /* A topic split down the middle reads in brass, between the two. */
 .rc-chip-pct.mid,
 .rc-ask-search-pct.mid { color: #E8B86D; }
-/* Review filters (▲ praise / ▼ complain) in the panel's own green and red. */
-:root { --ts-praise: #4ADE80; --ts-complain: #F87171; }
+/* Review filters (▲ praise / ▼ complain) and stance marks in the panel's own green, red and brass. */
+:root { --ts-praise: #4ADE80; --ts-complain: #F87171; --ts-mixed: #E8B86D; }

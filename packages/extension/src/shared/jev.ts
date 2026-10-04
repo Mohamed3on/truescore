@@ -1,4 +1,4 @@
-import { countStances, isTrusted, MAX_JUDGED, opinionTone, signedNet, mentionsText, type Answer, type Opinions, type ReceiptsResponse, type Review, type Stance, type StanceResponse, type StanceResult, type Tone } from '@truescore/gmaps-shared';
+import { countStances, isTrusted, MAX_JUDGED, opinionTone, signedNet, mentionsText, STANCE_MARKS, type Answer, type Opinions, type ReceiptsResponse, type Review, type Stance, type StanceResponse, type StanceResult, type Tone } from '@truescore/gmaps-shared';
 import { cacheGet, cacheSet } from './cache';
 import { el, npsColor } from './utils';
 
@@ -112,6 +112,11 @@ const STYLES = `
 .rc-highlight:has(.ars-receipt) .rc-h-text { flex: 1; }
 .ars-receipt-quote { margin: 0; padding: 6px 8px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; border: 1px solid color-mix(in srgb, currentColor 15%, transparent); border-radius: 6px; }
 .ars-receipt-more { font-size: 11px; opacity: .65; }
+/* A listed review's stance on the subject, after its stars (stanceMark). */
+.ts-stance { font-size: 10px; line-height: 1; color: var(--ts-praise, #15803D); }
+.ts-stance.complain { color: var(--ts-complain, #C2410C); }
+.ts-stance.mixed { color: var(--ts-mixed, hsl(40, 70%, 35%)); }
+.ts-stance.off { color: inherit; opacity: .6; }
 @keyframes ts-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes ts-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .ars-receipt-quotes, .ts-op-in > * { animation-name: ts-fade; } }
@@ -169,6 +174,18 @@ export const opinionFilters = (o: Opinions, current: () => Stance | null, set: (
 };
 export const markPressed = (root: Element, stance: Stance | null) =>
   root.querySelectorAll<HTMLButtonElement>('.ts-op-filter').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.stance === stance)));
+
+// A listed review's stance on the subject (STANCE_MARKS); none when it wasn't read.
+export const stanceMark = (stance: Stance | undefined): HTMLElement[] => {
+  if (!stance) return [];
+  ensureJevStyles();
+  const { glyph, label } = STANCE_MARKS[stance];
+  const mark = el('span', `ts-stance ${stance}`, glyph);
+  mark.title = label;
+  mark.setAttribute('role', 'img');
+  mark.setAttribute('aria-label', label);
+  return [mark];
+};
 
 // A summary bullet's receipt: how many reviews make its point; a press opens
 // them below it. `title` says what was checked when it wasn't every review;

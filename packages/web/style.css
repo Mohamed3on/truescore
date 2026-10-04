@@ -682,6 +682,11 @@ section#result::before {
 }
 .review-stars { color: var(--gold); letter-spacing: 0.1em; font-size: 11px; }
 .review-age { color: var(--t3); }
+.review-stance { margin: 0 auto 0 8px; font-size: 10px; line-height: 1; }
+.review-stance.praise { color: var(--pos); }
+.review-stance.complain { color: var(--neg); }
+.review-stance.mixed { color: var(--mid); }
+.review-stance.off { color: var(--t4); }
 .review-text {
   margin: 0;
   font-size: 13px;

@@ -141,6 +141,8 @@ describe('buildSearchSection', () => {
     expect(score.title).toBe('2 praise · 1 complain · 1 mixed or neutral');
     const [up, down] = [...section.querySelectorAll<HTMLButtonElement>('.ars-search-summary .ts-op-filter')];
     expect([up!.textContent, down!.textContent]).toEqual(['▲2', '▼1']);
+    // Each listed review is marked with what it says.
+    expect([...section.querySelectorAll('.ars-search-review .ts-stance')].map((m) => m.textContent)).toEqual(['▲', '▼', '▲', '●']);
     down!.click();
     expect(down!.getAttribute('aria-pressed')).toBe('true');
     expect([...section.querySelectorAll('.ars-search-title')].map((t) => t.textContent)).toEqual(['battery dies fast']);

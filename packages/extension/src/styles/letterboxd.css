@@ -358,5 +358,5 @@
 .lbx-ignored-list .lbx-ignore:hover { opacity: 1; color: #00e054; }
 .lbx-similar-item.lbx-moved { animation: lbx-slide-in .28s cubic-bezier(0.16, 1, 0.3, 1); }
 @keyframes lbx-slide-in { from { opacity: 0; transform: translateY(-3px); } }
-/* Review filters (▲ praise / ▼ complain) in Letterboxd's own green and orange. */
-:root { --ts-praise: #00e054; --ts-complain: #ff8000; }
+/* Review filters (▲ praise / ▼ complain) and stance marks in Letterboxd's own green, orange and slate. */
+:root { --ts-praise: #00e054; --ts-complain: #ff8000; --ts-mixed: #9ab; }

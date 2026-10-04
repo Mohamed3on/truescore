@@ -4,7 +4,7 @@ import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEAR
 import { createScoreStore, type Period } from '../shared/score-store';
 import type { LLMProvider, ReasoningEffort } from '../shared/config';
 import { findQA, loadQAs, removeQA, saveQA } from '../shared/qa-history';
-import { markPressed, opinionFilters, opinionNumbers, opinionsEl, opinionsLabel, opinionsSlot, readAnswers, readStanceOf, receiptButton, type NumberStyle } from '../shared/jev';
+import { markPressed, opinionFilters, opinionNumbers, opinionsEl, opinionsLabel, opinionsSlot, readAnswers, readStanceOf, receiptButton, stanceMark, type NumberStyle } from '../shared/jev';
 
 // The panel's own number styles, so stance numbers sit where the star share sat:
 // a chip's % and ·count; plain text in a panel title; the search header's colours.
@@ -1353,12 +1353,13 @@ const highlightTerms = (root: HTMLElement, terms: string[]) => {
   }
 };
 
-const reviewCardEl = (r: Review, fallbackTerms: string[] = []): HTMLElement => {
+const reviewCardEl = (r: Review, fallbackTerms: string[] = [], stance?: Stance): HTMLElement => {
   const card = el('div', 'rc-review');
   const meta = el('div', 'rc-review-meta');
   const stars = el('span', 'rc-review-stars', starString(r.stars));
   const age = el('span', 'rc-review-age', reviewAge(r.timestamp));
   meta.appendChild(stars);
+  meta.append(...stanceMark(stance));
   meta.appendChild(age);
   card.appendChild(meta);
   const text = el('div', 'rc-review-text');
@@ -1370,10 +1371,10 @@ const reviewCardEl = (r: Review, fallbackTerms: string[] = []): HTMLElement => {
   return card;
 };
 
-const renderReviewsInto = (container: HTMLElement, reviews: Review[], terms: string[] = []) => {
+const renderReviewsInto = (container: HTMLElement, reviews: Review[], terms: string[] = [], stances?: Record<string, Stance>) => {
   const fallback = terms.flatMap((t) => t.split(/\s+/)).map((t) => t.trim()).filter(Boolean);
   for (const r of sortedDisplayReviews(reviews)) {
-    container.appendChild(reviewCardEl(r, fallback));
+    container.appendChild(reviewCardEl(r, fallback, stances?.[r.reviewId]));
   }
 };
 
@@ -1395,7 +1396,7 @@ const renderChipReviews = (h: Highlight) => {
   const body = cardEls.chipPanelBody;
   if (!body) return;
   body.textContent = '';
-  renderReviewsInto(body, byStance(h.reviews ?? [], h.stances, chipFilter), [h.label]);
+  renderReviewsInto(body, byStance(h.reviews ?? [], h.stances, chipFilter), [h.label], h.stances);
 };
 
 const renderChipTitle = (title: HTMLElement, h: Highlight) => {
@@ -1582,14 +1583,19 @@ const renderLabelSearchResult = () => {
   const filters = el('span', 'ts-op-filters');
   void stance.then((read) => {
     if (!read) return;
+    const draw = (pick: Stance | null) => {
+      list.textContent = '';
+      renderReviewsInto(list, byStance(reviews, read.stances, pick), parseOrQuery(query), read.stances);
+    };
+    // Each listed review marked with what it says, once read.
+    draw(null);
     const o = opinionsOf(read.stance, read.of);
     if (o.sparse) return;
     const set = (pick: Stance | null) => {
       filter = pick;
       clearFilter = pick ? () => set(null) : null;
       markPressed(header, pick);
-      list.textContent = '';
-      renderReviewsInto(list, byStance(reviews, read.stances, pick), parseOrQuery(query));
+      draw(pick);
     };
     filters.append(...opinionFilters(o, () => filter, set));
     filters.classList.add('ts-op-in');

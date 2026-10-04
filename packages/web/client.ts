@@ -6,7 +6,7 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortChipsByImpact, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
-  answersOf, bySupport, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, opinionTone, signedNet, tooFewMentions, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
+  answersOf, bySupport, countAnswers, mentionsText, MAX_JUDGED, opinionPct, opinionsOf, opinionTone, signedNet, STANCE_MARKS, tooFewMentions, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type SearchEvent, type SearchResult,
@@ -505,6 +505,18 @@ function highlightInto(target: HTMLElement, text: string, terms: string[]) {
   if (last < text.length) target.appendChild(document.createTextNode(text.slice(last)));
 }
 
+// What a listed review says about the panel's subject (STANCE_MARKS), after its
+// stars; none when it wasn't read.
+function stanceMark(stance: Stance | undefined): HTMLElement[] {
+  if (!stance) return [];
+  const { glyph, label } = STANCE_MARKS[stance];
+  const mark = el('span', `review-stance ${stance}`, glyph);
+  mark.title = label;
+  mark.setAttribute('role', 'img');
+  mark.setAttribute('aria-label', label);
+  return [mark];
+}
+
 function renderReviewList(reviews: Review[]) {
   // Same precedence as askChipPanel's `filter`: a chip search by its label, a
   // text search by its query — tokenized to words. Only the fallback for reviews
@@ -515,7 +527,7 @@ function renderReviewList(reviews: Review[]) {
   const shown = stanceFilter && stances ? reviews.filter((r) => stances[r.reviewId] === stanceFilter) : reviews;
   chipBody.replaceChildren(...sortedDisplayReviews(shown).map((r) => {
     const meta = el('div', 'review-meta');
-    meta.append(el('span', 'review-stars', starString(r.stars)), el('span', 'review-age', reviewAge(r.timestamp)));
+    meta.append(el('span', 'review-stars', starString(r.stars)), ...stanceMark(stances?.[r.reviewId]), el('span', 'review-age', reviewAge(r.timestamp)));
     const text = el('p', 'review-text');
     highlightInto(text, r.text, r.matchTerms?.length ? r.matchTerms : fallback);
     const card = el('div', 'review-card');
