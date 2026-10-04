@@ -63,9 +63,7 @@ import {
   opinionTone,
   tooFewMentions,
   type AnswerCounts,
-  isTrusted,
   type Stance,
-  type StanceMark,
   type StanceResult,
   type SummaryHighlight,
 } from '@truescore/gmaps-shared';
@@ -1355,13 +1353,13 @@ const highlightTerms = (root: HTMLElement, terms: string[]) => {
   }
 };
 
-const reviewCardEl = (r: Review, fallbackTerms: string[] = [], stance?: StanceMark): HTMLElement => {
+const reviewCardEl = (r: Review, fallbackTerms: string[] = [], stance?: Stance): HTMLElement => {
   const card = el('div', 'rc-review');
   const meta = el('div', 'rc-review-meta');
   const stars = el('span', 'rc-review-stars', starString(r.stars));
   const age = el('span', 'rc-review-age', reviewAge(r.timestamp));
   meta.appendChild(stars);
-  meta.append(...stanceMark(stance));
+  meta.append(...stanceMark(stance, r.reviewerReviewCount));
   meta.appendChild(age);
   card.appendChild(meta);
   const text = el('div', 'rc-review-text');
@@ -1376,7 +1374,7 @@ const reviewCardEl = (r: Review, fallbackTerms: string[] = [], stance?: StanceMa
 const renderReviewsInto = (container: HTMLElement, reviews: Review[], terms: string[] = [], stances?: Record<string, Stance>) => {
   const fallback = terms.flatMap((t) => t.split(/\s+/)).map((t) => t.trim()).filter(Boolean);
   for (const r of sortedDisplayReviews(reviews)) {
-    container.appendChild(reviewCardEl(r, fallback, isTrusted(r.reviewerReviewCount) ? stances?.[r.reviewId] : 'untrusted'));
+    container.appendChild(reviewCardEl(r, fallback, stances?.[r.reviewId]));
   }
 };
 

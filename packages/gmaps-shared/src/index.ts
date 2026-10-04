@@ -6,6 +6,8 @@
 // packages — those diverge enough that abstraction would obscure more than
 // it shares.
 
+import { STANCE_MARKS, type Stance } from './stance';
+
 export type Review = {
   reviewId: string;
   stars: number;
@@ -30,6 +32,17 @@ export const PAGE_SIZE = 20;
 export const TRUSTED_MIN_REVIEWS = 3;
 
 export const isTrusted = (reviewerReviewCount: number) => reviewerReviewCount >= TRUSTED_MIN_REVIEWS;
+// What a listed review's card says beside its stars: its stance on the subject
+// (STANCE_MARKS), or, when its author isn't trusted, why it has none (no score
+// counts it, so Jev never reads it), in Google's own "· N reviews" style. Null
+// when it simply wasn't read; `authorReviews` is absent where trust doesn't apply.
+export const reviewMark = (stance: Stance | undefined, authorReviews?: number): { cls: string; text: string; label: string } | null => {
+  if (authorReviews != null && !isTrusted(authorReviews)) {
+    const n = `${authorReviews} review${authorReviews === 1 ? '' : 's'}`;
+    return { cls: 'untrusted', text: `untrusted · ${n}`, label: `Not counted or read: its author has ${n}, and TrueScore trusts authors with ${TRUSTED_MIN_REVIEWS}+` };
+  }
+  return stance ? { cls: stance, ...STANCE_MARKS[stance] } : null;
+};
 export const starScore = (stars: number): number => (stars === 5 ? 1 : stars === 1 ? -1 : 0);
 
 // Fold removed reviews into the score by treating them as 1★ reviews the place

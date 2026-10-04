@@ -1,4 +1,4 @@
-import { countStances, isTrusted, MAX_JUDGED, opinionTone, signedNet, mentionsText, STANCE_MARKS, type StanceMark, type Answer, type Opinions, type ReceiptsResponse, type Review, type Stance, type StanceResponse, type StanceResult, type Tone } from '@truescore/gmaps-shared';
+import { countStances, isTrusted, MAX_JUDGED, opinionTone, signedNet, mentionsText, reviewMark, type Answer, type Opinions, type ReceiptsResponse, type Review, type Stance, type StanceResponse, type StanceResult, type Tone } from '@truescore/gmaps-shared';
 import { cacheGet, cacheSet } from './cache';
 import { el, npsColor } from './utils';
 
@@ -176,13 +176,13 @@ export const opinionFilters = (o: Opinions, current: () => Stance | null, set: (
 export const markPressed = (root: Element, stance: Stance | null) =>
   root.querySelectorAll<HTMLButtonElement>('.ts-op-filter').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.stance === stance)));
 
-// A listed review's stance on the subject, or that its untrusted author kept it
-// unread (STANCE_MARKS); none when it wasn't read.
-export const stanceMark = (stance: StanceMark | undefined): HTMLElement[] => {
-  if (!stance) return [];
+// A listed review's mark beside its stars (reviewMark); none when it wasn't read.
+export const stanceMark = (stance: Stance | undefined, authorReviews?: number): HTMLElement[] => {
+  const m = reviewMark(stance, authorReviews);
+  if (!m) return [];
   ensureJevStyles();
-  const { text, label } = STANCE_MARKS[stance];
-  const mark = el('span', `ts-stance ${stance}`, text);
+  const { text, label } = m;
+  const mark = el('span', `ts-stance ${m.cls}`, text);
   mark.title = label;
   mark.setAttribute('role', 'img');
   mark.setAttribute('aria-label', label);

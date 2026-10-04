@@ -687,7 +687,8 @@ section#result::before {
 .review-stance.complain { color: var(--neg); }
 .review-stance.mixed { color: var(--mid); }
 .review-stance.off { color: var(--t4); }
-.review-stance.untrusted { color: var(--t3); }
+/* Untracked so "untrusted · 2 reviews" keeps to one line on a 360pt phone. */
+.review-stance.untrusted { color: var(--t3); letter-spacing: 0; }
 .review-text {
   margin: 0;
   font-size: 13px;

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { answersOf, countAnswers, countStances, opinionPct, opinionTone, opinionsOf, signedNet } from './stance';
+import { reviewMark } from './index';
 
 describe('countStances', () => {
   test('tallies every stance, skipping unread ones', () => {
@@ -40,5 +41,15 @@ describe('answersOf', () => {
     const o = answersOf(countAnswers(['yes', 'yes', 'no', 'none', 'unclear']));
     expect(o).toMatchObject({ pos: 2, neg: 1, net: 1, share: 67, posWord: 'yes', negWord: 'no', mentions: 4, sparse: false });
     expect(o.title).toBe("2 yes · 1 no · 1 unclear · 1 don't say");
+  });
+});
+
+describe('reviewMark', () => {
+  test("a read review shows its stance; an untrusted author's, never read, says why", () => {
+    expect(reviewMark('praise', 7)).toMatchObject({ cls: 'praise', text: '▲' });
+    expect(reviewMark('mixed')?.text).toBe('●');
+    expect(reviewMark(undefined, 1)).toMatchObject({ cls: 'untrusted', text: 'untrusted · 1 review' });
+    expect(reviewMark(undefined, 2)?.text).toBe('untrusted · 2 reviews');
+    expect(reviewMark(undefined, 7)).toBeNull();
   });
 });
