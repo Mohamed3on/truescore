@@ -12,12 +12,16 @@ export type Stance = (typeof STANCES)[number];
 export type StanceCounts = Record<Stance, number>;
 // A review's stance as its card marks it, beside its stars: the filters' ▲ and ▼,
 // a ● for mixed or neutral, a hollow ○ for not about it. All four are in every
-// system font's core set, so they render at one size wherever they show.
-export const STANCE_MARKS: Record<Stance, { glyph: string; label: string }> = {
-  praise: { glyph: '▲', label: 'Praises it' },
-  complain: { glyph: '▼', label: 'Complains about it' },
-  mixed: { glyph: '●', label: 'Mixed or neutral' },
-  off: { glyph: '○', label: 'Not about it' },
+// system font's core set, so they render at one size wherever they show. A
+// review by an untrusted author is never read (no score counts it), so its card
+// says so rather than show no mark, which reads as a miss.
+export type StanceMark = Stance | 'untrusted';
+export const STANCE_MARKS: Record<StanceMark, { text: string; label: string }> = {
+  praise: { text: '▲', label: 'Praises it' },
+  complain: { text: '▼', label: 'Complains about it' },
+  mixed: { text: '●', label: 'Mixed or neutral' },
+  off: { text: '○', label: 'Not about it' },
+  untrusted: { text: 'untrusted', label: 'Not counted or read: its author has too few reviews' },
 };
 
 // A review's answer to an Ask's question.
