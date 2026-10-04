@@ -126,8 +126,9 @@ let labelSearchSeq = 0;
 // `scoredCtx` holds each group's current items so a score landing late can
 // rebuild that chip row (filter to ≥2 mentions, sort by count) without a full
 // summary re-render. Each score carries what its reviews say about the item
-// when Jev could read them, as the topic chips do.
-type ScoredStats = SortStats & Partial<Pick<StanceResult, 'stance' | 'of'>>;
+// when Jev could read them, as the topic chips do, and — a standout naming a
+// topic — the pooled chip's numbers (pooledView), so a reload paints it as it was.
+type ScoredStats = SortStats & Partial<Pick<StanceResult, 'stance' | 'of'>> & { pooled?: Pick<Highlight, 'token' | 'count' | 'score' | 'stance' | 'of'> };
 const standoutScoreCache = new Map<string, ScoredStats>();
 const standoutScoreInflight = new Set<string>();
 // Zero-scores minted for failed searches (so the chip drops out instead of
@@ -1359,28 +1360,40 @@ const renderHighlights = () => {
 };
 
 // A topic and a standout naming the same thing, pooled into one chip
-// (pooledReads). Neither keeps its reviews across a reload, so a missing side is
-// fetched first, the topic showing as it was until then — and staying so if it
-// never comes.
+// (pooledReads). Its numbers are kept with the standout's score, so a reload
+// paints it as it was and fetches its reviews only when it opens (neither side
+// keeps them). A pool not made yet fetches the missing side first, the topic
+// showing as it was until then — and staying so if it never comes.
 const poolFetches = new WeakMap<Highlight, 'waiting' | 'done'>();
 const pooledViews = new WeakMap<Highlight, { s: ItemReviews; view: Highlight }>();
+// A pooled chip painted from its kept numbers, and the sides it pools on opening.
+const poolSides = new WeakMap<Highlight, { h: Highlight; featureId: string; item: string }>();
 const pooledView = (h: Highlight, featureId: string, item: string): Highlight | null => {
-  const s = standoutReviewsCache.get(`${featureId}|${item.toLowerCase()}`);
-  if (!h.reviews || !s) {
-    const fetched = poolFetches.get(h);
-    if (fetched === 'done') return h;
-    if (!fetched) {
-      poolFetches.set(h, 'waiting');
-      void Promise.all([ensureChipReviews(h), ensureScored(featureId, [item], 'standouts', true)])
-        .finally(() => { poolFetches.set(h, 'done'); renderHighlights(); });
-    }
-    return null;
+  const key = `${featureId}|${item.toLowerCase()}`;
+  const s = standoutReviewsCache.get(key);
+  const stats = standoutScoreCache.get(key)!;
+  if (h.reviews && s) {
+    const kept = pooledViews.get(h);
+    if (kept?.s === s) return kept.view;
+    const view = { ...h, ...pooledReads(h, s) };
+    stats.pooled = { token: h.token, count: view.count, score: view.score, stance: view.stance, of: view.of };
+    saveScoredCache();
+    pooledViews.set(h, { s, view });
+    return view;
   }
-  const kept = pooledViews.get(h);
-  if (kept?.s === s) return kept.view;
-  const view = { ...h, ...pooledReads(h, s) };
-  pooledViews.set(h, { s, view });
-  return view;
+  if (!h.reviews && stats.pooled?.token === h.token) {
+    const view = { ...h, stance: undefined, of: undefined, stances: undefined, ...stats.pooled };
+    poolSides.set(view, { h, featureId, item });
+    return view;
+  }
+  const fetched = poolFetches.get(h);
+  if (fetched === 'done') return h;
+  if (!fetched) {
+    poolFetches.set(h, 'waiting');
+    void Promise.all([ensureChipReviews(h), ensureScored(featureId, [item], 'standouts', true)])
+      .finally(() => { poolFetches.set(h, 'done'); renderHighlights(); });
+  }
+  return null;
 };
 
 const onChipClick = (h: Highlight) => {
@@ -1485,9 +1498,17 @@ const renderChipTitle = (title: HTMLElement, h: Highlight) => {
 };
 
 // Reviews are not persisted (see saveHighlightsCache); fetch on demand after a
-// refresh so the chip panel and Summarize have data to work with.
+// refresh so the chip panel and Summarize have data to work with. A pooled chip
+// painted from its kept numbers gets both sides, pooled.
 const ensureChipReviews = async (h: Highlight): Promise<void> => {
   if (h.reviews) return;
+  const pool = poolSides.get(h);
+  if (pool) {
+    await Promise.all([ensureChipReviews(pool.h), ensureScored(pool.featureId, [pool.item], 'standouts', true)]);
+    const s = standoutReviewsCache.get(`${pool.featureId}|${pool.item.toLowerCase()}`);
+    if (pool.h.reviews && s) Object.assign(h, pooledReads(pool.h, s));
+    return;
+  }
   const featureId = getFeatureId();
   if (!featureId) return;
   const creds = await ensureCreds();
@@ -1869,7 +1890,6 @@ const createUIElements = () => {
   cardEls.highlightsList = hlList;
   cardEls.highlightsBtn = hlBtn;
   cardEls.highlightsStale = hlStale;
-  if (highlightsState && highlightsState.items.length) renderHighlights();
 
   // Better-alternatives chips, directly under the topic row the standouts join —
   // the same kind of chip, but their own labelled row. Populated by renderSummary.
@@ -1910,6 +1930,9 @@ const createUIElements = () => {
   c.appendChild(sumPanel);
   cardEls.sumPanel = sumPanel;
   if (summaryCache.all) renderSummary(sumPanel, summaryCache.all);
+  // After the summary, whose standouts join the row: cached, it paints once,
+  // already in its final order.
+  if (highlightsState && highlightsState.items.length) renderHighlights();
 
   const sumRow = el('div', 'rc-sum-row');
   const sumBtn = el('button', 'rc-summarize-btn', 'Summarize') as HTMLButtonElement;
@@ -2207,7 +2230,7 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
         else standoutScoreTransient.add(key);
         // Read before the chip shows, so a star share never paints only to be replaced.
         const read = await readStanceOf(item, reviews);
-        standoutScoreCache.set(key, { ...statsForReviews(reviews), ...(read && { stance: read.stance, of: read.of }) });
+        standoutScoreCache.set(key, { ...statsForReviews(reviews), ...(read && { stance: read.stance, of: read.of }), pooled: standoutScoreCache.get(key)?.pooled });
         standoutReviewsCache.set(key, { reviews, stances: read?.stances });
         saveScoredCache();
         if (getFeatureId() === featureId) redrawScored(kind);

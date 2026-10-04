@@ -181,6 +181,13 @@ type TopicEntry = { key: string; state: ChipState; stance?: StanceCounts; score?
 let topicOrder: string[] = [];
 // What the row says while it has no topic chips ("finding topics…").
 let topicsNote: string | null = null;
+// A place whose topic chips and summary are cached still searches its standouts
+// and fetches its pooled topics' reviews, each a quick answer from the server's
+// cache. Its row waits for them — never past this — and paints once, already in
+// its final order, instead of rising in and re-sorting.
+const TOPICS_HOLD_MS = 1500;
+let topicsHeldUntil = 0;
+let topicsHold: ReturnType<typeof setTimeout> | undefined;
 
 function topicChip(h: UiChip, state: ChipState): HTMLButtonElement {
   const pct = state === 'done' && h.score
@@ -247,6 +254,12 @@ function renderTopics() {
       entries.push({ key, state: 'done', stance: r.stance, score: r, count: r.totalReviews, chip: () => standoutChip(d.item, r) });
     }
   }
+  if (!settled && Date.now() < topicsHeldUntil) {
+    clearTimeout(topicsHold);
+    topicsHold = setTimeout(renderTopics, topicsHeldUntil - Date.now());
+    return;
+  }
+  topicsHeldUntil = 0;
   const order = chipRowOrder(entries, topicOrder, settled, currentMergedPct);
   topicOrder = order.map((e) => e.key);
   replaceChips(highlightsList, order.map((e) => ({ key: e.key, el: e.chip() })), topicsNote ? [el('span', 'chip-loading', topicsNote)] : []);
@@ -1112,8 +1125,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number,
         freshnessLabel.classList.add('rechecking');
         const epoch = currentPlace();
         if (epoch && evt.overallPct == null) fetchHistogramFor(epoch, currentDisplayPct);
-        if (evt.highlights?.length) showHighlights(evt.highlights);
-        else loadHighlights();
+        if (evt.highlights?.length && evt.summary) topicsHeldUntil = Date.now() + TOPICS_HOLD_MS;
         if (evt.summary && epoch) {
           renderSummary(evt.summary, epoch);
           setStatus(`Cached · ${scoreMs}ms`);
@@ -1125,6 +1137,8 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number,
             }
           });
         }
+        if (evt.highlights?.length) showHighlights(evt.highlights);
+        else loadHighlights();
       } else if (evt.type === 'refreshed') {
         refreshed = true;
         freshnessLabel.classList.remove('rechecking');
