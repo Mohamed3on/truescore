@@ -15,6 +15,8 @@ const button = (className: string, text?: string) => {
 };
 
 type Row = { listed: ListedOption; tally?: OptionTally };
+// The shortcut, as the keyboard labels it.
+const KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌥T' : 'Alt+T';
 type View = 'people' | 'upvotes';
 
 const onThread = () => /^\/r\/[^/]+\/comments\/[a-z0-9]+/i.test(location.pathname);
@@ -114,6 +116,130 @@ const receipts = (reads: Record<string, Stance>, subject: string) => {
 
 // ---- the drawer ----
 
+// The drawer lives in a shadow root: old reddit's subreddit stylesheets (and
+// RES) style buttons and lists page-wide, and restyled its rows on hover. The
+// root takes the page's typeface through --ts-font and nothing else, and keeps
+// the ledger's grammar: tabular figures, an uppercase micro-label, hairline
+// rules, sentiment only on the figures (DESIGN.md).
+const DRAWER_CSS = `:host { all: initial !important; }
+.ts-tally {
+  --ts-ground: #fff;
+  --ts-ink: #222;
+  --ts-ink-2: #555;
+  --ts-ink-3: #888;
+  --ts-line: #e3e3e3;
+  --ts-hover: #f2f6fb;
+  --ts-accent: #369;
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 2147483000;
+  box-sizing: border-box;
+  width: min(380px, 100vw);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--ts-ground);
+  color: var(--ts-ink);
+  border-left: 1px solid var(--ts-line);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.12);
+  font-family: var(--ts-font, verdana, arial, helvetica, sans-serif);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.ts-tally[hidden] { display: none; }
+:host-context(.res-nightmode) .ts-tally,
+:host-context(.theme-dark) .ts-tally {
+  --ts-ground: #1a1a1b;
+  --ts-ink: #ddd;
+  --ts-ink-2: #aaa;
+  --ts-ink-3: #808080;
+  --ts-line: #343536;
+  --ts-hover: #26272a;
+  --ts-accent: #8cb3d9;
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.45);
+}
+
+.ts-tally-top {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ts-ground);
+  border-bottom: 1px solid var(--ts-line);
+}
+.ts-tally-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px 4px; }
+.ts-tally-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ts-ink-3);
+}
+.ts-tally-view { display: inline-flex; margin-left: auto; border: 1px solid var(--ts-line); border-radius: 6px; overflow: hidden; }
+.ts-tally button { font: inherit; color: inherit; }
+.ts-tally-seg,
+.ts-tally-close,
+.ts-tally-opt,
+.ts-tally-title,
+.ts-tally-receipt,
+.ts-tally-retry {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.ts-tally-seg { padding: 2px 8px; font-size: 11px; color: var(--ts-ink-2); }
+.ts-tally-seg[aria-pressed='true'] { background: var(--ts-hover); color: var(--ts-accent); font-weight: 700; }
+.ts-tally-close { padding: 0 2px 2px 6px; font-size: 18px; line-height: 1; color: var(--ts-ink-3); }
+.ts-tally-close:hover { color: var(--ts-ink); }
+.ts-tally-keys { color: var(--ts-ink-3); font-size: 10px; }
+.ts-tally-status { padding: 0 16px 10px; color: var(--ts-ink-3); font-variant-numeric: tabular-nums; }
+.ts-tally-error { display: flex; align-items: baseline; gap: 10px; padding: 0 16px 10px; color: #b91c1c; }
+.ts-tally-error:empty { display: none; }
+.ts-tally-retry { color: var(--ts-accent); text-decoration: underline; }
+
+.ts-tally-list { list-style: none; margin: 0; padding: 0; }
+.ts-tally-row { border-bottom: 1px solid var(--ts-line); }
+.ts-tally-opt,
+.ts-tally-title,
+.ts-tally-receipt { display: flex; align-items: baseline; gap: 8px; width: 100%; }
+.ts-tally-opt { padding: 8px 16px; }
+.ts-tally-opt:disabled { cursor: default; }
+.ts-tally-opt:hover:not(:disabled),
+.ts-tally-title:hover,
+.ts-tally-receipt:hover { background: var(--ts-hover); }
+.ts-tally-seg:focus-visible,
+.ts-tally-close:focus-visible,
+.ts-tally-opt:focus-visible,
+.ts-tally-title:focus-visible,
+.ts-tally-receipt:focus-visible,
+.ts-tally-retry:focus-visible { outline: 2px solid var(--ts-accent); outline-offset: -2px; }
+.ts-tally-name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.ts-tally-opt[aria-expanded='true'] .ts-tally-name { color: var(--ts-accent); }
+.ts-tally-fig { display: inline-flex; gap: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ts-up { color: #15803d; }
+.ts-down { color: #b91c1c; }
+.ts-net { min-width: 3em; text-align: right; font-weight: 700; }
+.ts-tally-pending { color: var(--ts-ink-3); font-style: italic; }
+
+.ts-tally-detail { padding: 0 16px 10px; }
+.ts-tally-titles { list-style: none; margin: 0 0 8px; padding: 0 0 8px; border-bottom: 1px dashed var(--ts-line); }
+.ts-tally-title { padding: 4px 8px; border-radius: 4px; }
+.ts-tally-title .ts-tally-name { font-weight: 400; }
+.ts-tally-title[aria-pressed='true'] { background: var(--ts-hover); }
+.ts-tally-title[aria-pressed='true'] .ts-tally-name { color: var(--ts-accent); }
+.ts-tally-receipts { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow-y: auto; }
+.ts-tally-receipt { align-items: flex-start; padding: 6px 8px; border-radius: 4px; }
+.ts-pts { min-width: 2.2em; text-align: right; color: var(--ts-ink-3); font-variant-numeric: tabular-nums; }
+.ts-quote { flex: 1; min-width: 0; color: var(--ts-ink-2); overflow-wrap: anywhere; }
+
+.ts-tally-once > summary { padding: 10px 16px; cursor: pointer; }
+.ts-tally-once .ts-tally-name { font-weight: 400; }
+.ts-tally-mark { font-weight: 700; }
+.ts-tally-mark.ts-praise { color: #15803d; }
+.ts-tally-mark.ts-complain { color: #b91c1c; }
+.ts-tally-mark.ts-mixed { color: #a16207; }
+`;
+
+const host = el('div', 'ts-tally-host');
+const shadow = host.attachShadow({ mode: 'open' });
 const drawer = el('aside', 'ts-tally');
 drawer.setAttribute('aria-label', 'Tally');
 drawer.hidden = true;
@@ -138,10 +264,13 @@ const failBox = el('div', 'ts-tally-error');
     b.addEventListener('click', () => { view = v; render(); });
     viewSwitch.append(b);
   }
-  head.append(el('span', 'ts-tally-label', 'Tally'), viewSwitch, close);
+  const keys = el('span', 'ts-tally-keys', KEY);
+  keys.title = `${KEY} opens and closes the tally, Esc closes it`;
+  head.append(el('span', 'ts-tally-label', 'Tally'), keys, viewSwitch, close);
   const top = el('div', 'ts-tally-top');
   top.append(head, status, failBox);
   drawer.append(top, list, once);
+  shadow.append(el('style', '', DRAWER_CSS), drawer);
 }
 
 const rowEls = new Map<string, HTMLElement>();
@@ -194,7 +323,7 @@ const statusText = () => {
   const counted = rows.filter((r) => r.tally).length;
   const options = shown().length;
   if (phase === 'listing') return thread ? `Listing the options in ${read} comments…` : 'Loading the comments…';
-  if (phase === 'reading') return `Reading ${read} comments · ${counted} of ${rows.length} options counted`;
+  if (phase === 'reading') return `Reading ${read} comments · ${counted} of ${rows.length} options counted…`;
   if (phase === 'done') return options ? `${options} options · ${read} comments` : `No options to tally in ${read} comments`;
   return '';
 };
@@ -222,9 +351,9 @@ function render() {
 }
 
 const onEvent = (e: TallyEvent) => {
-  if (e.type === 'options') {
-    rows = e.options.map((listed) => ({ listed }));
-    phase = rows.length ? 'reading' : 'done';
+  if (e.type === 'listed') {
+    if (!rows.some((r) => r.listed.key === e.option.key)) rows.push({ listed: e.option });
+    phase = 'reading';
   } else if (e.type === 'option') {
     const row = rows.find((r) => r.listed.key === e.option.key);
     if (row) row.tally = e.option;
@@ -259,8 +388,11 @@ async function start() {
   stop = requestTally(thread, onEvent);
 }
 
-function toggleDrawer(show = drawer.hidden || !drawer.isConnected) {
-  if (!drawer.isConnected) document.body.append(drawer);
+function toggleDrawer(show = drawer.hidden || !host.isConnected) {
+  if (!host.isConnected) {
+    host.style.setProperty('--ts-font', getComputedStyle(document.body).fontFamily);
+    document.body.append(host);
+  }
   drawer.hidden = !show;
   if (show && phase === 'idle') void start();
   else render();
@@ -276,7 +408,7 @@ const placeEntry = () => {
   if (buttons) {
     const a = el('a', LINK_CLASS, 'tally') as HTMLAnchorElement;
     a.href = '#';
-    a.title = 'Tally the options this thread recommends (Alt+T)';
+    a.title = `Tally the options this thread recommends (${KEY})`;
     a.addEventListener('click', open);
     const li = el('li');
     li.append(a);
@@ -286,7 +418,7 @@ const placeEntry = () => {
   const post = document.querySelector('shreddit-post');
   if (!post) return;
   const pill = button(`${LINK_CLASS} ts-tally-pill`, 'Tally the options');
-  pill.title = 'Alt+T';
+  pill.title = KEY;
   pill.addEventListener('click', open);
   post.after(pill);
 };
@@ -320,7 +452,7 @@ void tallyReady().then((ready) => {
     if (e.code === 'KeyT' && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && onThread()) {
       e.preventDefault();
       toggleDrawer();
-    } else if (e.key === 'Escape' && drawer.isConnected && !drawer.hidden) {
+    } else if (e.key === 'Escape' && host.isConnected && !drawer.hidden) {
       toggleDrawer(false);
     }
   });
