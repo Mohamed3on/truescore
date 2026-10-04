@@ -14,11 +14,14 @@ const button = (className: string, text?: string) => {
   return b;
 };
 
-// `why`: a line on why people rate it as they do, once the server has written it.
-type Row = { listed: ListedOption; tally?: OptionTally; why?: string };
+// `why`: a line on why people rate it as they do, once the server has written it;
+// `maker`: the Option a title stands in for, among products.
+type Row = { listed: ListedOption; tally?: OptionTally; why?: string; maker?: string };
 // The shortcut, as the keyboard labels it.
 const KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌥T' : 'Alt+T';
 type View = 'people' | 'upvotes';
+// Makers ranks the Options as listed; products ranks their titles on their own.
+type Level = 'makers' | 'products';
 
 const onThread = () => /^\/r\/[^/]+\/comments\/[a-z0-9]+/i.test(location.pathname);
 const isOld = () => !!document.querySelector('.commentarea');
@@ -36,6 +39,7 @@ let rows: Row[] = [];
 let phase: 'idle' | 'listing' | 'reading' | 'done' | 'error' = 'idle';
 let failure = '';
 let view: View = 'people';
+let level: Level = 'makers';
 let openKey: string | null = null;
 let openTitle: string | null = null;
 let stop: (() => void) | null = null;
@@ -162,10 +166,15 @@ const DRAWER_CSS = `:host { all: initial !important; }
   position: sticky;
   top: 0;
   z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 12px 16px 10px;
   background: var(--ts-ground);
   border-bottom: 1px solid var(--ts-line);
 }
-.ts-tally-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px 4px; }
+.ts-tally-head { display: flex; align-items: center; gap: 8px; }
 .ts-tally-label {
   font-size: 10px;
   font-weight: 700;
@@ -173,7 +182,9 @@ const DRAWER_CSS = `:host { all: initial !important; }
   text-transform: uppercase;
   color: var(--ts-ink-3);
 }
-.ts-tally-view { display: inline-flex; margin-left: auto; border: 1px solid var(--ts-line); border-radius: 6px; overflow: hidden; }
+.ts-tally-view { display: inline-flex; justify-self: end; border: 1px solid var(--ts-line); border-radius: 6px; overflow: hidden; }
+.ts-tally-view[hidden] { display: none; }
+.ts-tally-level { grid-row: 2; grid-column: 2; }
 .ts-tally button { font: inherit; color: inherit; }
 .ts-tally-seg,
 .ts-tally-close,
@@ -190,8 +201,9 @@ const DRAWER_CSS = `:host { all: initial !important; }
 .ts-tally-close { padding: 0 2px 2px 6px; font-size: 18px; line-height: 1; color: var(--ts-ink-3); }
 .ts-tally-close:hover { color: var(--ts-ink); }
 .ts-tally-keys { color: var(--ts-ink-3); font-size: 10px; }
-.ts-tally-status { padding: 0 16px 10px; color: var(--ts-ink-3); font-variant-numeric: tabular-nums; }
-.ts-tally-error { display: flex; align-items: baseline; gap: 10px; padding: 0 16px 10px; color: #b91c1c; }
+.ts-tally-status { grid-column: 1 / -1; color: var(--ts-ink-3); font-variant-numeric: tabular-nums; }
+.ts-tally-level:not([hidden]) ~ .ts-tally-status { grid-column: 1; }
+.ts-tally-error { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 10px; color: #b91c1c; }
 .ts-tally-error:empty { display: none; }
 .ts-tally-retry { color: var(--ts-accent); text-decoration: underline; }
 
@@ -214,6 +226,7 @@ const DRAWER_CSS = `:host { all: initial !important; }
 .ts-tally-retry:focus-visible { outline: 2px solid var(--ts-accent); outline-offset: -2px; }
 .ts-tally-name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
 .ts-tally-opt[aria-expanded='true'] .ts-tally-name { color: var(--ts-accent); }
+.ts-tally-maker { margin-left: 6px; font-weight: 400; color: var(--ts-ink-3); }
 .ts-tally-fig { display: inline-flex; gap: 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ts-up { color: #15803d; }
 .ts-down { color: #b91c1c; }
@@ -246,7 +259,23 @@ drawer.setAttribute('aria-label', 'Tally');
 drawer.hidden = true;
 const status = el('div', 'ts-tally-status');
 status.setAttribute('aria-live', 'polite');
-const viewSwitch = el('div', 'ts-tally-view');
+// A segmented switch over `values`; render() presses the one in force.
+const segments = <T extends string>(values: T[], pick: (v: T) => void) => {
+  const box = el('div', 'ts-tally-view');
+  for (const v of values) {
+    const b = button('ts-tally-seg', v);
+    b.dataset.value = v;
+    b.addEventListener('click', () => { pick(v); render(); });
+    box.append(b);
+  }
+  return box;
+};
+const press = (box: HTMLElement, value: string) => {
+  for (const b of box.querySelectorAll<HTMLElement>('button')) b.setAttribute('aria-pressed', String(b.dataset.value === value));
+};
+const viewSwitch = segments<View>(['people', 'upvotes'], (v) => { view = v; });
+const levelSwitch = segments<Level>(['makers', 'products'], (v) => { level = v; });
+levelSwitch.classList.add('ts-tally-level');
 const list = el('ol', 'ts-tally-list');
 const once = el('details', 'ts-tally-once') as HTMLDetailsElement;
 const onceLabel = el('summary', 'ts-tally-label');
@@ -259,17 +288,11 @@ const failBox = el('div', 'ts-tally-error');
   const close = button('ts-tally-close', '×');
   close.setAttribute('aria-label', 'Close the tally (Esc)');
   close.addEventListener('click', () => toggleDrawer(false));
-  for (const v of ['people', 'upvotes'] as View[]) {
-    const b = button('ts-tally-seg', v);
-    b.dataset.view = v;
-    b.addEventListener('click', () => { view = v; render(); });
-    viewSwitch.append(b);
-  }
   const keys = el('span', 'ts-tally-keys', KEY);
   keys.title = `${KEY} opens and closes the tally, Esc closes it`;
-  head.append(el('span', 'ts-tally-label', 'Tally'), keys, viewSwitch, close);
+  head.append(el('span', 'ts-tally-label', 'Tally'), keys);
   const top = el('div', 'ts-tally-top');
-  top.append(head, status, failBox);
+  top.append(head, viewSwitch, close, levelSwitch, status, failBox);
   drawer.append(top, list, once);
   shadow.append(el('style', '', DRAWER_CSS), drawer);
 }
@@ -293,7 +316,9 @@ const rowEl = (row: Row) => {
   const isOpen = openKey === listed.key && !!tally;
   const head = button('ts-tally-opt');
   head.setAttribute('aria-expanded', String(isOpen));
-  head.append(el('span', 'ts-tally-name', listed.name), tally ? figures(tally.count) : el('span', 'ts-tally-pending', 'reading…'));
+  const name = el('span', 'ts-tally-name', listed.name);
+  if (row.maker && !listed.name.toLowerCase().includes(row.maker.toLowerCase())) name.append(el('span', 'ts-tally-maker', row.maker));
+  head.append(name, tally ? figures(tally.count) : el('span', 'ts-tally-pending', 'reading…'));
   if (row.why) head.append(el('span', 'ts-tally-why', row.why));
   head.disabled = !tally;
   head.addEventListener('click', () => {
@@ -319,6 +344,12 @@ const rowEl = (row: Row) => {
 
 // An Option the model listed but no counted comment turns out to speak of isn't shown.
 const shown = () => rows.filter((r) => !r.tally || speakersOf(r.tally.count) > 0);
+// Products: each Option's titles in its place, ranked on their own; an Option
+// with none spoken of stands as it is.
+const products = (r: Row): Row[] => {
+  const titles = r.tally?.titles.filter((t) => speakersOf(t.count) > 0) ?? [];
+  return titles.length ? titles.map((t) => ({ listed: { key: t.key, name: t.name, titles: [] }, tally: { ...t, titles: [] }, maker: r.listed.name })) : [r];
+};
 
 const statusText = () => {
   const read = thread?.comments.filter(countsInTally).length ?? 0;
@@ -331,7 +362,9 @@ const statusText = () => {
 };
 
 function render() {
-  for (const b of viewSwitch.querySelectorAll<HTMLElement>('button')) b.setAttribute('aria-pressed', String(b.dataset.view === view));
+  press(viewSwitch, view);
+  press(levelSwitch, level);
+  levelSwitch.hidden = !rows.some((r) => r.listed.titles.length);
   status.textContent = statusText();
   failBox.replaceChildren();
   if (phase === 'error') {
@@ -339,7 +372,7 @@ function render() {
     retry.addEventListener('click', () => void start());
     failBox.append(el('span', '', failure), retry);
   }
-  const visible = shown();
+  const visible = level === 'products' && !levelSwitch.hidden ? shown().flatMap(products) : shown();
   const counted = visible.filter((r) => r.tally && speakersOf(r.tally.count) >= MIN_TALLY_PEOPLE).sort((a, b) => byStanding(a.tally!.count, b.tally!.count));
   const pending = visible.filter((r) => !r.tally);
   const folded = visible.filter((r) => r.tally && speakersOf(r.tally.count) < MIN_TALLY_PEOPLE).sort((a, b) => byStanding(a.tally!.count, b.tally!.count));
@@ -347,7 +380,7 @@ function render() {
   onceList.replaceChildren(...folded.map(rowEl));
   onceLabel.textContent = `Named by one person · ${folded.length}`;
   once.hidden = !folded.length;
-  const open = rows.find((r) => r.listed.key === openKey)?.tally;
+  const open = visible.find((r) => r.listed.key === openKey)?.tally;
   const title = open?.titles.find((t) => t.key === openTitle);
   markThread(drawer.hidden ? null : title?.reads ?? open?.reads ?? null, title?.name ?? open?.name);
 }
