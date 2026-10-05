@@ -1,6 +1,6 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { DirectChatTransport, generateObject, generateText, jsonSchema, NoObjectGeneratedError, streamObject, ToolLoopAgent, type ChatTransport, type JSONSchema7, type LanguageModel, type LanguageModelUsage } from 'ai';
+import { DirectChatTransport, generateObject, generateText, jsonSchema, NoObjectGeneratedError, streamObject, streamText, ToolLoopAgent, type ChatTransport, type JSONSchema7, type LanguageModel, type LanguageModelUsage } from 'ai';
 import { salvageString, salvageStringArray, searchesLeft, searchReviewsTool, type AskMessage } from '@truescore/gmaps-shared';
 import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
 import { DEEPSEEK_MODEL, GEMINI_MODEL, getActiveLLM, OPENAI_MODEL } from './config';
@@ -40,9 +40,19 @@ export const setOnUsage = (fn: typeof onUsage) => { onUsage = fn; };
 
 // One pass over the reviews: free-form text, or an object matching `schema`
 // (authored strict: every property required, no extras). `onPartial` gets the
-// object as far as it's written, each time it grows.
+// text or object as far as it's written, each time it grows.
 export const summarize = async (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null, onPartial?: (partial: any) => void) => {
   const call = { ...await activeModel(), prompt: withReviews(prompt, reviewTexts) };
+  if (!schema && onPartial) {
+    // A failed call reaches only onError; the stream itself just ends.
+    let failure: unknown;
+    const stream = streamText({ ...call, onError: ({ error }) => { failure = error; } });
+    let text = '';
+    for await (const delta of stream.textStream) onPartial((text += delta));
+    if (failure) throw failure;
+    onUsage?.(await stream.usage);
+    return text;
+  }
   if (!schema) {
     const { text, usage } = await generateText(call);
     onUsage?.(usage);

@@ -136,11 +136,19 @@ const fadeIn = (node: HTMLElement) => {
   node.animate([{ opacity: 0 }, {}], { duration: 220, easing: EASE });
 };
 
-// A bullet's text, rewritten only when it changed (a receipt rides along after it).
-const write = (node: HTMLElement, text: string) => {
+// Markdown written into `node`, rewritten only when it changed: a streamed
+// partial redraws just what grew, and what rides after it (a receipt) stays.
+const write = (node: HTMLElement, text: string, render = renderMarkdownInline) => {
   if (node.dataset.md === text) return;
   node.dataset.md = text;
-  renderMarkdownInline(node, text);
+  render(node, text);
+};
+
+// A panel's blocks join `container` in their fixed order, whichever is drawn first.
+const inOrder = (container: HTMLElement, blocks: () => (HTMLElement | undefined)[]) => (node: HTMLElement) => {
+  if (node.isConnected) return;
+  const all = blocks();
+  container.insertBefore(node, all.slice(all.indexOf(node) + 1).find((b) => b?.isConnected) ?? null);
 };
 
 type Bullets = { section: HTMLElement; items: HTMLElement[] };
@@ -162,20 +170,12 @@ const mountStructuredSummary = (container: HTMLElement, renderQuote?: RenderQuot
   let alt: HTMLElement | undefined;
   let streamed = false;
 
-  // Each block in its place, whatever order the model writes them in.
-  const show = (node: HTMLElement) => {
-    if (node.isConnected) return;
-    const blocks = [conclusion, lists.praised.section, lists.complaints.section, alt];
-    container.insertBefore(node, blocks.slice(blocks.indexOf(node) + 1).find((b) => b?.isConnected) ?? null);
-  };
+  const show = inOrder(container, () => [conclusion, lists.praised.section, lists.complaints.section, alt]);
 
   const drawConclusion = (text: string | undefined, phase: SummaryPhase) => {
     if (text) {
       conclusion.classList.remove('ars-conclusion-wait');
-      if (conclusion.dataset.md !== text) {
-        conclusion.dataset.md = text;
-        renderMarkdown(conclusion, text);
-      }
+      write(conclusion, text, renderMarkdown);
       show(conclusion);
     } else if (phase === 'writing') {
       // The verdict is written last but leads the panel: hold its place.
@@ -283,12 +283,11 @@ export const withContext = (prompt: string, context?: string) => (context ? `${p
 export const llmSummarize = (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null = SUMMARY_SCHEMA, onPartial?: (partial: any) => void): Promise<any> =>
   summarize(reviewTexts, prompt, schema, onPartial);
 
+// Rewrites the answer already there, so a streamed one grows in place.
 export const renderFreeFormAnswer = (container: HTMLElement, text: string) => {
-  container.textContent = '';
-  const div = document.createElement('div');
-  div.className = 'ars-answer';
-  renderMarkdown(div, text);
-  container.appendChild(div);
+  let answer = container.querySelector<HTMLElement>(':scope > .ars-answer');
+  if (!answer) container.replaceChildren((answer = el('div', 'ars-answer')));
+  write(answer, text, renderMarkdown);
 };
 
 const RL_KEY = 'ars-gemini-rate-limit';
@@ -668,20 +667,30 @@ export const buildMediaSummary = ({
 
   let showingSummary = false;
 
-  const renderMediaSummary = (data: any) => {
-    body.textContent = '';
-    for (const [label, field] of sections) {
-      const value = data?.[field];
-      if (!value || !String(value).trim()) continue;
+  // The summary drawn into `body`, redrawn in place as it streams: a section
+  // joins once its field has words, and only the field that grew is rewritten.
+  const mountMediaSummary = () => {
+    const secs = sections.map(([label]) => {
       const sec = el('div', `${p}-sec`);
       sec.append(el('div', `${p}-label`, label));
-      const text = el('div', `${p}-text`);
-      renderMarkdownInline(text, String(value));
-      sec.append(text);
-      body.append(sec);
-    }
-    body.style.display = 'block';
+      return { sec, text: sec.appendChild(el('div', `${p}-text`)) };
+    });
+    const show = inOrder(body, () => secs.map((s) => s.sec));
+    let shown = false;
+    return (data: any) => sections.forEach(([, field], i) => {
+      const value = String(data?.[field] ?? '').trim();
+      if (!value) return void secs[i]!.sec.remove();
+      // The progress note gives way to the first words.
+      if (!shown) {
+        body.replaceChildren();
+        body.style.display = 'block';
+        shown = true;
+      }
+      write(secs[i]!.text, value);
+      show(secs[i]!.sec);
+    });
   };
+  const renderMediaSummary = (data: any) => mountMediaSummary()(data);
 
   const renderAnswer = (text: string, searches: AskSearch[] = []) => {
     mountAskView(body, `${p}-text`, searchAsk?.open)({ searches, text, done: true });
@@ -709,10 +718,12 @@ export const buildMediaSummary = ({
       const texts = await fetchReviews();
       if (!texts.length) throw new Error('No written reviews found yet.');
       note(`${p}-progress`, '✦ Summarizing…');
-      const data = await llmSummarize(texts, summaryPrompt, schema);
+      // Each section shows as it's written.
+      const draw = mountMediaSummary();
+      const data = await llmSummarize(texts, summaryPrompt, schema, draw);
       bumpRateLimit();
       if (summaryCacheKey) cacheSet(summaryCacheKey, data);
-      renderMediaSummary(data);
+      draw(data);
       showingSummary = true;
     } catch (e: any) {
       note(`${p}-error`, e.message);

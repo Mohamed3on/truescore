@@ -221,7 +221,9 @@ export const buildSearchSection = <T,>({
     sumPanel.style.display = 'block';
     sumPanel.textContent = 'Summarizing…';
     try {
-      const text = await llmSummarize(texts, promptFor(query), null);
+      const text = await llmSummarize(texts, promptFor(query), null, (partial) => {
+        if (currentQuery === query) renderFreeFormAnswer(sumPanel, partial);
+      });
       summaryCache.set(query.toLowerCase(), text);
       if (currentQuery !== query) return;
       renderCached(query, text);

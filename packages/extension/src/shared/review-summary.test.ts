@@ -169,3 +169,45 @@ test('a summary shows as it is written, dim until checked, then drops and orders
     jev.support = undefined;
   }
 });
+
+test('a media summary keeps its progress note until the first words, then fills each section in place', async () => {
+  const { buildMediaSummary } = await import('./review-summary');
+  const anchor = document.createElement('div').appendChild(document.createElement('div'));
+  const body = () => section.querySelector('.gr-summary-body')!;
+  const seen: string[] = [];
+  let first: Element | undefined;
+  stream = {
+    partials: [{ summary: '' }, { summary: 'Loved' }, { summary: 'Loved it', recommendation: 'Read' }],
+    whole: { summary: 'Loved it', recommendation: 'Read it', dislikes: '', audience: 'Fans' },
+    after: (i) => {
+      seen.push([...body().children].map((c) => c.textContent).join(' | '));
+      if (i === 1) first = body().querySelector('.gr-summary-text')!;
+    },
+  };
+  const section = buildMediaSummary({
+    anchor, classPrefix: 'gr-summary', heading: 'Reader Reviews', summaryPrompt: 'p', schema: {},
+    sections: [['Summary', 'summary'], ['Verdict', 'recommendation'], ['Didn’t enjoy', 'dislikes'], ['Who it’s for', 'audience']],
+    summaryCacheKey: null, summaryTtl: 0, initialButtonLabel: '✦ Summarize', fetchReviews: async () => ['a review'],
+  });
+  try {
+    (section.querySelector('.gr-summary-btn') as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(seen).toEqual(['✦ Summarizing…', 'SummaryLoved', 'SummaryLoved it | VerdictRead']);
+    expect([...body().children].map((c) => c.textContent)).toEqual(['SummaryLoved it', 'VerdictRead it', 'Who it’s forFans']);
+    expect(body().querySelector('.gr-summary-text')).toBe(first!);
+  } finally {
+    stream = undefined;
+  }
+});
+
+test('a free-form answer grows in place as it streams', async () => {
+  const { renderFreeFormAnswer } = await import('./review-summary');
+  const panel = document.createElement('div');
+  panel.textContent = 'Summarizing…';
+  renderFreeFormAnswer(panel, 'Mostly');
+  const answer = panel.firstElementChild;
+  renderFreeFormAnswer(panel, 'Mostly **good**');
+  expect(panel.children.length).toBe(1);
+  expect(panel.firstElementChild).toBe(answer);
+  expect(answer!.querySelector('strong')?.textContent).toBe('good');
+});
