@@ -19,7 +19,7 @@
 import { readdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { stripAccents, threadFromListing, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread } from '@truescore/gmaps-shared';
+import { stripAccents, threadFromListing, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type TitleTally } from '@truescore/gmaps-shared';
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 process.env.TRUESCORE_CACHE_DB_PATH = arg('db') ?? join(tmpdir(), `truescore-tally-eval-${process.pid}.sqlite`);
@@ -61,6 +61,13 @@ const sameThing = (produced: string, names: string[]) => {
   return names.map(words).filter((n) => n.length > 2).some((n) => p.trim() === n || p.includes(` ${n} `) || ` ${n} `.includes(p));
 };
 
+// Produced titles read as one: what each comment says of any of them, together.
+const asOne = (thread: Thread, ts: TitleTally[]): TitleTally | undefined => {
+  if (ts.length < 2) return ts[0];
+  const reads = Object.fromEntries([...new Set(ts.flatMap((t) => Object.keys(t.reads)))].map((id) => [id, combine(ts.map((t) => t.reads[id]))!]));
+  return { key: ts.map((t) => t.key).join('+'), name: ts.map((t) => t.name).join(' + '), reads, count: countOf(thread, reads) };
+};
+
 const pad = (s: string | number, n: number) => String(s).padEnd(n);
 const fmt = (c?: TallyCount) => (c ? `${c.for}-${c.against}${c.mixed ? ` (${c.mixed}m)` : ''}` : '—');
 
@@ -91,11 +98,14 @@ for (const file of files) {
     if (match) used.add(match);
     return { o, match };
   });
-  // Each labelled title, sought among its Option's match's titles.
-  const titleRows = new Map(rows.map(({ o, match }) => [o, expectedOf(thread, fx.labels, (l) => (l.option === o.name ? l.title : null)).map((t) => ({
-    o: t,
-    match: match?.titles.filter((p) => sameThing(p.name, [t.name, ...(fx.aliases[`${o.name} / ${t.name}`] ?? [])])).sort((a, b) => speakers(b.count) - speakers(a.count))[0],
-  }))]));
+  // Each labelled title, sought among its Option's match's titles: the one of
+  // its name, or else all those naming it, read as one (a listing that split a
+  // "Donkey" into Donkey 5 and Donkey 6).
+  const titleRows = new Map(rows.map(({ o, match }) => [o, expectedOf(thread, fx.labels, (l) => (l.option === o.name ? l.title : null)).map((t) => {
+    const named = match?.titles.filter((p) => sameThing(p.name, [t.name, ...(fx.aliases[`${o.name} / ${t.name}`] ?? [])])) ?? [];
+    const own = named.filter((p) => words(p.name) === words(t.name));
+    return { o: t, match: asOne(thread, own.length ? own : named) };
+  })]));
   const titles = [...titleRows.values()].flat();
   const extra = produced.filter((p) => !used.has(p) && speakers(p.count) >= 2);
   const ranked = [...produced].filter((p) => speakers(p.count) >= 2).sort((a, b) => net(b.count) - net(a.count) || a.count.against - b.count.against);
