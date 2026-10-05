@@ -108,61 +108,155 @@ type RenderQuote = (text: string) => HTMLElement | null;
 const receiptFor = (item: HTMLElement, { n, quotes }: Receipt, checkedOf: number | undefined, renderQuote?: RenderQuote) =>
   receiptButton(item, n, quotes, checkedOf ? `Of the ${RECEIPT_REVIEWS} longest of ${checkedOf} reviews — show the ones that say this` : undefined, renderQuote);
 
-export const renderStructuredSummary = (
-  container: HTMLElement,
-  { complaints, praised, conclusion, betterAlternative, receipts, receiptsOf }: any,
-  renderQuote?: RenderQuote,
-) => {
-  container.textContent = '';
-  if (conclusion) {
-    const el = document.createElement('div');
-    el.className = 'ars-conclusion';
-    renderMarkdown(el, conclusion);
-    container.appendChild(el);
+// Where a summary on screen stands: being written (each bullet shows as it
+// streams in), written and being checked against the reviews, or checked.
+type SummaryPhase = 'writing' | 'checking' | 'checked';
+
+// The daylight skin's ease (DESIGN.md), for the moves the check makes.
+const EASE = 'cubic-bezier(0.25, 1, 0.5, 1)';
+const animates = (node: HTMLElement) => typeof node.animate === 'function' && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// A bullet the check drops folds shut, so what follows closes up instead of
+// jumping. A list it reorders fades out and back in, sorted: bullets sliding
+// past each other cross their text, and folding the moved ones shut and open
+// again pumps the panel.
+const fold = async (node: HTMLElement) => {
+  if (animates(node)) {
+    node.style.overflow = 'hidden';
+    await node.animate([{ height: `${node.offsetHeight}px` }, { height: '0px', opacity: 0, marginTop: '0px', marginBottom: '0px' }], { duration: 200, easing: EASE })
+      .finished.catch(() => {});
   }
-  const addSection = (title: string, items: string[], type: string) => {
-    if (!items?.length) return;
-    const section = document.createElement('div');
-    section.className = `ars-section ars-section--${type}`;
-    const heading = document.createElement('div');
-    heading.className = 'ars-section-title';
-    heading.textContent = `${type === 'praised' ? '\u25B3' : '\u25BD'} ${title}`;
-    section.appendChild(heading);
-    // Most-backed first once checked.
-    const ordered = receipts ? bySupport(items.map((text) => ({ text, support: receipts[text]?.n }))).map((x) => x.text) : items;
-    for (const item of ordered) {
-      const bullet = document.createElement('div');
-      bullet.className = 'ars-section-item';
-      renderMarkdownInline(bullet, item);
-      if (receipts?.[item]) bullet.appendChild(receiptFor(bullet, receipts[item], receiptsOf, renderQuote));
-      section.appendChild(bullet);
-    }
-    container.appendChild(section);
-  };
-  addSection('Universally praised', praised, 'praised');
-  addSection('Common complaints', complaints, 'complaints');
-  if (betterAlternative) {
-    const section = document.createElement('div');
-    section.className = 'ars-section ars-section--alt';
-    const heading = document.createElement('div');
-    heading.className = 'ars-section-title';
-    heading.textContent = '\u21C4 Better alternative';
-    section.appendChild(heading);
-    const item = document.createElement('div');
-    item.className = 'ars-section-item';
-    renderMarkdownInline(item, betterAlternative);
-    // Its count spans every review naming it, not the longest RECEIPT_REVIEWS.
-    if (receipts?.[betterAlternative]) item.appendChild(receiptFor(item, receipts[betterAlternative], undefined, renderQuote));
-    section.appendChild(item);
-    container.appendChild(section);
-  }
+  node.remove();
 };
+const fadeOut = (node: HTMLElement) =>
+  animates(node) ? node.animate([{ opacity: 0 }], { duration: 120, easing: EASE, fill: 'forwards' }).finished.catch(() => {}) : undefined;
+const fadeIn = (node: HTMLElement) => {
+  if (!animates(node)) return;
+  for (const a of node.getAnimations()) a.cancel();
+  node.animate([{ opacity: 0 }, {}], { duration: 220, easing: EASE });
+};
+
+// A bullet's text, rewritten only when it changed (a receipt rides along after it).
+const write = (node: HTMLElement, text: string) => {
+  if (node.dataset.md === text) return;
+  node.dataset.md = text;
+  renderMarkdownInline(node, text);
+};
+
+type Bullets = { section: HTMLElement; items: HTMLElement[] };
+const bulletsOf = (type: string, title: string): Bullets => {
+  const section = el('div', `ars-section ars-section--${type}`);
+  section.appendChild(el('div', 'ars-section-title', title));
+  return { section, items: [] };
+};
+
+// A summary drawn into `container` and redrawn in place: a streamed partial
+// only rewrites the bullet that grew, each showing dim until it's checked. The
+// check then folds away the bullets too few reviews make, puts the rest
+// most-backed first and lights them up with their counts. Drawing a checked
+// summary straight away (a cached one) builds it at once, with nothing moving.
+const mountStructuredSummary = (container: HTMLElement, renderQuote?: RenderQuote) => {
+  container.textContent = '';
+  const conclusion = el('div', 'ars-conclusion');
+  const lists = { praised: bulletsOf('praised', '\u25B3 Universally praised'), complaints: bulletsOf('complaints', '\u25BD Common complaints') };
+  let alt: HTMLElement | undefined;
+  let streamed = false;
+
+  // Each block in its place, whatever order the model writes them in.
+  const show = (node: HTMLElement) => {
+    if (node.isConnected) return;
+    const blocks = [conclusion, lists.praised.section, lists.complaints.section, alt];
+    container.insertBefore(node, blocks.slice(blocks.indexOf(node) + 1).find((b) => b?.isConnected) ?? null);
+  };
+
+  const drawConclusion = (text: string | undefined, phase: SummaryPhase) => {
+    if (text) {
+      conclusion.classList.remove('ars-conclusion-wait');
+      if (conclusion.dataset.md !== text) {
+        conclusion.dataset.md = text;
+        renderMarkdown(conclusion, text);
+      }
+      show(conclusion);
+    } else if (phase === 'writing') {
+      // The verdict is written last but leads the panel: hold its place.
+      if (!conclusion.classList.contains('ars-conclusion-wait')) {
+        conclusion.classList.add('ars-conclusion-wait');
+        conclusion.replaceChildren(el('span'), el('span'), el('span'));
+      }
+      show(conclusion);
+    } else conclusion.remove();
+  };
+
+  const drawWritten = (b: Bullets, texts: string[]) => {
+    for (const [i, text] of texts.entries()) {
+      b.items[i] ??= b.section.appendChild(el('div', 'ars-section-item ars-pending'));
+      write(b.items[i]!, text);
+    }
+    for (const gone of b.items.splice(texts.length)) gone.remove();
+    if (texts.length) show(b.section);
+  };
+
+  return async (summary: any, phase: SummaryPhase = 'checked') => {
+    const texts = (list: unknown) => (Array.isArray(list) ? list.filter((t): t is string => typeof t === 'string' && !!t) : []);
+    container.setAttribute('aria-busy', String(phase !== 'checked'));
+    drawConclusion(summary.conclusion, phase);
+    if (phase !== 'checked') {
+      streamed = true;
+      drawWritten(lists.praised, texts(summary.praised));
+      drawWritten(lists.complaints, texts(summary.complaints));
+      return;
+    }
+    const { receipts, receiptsOf, betterAlternative } = summary;
+    const plans = ([[lists.praised, summary.praised], [lists.complaints, summary.complaints]] as const).map(([b, list]) => {
+      const written = texts(list);
+      // Most-backed first once checked.
+      const ordered = receipts ? bySupport(written.map((text) => ({ text, support: receipts[text]?.n }))).map((x) => x.text) : written;
+      const byText = new Map(b.items.map((item) => [item.dataset.md, item]));
+      const items = ordered.map((text) => byText.get(text) ?? el('div', 'ars-section-item'));
+      const kept = b.items.filter((item) => items.includes(item));
+      return { b, ordered, items, dropped: b.items.filter((item) => !items.includes(item)), sorted: kept.some((item, i) => item !== items[i]) };
+    });
+    // A cached summary (nothing streamed, nothing leaving) draws at once.
+    const leaving = plans.flatMap((p) => [...p.dropped.map(fold), ...(p.sorted ? p.items.map(fadeOut) : [])]);
+    if (leaving.length) await Promise.all(leaving);
+    for (const { b, ordered, items, sorted } of plans) {
+      b.items = items;
+      b.section.append(...items);
+      for (const [i, item] of items.entries()) {
+        write(item, ordered[i]!);
+        item.classList.remove('ars-pending');
+        const receipt = receipts?.[ordered[i]!];
+        if (receipt && !item.querySelector(':scope > .ars-receipt')) {
+          const button = item.appendChild(receiptFor(item, receipt, receiptsOf, renderQuote));
+          if (streamed) button.classList.add('ars-arrive');
+        }
+        if (sorted) fadeIn(item);
+      }
+      if (items.length) show(b.section);
+      else void fold(b.section);
+    }
+    if (betterAlternative) {
+      alt = bulletsOf('alt', '\u21C4 Better alternative').section;
+      const item = alt.appendChild(el('div', 'ars-section-item'));
+      renderMarkdownInline(item, betterAlternative);
+      // Its count spans every review naming it, not the longest RECEIPT_REVIEWS.
+      if (receipts?.[betterAlternative]) item.appendChild(receiptFor(item, receipts[betterAlternative], undefined, renderQuote));
+      if (streamed) alt.classList.add('ars-arrive');
+      show(alt);
+    }
+  };
+};
+
+export const renderStructuredSummary = (container: HTMLElement, summary: any, renderQuote?: RenderQuote) =>
+  void mountStructuredSummary(container, renderQuote)(summary);
 
 const SUMMARY_SCHEMA = {
   type: 'object' as const,
+  // Written in the order the panel shows them, so a streamed summary fills in
+  // top to bottom (the conclusion, shown first, holds its place till last).
   properties: {
-    complaints: { type: 'array' as const, items: { type: 'string' as const } },
     praised: { type: 'array' as const, items: { type: 'string' as const } },
+    complaints: { type: 'array' as const, items: { type: 'string' as const } },
     conclusion: { type: 'string' as const },
     betterAlternative: { type: 'string' as const },
     rivals: {
@@ -175,7 +269,7 @@ const SUMMARY_SCHEMA = {
       },
     },
   },
-  required: ['complaints', 'praised', 'conclusion', 'betterAlternative', 'rivals'],
+  required: ['praised', 'complaints', 'conclusion', 'betterAlternative', 'rivals'],
   additionalProperties: false,
 };
 
@@ -185,9 +279,9 @@ const SUMMARY_SCHEMA = {
 export const withContext = (prompt: string, context?: string) => (context ? `${prompt}\n\n${context}` : prompt);
 
 // One pass over the reviews on the popup's model: free-form text for a null
-// schema, else an object matching it (see llm.ts).
-export const llmSummarize = (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null = SUMMARY_SCHEMA): Promise<any> =>
-  summarize(reviewTexts, prompt, schema);
+// schema, else an object matching it, streamed to `onPartial` (see llm.ts).
+export const llmSummarize = (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null = SUMMARY_SCHEMA, onPartial?: (partial: any) => void): Promise<any> =>
+  summarize(reviewTexts, prompt, schema, onPartial);
 
 export const renderFreeFormAnswer = (container: HTMLElement, text: string) => {
   container.textContent = '';
@@ -347,19 +441,24 @@ export const buildSummarizeWidget = ({
     try {
       const reviews = await loadReviews();
       btn.textContent = '\u23F3 Summarizing\u2026';
-      const summary = await llmSummarize(reviews, withContext(summaryPrompt, context));
-      // Its points are checked against the reviews before any of them shows.
+      // It shows as it's written, its points dim until they're checked
+      // against the reviews.
+      const draw = mountStructuredSummary(summaryPanel, renderQuote);
+      void draw({}, 'writing');
+      summaryPanel.style.display = 'block';
+      const summary = await llmSummarize(reviews, withContext(summaryPrompt, context), undefined, (partial) => draw(partial, 'writing'));
       btn.textContent = '\u23F3 Checking it against the reviews\u2026';
+      void draw(summary, 'checking');
       const parsed = await withReceipts(summary, reviews, searchAsk?.search);
       bumpRateLimit();
       summaryTs = Date.now();
       // Quota-full must not discard a summary the LLM call already paid for.
       try { localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta })); } catch {}
-      renderStructuredSummary(summaryPanel, parsed, renderQuote);
-      summaryPanel.style.display = 'block';
+      void draw(parsed);
       panelMode = 'summary';
     } catch (e: any) {
       summaryPanel.textContent = `Error: ${e.message}`;
+      summaryPanel.removeAttribute('aria-busy');
       summaryPanel.style.display = 'block';
     } finally {
       btn.disabled = false;

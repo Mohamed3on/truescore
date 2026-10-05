@@ -5,7 +5,20 @@ import * as realJev from './jev';
 const PARSED = { praised: ['Lasts long'], complaints: [], conclusion: 'Good.', betterAlternative: '' };
 // Keep the rest of the module intact: module mocks are process-wide, and a bare
 // factory blanked salvageObject for llm.test.ts whenever it ran after this file.
-mock.module('./llm', () => ({ ...realLlm, summarize: async () => PARSED, askTransport: async () => { throw new Error('unused'); } }));
+// A streamed summary, for the test that sets one: its partials, then the whole.
+let stream: { partials: any[]; whole: any; after?: (i: number) => void } | undefined;
+mock.module('./llm', () => ({
+  ...realLlm,
+  summarize: async (_reviews: string[], _prompt: string, _schema: unknown, onPartial?: (partial: any) => void) => {
+    if (!stream) return PARSED;
+    for (const [i, partial] of stream.partials.entries()) {
+      onPartial?.(partial);
+      stream.after?.(i);
+    }
+    return stream.whole;
+  },
+  askTransport: async () => { throw new Error('unused'); },
+}));
 // Jev's reads, for the test that sets them; the real ones otherwise.
 const jev: { support?: typeof realJev.readSupport; answers?: typeof realJev.readAnswers } = {};
 const { readSupport, readAnswers } = realJev;
@@ -109,5 +122,50 @@ test('the better alternative is the rival every review naming it prefers, not th
     expect((await withReceipts({ ...parsed, betterAlternative: 'Model pick' }, sample, search)).betterAlternative).toBe('Model pick');
   } finally {
     jev.support = jev.answers = undefined;
+  }
+});
+
+test('a summary shows as it is written, dim until checked, then drops and orders its points', async () => {
+  const { buildSummarizeWidget } = await import('./review-summary');
+  const wrapper = document.createElement('div');
+  const panel = () => wrapper.querySelector('.ars-summary-panel')!;
+  const bullets = (type: string) => [...panel().querySelectorAll<HTMLElement>(`.ars-section--${type} .ars-section-item`)];
+  const seen: string[][] = [];
+  let lasts: HTMLElement | undefined;
+  stream = {
+    partials: [
+      { praised: ['Lasts'] },
+      { praised: ['Lasts long', 'Qui'] },
+      { praised: ['Lasts long', 'Quiet', 'Cheap'], complaints: ['Leaks'], conclusion: 'Go' },
+    ],
+    whole: { praised: ['Lasts long', 'Quiet', 'Cheap'], complaints: ['Leaks'], conclusion: 'Good.', betterAlternative: '', rivals: [] },
+    after: (i) => {
+      seen.push(bullets('praised').map((b) => `${b.textContent}${b.classList.contains('ars-pending') ? ' (dim)' : ''}`));
+      if (i === 0) {
+        lasts = bullets('praised')[0];
+        // The verdict leads the panel but is written last: its place is held.
+        expect(panel().querySelector('.ars-conclusion-wait')).not.toBeNull();
+        expect(panel().getAttribute('aria-busy')).toBe('true');
+      }
+    },
+  };
+  // One review makes "Quiet", too few to show; "Cheap" is the best backed.
+  jev.support = async (points) => points.map((p) => (p === 'Quiet' ? [0] : p === 'Cheap' ? [0, 1, 2] : [0, 1]));
+  try {
+    buildSummarizeWidget({ wrapper, cacheKey: 'stream-test', summaryPrompt: 'p', fetchReviews: async () => ['r1', 'r2', 'r3'] });
+    (wrapper.querySelector('.ars-summarize-btn') as HTMLButtonElement).click();
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(seen).toEqual([['Lasts (dim)'], ['Lasts long (dim)', 'Qui (dim)'], ['Lasts long (dim)', 'Quiet (dim)', 'Cheap (dim)']]);
+    expect(bullets('praised').map((b) => b.textContent)).toEqual(['Cheap3 reviews', 'Lasts long2 reviews']);
+    // The bullet that streamed in is the one that moved, not a redraw.
+    expect(bullets('praised')[1]).toBe(lasts);
+    expect(panel().querySelectorAll('.ars-pending').length).toBe(0);
+    expect(bullets('complaints').map((b) => b.textContent)).toEqual(['Leaks2 reviews']);
+    expect(panel().firstElementChild!.textContent).toBe('Good.');
+    expect(panel().getAttribute('aria-busy')).toBe('false');
+  } finally {
+    stream = undefined;
+    jev.support = undefined;
   }
 });
