@@ -344,10 +344,8 @@
   line-height: 1.5;
 }
 
-/* A streamed summary: bullets show dim until they're checked against the
-   reviews; the verdict, written last but shown first, holds its place. */
-.ars-section-item { transition: opacity 0.2s cubic-bezier(0.25, 1, 0.5, 1); }
-.ars-section-item.ars-pending { opacity: 0.5; }
+/* A streamed summary's verdict, written last but shown first, holds its place
+   (its bullets' dimming and motion are gmaps-shared summary-draw's). */
 .ars-conclusion-wait > span {
   display: block;
   height: 0.75em;
@@ -359,8 +357,6 @@
 .ars-conclusion-wait > span:nth-child(2) { width: 88%; }
 .ars-conclusion-wait > span:nth-child(3) { width: 55%; }
 .ars-arrive { animation: ars-enter 0.35s cubic-bezier(0.25, 1, 0.5, 1) both; }
-.ars-receipt.ars-arrive { animation: ars-fade-in 0.2s cubic-bezier(0.25, 1, 0.5, 1) both; }
-@keyframes ars-fade-in { from { opacity: 0; } }
 
 /* Free-form answer */
 .ars-answer {
@@ -730,6 +726,5 @@
   .ars-stat-val.ars-bump { animation: none; }
   .ars-scan-spinner { animation: none; }
   .ars-scan-spinner.ars-scan-done { animation: none; opacity: 0; }
-  .ars-section-item { transition: none; }
-  .ars-conclusion-wait > span, .ars-arrive, .ars-receipt.ars-arrive { animation: none; }
+  .ars-conclusion-wait > span, .ars-arrive { animation: none; }
 }

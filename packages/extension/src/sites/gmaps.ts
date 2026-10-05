@@ -69,7 +69,10 @@ import {
   type AnswerCounts,
   type Stance,
   type StanceResult,
+  type SummaryDraft,
   type SummaryHighlight,
+  mountBullets,
+  streamSummary,
 } from '@truescore/gmaps-shared';
 
 const SORT_KEYS = ['relevant', 'newest'] as const;
@@ -1000,7 +1003,8 @@ const llmContext = async () => {
   return { featureId, name: getPlaceInfo().name, removedReviews: activeRemovedReviews, ...settings };
 };
 
-const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null): Promise<SummaryResult> => {
+// Streamed: `onDraft` gets the summary as the model writes it, before it's checked.
+const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null, onDraft: (draft: SummaryDraft) => void): Promise<SummaryResult> => {
   const body = {
     ...await llmContext(), reviewTexts,
     filter: filterQuery ?? undefined,
@@ -1009,15 +1013,11 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
     // always "compute fresh" — Resummarize/refresh-search/highlight-summarize
     // all flow here. Server-side cache is for the web SPA.
     force: true,
+    stream: true,
   } satisfies SummarizeRequest;
-  const resp = await fetch(`${TRUESCORE_API_BASE}/api/summarize`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await resp.json().catch(() => null) as { summary?: SummaryResult; error?: string } | null;
-  if (!resp.ok || !data?.summary) throw new Error(data?.error || `/api/summarize failed (${resp.status})`);
-  return data.summary;
+  const { summary, error } = await streamSummary(`${TRUESCORE_API_BASE}/api/summarize`, body, onDraft);
+  if (!summary) throw new Error(error || '/api/summarize failed');
+  return summary;
 };
 
 // One Ask: its Sample, scope and question; `live` false (the user moved on)
@@ -1606,15 +1606,15 @@ const summarizeActiveChip = async () => {
     return;
   }
   const place = currentPlace();
+  let draw: ReturnType<typeof mountSummary> | undefined;
   try {
-    const result = await summarizeReviews(texts, h.label);
+    const result = await summarizeReviews(texts, h.label, (draft) => (draw ??= mountSummary(body))(draft, false));
     h.summary = result;
     // A pooled chip's summary is its topic's (pooledView copies the topic chip).
     const topic = highlightsState?.items.find((x) => x.token === h.token);
     if (topic) topic.summary = result;
     saveHighlightsCache();
-    body.className = 'rc-chip-body';
-    renderSummary(body, result);
+    (draw ?? mountSummary(body))(result);
     sumBtn.textContent = 'Show Reviews';
     chipViewMode = 'summary';
     pushContribution({ highlightSummaries: { [h.token]: result } }, place);
@@ -1793,16 +1793,16 @@ const summarizeLabelSearch = async (btn?: HTMLButtonElement) => {
 
   if (btn) { btn.disabled = true; btn.textContent = 'Summarizing…'; }
   const featureId = getFeatureId();
+  let draw: ReturnType<typeof mountSummary> | undefined;
   try {
-    const result = await summarizeReviews(texts, search.query);
+    const result = await summarizeReviews(texts, search.query, (draft) => {
+      if (activeLabelSearch === search) (draw ??= mountSummary(panel))(draft, false);
+    });
     search.summary = result;
     cacheSearchSummary(featureId, search.query, result);
     // Paint only while this search is still the one showing (a nav or a newer
     // search resets activeLabelSearch).
-    if (activeLabelSearch === search) {
-      panel.className = 'rc-summary-panel';
-      renderSummary(panel, result);
-    }
+    if (activeLabelSearch === search) (draw ?? mountSummary(panel))(result);
   } catch (e) {
     console.error('[label search] summary failed', e);
     panel.textContent = 'Summarization failed';
@@ -2347,27 +2347,39 @@ const valueMeter = (rating: number) => {
   return box;
 };
 
-const renderSummary = (panel: HTMLElement, result: SummaryResult) => {
+// A summary drawn into `panel` and redrawn in place as it streams (gmaps-shared
+// summary-draw): its verdict as it's written, its bullets dim until they're
+// checked. Drawn `checked`, the bullets settle most-backed first, and a cached
+// summary draws at once.
+const mountSummary = (panel: HTMLElement) => {
   panel.textContent = '';
-  panel.className = 'rc-summary-panel';
-  panel.style.display = 'block';
-  if (result.verdict) {
-    const verdict = el('div', 'rc-verdict');
-    renderMarkdown(verdict, result.verdict);
-    panel.appendChild(verdict);
-  }
-  if (result.highlights?.length) {
+  const verdict = el('div', 'rc-verdict');
+  const rows = el('div', 'rc-summary-bullets');
+  panel.append(verdict, rows);
+  const bullets = mountBullets<SummaryHighlight>(rows, (h) => h.text, () => el('div'), (row, h) => {
+    row.className = `rc-highlight ${h.sentiment}`;
+    const text = el('span', 'rc-h-text');
+    renderMarkdownInline(text, h.text ?? '');
+    row.replaceChildren(text);
+    // How many reviews make the point (checked on the server), opened below.
+    if (h.support != null) row.appendChild(receiptButton(row, h.support, h.quotes ?? []));
+  });
+  return (result: SummaryResult, checked = true) => {
+    panel.className = 'rc-summary-panel';
+    panel.style.display = 'block';
+    verdict.hidden = !result.verdict;
+    if (result.verdict) renderMarkdown(verdict, result.verdict);
+    if (!checked) return bullets.draft(result.highlights ?? []);
     // Most-backed first once checked.
-    for (const h of bySupport(result.highlights)) {
-      const row = el('div', `rc-highlight ${h.sentiment}`);
-      const text = el('span', 'rc-h-text');
-      renderMarkdownInline(text, h.text ?? '');
-      row.appendChild(text);
-      // How many reviews make the point (checked on the server), opened below.
-      if (h.support != null) row.appendChild(receiptButton(row, h.support, h.quotes ?? []));
-      panel.appendChild(row);
-    }
-  }
+    void bullets.settle(bySupport(result.highlights ?? []));
+    finishSummary(panel, result);
+  };
+};
+const renderSummary = (panel: HTMLElement, result: SummaryResult) => mountSummary(panel)(result);
+
+// What only a whole summary carries: value for money, and for the place's own
+// summary its standouts and alternatives.
+const finishSummary = (panel: HTMLElement, result: SummaryResult) => {
   if (result.valueForMoney) panel.appendChild(valueMeter(result.valueForMoney));
   // Standouts and alternatives are scored chip groups about the place as a whole
   // — only the main summary, never a label-search/chip sub-summary whose items
@@ -2439,14 +2451,17 @@ const triggerSummarize = async () => {
       else await askReviews(panel, job);
       return;
     }
-    const result = await summarizeReviews(texts, null);
+    let draw: ReturnType<typeof mountSummary> | undefined;
+    const result = await summarizeReviews(texts, null, (draft) => {
+      if (place.featureId === lastFeatureId) (draw ??= mountSummary(panel))(draft, false);
+    });
     // Filed and uploaded under the place it was asked about; the in-memory cache
     // and panel only if that's still the place open (see currentPlace).
     const current = place.featureId === lastFeatureId;
     if (current) summaryCache.all = result;
     saveSummaryCache(place.featureId, { all: result });
     pushContribution({ summary: result }, place);
-    if (current && cardEls.sumPanel) renderSummary(cardEls.sumPanel, result);
+    if (current && cardEls.sumPanel) (draw ?? mountSummary(cardEls.sumPanel))(result);
   } catch (e) {
     if (place.featureId !== lastFeatureId) return;
     console.error('[Reviews] Summarize error:', e);

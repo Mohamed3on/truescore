@@ -4,7 +4,7 @@ import { cacheGet, cacheSet } from './cache';
 import { summarize } from './llm';
 import { findQA, loadQAs, removeQA, saveQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
-import { bySupport, parseOrQuery, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
+import { bySupport, foldAway, mountBullets, parseOrQuery, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
 import type { JSONSchema7 } from 'ai';
 import { readAnswers, readSupport, receiptButton } from './jev';
 
@@ -112,38 +112,6 @@ const receiptFor = (item: HTMLElement, { n, quotes }: Receipt, checkedOf: number
 // streams in), written and being checked against the reviews, or checked.
 type SummaryPhase = 'writing' | 'checking' | 'checked';
 
-// The daylight skin's ease (DESIGN.md), for the moves the check makes.
-const EASE = 'cubic-bezier(0.25, 1, 0.5, 1)';
-const animates = (node: HTMLElement) => typeof node.animate === 'function' && !matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-// A bullet the check drops folds shut, so what follows closes up instead of
-// jumping. A list it reorders fades out and back in, sorted: bullets sliding
-// past each other cross their text, and folding the moved ones shut and open
-// again pumps the panel.
-const fold = async (node: HTMLElement) => {
-  if (animates(node)) {
-    node.style.overflow = 'hidden';
-    await node.animate([{ height: `${node.offsetHeight}px` }, { height: '0px', opacity: 0, marginTop: '0px', marginBottom: '0px' }], { duration: 200, easing: EASE })
-      .finished.catch(() => {});
-  }
-  node.remove();
-};
-const fadeOut = (node: HTMLElement) =>
-  animates(node) ? node.animate([{ opacity: 0 }], { duration: 120, easing: EASE, fill: 'forwards' }).finished.catch(() => {}) : undefined;
-const fadeIn = (node: HTMLElement) => {
-  if (!animates(node)) return;
-  for (const a of node.getAnimations()) a.cancel();
-  node.animate([{ opacity: 0 }, {}], { duration: 220, easing: EASE });
-};
-
-// Markdown written into `node`, rewritten only when it changed: a streamed
-// partial redraws just what grew, and what rides after it (a receipt) stays.
-const write = (node: HTMLElement, text: string, render = renderMarkdownInline) => {
-  if (node.dataset.md === text) return;
-  node.dataset.md = text;
-  render(node, text);
-};
-
 // A panel's blocks join `container` in their fixed order, whichever is drawn first.
 const inOrder = (container: HTMLElement, blocks: () => (HTMLElement | undefined)[]) => (node: HTMLElement) => {
   if (node.isConnected) return;
@@ -151,34 +119,40 @@ const inOrder = (container: HTMLElement, blocks: () => (HTMLElement | undefined)
   container.insertBefore(node, all.slice(all.indexOf(node) + 1).find((b) => b?.isConnected) ?? null);
 };
 
-type Bullets = { section: HTMLElement; items: HTMLElement[] };
-const bulletsOf = (type: string, title: string): Bullets => {
+const sectionOf = (type: string, title: string) => {
   const section = el('div', `ars-section ars-section--${type}`);
   section.appendChild(el('div', 'ars-section-title', title));
-  return { section, items: [] };
+  return section;
 };
 
-// A summary drawn into `container` and redrawn in place: a streamed partial
-// only rewrites the bullet that grew, each showing dim until it's checked. The
-// check then folds away the bullets too few reviews make, puts the rest
-// most-backed first and lights them up with their counts. Drawing a checked
-// summary straight away (a cached one) builds it at once, with nothing moving.
+// A summary drawn into `container` and redrawn in place: its praise and
+// complaints are bullet lists drawn as they stream in (gmaps-shared
+// summary-draw), and the verdict, written last but shown first, holds its
+// place. Drawing a checked summary straight away (a cached one) builds it at
+// once, with nothing moving.
 const mountStructuredSummary = (container: HTMLElement, renderQuote?: RenderQuote) => {
   container.textContent = '';
   const conclusion = el('div', 'ars-conclusion');
-  const lists = { praised: bulletsOf('praised', '\u25B3 Universally praised'), complaints: bulletsOf('complaints', '\u25BD Common complaints') };
+  let receiptsOf: number | undefined;
+  const listOf = (type: string, title: string) => {
+    const section = sectionOf(type, title);
+    const bullets = mountBullets<{ text: string; receipt?: Receipt }>(section, (b) => b.text, () => el('div', 'ars-section-item'), (row, b) => {
+      renderMarkdownInline(row, b.text);
+      if (b.receipt) row.appendChild(receiptFor(row, b.receipt, receiptsOf, renderQuote));
+    });
+    return { section, bullets };
+  };
+  const lists = [listOf('praised', '\u25B3 Universally praised'), listOf('complaints', '\u25BD Common complaints')] as const;
   let alt: HTMLElement | undefined;
   let streamed = false;
-
-  const show = inOrder(container, () => [conclusion, lists.praised.section, lists.complaints.section, alt]);
+  const show = inOrder(container, () => [conclusion, lists[0].section, lists[1].section, alt]);
 
   const drawConclusion = (text: string | undefined, phase: SummaryPhase) => {
     if (text) {
       conclusion.classList.remove('ars-conclusion-wait');
-      write(conclusion, text, renderMarkdown);
+      writeMarkdown(conclusion, text, renderMarkdown);
       show(conclusion);
     } else if (phase === 'writing') {
-      // The verdict is written last but leads the panel: hold its place.
       if (!conclusion.classList.contains('ars-conclusion-wait')) {
         conclusion.classList.add('ars-conclusion-wait');
         conclusion.replaceChildren(el('span'), el('span'), el('span'));
@@ -187,68 +161,39 @@ const mountStructuredSummary = (container: HTMLElement, renderQuote?: RenderQuot
     } else conclusion.remove();
   };
 
-  const drawWritten = (b: Bullets, texts: string[]) => {
-    for (const [i, text] of texts.entries()) {
-      b.items[i] ??= b.section.appendChild(el('div', 'ars-section-item ars-pending'));
-      write(b.items[i]!, text);
-    }
-    for (const gone of b.items.splice(texts.length)) gone.remove();
-    if (texts.length) show(b.section);
-  };
-
-  return async (summary: any, phase: SummaryPhase = 'checked') => {
+  return (summary: any, phase: SummaryPhase = 'checked') => {
     const texts = (list: unknown) => (Array.isArray(list) ? list.filter((t): t is string => typeof t === 'string' && !!t) : []);
+    const written = [texts(summary.praised), texts(summary.complaints)];
     container.setAttribute('aria-busy', String(phase !== 'checked'));
     drawConclusion(summary.conclusion, phase);
-    if (phase !== 'checked') {
-      streamed = true;
-      drawWritten(lists.praised, texts(summary.praised));
-      drawWritten(lists.complaints, texts(summary.complaints));
-      return;
-    }
-    const { receipts, receiptsOf, betterAlternative } = summary;
-    const plans = ([[lists.praised, summary.praised], [lists.complaints, summary.complaints]] as const).map(([b, list]) => {
-      const written = texts(list);
-      // Most-backed first once checked.
-      const ordered = receipts ? bySupport(written.map((text) => ({ text, support: receipts[text]?.n }))).map((x) => x.text) : written;
-      const byText = new Map(b.items.map((item) => [item.dataset.md, item]));
-      const items = ordered.map((text) => byText.get(text) ?? el('div', 'ars-section-item'));
-      const kept = b.items.filter((item) => items.includes(item));
-      return { b, ordered, items, dropped: b.items.filter((item) => !items.includes(item)), sorted: kept.some((item, i) => item !== items[i]) };
-    });
-    // A cached summary (nothing streamed, nothing leaving) draws at once.
-    const leaving = plans.flatMap((p) => [...p.dropped.map(fold), ...(p.sorted ? p.items.map(fadeOut) : [])]);
-    if (leaving.length) await Promise.all(leaving);
-    for (const { b, ordered, items, sorted } of plans) {
-      b.items = items;
-      b.section.append(...items);
-      for (const [i, item] of items.entries()) {
-        write(item, ordered[i]!);
-        item.classList.remove('ars-pending');
-        const receipt = receipts?.[ordered[i]!];
-        if (receipt && !item.querySelector(':scope > .ars-receipt')) {
-          const button = item.appendChild(receiptFor(item, receipt, receiptsOf, renderQuote));
-          if (streamed) button.classList.add('ars-arrive');
-        }
-        if (sorted) fadeIn(item);
+    const { receipts, betterAlternative } = summary;
+    receiptsOf = summary.receiptsOf;
+    for (const [i, { section, bullets }] of lists.entries()) {
+      if (phase !== 'checked') {
+        streamed = true;
+        bullets.draft(written[i]!.map((text) => ({ text })));
+        if (written[i]!.length) show(section);
+        continue;
       }
-      if (items.length) show(b.section);
-      else void fold(b.section);
+      // Most-backed first once checked.
+      const ordered = receipts ? bySupport(written[i]!.map((text) => ({ text, support: receipts[text]?.n }))).map((x) => x.text) : written[i]!;
+      void bullets.settle(ordered.map((text) => ({ text, receipt: receipts?.[text] })));
+      if (ordered.length) show(section);
+      else void foldAway(section);
     }
-    if (betterAlternative) {
-      alt = bulletsOf('alt', '\u21C4 Better alternative').section;
-      const item = alt.appendChild(el('div', 'ars-section-item'));
-      renderMarkdownInline(item, betterAlternative);
-      // Its count spans every review naming it, not the longest RECEIPT_REVIEWS.
-      if (receipts?.[betterAlternative]) item.appendChild(receiptFor(item, receipts[betterAlternative], undefined, renderQuote));
-      if (streamed) alt.classList.add('ars-arrive');
-      show(alt);
-    }
+    if (phase !== 'checked' || !betterAlternative) return;
+    alt = sectionOf('alt', '\u21C4 Better alternative');
+    const item = alt.appendChild(el('div', 'ars-section-item'));
+    renderMarkdownInline(item, betterAlternative);
+    // Its count spans every review naming it, not the longest RECEIPT_REVIEWS.
+    if (receipts?.[betterAlternative]) item.appendChild(receiptFor(item, receipts[betterAlternative], undefined, renderQuote));
+    if (streamed) alt.classList.add('ars-arrive');
+    show(alt);
   };
 };
 
 export const renderStructuredSummary = (container: HTMLElement, summary: any, renderQuote?: RenderQuote) =>
-  void mountStructuredSummary(container, renderQuote)(summary);
+  mountStructuredSummary(container, renderQuote)(summary);
 
 const SUMMARY_SCHEMA = {
   type: 'object' as const,
@@ -287,7 +232,7 @@ export const llmSummarize = (reviewTexts: string[], prompt: string, schema: JSON
 export const renderFreeFormAnswer = (container: HTMLElement, text: string) => {
   let answer = container.querySelector<HTMLElement>(':scope > .ars-answer');
   if (!answer) container.replaceChildren((answer = el('div', 'ars-answer')));
-  write(answer, text, renderMarkdown);
+  writeMarkdown(answer, text, renderMarkdown);
 };
 
 const RL_KEY = 'ars-gemini-rate-limit';
@@ -686,7 +631,7 @@ export const buildMediaSummary = ({
         body.style.display = 'block';
         shown = true;
       }
-      write(secs[i]!.text, value);
+      writeMarkdown(secs[i]!.text, value, renderMarkdownInline);
       show(secs[i]!.sec);
     });
   };

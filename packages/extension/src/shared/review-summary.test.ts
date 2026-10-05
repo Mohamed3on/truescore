@@ -140,7 +140,7 @@ test('a summary shows as it is written, dim until checked, then drops and orders
     ],
     whole: { praised: ['Lasts long', 'Quiet', 'Cheap'], complaints: ['Leaks'], conclusion: 'Good.', betterAlternative: '', rivals: [] },
     after: (i) => {
-      seen.push(bullets('praised').map((b) => `${b.textContent}${b.classList.contains('ars-pending') ? ' (dim)' : ''}`));
+      seen.push(bullets('praised').map((b) => `${b.textContent}${b.style.opacity === '0.5' ? ' (dim)' : ''}`));
       if (i === 0) {
         lasts = bullets('praised')[0];
         // The verdict leads the panel but is written last: its place is held.
@@ -160,7 +160,7 @@ test('a summary shows as it is written, dim until checked, then drops and orders
     expect(bullets('praised').map((b) => b.textContent)).toEqual(['Cheap3 reviews', 'Lasts long2 reviews']);
     // The bullet that streamed in is the one that moved, not a redraw.
     expect(bullets('praised')[1]).toBe(lasts);
-    expect(panel().querySelectorAll('.ars-pending').length).toBe(0);
+    expect([...panel().querySelectorAll<HTMLElement>('.ars-section-item')].every((b) => !b.style.opacity)).toBe(true);
     expect(bullets('complaints').map((b) => b.textContent)).toEqual(['Leaks2 reviews']);
     expect(panel().firstElementChild!.textContent).toBe('Good.');
     expect(panel().getAttribute('aria-busy')).toBe('false');
