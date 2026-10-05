@@ -14,8 +14,8 @@ import type { Thread } from './thread';
 // from Chip so the two "highlights" (prose bullets vs scored topic chips) never
 // collide again. `support`: how many of the summarized reviews make the point,
 // as Jev read them (web/jev.ts), and `quotes` the first of those reviews — a
-// bullet fewer than two reviews make is dropped before it's ever shown. Both
-// absent on summaries Jev didn't check.
+// bullet fewer than two reviews make is dropped (streamed, it shows dim till
+// then). Both absent on drafts and on summaries Jev didn't check.
 export type SummaryHighlight = { text: string; sentiment: string; support?: number; quotes?: string[] };
 // `items`: specific things reviewers single out (dishes, animals, exhibits…),
 // as short label-search terms (e.g. "alfajores", "gorilla"). Rendered as their
@@ -108,11 +108,20 @@ export type HighlightEvent =
   | { type: 'done'; failures: number; totalFetched: number; cached: boolean }
   | { type: 'error'; error: string };
 
+// ---- streamed summaries (NDJSON) ----
+// A summary as far as the model has written it: its verdict and highlights,
+// none checked yet. A summary request that asks to `stream` gets these as the
+// model writes, then the checked summary — or, cached, just that.
+export type SummaryDraft = Pick<Summary, 'verdict' | 'highlights'>;
+export type SummaryDraftEvent = { type: 'summary-draft'; summary: SummaryDraft };
+export type SummaryEvent = SummaryDraftEvent | ({ type: 'summary' } & HighlightSummaryResponse) | { type: 'error'; error: string };
+
 // ---- /api/search (NDJSON stream) ----
 export type SearchResponse = { result?: SearchResult; cached?: boolean; error?: string };
 export type SearchEvent =
   | ({ type: 'search-progress'; query: string } & SortStats)
   | { type: 'search'; result: SearchResult; cached: boolean }
+  | SummaryDraftEvent
   | { type: 'search-summary'; summary: Summary }
   | { type: 'error'; error: string };
 
@@ -197,13 +206,14 @@ export type LookupRequest = { url: string };
 // server otherwise falls back to the notice on its own cached preview meta; a
 // caller that has neither just gets an uncouched summary. It goes to the model
 // so it can weigh a survivor-only review set and hedge its verdict.
-export type SummarizeRequest = { featureId: string; name?: string; reviewTexts?: string[]; filter?: string; force?: boolean; removedReviews?: RemovedReviews | null } & LlmOverrides;
+// `stream`: answer with SummaryEvents rather than one JSON response.
+export type SummarizeRequest = { featureId: string; name?: string; reviewTexts?: string[]; filter?: string; force?: boolean; removedReviews?: RemovedReviews | null; stream?: boolean } & LlmOverrides;
 export type HistogramRequest = { featureId: string };
 // `wait`: hold the request through a background harvest rather than answer 202
 // (see HighlightsResponse). The web client opts in; the extension still polls.
 // `token`: just that chip, read from the cache — the web client opening one.
 export type HighlightsRequest = { featureId: string; force?: boolean; wait?: boolean; token?: string };
-export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean } & LlmOverrides;
+export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean; stream?: boolean } & LlmOverrides;
 export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean } & LlmOverrides;
 // A Search's matches as a client finds them: review texts and their TrueScore.
 export type SearchMatches = { texts: string[]; scorePct: number; trustedReviews: number };

@@ -6,11 +6,11 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
-  answersOf, bySupport, countAnswers, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
+  answersOf, bySupport, countAnswers, mountBullets, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Review, type SearchEvent, type SearchResult,
-  type SortStats, type Summary, type SummarizeResponse,
+  type SortStats, type Summary, type SummaryDraft, type SummaryHighlight,
   type AskRequest, type HighlightSummaryRequest, type HighlightsRequest, type HistogramRequest, type LookupRequest, type SearchRequest, type SummarizeRequest,
 } from '@truescore/gmaps-shared';
 
@@ -670,20 +670,19 @@ function renderReviewList(reviews: Review[]) {
   }
 }
 
-// One <li><span class="h-text {sentiment}"> per highlight, appended to ul —
-// with its receipt when Jev checked it: how many reviews make the point, a button
+// A summary's bullets in `ul`, drawn in place as it streams in (gmaps-shared
+// summary-draw): one <li><span class="h-text {sentiment}"> per highlight, with
+// its receipt once Jev checked it — how many reviews make the point, a button
 // that opens them under the bullet.
-function renderHighlightList(ul: HTMLElement, highlights: Summary['highlights']) {
-  // Most-backed first once checked.
-  for (const h of bySupport(highlights)) {
+const bulletsIn = (ul: HTMLElement) => {
+  ul.replaceChildren();
+  return mountBullets<SummaryHighlight>(ul, (h) => h.text, () => el('li'), (li, h) => {
     const text = el('span', `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`);
     renderMarkdownInline(text, h.text ?? '');
-    const li = el('li');
-    li.appendChild(text);
+    li.replaceChildren(text);
     if (h.support != null) li.appendChild(receipt(li, h.support, h.quotes ?? []));
-    ul.appendChild(li);
-  }
-}
+  });
+};
 
 function receipt(li: HTMLElement, support: number, quotes: string[]): HTMLButtonElement {
   const btn = el('button', 'receipt', `${support} reviews`);
@@ -702,16 +701,21 @@ function receipt(li: HTMLElement, support: number, quotes: string[]): HTMLButton
   return btn;
 }
 
-function renderChipSummary(summary: Summary) {
+// A chip's or Search's summary in the panel: its drafts as the model writes,
+// then the checked summary (most-backed first), or a cached one at once.
+function mountChipSummary() {
   const verdict = el('div', 'verdict');
-  renderMarkdown(verdict, summary.verdict);
-  chipBody.replaceChildren(verdict);
-  if (summary.highlights?.length) {
-    const ul = el('ul', 'highlights');
-    renderHighlightList(ul, summary.highlights);
-    chipBody.appendChild(ul);
-  }
+  const ul = el('ul', 'highlights');
+  chipBody.replaceChildren(verdict, ul);
+  const bullets = bulletsIn(ul);
+  return (summary: SummaryDraft, checked = false) => {
+    renderMarkdown(verdict, summary.verdict);
+    if (!checked) return bullets.draft(summary.highlights);
+    void bullets.settle(bySupport(summary.highlights));
+    if (!summary.highlights.length) ul.remove();
+  };
 }
+const renderChipSummary = (summary: Summary) => mountChipSummary()(summary, true);
 
 async function onHighlightClick(h: UiChip) {
   if (!currentPlace()) return;
@@ -737,14 +741,15 @@ async function summarizeActiveChip() {
   setStatus(`Summarizing "${h.label}"…`);
   const t0 = Date.now();
   try {
-    const data = await postJson<{ summary?: Summary; cached?: boolean }>('/api/highlight-summary', {
-      featureId: epoch.featureId, token: h.token,
+    let draw: ReturnType<typeof mountChipSummary> | undefined;
+    const data = await streamSummary('/api/highlight-summary', {
+      featureId: epoch.featureId, token: h.token, stream: true,
       // A pooled chip's summary reads both review sets, as its list shows them.
       ...(h.pooled ? { reviewTexts: textReviewsFor(h.reviews ?? []) } : {}),
-    } satisfies HighlightSummaryRequest);
+    } satisfies HighlightSummaryRequest, (draft) => { if (epoch.alive) (draw ??= mountChipSummary())(draft); });
     if (!epoch.alive) return;
     if (data.summary) {
-      renderChipSummary(data.summary);
+      (draw ?? mountChipSummary())(data.summary, true);
       chipSummarizeBtn.disabled = false;
       chipSummarizeBtn.textContent = 'SHOW REVIEWS';
       setStatus(`"${h.label}" summarized${data.cached ? ' (cached)' : ` in ${((Date.now() - t0) / 1000).toFixed(1)}s`}`);
@@ -767,6 +772,7 @@ async function summarizeActiveSearch() {
   try {
     let result: SearchResult | null = null;
     let cached = false;
+    let draw: ReturnType<typeof mountChipSummary> | undefined;
     for await (const evt of streamNdjson<SearchEvent>('/api/search', {
       featureId: epoch.featureId, query: r.query, summarize: true,
     } satisfies SearchRequest)) {
@@ -774,12 +780,14 @@ async function summarizeActiveSearch() {
       if (evt.type === 'search') {
         result = evt.result;
         cached = evt.cached;
+      } else if (evt.type === 'summary-draft') {
+        (draw ??= mountChipSummary())(evt.summary);
       } else if (evt.type === 'search-summary') {
         if (result) {
           result.summary = evt.summary;
           activePanel = { kind: 'search', result };
         }
-        renderChipSummary(evt.summary);
+        (draw ?? mountChipSummary())(evt.summary, true);
       }
     }
     chipSummarizeBtn.disabled = false;
@@ -1078,7 +1086,7 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   searchInput.value = '';
   searchRefreshBtn.hidden = true;
   highlightsList.replaceChildren();
-  highlightsListEl.replaceChildren();
+  mainBullets = bulletsIn(highlightsListEl);
   chipBody.replaceChildren();
   // Wipe the previous place's meta/freshness so a fresh-lookup sequence
   // doesn't show stale photo + address until `preview` lands.
@@ -1371,19 +1379,23 @@ function renderValue(rating?: number) {
   dot.style.left = `${position * 100}%`;
 }
 
+// The place's bullets: drafted as a summary streams in, settled once it's
+// checked, or settled at once for a cached one.
+let mainBullets = bulletsIn(highlightsListEl);
+
 function renderSummary(summary: Summary, epoch: PlaceEpoch) {
   if (!epoch.alive) return;
   preferredBy = summary.preferredBy;
   renderValue(summary.valueForMoney);
   renderMarkdown($('verdict'), summary.verdict);
   resummarizeBtn.hidden = false;
-  highlightsListEl.replaceChildren();
-  renderHighlightList(highlightsListEl, summary.highlights);
+  void mainBullets.settle(bySupport(summary.highlights));
   showScored('standouts', summary.items, epoch.featureId);
   showScored('alternatives', summary.alternatives, epoch.featureId);
 }
 
 function renderSummaryError(msg: string) {
+  mainBullets = bulletsIn(highlightsListEl);
   $('verdict').textContent = `summary failed: ${msg}`;
   clearScored('standouts');
   clearScored('alternatives');
@@ -1401,7 +1413,15 @@ async function fetchHistogramFor(epoch: PlaceEpoch, mergedPct: number) {
 async function fetchSummaryFor(epoch: PlaceEpoch, force = false): Promise<{ ok: boolean; ms: number }> {
   const t0 = Date.now();
   try {
-    const data = await postJson<SummarizeResponse>('/api/summarize', { featureId: epoch.featureId, force } satisfies SummarizeRequest);
+    // It shows as it's written, from a fresh list of bullets.
+    let drafting = false;
+    const data = await streamSummary('/api/summarize', { featureId: epoch.featureId, force, stream: true } satisfies SummarizeRequest, (draft) => {
+      if (!epoch.alive) return;
+      if (!drafting) mainBullets = bulletsIn(highlightsListEl);
+      drafting = true;
+      renderMarkdown($('verdict'), draft.verdict);
+      mainBullets.draft(draft.highlights);
+    });
     if (!epoch.alive) return { ok: false, ms: Date.now() - t0 };
     if (data.error) {
       renderSummaryError(data.error);

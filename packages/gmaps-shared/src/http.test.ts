@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach } from 'bun:test';
-import { readNdjson, streamNdjson } from './http';
+import { readNdjson, streamNdjson, streamSummary } from './http';
 
 const streamOf = (...chunks: string[]): ReadableStream<Uint8Array> => {
   const enc = new TextEncoder();
@@ -64,5 +64,28 @@ describe('streamNdjson', () => {
     globalThis.fetch = (async () =>
       new Response('{"error":"nope"}', { status: 500, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     await expect(drain(streamNdjson('/api/x', {}))).rejects.toThrow('nope');
+  });
+});
+
+describe('streamSummary', () => {
+  const origFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = origFetch; });
+
+  test('hands each draft on, then resolves to the checked summary', async () => {
+    const lines = [
+      { type: 'summary-draft', summary: { verdict: 'Go', highlights: [] } },
+      { type: 'summary-draft', summary: { verdict: 'Good', highlights: [{ text: 'Fast', sentiment: 'positive' }] } },
+      { type: 'summary', summary: { verdict: 'Good', highlights: [{ text: 'Fast', sentiment: 'positive', support: 3 }] }, cached: false },
+    ];
+    globalThis.fetch = (async () => new Response(lines.map((l) => JSON.stringify(l)).join('\n') + '\n', { headers: { 'content-type': 'application/x-ndjson' } })) as unknown as typeof fetch;
+    const drafts: string[] = [];
+    const done = await streamSummary('/api/summarize', {}, (d) => drafts.push(d.verdict));
+    expect(drafts).toEqual(['Go', 'Good']);
+    expect(done.summary?.highlights[0]?.support).toBe(3);
+  });
+
+  test('throws when the stream closes without a summary', async () => {
+    globalThis.fetch = (async () => new Response('{"type":"summary-draft","summary":{"verdict":"Go","highlights":[]}}\n', { headers: { 'content-type': 'application/x-ndjson' } })) as unknown as typeof fetch;
+    await expect(streamSummary('/api/summarize', {}, () => {})).rejects.toThrow('without a summary');
   });
 });

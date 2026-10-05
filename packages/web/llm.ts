@@ -1,8 +1,8 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { convertToModelMessages, generateObject, generateText, NoObjectGeneratedError, streamObject, streamText } from 'ai';
+import { convertToModelMessages, NoObjectGeneratedError, streamObject, streamText } from 'ai';
 import { z } from 'zod';
-import { LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, type AskMessage, type Summary, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
+import { LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
 import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
 import { capItems, MAX_SCORED_ITEMS, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
@@ -89,11 +89,12 @@ const NOTES = `On factual disagreements (price, hours), trust the more recent re
 // alternatives, gemini's highlights shrank and valueForMoney came back
 // Infinity. Field semantics and content hygiene (no duplicates, no placeholder
 // entries) live in structuredRequest's prompt; the code only caps the fan-out (capItems).
+const SENTIMENTS = ['positive', 'negative', 'neutral'] as const;
 const HIGHLIGHTS_SCHEMA = z.object({
   highlights: z.array(
     z.object({
       text: z.string(),
-      sentiment: z.enum(['positive', 'negative', 'neutral']),
+      sentiment: z.enum(SENTIMENTS),
     }),
   ),
   items: z.array(z.string()),
@@ -146,7 +147,9 @@ ${NOTES}${removal ? `\n\n${removal} If they do, add one negative highlight for i
 // prompts via removalNote so the verdict is weighed as survivor-only; the model
 // only speaks of it when the surviving text corroborates it (the UI already
 // shows Google's banner).
-export async function summarize({ placeName, reviewTexts, removedReviews }: Subject, filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Summary> {
+// `onDraft` gets the summary as far as it's written (the verdict and the
+// highlights so far) each time either grows; both halves then stream.
+export async function summarize({ placeName, reviewTexts, removedReviews }: Subject, filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort, onDraft?: (draft: SummaryDraft) => void): Promise<Summary> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
@@ -156,12 +159,18 @@ export async function summarize({ placeName, reviewTexts, removedReviews }: Subj
 
 ${NOTES}${removal ? `\n\n${removal}` : ''}`;
 
+  const draft: SummaryDraft = { verdict: '', highlights: [] };
+  const drafting = onDraft && ((part: Partial<SummaryDraft>) => onDraft(Object.assign(draft, part)));
+
   const [verdict, structured] = await Promise.all([
-    generateText({ model, providerOptions, maxOutputTokens: 1024, prompt: verdictPrompt }).then((r) => {
+    writeText({ model, providerOptions, maxOutputTokens: 1024, prompt: verdictPrompt }, drafting && ((verdict) => drafting({ verdict }))).then((r) => {
       report(provider, 'verdict', r.usage);
       return r.text;
     }),
-    generateObject({ model, providerOptions, ...structuredRequest({ placeName, reviewTexts, removedReviews }, filterQuery) })
+    // A sentiment still being written reads as neutral, not as half a word.
+    writeObject({ model, providerOptions, ...structuredRequest({ placeName, reviewTexts, removedReviews }, filterQuery) }, drafting && ((partial) => drafting({
+      highlights: (partial.highlights ?? []).flatMap((h) => (h?.text ? [{ text: h.text, sentiment: SENTIMENTS.find((s) => s === h.sentiment) ?? 'neutral' }] : [])),
+    })))
       .then((r) => {
         report(provider, 'structured', r.usage);
         return { ...r.object, valueForMoney: r.object.valueForMoney ?? undefined, items: capItems(r.object.items), alternatives: capItems(r.object.alternatives) };

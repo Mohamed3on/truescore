@@ -4,6 +4,7 @@
 // reader used by /api/lookup, /api/search, /api/highlights, /api/ask.
 // Deliberately DOM-free so it's unit-testable in bun without a browser (fetch /
 // ReadableStream / TextDecoder are all globals).
+import type { SummaryDraft, SummaryEvent } from './wire';
 
 const RETRY_STATUSES = new Set([502, 503, 504, 521, 522, 524]);
 
@@ -89,4 +90,14 @@ export async function* streamNdjson<T extends { type: string }>(url: string, bod
     if (evt.type === 'error') throw new Error((evt as { error?: string }).error || 'request failed');
     yield evt;
   }
+}
+
+// A summary route asked to `stream`: `onDraft` gets each draft as the model
+// writes it; resolves to the checked summary (or the cached one, alone).
+export async function streamSummary(url: string, body: unknown, onDraft: (draft: SummaryDraft) => void, signal?: AbortSignal) {
+  for await (const evt of streamNdjson<SummaryEvent>(url, body, signal)) {
+    if (evt.type === 'summary-draft') onDraft(evt.summary);
+    else if (evt.type === 'summary') return evt;
+  }
+  throw new Error('the summary stream closed without a summary');
 }

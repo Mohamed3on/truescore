@@ -707,6 +707,8 @@ export * from './thread';
 
 // The topic row: topic chips and standouts pooled, ranked and animated alike.
 export * from './chip-row';
+export * from './summary-draw';
+export * from './write';
 
 // Reading fields out of JSON a model didn't finish writing — both packages hit
 // the same truncation against the same providers.

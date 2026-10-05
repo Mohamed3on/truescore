@@ -32,6 +32,9 @@ import {
   type Summary,
   type SummarizeRequest,
   type SummarizeResponse,
+  type SummaryDraft,
+  type SummaryDraftEvent,
+  type SummaryEvent,
   type TallyEvent,
   type TallyRequest,
 } from '@truescore/gmaps-shared';
@@ -171,6 +174,46 @@ function ndjsonStream<E extends { type: string }>(producer: (write: (event: E) =
   });
   return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson', ...headers } });
 }
+
+// A summary's drafts as the model writes it, at most one per DRAFT_MS: each
+// carries the whole draft so far, so one skipped costs nothing. Stopped before
+// the checked summary goes out, so no draft lands after it.
+const DRAFT_MS = 150;
+const drafter = (write: (event: SummaryDraftEvent) => void) => {
+  let next: SummaryDraft | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let last = 0;
+  const flush = () => {
+    timer = undefined;
+    if (next) write({ type: 'summary-draft', summary: next });
+    next = undefined;
+    last = Date.now();
+  };
+  return {
+    onDraft: (draft: SummaryDraft) => {
+      next = draft;
+      timer ??= setTimeout(flush, Math.max(0, DRAFT_MS - (Date.now() - last)));
+    },
+    stop: () => {
+      clearTimeout(timer);
+      timer = next = undefined;
+    },
+  };
+};
+
+// A summary route's answer as SummaryEvents, for a client that asked to `stream`:
+// its drafts as the model writes, then the checked summary.
+const summaryStream = (answer: (onDraft: (draft: SummaryDraft) => void) => Promise<HighlightSummaryResponse>) =>
+  ndjsonStream<SummaryEvent>(async (write) => {
+    const drafts = drafter(write);
+    try {
+      const done = await answer(drafts.onDraft);
+      drafts.stop();
+      write({ type: 'summary', ...done });
+    } finally {
+      drafts.stop();
+    }
+  }, { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
 
 const PORT = Number(process.env.PORT || 3000);
 
@@ -663,23 +706,26 @@ Bun.serve({
           const entry = cache.get(featureId);
           const force = !!body.force;
           const filter = body.filter?.trim() || undefined;
-          // Only the unfiltered place summary participates in the persisted
-          // cache; filtered topic summaries are per-callsite and shouldn't
-          // overwrite the canonical entry.summary slot.
-          if (!filter && entry?.summary && !force) {
-            const summary = await summaryWithReceipts(entry.summary, cachedSubject(entry), (s) => cache.putSummary(featureId, s));
-            return corsJson({ summary, cached: true } satisfies SummarizeResponse);
-          }
-
-          const subject = resolveSubject({
-            entry, name: body.name, reviewTexts: body.reviewTexts, reviews: entry?.score?.reviews, removedReviews: body.removedReviews,
-            hint: 'look up the place first or pass reviewTexts in the body',
-          });
-
-          // Its receipts are read before it's returned: a bullet never shows only to be dropped.
-          const summary = await withReceipts(await summarize(subject, filter, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
-          if (!filter && entry) await cache.putSummary(featureId, summary);
-          return corsJson({ summary, cached: false } satisfies SummarizeResponse);
+          const answer = async (onDraft?: (draft: SummaryDraft) => void): Promise<SummarizeResponse> => {
+            // Only the unfiltered place summary participates in the persisted
+            // cache; filtered topic summaries are per-callsite and shouldn't
+            // overwrite the canonical entry.summary slot.
+            if (!filter && entry?.summary && !force) {
+              const summary = await summaryWithReceipts(entry.summary, cachedSubject(entry), (s) => cache.putSummary(featureId, s));
+              return { summary, cached: true };
+            }
+            const subject = resolveSubject({
+              entry, name: body.name, reviewTexts: body.reviewTexts, reviews: entry?.score?.reviews, removedReviews: body.removedReviews,
+              hint: 'look up the place first or pass reviewTexts in the body',
+            });
+            // Its receipts are read before it's final: streamed, its bullets
+            // show dim until then, and the ones too few reviews make go.
+            const summary = await withReceipts(await summarize(subject, filter, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort), onDraft), subject);
+            if (!filter && entry) await cache.putSummary(featureId, summary);
+            return { summary, cached: false };
+          };
+          if (body.stream) return summaryStream(answer);
+          return corsJson((await answer()) satisfies SummarizeResponse);
         } catch (e) {
           // No reviews to summarize is the caller's 404, not a server fault.
           if (!(e instanceof NoReviews)) console.error('[summarize]', e);
@@ -750,23 +796,24 @@ Bun.serve({
 
           const entry = cache.get(featureId);
           const cached = entry?.highlightSummaries?.[token];
-          if (cached && !force) {
-            const chip = entry?.highlights?.find((h) => h.token === token);
-            const summary = await summaryWithReceipts(cached, entry && cachedSubject(entry, chip?.reviews), (s) => cache.putHighlightSummary(featureId, token, s));
-            return corsJson({ summary, label: chip?.label ?? body.label ?? '', cached: true } satisfies HighlightSummaryResponse);
-          }
-
           const highlight = entry?.highlights?.find((h) => h.token === token);
           const label = highlight?.label ?? body.label;
-          if (!label) return corsJson({ error: 'missing label (and no cached highlight)' }, 400);
-          const subject = resolveSubject({
-            entry, name: body.name, reviewTexts: body.reviewTexts, reviews: highlight?.reviews,
-            hint: 'pass reviewTexts in the body or run highlights first',
-          });
-
-          const summary = await withReceipts(await summarize(subject, label, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
-          if (entry) await cache.putHighlightSummary(featureId, token, summary);
-          return corsJson({ summary, label, cached: false } satisfies HighlightSummaryResponse);
+          if (!(cached && !force) && !label) return corsJson({ error: 'missing label (and no cached highlight)' }, 400);
+          const answer = async (onDraft?: (draft: SummaryDraft) => void): Promise<HighlightSummaryResponse> => {
+            if (cached && !force) {
+              const summary = await summaryWithReceipts(cached, entry && cachedSubject(entry, highlight?.reviews), (s) => cache.putHighlightSummary(featureId, token, s));
+              return { summary, label: label ?? '', cached: true };
+            }
+            const subject = resolveSubject({
+              entry, name: body.name, reviewTexts: body.reviewTexts, reviews: highlight?.reviews,
+              hint: 'pass reviewTexts in the body or run highlights first',
+            });
+            const summary = await withReceipts(await summarize(subject, label, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort), onDraft), subject);
+            if (entry) await cache.putHighlightSummary(featureId, token, summary);
+            return { summary, label, cached: false };
+          };
+          if (body.stream) return summaryStream(answer);
+          return corsJson((await answer()) satisfies HighlightSummaryResponse);
         } catch (e) {
           if (!(e instanceof NoReviews)) console.error('[highlight-summary]', e);
           return corsJson(errBody(e), errStatus(e));
@@ -829,7 +876,12 @@ Bun.serve({
                 const reviewTexts = textReviewsFor(result.reviews);
                 if (reviewTexts.length) {
                   const subject = { placeName: entry.name, reviewTexts, removedReviews: entry.meta?.removedReviews };
-                  result.summary = await withReceipts(await summarize(subject, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort)), subject);
+                  const drafts = drafter(write);
+                  try {
+                    result.summary = await withReceipts(await summarize(subject, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort), drafts.onDraft), subject);
+                  } finally {
+                    drafts.stop();
+                  }
                   write({ type: 'search-summary', summary: result.summary });
                   if (cacheable) await cache.putSearch(featureId, term, result);
                 }
