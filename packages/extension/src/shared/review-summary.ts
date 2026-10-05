@@ -4,15 +4,21 @@ import { cacheGet, cacheSet } from './cache';
 import { summarize } from './llm';
 import { findQA, loadQAs, removeQA, saveQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
-import { bySupport, type AskSearch } from '@truescore/gmaps-shared';
+import { bySupport, parseOrQuery, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
 import type { JSONSchema7 } from 'ai';
-import { readSupport, receiptButton } from './jev';
+import { readAnswers, readSupport, receiptButton } from './jev';
+
+// Rivals checked per summary, at a search and a Jev read each.
+const MAX_RIVALS = 3;
 
 // The betterAlternative rule every structured summary prompt shares (retail,
 // BJJ courses, hotels), so the "Better alternative" section means the same thing
 // on every site: a rival reviewers endorse over this one, never one they merely
-// mention or compare. `rival` names what a rival is on that site.
-export const betterAlternativeRule = (rival: string) => `betterAlternative: only if 2+ reviewers say a specific ${rival} is better than this one — they prefer it, switched to it, or recommend it instead — give its name and why they prefer it, nothing else. Merely being mentioned or compared is not enough: leave out ones reviewers call equal, only marginally different, or worse, and ones reviewers disagree about. If none clears that bar, return an empty string for this field. Never write a sentence explaining that there's no alternative; absence must be silent.`;
+// mention or compare. `rival` names what a rival is on that site. The model's
+// own pick shows only when Jev can't check its `rivals` (see preferredRival).
+export const betterAlternativeRule = (rival: string) => `betterAlternative: only if 2+ reviewers say a specific ${rival} is better than this one — they prefer it, switched to it, or recommend it instead — give its name and why they prefer it, nothing else. Merely being mentioned or compared is not enough: leave out ones reviewers call equal, only marginally different, or worse, and ones reviewers disagree about. If none clears that bar, return an empty string for this field. Never write a sentence explaining that there's no alternative; absence must be silent.
+
+rivals: every specific ${rival} that even one of these reviews says is better than this one in that sense, most-preferred first, at most ${MAX_RIVALS} — including ones betterAlternative leaves out for too few reviewers or for disagreement, since every review naming each is read before it shows. name: its name, spelled out as reviewers who write it in full do, never starred out ("Acme Pro"); aliases: every other way reviewers write it, exactly as written ("Acme", "AcmePro"), as each is searched; why: in one line, what they say it does better ("lasts twice as long") — never who or how many say so, as the count shows beside it. An empty list if no review prefers one.`;
 
 // Shared default summary prompt for retail product pages (Amazon, Decathlon, dm…).
 // Domain-specific pages (hotels, films, BJJ courses) keep their own prompts.
@@ -49,22 +55,49 @@ const RECEIPT_REVIEWS = 200;
 const QUOTES_MAX = 20;
 type Receipt = { n: number; quotes: string[] };
 
+type Rival = { name: string; aliases: string[]; why: string };
+
+// The better alternative, settled by every review naming a rival — all of the
+// page's when it can search them, else the ones in hand — not by the model,
+// whose sample may hold too few of them to settle it (Amazon's newest 100 held
+// 3 of a syrup's 8 reviews naming More): the rival most reviewers would rather
+// have, when 2+ would and more would than wouldn't, as its line and receipt.
+// Null when none would; undefined when Jev couldn't read them.
+const preferredRival = async (rivals: Rival[], reviews: string[], search?: SearchReviews) => {
+  const reads = await Promise.all(rivals.filter((r) => r?.name?.trim()).slice(0, MAX_RIVALS).map(async ({ name, aliases, why }) => {
+    const query = [name, ...(aliases ?? [])].join(' OR ');
+    const names = parseOrQuery(query);
+    const texts = (search && (await search(query, () => {}))?.texts) || reviews.filter((t) => names.some((n) => t.toLowerCase().includes(n.toLowerCase())));
+    // Asked "Is it better than what this review is about?", Jev read reviews
+    // preferring More as no, and one ranking this syrup above a rival as yes.
+    const answers = texts.length ? await readAnswers(`Does this reviewer prefer ${name} to the one they're reviewing?`, texts) : [];
+    if (!answers) return null;
+    const yes = texts.filter((_, i) => answers[i] === 'yes');
+    return { line: why ? `**${name}** — ${why}` : `**${name}**`, yes, no: answers.filter((a) => a === 'no').length };
+  }));
+  const read = reads.filter((r) => r !== null);
+  if (read.length < reads.length) return undefined;
+  const [best] = read.filter((r) => r.yes.length >= MIN_SUPPORT && r.yes.length > r.no).sort((a, b) => b.yes.length - a.yes.length);
+  return best ? { line: best.line, receipt: { n: best.yes.length, quotes: best.yes.slice(0, QUOTES_MAX) } } : null;
+};
+
 // The structured summary with its receipts, read by Jev on the server: each
-// praise, complaint and better alternative keeps how many reviews make it and
-// the first of them; one fewer than MIN_SUPPORT make is dropped before it's
-// ever shown. Unchanged when Jev can't read them.
-export const withReceipts = async (parsed: any, reviews: string[]) => {
+// praise and complaint keeps how many reviews make it and the first of them; one
+// fewer than MIN_SUPPORT make is dropped before it's ever shown, and the better
+// alternative is preferredRival's. Unchanged when Jev can't read them.
+export const withReceipts = async (parsed: any, reviews: string[], search?: SearchReviews) => {
   const texts = reviews.slice(0, RECEIPT_REVIEWS);
-  const points: string[] = [...(parsed.praised ?? []), ...(parsed.complaints ?? []), ...(parsed.betterAlternative ? [parsed.betterAlternative] : [])];
-  const support = points.length ? await readSupport(points, texts) : null;
+  const points: string[] = [...(parsed.praised ?? []), ...(parsed.complaints ?? [])];
+  const [support, rival] = await Promise.all([points.length ? readSupport(points, texts) : null, preferredRival(parsed.rivals ?? [], reviews, search)]);
   if (!support) return parsed;
   const receipts: Record<string, Receipt> = Object.fromEntries(points.map((p, i) => [p, { n: support[i]!.length, quotes: support[i]!.slice(0, QUOTES_MAX).map((j) => texts[j]!) }]));
+  if (rival) receipts[rival.line] = rival.receipt;
   const made = (p: string) => receipts[p]!.n >= MIN_SUPPORT;
   return {
     ...parsed,
     praised: (parsed.praised ?? []).filter(made),
     complaints: (parsed.complaints ?? []).filter(made),
-    betterAlternative: parsed.betterAlternative && made(parsed.betterAlternative) ? parsed.betterAlternative : '',
+    betterAlternative: rival === undefined ? parsed.betterAlternative : rival?.line ?? '',
     receipts,
     ...(reviews.length > texts.length ? { receiptsOf: reviews.length } : {}),
   };
@@ -118,7 +151,8 @@ export const renderStructuredSummary = (
     const item = document.createElement('div');
     item.className = 'ars-section-item';
     renderMarkdownInline(item, betterAlternative);
-    if (receipts?.[betterAlternative]) item.appendChild(receiptFor(item, receipts[betterAlternative], receiptsOf, renderQuote));
+    // Its count spans every review naming it, not the longest RECEIPT_REVIEWS.
+    if (receipts?.[betterAlternative]) item.appendChild(receiptFor(item, receipts[betterAlternative], undefined, renderQuote));
     section.appendChild(item);
     container.appendChild(section);
   }
@@ -131,8 +165,17 @@ const SUMMARY_SCHEMA = {
     praised: { type: 'array' as const, items: { type: 'string' as const } },
     conclusion: { type: 'string' as const },
     betterAlternative: { type: 'string' as const },
+    rivals: {
+      type: 'array' as const,
+      items: {
+        type: 'object' as const,
+        properties: { name: { type: 'string' as const }, aliases: { type: 'array' as const, items: { type: 'string' as const } }, why: { type: 'string' as const } },
+        required: ['name', 'aliases', 'why'],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ['complaints', 'praised', 'conclusion', 'betterAlternative'],
+  required: ['complaints', 'praised', 'conclusion', 'betterAlternative', 'rivals'],
   additionalProperties: false,
 };
 
@@ -307,7 +350,7 @@ export const buildSummarizeWidget = ({
       const summary = await llmSummarize(reviews, withContext(summaryPrompt, context));
       // Its points are checked against the reviews before any of them shows.
       btn.textContent = '\u23F3 Checking it against the reviews\u2026';
-      const parsed = await withReceipts(summary, reviews);
+      const parsed = await withReceipts(summary, reviews, searchAsk?.search);
       bumpRateLimit();
       summaryTs = Date.now();
       // Quota-full must not discard a summary the LLM call already paid for.

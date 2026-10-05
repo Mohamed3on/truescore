@@ -1,10 +1,19 @@
 import { test, expect, mock } from 'bun:test';
 import * as realLlm from './llm';
+import * as realJev from './jev';
 
 const PARSED = { praised: ['Lasts long'], complaints: [], conclusion: 'Good.', betterAlternative: '' };
 // Keep the rest of the module intact: module mocks are process-wide, and a bare
 // factory blanked salvageObject for llm.test.ts whenever it ran after this file.
 mock.module('./llm', () => ({ ...realLlm, summarize: async () => PARSED, askTransport: async () => { throw new Error('unused'); } }));
+// Jev's reads, for the test that sets them; the real ones otherwise.
+const jev: { support?: typeof realJev.readSupport; answers?: typeof realJev.readAnswers } = {};
+const { readSupport, readAnswers } = realJev;
+mock.module('./jev', () => ({
+  ...realJev,
+  readSupport: (...a: Parameters<typeof readSupport>) => (jev.support ?? readSupport)(...a),
+  readAnswers: (...a: Parameters<typeof readAnswers>) => (jev.answers ?? readAnswers)(...a),
+}));
 
 test('Re-summarize gets its label back once the new summary is on screen', async () => {
   const { buildSummarizeWidget } = await import('./review-summary');
@@ -72,4 +81,33 @@ test("a receipt's reviews show as the site's cards, and as text when it has none
   const box = wrapper.querySelector('.ars-receipt-quotes')!;
   expect([...box.children].map((c) => c.className)).toEqual(['card', 'ars-receipt-quote']);
   expect(box.textContent).not.toContain('[Ranking');
+});
+
+test('the better alternative is the rival every review naming it prefers, not the sample', async () => {
+  const { withReceipts } = await import('./review-summary');
+  const naming = ['More tastes far better', 'Not half as good as More', 'A cheaper alternative to More', 'Went back to More'];
+  const search = async () => ({ texts: naming, scorePct: 0, trustedReviews: 0 });
+  const parsed = { ...PARSED, rivals: [{ name: 'More Zerup', aliases: ['More'], why: 'tastes less artificial' }] };
+  const sample = ['a sample review that never names it'];
+  jev.support = async (points) => points.map(() => [0, 0]);
+  try {
+    jev.answers = async (_q, texts) => texts.map((t) => (t.includes('cheaper') ? 'no' : 'yes'));
+    const found = await withReceipts(parsed, sample, search);
+    expect(found.betterAlternative).toBe('**More Zerup** — tastes less artificial');
+    expect(found.receipts[found.betterAlternative]).toEqual({ n: 3, quotes: [naming[0], naming[1], naming[3]] });
+
+    // As many reviewers would rather keep this one: no alternative, whatever the model picked.
+    jev.answers = async (_q, texts) => texts.map((_, i) => (i % 2 ? 'no' : 'yes'));
+    expect((await withReceipts({ ...parsed, betterAlternative: 'Model pick' }, sample, search)).betterAlternative).toBe('');
+
+    // Without a search, the reviews in hand that name it.
+    jev.answers = async (_q, texts) => texts.map(() => 'yes');
+    expect((await withReceipts(parsed, [...naming, 'unrelated'])).receipts['**More Zerup** — tastes less artificial'].n).toBe(4);
+
+    // Jev can't read them: the model's own pick stands.
+    jev.answers = async () => null;
+    expect((await withReceipts({ ...parsed, betterAlternative: 'Model pick' }, sample, search)).betterAlternative).toBe('Model pick');
+  } finally {
+    jev.support = jev.answers = undefined;
+  }
 });
