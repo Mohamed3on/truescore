@@ -46,13 +46,15 @@ const keyOf = (name: string) => words(name).trim().replace(/ /g, '-');
 // the top, a post) that does: a bare "this" speaks of what its parent named.
 // Only the parent: a reply further down a side conversation ("does it fold
 // flat?") can't be told apart from talk of another Option. Nor a parent, or
-// post, that names one of `rivals` too (a title's siblings): a reply to a
-// brand's case made with three of its models speaks of the brand, and Jev
-// would hand its agreement to each model. A name inside a rival's isn't one:
-// "Pepsi Max" in "Pepsi Max 10/10", not in "Pepsi Max Lemon". Only these are
-// read, so the rest of a thread costs nothing.
+// post, that names one of `rivals` too (the thread's other Options, or a
+// title's siblings): a reply to a comparison of three strollers, or to a
+// brand's case made with three of its models, speaks of none of them alone,
+// and Jev would hand its agreement, or its quibble, to each. A name inside a
+// rival's isn't one: "Pepsi Max" in "Pepsi Max 10/10", not in "Pepsi Max
+// Lemon". Only these are read, so the rest of a thread costs nothing.
 export const naming = (thread: Thread, names: string[], rivals: string[] = []): ThreadComment[] => {
-  const needles = (ns: string[]) => [...new Set(ns.map(words))].filter((n) => n.trim().length > 1);
+  // Each name as written and with an s on the end: "gordon ryans", "Sonys".
+  const needles = (ns: string[]) => [...new Set(ns.map(words))].filter((n) => n.trim().length > 1).flatMap((n) => [n, `${n.trimEnd()}s `]);
   const sayer = (ns: string[], hidden: string[] = []) => (text: string) => {
     for (const h of hidden) while (text.includes(h)) text = text.replace(h, ' ');
     return ns.some((n) => text.includes(n));
@@ -148,12 +150,13 @@ export const listedOf = (o: ThreadOption): ListedOption => {
 // large, so a reply naming a sibling ("8a here" under a Pixel 8 Pro) or
 // speaking of the whole brand reads as not about it. Its siblings are its
 // rivals, so one whose name holds its own ("Pepsi Max Lemon" beside "Pepsi
-// Max") hides from it only that sibling's mentions, not the name.
+// Max") hides from it only that sibling's mentions, not the name. An Option's
+// rivals are the thread's other Options.
 export async function tallyOption(thread: Thread, question: string, o: ThreadOption, all: ThreadOption[] = [o]): Promise<OptionTally | null> {
   const rest = all.filter((x) => x !== o);
   const others = rest.map((x) => x.name);
   const [own, ...titles] = await Promise.all([
-    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others.join(', ')),
+    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others.join(', '), rest.flatMap((x) => ownNames(x, all))),
     ...o.titles.map((t) => {
       const mine = [t.name, ...t.aliases];
       const siblings = o.titles.filter((x) => x !== t);

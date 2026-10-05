@@ -9,14 +9,15 @@ const comment = (id: string, body: string, more: Partial<ThreadComment> = {}): T
 const threadWith = (comments: ThreadComment[], title = `Best headphones? #${++n}`): Thread => ({ id: `t${n}`, title, text: '', comments });
 
 describe('naming', () => {
-  test('finds a name whole, in any case, possessive or link slug', () => {
+  test('finds a name whole, in any case, possessive, plural or link slug', () => {
     const thread = threadWith([
       comment('a', "Sony's are great"),
       comment('b', 'see [this](https://shop.example/products/xm5-by-sony-japan)'),
       comment('c', 'SONY all day'),
       comment('d', 'Sonyx is a different brand'),
+      comment('e', 'both my Sonys broke'),
     ]);
-    expect(naming(thread, ['Sony']).map((c) => c.id)).toEqual(['a', 'b', 'c']);
+    expect(naming(thread, ['Sony']).map((c) => c.id)).toEqual(['a', 'b', 'c', 'e']);
   });
 
   test('a reply to a comment naming it speaks of it too, as does an answer to a post that names it', () => {
@@ -161,6 +162,20 @@ describe('tallyOption', () => {
     expect(t!.titles.find((x) => x.name === 'Pixel 8 Pro')!.reads).toEqual({ a: 'praise', b: 'praise', c: 'praise' });
     expect(t!.titles.find((x) => x.name === 'Pixel 8a')!.reads).toEqual({ c: 'praise' });
     expect(t!.reads.d).toBe('praise');
+  });
+
+  test('a reply, or an answer to the post, takes an Option from it only when it names no other Option', async () => {
+    const thread = threadWith([
+      comment('a', 'Bose is great'),
+      comment('b', 'this', { parentId: 'a' }),
+      comment('c', 'Bose and Sony are both great'),
+      comment('d', 'same', { parentId: 'c' }),
+      comment('e', 'go for the first'),
+    ], 'Bose or Sony?');
+    const [bose, sony] = [{ name: 'Bose', aliases: [], titles: [] }, { name: 'Sony', aliases: [], titles: [] }];
+    const t = await tallyOption(thread, 'Bose or Sony?', bose, [bose, sony]);
+    expect(t!.reads).toEqual({ a: 'praise', b: 'praise', c: 'praise' });
+    expect(requests.flatMap((r) => Object.values(r.questions).map((q) => q.instructions.comment))).not.toContain('go for the first');
   });
 
   test("a title whose name a sibling's holds reads its own mentions, not the sibling's", async () => {
