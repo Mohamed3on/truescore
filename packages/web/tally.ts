@@ -45,19 +45,23 @@ const keyOf = (name: string) => words(name).trim().replace(/ /g, '-');
 // The counted comments that name any of `names`, or reply to a comment (or, at
 // the top, a post) that does: a bare "this" speaks of what its parent named.
 // Only the parent: a reply further down a side conversation ("does it fold
-// flat?") can't be told apart from talk of another Option. Nor a parent that
-// names one of `rivals` too (a title's siblings): a reply to a brand's case
-// made with three of its models speaks of the brand, and Jev would hand its
-// agreement to each model. Only these are read, so the rest of a thread costs
-// nothing.
+// flat?") can't be told apart from talk of another Option. Nor a parent, or
+// post, that names one of `rivals` too (a title's siblings): a reply to a
+// brand's case made with three of its models speaks of the brand, and Jev
+// would hand its agreement to each model. A name inside a rival's isn't one:
+// "Pepsi Max" in "Pepsi Max 10/10", not in "Pepsi Max Lemon". Only these are
+// read, so the rest of a thread costs nothing.
 export const naming = (thread: Thread, names: string[], rivals: string[] = []): ThreadComment[] => {
-  const sayer = (ns: string[]) => {
-    const needles = [...new Set(ns.map(words))].filter((n) => n.trim().length > 1);
-    return (text: string) => needles.some((n) => text.includes(n));
+  const needles = (ns: string[]) => [...new Set(ns.map(words))].filter((n) => n.trim().length > 1);
+  const sayer = (ns: string[], hidden: string[] = []) => (text: string) => {
+    for (const h of hidden) while (text.includes(h)) text = text.replace(h, ' ');
+    return ns.some((n) => text.includes(n));
   };
-  const says = sayer(names), rival = sayer(rivals);
+  const theirs = needles(rivals);
+  const says = sayer(needles(names), theirs), rival = sayer(theirs);
   const byId = new Map(thread.comments.map((c) => [c.id, c]));
-  const inPost = says(words(`${thread.title} ${thread.text}`));
+  const post = words(`${thread.title} ${thread.text}`);
+  const inPost = says(post) && !rival(post);
   return thread.comments.filter((c) => {
     if (!countsInTally(c)) return false;
     const parent = c.parentId ? words(byId.get(c.parentId)?.body ?? '') : undefined;
@@ -142,7 +146,9 @@ export const listedOf = (o: ThreadOption): ListedOption => {
 // all. A stance on one of its titles counts for the Option too (CONTEXT.md:
 // Option). A title's `others` add its maker's other titles and the maker at
 // large, so a reply naming a sibling ("8a here" under a Pixel 8 Pro) or
-// speaking of the whole brand reads as not about it.
+// speaking of the whole brand reads as not about it. Its siblings are its
+// rivals, so one whose name holds its own ("Pepsi Max Lemon" beside "Pepsi
+// Max") hides from it only that sibling's mentions, not the name.
 export async function tallyOption(thread: Thread, question: string, o: ThreadOption, all: ThreadOption[] = [o]): Promise<OptionTally | null> {
   const rest = all.filter((x) => x !== o);
   const others = rest.map((x) => x.name);
@@ -152,7 +158,7 @@ export async function tallyOption(thread: Thread, question: string, o: ThreadOpt
       const mine = [t.name, ...t.aliases];
       const siblings = o.titles.filter((x) => x !== t);
       const theirs = siblings.flatMap((x) => [x.name, ...x.aliases]);
-      return readsOf(thread, question, titleOf(o, t), telling(mine, [...rest.flatMap(namesOf), ...theirs]),
+      return readsOf(thread, question, titleOf(o, t), telling(mine, rest.flatMap(namesOf)),
         `${titleOf(o, t)}${also(t.aliases)}`, [...siblings.map((x) => titleOf(o, x)), `${o.name} in general`, ...others].join(', '),
         telling(theirs, mine));
     }),

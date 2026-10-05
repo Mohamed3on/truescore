@@ -44,6 +44,17 @@ describe('naming', () => {
     expect(naming(thread, ['Pixel 8 Pro', '8 Pro'], ['Pixel 8a', '8a']).map((c) => c.id)).toEqual(['a', 'b', 'c']);
   });
 
+  test("a name inside a rival's isn't one, and a post naming a rival lends no title", () => {
+    const thread = threadWith([
+      comment('a', 'Pepsi Max 10/10'),
+      comment('b', 'Pepsi Max Lemon, Pepsi Max Lemon!'),
+      comment('c', 'Pepsi Max Lemon beats Pepsi Max'),
+    ], 'Tried Pepsi Max and Pepsi Max Lemon, what next?');
+    expect(naming(thread, ['Pepsi Max'], ['Pepsi Max Lemon']).map((c) => c.id)).toEqual(['a', 'c']);
+    const asked = threadWith([comment('a', 'go for it')], 'Is Pepsi Max worth it?');
+    expect(naming(asked, ['Pepsi Max'], ['Pepsi Max Lemon']).map((c) => c.id)).toEqual(['a']);
+  });
+
   test("only counted comments are read, though an uncounted one still lends its name to replies", () => {
     const thread = threadWith([
       comment('a', 'Bose', { score: 0 }),
@@ -150,6 +161,13 @@ describe('tallyOption', () => {
     expect(t!.titles.find((x) => x.name === 'Pixel 8 Pro')!.reads).toEqual({ a: 'praise', b: 'praise', c: 'praise' });
     expect(t!.titles.find((x) => x.name === 'Pixel 8a')!.reads).toEqual({ c: 'praise' });
     expect(t!.reads.d).toBe('praise');
+  });
+
+  test("a title whose name a sibling's holds reads its own mentions, not the sibling's", async () => {
+    const thread = threadWith([comment('a', 'Pepsi Max is great'), comment('b', 'Pepsi Max Lemon is the best')]);
+    const pepsi = { name: 'Pepsi', aliases: [], titles: [{ name: 'Pepsi Max', aliases: [] }, { name: 'Pepsi Max Lemon', aliases: [] }] };
+    const t = await tallyOption(thread, 'Best zero drink?', pepsi);
+    expect(t!.titles.map((x) => x.reads)).toEqual([{ a: 'praise' }, { b: 'praise' }]);
   });
 
   test("two makers' titles of one name are read apart", async () => {
