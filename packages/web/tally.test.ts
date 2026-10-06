@@ -112,7 +112,7 @@ describe('threadOf', () => {
 // A fake Jev reading each comment by a rule; a reply reads through its parent.
 type Req = { state: any; questions: Record<string, any> };
 let requests: Req[] = [];
-const verdict = (text: string) => (/awful|bad/.test(text) ? 'complain' : /great|best/.test(text) ? 'praise' : /^(this|same)\b/.test(text) ? 'agree' : 'off');
+const verdict = (text: string) => (/awful|bad/.test(text) ? 'against' : /great|best/.test(text) ? 'for' : /^(this|same)\b/.test(text) ? 'agree' : 'off');
 beforeEach(() => {
   requests = [];
   setJevClient({

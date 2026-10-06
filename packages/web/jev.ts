@@ -148,29 +148,34 @@ export const stancesFor = (topic: string, texts: string[]): Promise<Stance[] | n
   judge('stance', topic, { topic }, texts,
     (review) => choice({ question: 'How does this review talk about `topic`?', review }, STANCE_CRITERIA), inCriteria(STANCE_CRITERIA));
 
-// What each comment says of an Option (see web/tally.ts), as an answer to the
-// Thread's question and read with the comment it replies to, so a bare "this"
-// carries its parent's stance. `option` describes it for the model and `others`
-// names the thread's other Options, so talk of one of them, however alike its
-// name, reads as not about this one. The criteria spell out the cases Jev got
-// wrong (praise read as mixed, thanks read as agreement, a gripe about every
-// instructional read as one about this one); described as objects with
-// examples instead, they read no better on the labelled threads and cost ~35%
-// more tokens. The memo is keyed by `name` and these criteria, so a re-listing
-// that words the description differently reads nothing twice, and changed
-// criteria read everything afresh.
+// What each comment says of an Option (see web/tally.ts): for or against it as
+// an answer to the Thread's question, not whether it speaks well of it, so on
+// "the most dangerous submission?" "people rip kimuras" is for the kimura. Jev
+// chooses for or against, mapped to praise and complain: offered those, or
+// asked whether a comment recommends it, it read every warning as against.
+// Read with the comment it replies to, so a bare "this" carries its parent's
+// stance. `option` describes it for the model and `others` names the thread's
+// other Options, so talk of one of them, however alike its name, reads as not
+// about this one. The criteria spell out the cases Jev got wrong (praise read
+// as mixed, thanks read as agreement, a gripe about every instructional read
+// as one about this one); described as objects with examples instead, they
+// read no better on the labelled threads and cost ~35% more tokens. The memo
+// is keyed by `name` and these criteria, so a re-listing that words the
+// description differently reads nothing twice, and changed criteria read
+// everything afresh.
 const OPTION_CRITERIA = {
-  praise: 'Recommends it to the asker or speaks well of it. Naming it as an answer counts, and so does a recommendation with a small caveat',
-  complain: 'Advises against it or speaks badly of it in particular, not just of a whole kind of thing it belongs to',
+  for: 'Gives it as an answer to `thread` or backs it as one. Naming it counts, and so does an answer with a small caveat',
+  against: 'Argues it is not a good answer to `thread`, it in particular, not just a whole kind of thing it belongs to',
   mixed: 'Weighs a drawback that matters for what the asker needs against its good points without settling, or mentions it without a verdict (owns it, is considering it)',
   off: 'Never speaks of it: speaks only of one of `others` (even one with a similar name), only of a whole kind of thing, only asks a question, or speaks of something else',
 };
 const REPLY_CRITERIA = {
-  praise: 'Recommends it to the asker or speaks well of it, including by agreeing with `replying_to` where that recommends it ("this", "+1", "same")',
-  complain: 'Advises against it or speaks badly of it in particular, including by disagreeing with `replying_to` where that recommends it',
+  for: 'Gives it as an answer to `thread` or backs it as one, including by agreeing with `replying_to` where that gives it ("this", "+1", "same")',
+  against: 'Argues it is not a good answer to `thread`, it in particular, including by disagreeing with `replying_to` where that gives it',
   mixed: OPTION_CRITERIA.mixed,
   off: 'Never speaks of it, neither in its own words nor by agreeing or disagreeing with `replying_to` about it. Thanking `replying_to` or asking it something is not agreeing with it, and speaking only of one of `others` is not speaking of it',
 };
+const STANCE_OF = { for: 'praise', against: 'complain', mixed: 'mixed', off: 'off' } as const;
 const OPTION_READ = Bun.hash(JSON.stringify([OPTION_CRITERIA, REPLY_CRITERIA])).toString(36);
 export const optionStancesFor = (thread: string, name: string, option: string, others: string, comments: { text: string; parent?: string }[]): Promise<Stance[] | null> =>
   judge('option', `${thread}\u0000${name}\u0000${OPTION_READ}`, { thread, option, others }, comments.map((c) => `${c.parent ?? ''}\u0000${c.text}`),
@@ -180,7 +185,7 @@ export const optionStancesFor = (thread: string, name: string, option: string, o
         ? choice({ question: 'How does this comment, a reply to `replying_to`, speak of `option` as an answer to `thread`?', comment: clip(text), replying_to: clip(parent) }, REPLY_CRITERIA)
         : choice({ question: 'How does this comment speak of `option` as an answer to `thread`?', comment: clip(text) }, OPTION_CRITERIA);
     },
-    inCriteria(OPTION_CRITERIA));
+    (a) => { const k = inCriteria(OPTION_CRITERIA)(a); return k && STANCE_OF[k]; });
 
 // Each text's answer to an Ask's `question`.
 export const answersFor = (question: string, texts: string[]): Promise<Answer[] | null> =>
