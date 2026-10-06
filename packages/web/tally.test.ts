@@ -35,6 +35,12 @@ describe('naming', () => {
     expect(naming(asked, ['Bose']).map((c) => c.id)).toEqual(['a']);
   });
 
+  test("an answer to a post that names it only as background doesn't speak of it", () => {
+    const thread = threadWith([comment('a', 'Aldi has good ones')], "Rewe's berries are the worst, where else?");
+    expect(naming(thread, ['Rewe'], [], new Set(), false)).toEqual([]);
+    expect(naming(thread, ['Rewe']).map((c) => c.id)).toEqual(['a']);
+  });
+
   test("a reply speaks of a title through its parent only when the parent names none of its rivals", () => {
     const thread = threadWith([
       comment('a', 'My Pixel 8 Pro is still great'),

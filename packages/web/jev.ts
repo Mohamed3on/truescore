@@ -198,6 +198,16 @@ export const groupAnswersFor = (thread: string, comments: string[]): Promise<boo
     (comment) => noul({ question: GROUP_QUESTION, comment }), yesNo)
     .then((says) => says && says.map((v) => v === '1'));
 
+// Whether the Thread's post asks about each thing it names (web/tally.ts): "is
+// the Donkey worth it?" does, so a bare "yes" under it speaks of the Donkey;
+// "Rewe's are the worst, where else?" names Rewe as what the asker wants away
+// from, so an answer to it isn't one about Rewe.
+const ASKED_QUESTION = 'Does `thread` ask about `option` itself, for verdicts on it or whether to choose it, rather than naming it only as background: one the asker owns, has tried or wants to get away from?';
+export const askedAboutFor = (thread: string, options: string[]): Promise<boolean[] | null> =>
+  judge('asked', `${thread}\u0000${Bun.hash(ASKED_QUESTION).toString(36)}`, { thread }, options,
+    (option) => noul({ question: ASKED_QUESTION, option }), yesNo)
+    .then((says) => says && says.map((v) => v === '1'));
+
 // Each text's answer to an Ask's `question`.
 export const answersFor = (question: string, texts: string[]): Promise<Answer[] | null> =>
   judge('answer', question, { question }, texts,
