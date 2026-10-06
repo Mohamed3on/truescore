@@ -72,7 +72,7 @@ const pad = (s: string | number, n: number) => String(s).padEnd(n);
 const fmt = (c?: TallyCount) => (c ? `${c.for}-${c.against}${c.mixed ? ` (${c.mixed}m)` : ''}` : '—');
 
 const files = readdirSync(DIR).filter((f) => f.endsWith('.json') && (!arg('fixture') || f.includes(arg('fixture')!)));
-const totals = { expected: 0, found: 0, extra: 0, countErr: 0, top1: 0, top5: 0, threads: 0, titles: 0, titlesFound: 0, titleErr: 0 };
+const totals = { expected: 0, found: 0, extra: 0, countErr: 0, readErr: 0, top1: 0, top5: 0, threads: 0, titles: 0, titlesFound: 0, titleErr: 0 };
 let llmIn = 0, llmOut = 0;
 setOnUsage((u) => { llmIn += u.inputTokens; llmOut += u.outputTokens; });
 
@@ -126,28 +126,30 @@ for (const file of files) {
     for (const t of titleRows.get(o)!) console.log(`    ${pad(t.o.name, 42)}${pad(fmt(t.o.count), 10)}${pad(fmt(t.match?.count), 12)}${t.match?.name ?? 'MISSING'}`);
   }
   for (const p of extra) console.log(`  ${pad('(not labelled)', 44)}${pad('', 10)}${pad(fmt(p.count), 12)}${p.name}`);
-  if (process.argv.includes('--why')) {
-    const byId = new Map(thread.comments.map((c) => [c.id, c]));
-    for (const { o, match } of [...found, ...titlesFound]) {
-      const ids = new Set([...Object.keys(o.reads), ...Object.keys(match!.reads)]);
-      for (const id of ids) {
-        const want = o.reads[id], got = match!.reads[id];
-        if (want === got) continue;
-        const c = byId.get(id)!;
-        const parent = c.parentId ? byId.get(c.parentId)?.body : undefined;
-        console.log(`    ${o.name}: labelled ${want ?? 'off'}, read ${got ?? 'off'} · "${c.body.replace(/\s+/g, ' ').slice(0, 160)}"${parent ? ` ← "${parent.replace(/\s+/g, ' ').slice(0, 80)}"` : ''}`);
-      }
+  // Every read the labels disagree with, among the Options and titles found:
+  // in a count, a wrong read for and another against cancel out.
+  const byId = new Map(thread.comments.map((c) => [c.id, c]));
+  let readErr = 0;
+  for (const { o, match } of [...found, ...titlesFound]) {
+    for (const id of new Set([...Object.keys(o.reads), ...Object.keys(match!.reads)])) {
+      const want = o.reads[id], got = match!.reads[id];
+      if (want === got) continue;
+      readErr++;
+      if (!process.argv.includes('--why')) continue;
+      const c = byId.get(id)!;
+      const parent = c.parentId ? byId.get(c.parentId)?.body : undefined;
+      console.log(`    ${o.name}: labelled ${want ?? 'off'}, read ${got ?? 'off'} · "${c.body.replace(/\s+/g, ' ').slice(0, 160)}"${parent ? ` ← "${parent.replace(/\s+/g, ' ').slice(0, 80)}"` : ''}`);
     }
   }
-  console.log(`  found ${found.length}/${rows.length} · count error ${countErr} people · #1 ${top1 ? 'right' : 'WRONG'} · top-5 overlap ${top5}/${Math.min(5, rows.length)} · titles found ${titlesFound.length}/${titles.length}, count error ${titleErr} people`);
+  console.log(`  found ${found.length}/${rows.length} · count error ${countErr} people · ${readErr} reads wrong · #1 ${top1 ? 'right' : 'WRONG'} · top-5 overlap ${top5}/${Math.min(5, rows.length)} · titles found ${titlesFound.length}/${titles.length}, count error ${titleErr} people`);
   Object.assign(totals, {
     expected: totals.expected + rows.length, found: totals.found + found.length, extra: totals.extra + extra.length,
-    countErr: totals.countErr + countErr, top1: totals.top1 + top1, top5: totals.top5 + top5, threads: totals.threads + 1,
+    countErr: totals.countErr + countErr, readErr: totals.readErr + readErr, top1: totals.top1 + top1, top5: totals.top5 + top5, threads: totals.threads + 1,
     titles: totals.titles + titles.length, titlesFound: totals.titlesFound + titlesFound.length, titleErr: totals.titleErr + titleErr,
   });
 }
 
 const jevTokens = Object.values(spent).reduce((a, n) => a + n, 0);
-console.log(`\n${totals.threads} threads · options found ${totals.found}/${totals.expected} · unlabelled extras ${totals.extra} · count error ${totals.countErr} people · #1 right ${totals.top1}/${totals.threads} · top-5 overlap ${totals.top5}`);
+console.log(`\n${totals.threads} threads · options found ${totals.found}/${totals.expected} · unlabelled extras ${totals.extra} · count error ${totals.countErr} people · ${totals.readErr} reads wrong · #1 right ${totals.top1}/${totals.threads} · top-5 overlap ${totals.top5}`);
 console.log(`titles found ${totals.titlesFound}/${totals.titles} · count error ${totals.titleErr} people`);
 console.log(`cost: LLM ${llmIn} in / ${llmOut} out tokens (${provider}) · Jev ${jevTokens} in tokens ($${((jevTokens * 0.042) / 1e6).toFixed(4)})`);
