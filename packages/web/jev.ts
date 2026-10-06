@@ -189,6 +189,15 @@ export const optionStancesFor = (thread: string, name: string, option: string, o
     },
     (a) => { const k = inCriteria(OPTION_CRITERIA)(a); return k && STANCE_OF[k]; });
 
+// Whether each comment answers the Thread's question about the things its post
+// lists as a group (web/tally.ts): such a comment names none of them, yet is
+// then read for each.
+const GROUP_QUESTION = 'Does this comment give a verdict on the options `thread` lists as a group: all of them, none of them, or all the rest ("all of the above", "none of those", "the others are fine")?';
+export const groupAnswersFor = (thread: string, comments: string[]): Promise<boolean[] | null> =>
+  judge('group', `${thread}\u0000${Bun.hash(GROUP_QUESTION).toString(36)}`, { thread }, comments,
+    (comment) => noul({ question: GROUP_QUESTION, comment }), yesNo)
+    .then((says) => says && says.map((v) => v === '1'));
+
 // Each text's answer to an Ask's `question`.
 export const answersFor = (question: string, texts: string[]): Promise<Answer[] | null> =>
   judge('answer', question, { question }, texts,

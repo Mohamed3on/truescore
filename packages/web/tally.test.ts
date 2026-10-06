@@ -64,6 +64,22 @@ describe('naming', () => {
     ]);
     expect(naming(thread, ['Bose']).map((c) => c.id)).toEqual(['b']);
   });
+
+  test('a name of several words is found run together', () => {
+    const thread = threadWith([comment('a', 'toeholds are the worst'), comment('b', 'toe hold'), comment('c', 'the toe is fine')]);
+    expect(naming(thread, ['Toe hold']).map((c) => c.id)).toEqual(['a', 'b']);
+  });
+
+  test("an answer to the post's list as a whole speaks of each thing it lists, though the post names rivals", () => {
+    const thread = { ...threadWith([
+      comment('a', 'none of those are bad'),
+      comment('b', 'this', { parentId: 'a' }),
+      comment('c', 'go to class'),
+    ]), text: 'Toe hold, knee bar or calf slicer?' };
+    expect(naming(thread, ['Knee bar'], ['Toe hold', 'Calf slicer']).map((c) => c.id)).toEqual([]);
+    expect(naming(thread, ['Knee bar'], ['Toe hold', 'Calf slicer'], new Set(['a'])).map((c) => c.id)).toEqual(['a']);
+    expect(naming(thread, ['Heel hook'], [], new Set(['a'])).map((c) => c.id)).toEqual([]);
+  });
 });
 
 describe('telling', () => {
@@ -146,6 +162,15 @@ describe('tallyOption', () => {
     expect(asked.find((q) => q.comment === 'The XM5 are great')).not.toHaveProperty('replying_to');
     expect(asked.some((q) => q.comment === 'Bose is the best')).toBe(false);
     expect(requests[0]!.state.option).toContain('WH-1000XM5');
+  });
+
+  test("an answer to the post's list as a whole is read as a reply to the post", async () => {
+    const thread = { ...threadWith([comment('a', 'all of them are bad')]), text: 'Toe hold or knee bar?' };
+    const knee = { name: 'Knee bar', aliases: [], titles: [] }, toe = { name: 'Toe hold', aliases: [], titles: [] };
+    const t = await tallyOption(thread, 'Most taboo? Toe hold or knee bar?', knee, [knee, toe], new Set(['a']));
+    const asked = requests.flatMap((r) => Object.values(r.questions).map((q) => q.instructions));
+    expect(asked.find((q) => q.comment === 'all of them are bad')?.replying_to).toBe('Most taboo? Toe hold or knee bar?');
+    expect(t!.reads).toEqual({ a: 'complain' });
   });
 
   test("a reply takes a title from its parent only when the parent names none of the maker's other titles", async () => {

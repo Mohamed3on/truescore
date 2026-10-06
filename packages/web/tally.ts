@@ -1,6 +1,6 @@
 import { countsInTally, MIN_TALLY_PEOPLE, stripAccents, type ListedOption, type LlmOverrides, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type ThreadComment } from '@truescore/gmaps-shared';
 import { db } from './db';
-import { optionStancesFor } from './jev';
+import { groupAnswersFor, optionStancesFor } from './jev';
 import { explainOptions, listOptions, optionsRequest, reasonsRequest, type ThreadOption } from './llm';
 
 // A Reddit Thread's Tally (CONTEXT.md). The model lists the Options and how the
@@ -42,6 +42,17 @@ const questionOf = ({ title, text }: Thread) => `${title}\n\n${text.slice(0, MAX
 const words = (s: string) => ` ${stripAccents(s.toLowerCase()).replace(/[^a-z0-9]+/g, ' ').trim()} `;
 const keyOf = (name: string) => words(name).trim().replace(/ /g, '-');
 
+// Each name as written, with an s on the end ("gordon ryans", "Sonys") and, for
+// a name of several words, run together ("toehold").
+const needles = (ns: string[]) => [...new Set(ns.map(words))].filter((n) => n.trim().length > 1)
+  .flatMap((n) => [...new Set([n, ` ${n.trim().replace(/ /g, '')} `])]).flatMap((n) => [n, `${n.trimEnd()}s `]);
+// Whether a text holds one of the needles, once the `hidden` ones are blanked out.
+const sayer = (ns: string[], hidden: string[] = []) => (text: string) => {
+  for (const h of hidden) while (text.includes(h)) text = text.replace(h, ' ');
+  return ns.some((n) => text.includes(n));
+};
+const postOf = (thread: Thread) => words(`${thread.title} ${thread.text}`);
+
 // The counted comments that name any of `names`, or reply to a comment (or, at
 // the top, a post) that does: a bare "this" speaks of what its parent named.
 // Only the parent: a reply further down a side conversation ("does it fold
@@ -49,25 +60,23 @@ const keyOf = (name: string) => words(name).trim().replace(/ /g, '-');
 // post, that names one of `rivals` too (the thread's other Options, or a
 // title's siblings): a reply to a comparison of three strollers, or to a
 // brand's case made with three of its models, speaks of none of them alone,
-// and Jev would hand its agreement, or its quibble, to each. A name inside a
-// rival's isn't one: "Pepsi Max" in "Pepsi Max 10/10", not in "Pepsi Max
-// Lemon". Only these are read, so the rest of a thread costs nothing.
-export const naming = (thread: Thread, names: string[], rivals: string[] = []): ThreadComment[] => {
-  // Each name as written and with an s on the end: "gordon ryans", "Sonys".
-  const needles = (ns: string[]) => [...new Set(ns.map(words))].filter((n) => n.trim().length > 1).flatMap((n) => [n, `${n.trimEnd()}s `]);
-  const sayer = (ns: string[], hidden: string[] = []) => (text: string) => {
-    for (const h of hidden) while (text.includes(h)) text = text.replace(h, ' ');
-    return ns.some((n) => text.includes(n));
-  };
+// and Jev would hand its agreement, or its quibble, to each. Except the
+// `group` answers: "none of those are bad" speaks of each thing the post
+// lists (groupAnswersOf). A name inside a rival's isn't one:
+// "Pepsi Max" in "Pepsi Max 10/10", not in "Pepsi Max Lemon". Only these are
+// read, so the rest of a thread costs nothing.
+export const naming = (thread: Thread, names: string[], rivals: string[] = [], group: ReadonlySet<string> = new Set()): ThreadComment[] => {
   const theirs = needles(rivals);
   const says = sayer(needles(names), theirs), rival = sayer(theirs);
   const byId = new Map(thread.comments.map((c) => [c.id, c]));
-  const post = words(`${thread.title} ${thread.text}`);
-  const inPost = says(post) && !rival(post);
+  const post = postOf(thread);
+  const listed = says(post), inPost = listed && !rival(post);
   return thread.comments.filter((c) => {
     if (!countsInTally(c)) return false;
     const parent = c.parentId ? words(byId.get(c.parentId)?.body ?? '') : undefined;
-    return says(words(c.body)) || (parent !== undefined ? says(parent) && !rival(parent) : !c.parentId && inPost);
+    return says(words(c.body)) || (parent !== undefined
+      ? says(parent) && !rival(parent)
+      : inPost || (listed && group.has(c.id)));
   });
 };
 
@@ -130,12 +139,13 @@ export const telling = (mine: string[], others: string[]): string[] => {
 
 // Jev's reads of the comments naming something, kept where they speak of it.
 // `name` keys the memo, so it holds the maker for a title: two makers' courses
-// can share a name.
-async function readsOf(thread: Thread, question: string, name: string, names: string[], description: string, others: string, rivals?: string[]): Promise<Record<string, Stance> | null> {
+// can share a name. A `group` answer is read as a reply to the post, the list
+// its "those" points at.
+async function readsOf(thread: Thread, question: string, name: string, names: string[], description: string, others: string, rivals?: string[], group?: ReadonlySet<string>): Promise<Record<string, Stance> | null> {
   const byId = new Map(thread.comments.map((c) => [c.id, c]));
-  const comments = naming(thread, names, rivals);
+  const comments = naming(thread, names, rivals, group);
   const stances = await optionStancesFor(question, name, description, others,
-    comments.map((c) => ({ text: c.body, parent: c.parentId ? byId.get(c.parentId)?.body : undefined })));
+    comments.map((c) => ({ text: c.body, parent: c.parentId ? byId.get(c.parentId)?.body : group?.has(c.id) ? question : undefined })));
   return stances && Object.fromEntries(comments.flatMap((c, i) => (stances[i] === 'off' ? [] : [[c.id, stances[i]!]])));
 }
 
@@ -151,19 +161,20 @@ export const listedOf = (o: ThreadOption): ListedOption => {
 // speaking of the whole brand reads as not about it. Its siblings are its
 // rivals, so one whose name holds its own ("Pepsi Max Lemon" beside "Pepsi
 // Max") hides from it only that sibling's mentions, not the name. An Option's
-// rivals are the thread's other Options.
-export async function tallyOption(thread: Thread, question: string, o: ThreadOption, all: ThreadOption[] = [o]): Promise<OptionTally | null> {
+// rivals are the thread's other Options. `group` holds the answers to the
+// post's list as a whole (groupAnswersOf).
+export async function tallyOption(thread: Thread, question: string, o: ThreadOption, all: ThreadOption[] = [o], group?: ReadonlySet<string>): Promise<OptionTally | null> {
   const rest = all.filter((x) => x !== o);
   const others = rest.map((x) => x.name);
   const [own, ...titles] = await Promise.all([
-    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others.join(', '), rest.flatMap((x) => ownNames(x, all))),
+    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others.join(', '), rest.flatMap((x) => ownNames(x, all)), group),
     ...o.titles.map((t) => {
       const mine = [t.name, ...t.aliases];
       const siblings = o.titles.filter((x) => x !== t);
       const theirs = siblings.flatMap((x) => [x.name, ...x.aliases]);
       return readsOf(thread, question, titleOf(o, t), telling(mine, rest.flatMap(namesOf)),
         `${titleOf(o, t)}${also(t.aliases)}`, [...siblings.map((x) => titleOf(o, x)), `${o.name} in general`, ...others].join(', '),
-        telling(theirs, mine));
+        telling(theirs, mine), group);
     }),
   ]);
   if (!own || titles.some((r) => !r)) return null;
@@ -241,6 +252,16 @@ async function reasonsOf(thread: Thread, question: string, options: ThreadOption
   }
 }
 
+// The answers that give one verdict on the things a post lists, as a group
+// ("none of those are bad", "all of the above"): they name none, yet speak of
+// each, so they're read for every Option the post names (naming). Only
+// top-level comments are asked; none count when Jev can't say.
+async function groupAnswersOf(thread: Thread, question: string): Promise<ReadonlySet<string>> {
+  const top = thread.comments.filter((c) => !c.parentId && countsInTally(c));
+  const says = await groupAnswersFor(question, top.map((c) => c.body));
+  return new Set(says ? top.filter((_, i) => says[i]).map((c) => c.id) : []);
+}
+
 // The whole Tally as a stream: each Option as soon as the model names it, then
 // each count once Jev has read it, and alongside, why each is rated as it is.
 // Counting waits for the whole list, since a name only picks comments once it's
@@ -249,16 +270,22 @@ async function reasonsOf(thread: Thread, question: string, options: ThreadOption
 export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void, overrides: LlmOverrides = {}): Promise<void> {
   const question = questionOf(thread);
   const options: ThreadOption[] = [];
+  const post = postOf(thread);
+  // Asked once the post names two Options, while the rest are listed: which
+  // ones doesn't change the question.
+  let group: Promise<ReadonlySet<string>> | undefined;
   await listOptionsOf(thread, question, overrides, (raw) => {
     const o = tidy(raw);
     const key = keyOf(o.name);
     if (!key || options.some((x) => keyOf(x.name) === key)) return;
     options.push(o);
     write({ type: 'listed', option: listedOf(o) });
+    if (!group && options.filter((x) => sayer(needles(namesOf(x)))(post)).length >= 2) group = groupAnswersOf(thread, question);
   });
+  const answers = await group;
   const [tallies] = await Promise.all([
     Promise.all(options.map(async (o) => {
-      const t = await tallyOption(thread, question, o, options);
+      const t = await tallyOption(thread, question, o, options, answers);
       if (t) write({ type: 'option', option: t });
       return t;
     })),
