@@ -125,8 +125,16 @@ const titleOf = (o: ThreadOption, t: Title) => `${o.name}'s ${t.name}`;
 const describeOption = (o: ThreadOption) =>
   `${o.name}${o.titles.length ? ` (including ${o.titles.map((t) => titleOf(o, t)).join(', ')})` : ''}${also(o.aliases)}`;
 const namesOf = (o: ThreadOption) => [o.name, ...o.aliases, ...o.titles.flatMap((t) => [t.name, ...t.aliases])];
-// The names that pick an Option's comments among the thread's `all` (telling).
-const ownNames = (o: ThreadOption, all: ThreadOption[]) => telling(namesOf(o), all.filter((x) => x !== o).flatMap(namesOf));
+// The names that pick an Option's comments among the thread's `all`: its own,
+// less any another Option has too, which could mean either.
+const ownNames = (o: ThreadOption, all: ThreadOption[]) => {
+  const theirs = new Set(all.filter((x) => x !== o).flatMap(namesOf).map(words));
+  return namesOf(o).filter((n) => !theirs.has(words(n)));
+};
+// Its rivals (naming): the other Options' names, less any its own hold. So
+// one whose name holds its own ("Inside heel hook" beside "Heel hook") hides
+// from it only its own mentions, as a sibling title's does (tallyOption).
+const rivalsOf = (o: ThreadOption, all: ThreadOption[]) => telling(all.filter((x) => x !== o).flatMap((x) => ownNames(x, all)), ownNames(o, all));
 
 // The names that pick a thing's comments: its own, less any that a name of
 // something else holds ("twin" beside a Zoe Twin, "mount" beside Danaher's 4x4
@@ -167,7 +175,7 @@ export async function tallyOption(thread: Thread, question: string, o: ThreadOpt
   const rest = all.filter((x) => x !== o);
   const others = rest.map((x) => x.name);
   const [own, ...titles] = await Promise.all([
-    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others.join(', '), rest.flatMap((x) => ownNames(x, all)), group),
+    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others.join(', '), rivalsOf(o, all), group),
     ...o.titles.map((t) => {
       const mine = [t.name, ...t.aliases];
       const siblings = o.titles.filter((x) => x !== t);
@@ -233,7 +241,7 @@ async function reasonsOf(thread: Thread, question: string, options: ThreadOption
   const index = new Map<ThreadComment, number>();
   const groups = options
     .map((o) => {
-      const named = naming(thread, ownNames(o, options));
+      const named = naming(thread, ownNames(o, options), rivalsOf(o, options));
       return { o, named, people: new Set(named.map(personOf)).size, upvotes: named.reduce((n, c) => n + c.score, 0) };
     })
     .filter((g) => g.people >= MIN_TALLY_PEOPLE)

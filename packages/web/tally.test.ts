@@ -210,6 +210,13 @@ describe('tallyOption', () => {
     expect(t!.titles.map((x) => x.reads)).toEqual([{ a: 'praise' }, { b: 'praise' }]);
   });
 
+  test("an Option whose name another's holds reads its own mentions, not the other's", async () => {
+    const thread = threadWith([comment('a', 'Heel hooks are great'), comment('b', 'Inside heel hooks are great')], 'Most dangerous submission?');
+    const heel = { name: 'Heel hook', aliases: [], titles: [] }, inside = { name: 'Inside heel hook', aliases: [], titles: [] };
+    expect((await tallyOption(thread, 'q', heel, [heel, inside]))!.reads).toEqual({ a: 'praise' });
+    expect((await tallyOption(thread, 'q', inside, [heel, inside]))!.reads).toEqual({ b: 'praise' });
+  });
+
   test("two makers' titles of one name are read apart", async () => {
     const thread = threadWith([comment('a', 'Pressure Passing by Lovato is great, Pressure Passing by Schreiner is bad')]);
     await tallyOption(thread, 'q', { name: 'Lovato', aliases: [], titles: [{ name: 'Pressure Passing', aliases: [] }] });
