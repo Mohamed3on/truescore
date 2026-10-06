@@ -242,13 +242,13 @@ export type ThreadOption = z.infer<typeof OPTIONS_SCHEMA>['options'][number];
 export const optionsRequest = (question: string, comments: string[]) => ({
   maxOutputTokens: 8192,
   schema: OPTIONS_SCHEMA,
-  prompt: `Question:\n${question}\n\n---\n\nAnswers:\n\n${comments.join('\n\n')}\n\n---\n\nList the Options these answers recommend or warn against: the things the asker could choose, such as a product, a course, a place or a service. Include one even if a single answer names it, and one they only warn against.
+  prompt: `Question:\n${question}\n\n---\n\nAnswers:\n\n${comments.join('\n\n')}\n\n---\n\nList the Options: the things these answers put forward, or argue against, as answers to the question, whatever kind of thing it asks for: a product, a course, a technique, a store, a place, a way of doing it. Include one even if a single answer names it, and one they only argue against.
 
 Use two levels when the answers name makers: each Option is the maker (a brand, a creator, a company) and its titles are the specific products, courses or models named under it. A thing with no maker named in the thread is an Option of its own, with no titles. Name a title only when the answers give the product a name of its own ("WH-1000XM5", "QuietComfort Ultra"); a description ("their wireless pair", "the double one") is not a title. Give each name in its usual full form ("Sony"; "WH-1000XM5").
 
 aliases: every other way the answers write it, exactly as written: first names, surnames, nicknames, abbreviations, misspellings, partial titles ("Sonys", "Soni"; "XM5", "1000xm5"), so that searching for any of them finds every answer speaking of it. Skip variants that differ only in capital letters or punctuation ("sony", "Sony's", "WH 1000XM5"): the search already matches those. A title's aliases never include its maker's name alone, and an alias that could just as well mean another Option or title (a first name two of them share, a title two makers both use) is left out.
 
-Not Options: stores and marketplaces, general advice ("try before you buy"), kinds of thing ("wireless ones", "an open-back pair"), or the asker's own situation. Each Option and title once.`,
+Not Options: answers to another question than this one (the store a product came from, where it asks which product to get), general advice ("try before you buy"), kinds of thing where it asks for a particular one ("wireless ones", "an open-back pair", where it asks which headphones), or the asker's own situation. Each Option and title once.`,
 });
 
 // Streams the listing: each Option goes to `onOption` once the model has moved
