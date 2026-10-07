@@ -13,7 +13,8 @@ export type ThreadComment = {
   // AutoModerator, or a stickied or moderator-distinguished note: never counted.
   bot?: boolean;
 };
-export type Thread = { id: string; title: string; text: string; comments: ThreadComment[] };
+// `author`: who posted it, the "OP" its comments speak to.
+export type Thread = { id: string; title: string; text: string; author?: string; comments: ThreadComment[] };
 
 type Thing = { kind: string; data: Record<string, any> };
 type Listing = { data: { children: Thing[] } };
@@ -41,7 +42,7 @@ export const threadFromListing = ([post, comments]: [Listing, Listing]): Thread 
     }
   };
   walk(comments.data.children);
-  return { id: p.id, title: p.title ?? '', text: p.selftext ?? '', comments: out };
+  return { id: p.id, title: p.title ?? '', text: p.selftext ?? '', ...(p.author && p.author !== '[deleted]' ? { author: p.author } : {}), comments: out };
 };
 
 // Whether a comment counts toward a Tally: not a bot's, and not voted to 0 or below.

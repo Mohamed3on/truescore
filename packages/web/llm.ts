@@ -1,8 +1,8 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { convertToModelMessages, NoObjectGeneratedError, streamObject, streamText } from 'ai';
+import { convertToModelMessages, NoObjectGeneratedError, streamObject, streamText, type ModelMessage } from 'ai';
 import { z } from 'zod';
-import { LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort } from '@truescore/gmaps-shared';
+import { LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
 import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
 import { capItems, MAX_SCORED_ITEMS, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
@@ -300,4 +300,54 @@ export async function explainOptions(question: string, comments: string[], group
   while (sent < keys.length) { onReason(keys[sent]!, reasons[keys[sent]!] ?? ''); sent++; }
   report(provider, 'reasons', await writing.usage);
   return reasons;
+}
+
+// ---- A question asked of a Reddit Thread (CONTEXT.md: Ask) ----
+
+// The whole Thread goes in: what a page loads runs to a few thousand tokens, so
+// there's nothing to search. As in an Ask, the instructions and the Thread lead
+// the prompt, closed by a cache breakpoint, so a follow-up reads them back from
+// the provider's prompt cache.
+const THREAD_ASK_INSTRUCTIONS = `Answer the question about this Reddit thread from its post and comments. Be concise. Quote commenters' own words inline ("...") when they answer it directly. Cite the comments each sentence rests on by id in brackets at the end of that sentence: [k3j9x2a], or [k3j9x2a, m2n4p1q] for several. Weigh how many people say something and how many points their comments have: what many say, or a comment with many points, outweighs a lone comment. Say so when commenters disagree, and when the thread doesn't answer the question. Answer in the language of the question.`;
+// The comments the model reads, in the page's order, up to this many characters.
+const THREAD_CHARS = 300_000;
+
+// The Thread as the model reads it: the post, then each comment the page loaded
+// with its id, author (OP for the post's), points and the comment it replies
+// to. Bots' notes are left out.
+const threadBlock = ({ title, text, author, comments }: Thread) => {
+  const who = (name: string) => `u/${name}${name === author ? ' (OP)' : ''}`;
+  let chars = 0;
+  const lines = comments.filter((c) => !c.bot)
+    .map((c) => `[${c.id}] ${who(c.author)} · ${c.score} points${c.parentId ? ` · replying to [${c.parentId}]` : ''}\n${c.body}`)
+    .filter((c) => (chars += c.length) <= THREAD_CHARS);
+  return `Post${author ? ` by ${who(author)}` : ''}: ${title}\n\n${text}\n\n---\n\nComments:\n\n${lines.join('\n\n')}`.toWellFormed();
+};
+
+// An answer's exact instructions and messages: the Thread with the first
+// question, then each question asked since, after the answer before it.
+export const threadAskRequest = (thread: Thread, chat: ThreadTurn[]) => ({
+  instructions: THREAD_ASK_INSTRUCTIONS,
+  messages: chat.flatMap(({ question, answer }, i): ModelMessage[] => [
+    {
+      role: 'user',
+      content: i ? `Question: ${question}` : [
+        { type: 'text', text: threadBlock(thread), providerOptions: CACHE_BREAKPOINT },
+        { type: 'text', text: `\n\n---\n\nQuestion: ${question}` },
+      ],
+    },
+    ...(answer === undefined ? [] : [{ role: 'assistant' as const, content: answer }]),
+  ]),
+});
+
+// The answer to the last question in `chat`, each piece of its text to
+// `onText` as the model writes it.
+export async function askThread(thread: Thread, chat: ThreadTurn[], onText: (text: string) => void, { provider = active(), reasoningEffort, abortSignal }: AskOptions = {}): Promise<void> {
+  const { model, providerOptions } = providerFor(provider, reasoningEffort);
+  // A failed call reaches only onError; the stream itself just ends.
+  let failure: unknown;
+  const answer = streamText({ model, providerOptions, maxOutputTokens: 32768, abortSignal, ...threadAskRequest(thread, chat), onError: ({ error }) => { failure = error; } });
+  for await (const text of answer.textStream) onText(text);
+  if (failure) throw failure;
+  report(provider, 'thread-ask', await answer.usage);
 }

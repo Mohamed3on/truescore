@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { Thread, ThreadComment } from '@truescore/gmaps-shared';
 import { setJevClient } from './jev';
-import { combine, countOf, naming, tallyOption, telling, threadOf } from './tally';
+import { chatOf, combine, countOf, naming, tallyOption, telling, threadOf } from './tally';
 
 let n = 0;
 const comment = (id: string, body: string, more: Partial<ThreadComment> = {}): ThreadComment =>
@@ -128,6 +128,18 @@ describe('threadOf', () => {
     const thread = threadOf({ id: 'p', title: 'Q', text: 5, comments: [{ id: 'a', body: 'Sony', score: 3, author: 'u', parentId: null }, { id: 'b' }, null] });
     expect(thread).toEqual({ id: 'p', title: 'Q', text: '', comments: [{ id: 'a', parentId: null, author: 'u', score: 3, body: 'Sony' }] });
     expect(threadOf({ id: 'p' })).toBeNull();
+  });
+});
+
+describe('chatOf', () => {
+  test('keeps the answered questions before the one to answer, and needs one', () => {
+    expect(chatOf([{ question: 'best?', answer: 'Sony' }, { question: 'why?', answer: 'stale' }, { question: ' ' }])).toEqual([
+      { question: 'best?', answer: 'Sony' },
+      { question: 'why?' },
+    ]);
+    expect(chatOf([{ question: 'best?' }, { question: 'why?' }])).toEqual([{ question: 'why?' }]);
+    expect(chatOf([])).toBeNull();
+    expect(chatOf('best?')).toBeNull();
   });
 });
 

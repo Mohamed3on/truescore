@@ -37,13 +37,15 @@ import {
   type SummaryEvent,
   type TallyEvent,
   type TallyRequest,
+  type ThreadAskEvent,
+  type ThreadAskRequest,
 } from '@truescore/gmaps-shared';
 import type { BunRequest, Serve, Server } from 'bun';
 import { resolvePlace } from './resolve';
 import { mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch, type ScoreResult } from './gmaps';
 import { createUIMessageStream, createUIMessageStreamResponse, isStaticToolUIPart } from 'ai';
-import { summarize, ask, parseProvider, parseReasoningEffort } from './llm';
+import { summarize, ask, askThread, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, harvestQuick, scoreHighlight, type Harvest } from './highlights';
 import { answerKey, cache, type CachedAnswer, type CacheEntry } from './cache';
@@ -53,7 +55,7 @@ import index from './index.html';
 import login from './login.html';
 import { errStatus, NoReviews, resolveSubject, type Subject } from './summary-subject';
 import { answersFor, hasReceipts, jevAvailable, mentioning, preferredCount, stanceOfReviews, stancesFor, supportFor, withReceipts } from './jev';
-import { tallyThread, threadOf } from './tally';
+import { chatOf, tallyThread, threadOf } from './tally';
 
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -954,6 +956,27 @@ Bun.serve({
           return ndjsonStream<TallyEvent>((write) => tallyThread(thread, write, overrides), { 'Access-Control-Allow-Origin': '*' });
         } catch (e) {
           console.error('[tally]', e);
+          return corsJson(errBody(e), 400);
+        }
+      },
+      OPTIONS: corsOptions,
+    },
+    // A question asked of a Reddit Thread (see ThreadAskRequest), for the
+    // extension: answered from the comments the page loaded, as it's written.
+    // The client leaving stops the model.
+    '/api/thread-ask': {
+      POST: async (req) => {
+        try {
+          const body = await req.json() as ThreadAskRequest;
+          const thread = threadOf(body.thread), chat = chatOf(body.chat);
+          if (!thread || !chat) return corsJson({ error: 'missing thread or question' }, 400);
+          const options = { provider: parseProvider(body.provider), reasoningEffort: parseReasoningEffort(body.reasoningEffort), abortSignal: req.signal };
+          return ndjsonStream<ThreadAskEvent>(async (write) => {
+            await askThread(thread, chat, (text) => write({ type: 'text', text }), options);
+            write({ type: 'done' });
+          }, { 'Access-Control-Allow-Origin': '*' });
+        } catch (e) {
+          console.error('[thread-ask]', e);
           return corsJson(errBody(e), 400);
         }
       },

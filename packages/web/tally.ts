@@ -1,4 +1,4 @@
-import { countsInTally, MIN_TALLY_PEOPLE, stripAccents, type ListedOption, type LlmOverrides, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type ThreadComment } from '@truescore/gmaps-shared';
+import { countsInTally, MIN_TALLY_PEOPLE, stripAccents, type ListedOption, type LlmOverrides, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type ThreadComment, type ThreadTurn } from '@truescore/gmaps-shared';
 import { db } from './db';
 import { askedAboutFor, groupAnswersFor, optionStancesFor } from './jev';
 import { explainOptions, listOptions, optionsRequest, reasonsRequest, type ThreadOption } from './llm';
@@ -31,7 +31,21 @@ export const threadOf = (v: unknown): Thread | null => {
           ...(c.bot ? { bot: true } : {}),
         }]
       : []);
-  return { id: t.id, title: str(t.title), text: str(t.text), comments };
+  const author = str(t.author);
+  return { id: t.id, title: str(t.title), text: str(t.text), ...(author ? { author } : {}), comments };
+};
+
+// The questions asked of a Thread so far (ThreadAskRequest): the last
+// MAX_TURNS, each with its answer but the one to answer. null without one.
+const MAX_TURNS = 11;
+export const chatOf = (v: unknown): ThreadTurn[] | null => {
+  const asked = (Array.isArray(v) ? v : []).filter((t) => typeof t?.question === 'string' && t.question.trim()).slice(-MAX_TURNS);
+  const last = asked.pop();
+  if (!last) return null;
+  return [
+    ...asked.filter((t) => typeof t.answer === 'string').map((t) => ({ question: t.question.slice(0, MAX_QUESTION), answer: t.answer.slice(0, MAX_BODY) })),
+    { question: last.question.slice(0, MAX_QUESTION) },
+  ];
 };
 
 // The question every comment answers: the post's title and text.

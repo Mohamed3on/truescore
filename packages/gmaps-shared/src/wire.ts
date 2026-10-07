@@ -149,6 +149,14 @@ export type TallyEvent =
   | { type: 'done' }
   | { type: 'error'; error: string };
 
+// ---- /api/thread-ask (NDJSON stream) ----
+// A question asked of a Thread (CONTEXT.md: Ask), answered from the comments
+// the page loaded: the answer's text as the model writes it, citing the
+// comments it rests on by id ("[k3j9x2a]"). A ThreadTurn is one question with
+// its answer; the one being asked has none yet.
+export type ThreadTurn = { question: string; answer?: string };
+export type ThreadAskEvent = { type: 'text'; text: string } | { type: 'done' } | { type: 'error'; error: string };
+
 // ---- /api/ask (AI SDK UI message stream) ----
 // An Ask is a chat: the question, then the model's message. Calling
 // searchReviews ends a round; the client runs the Search its own way and sends
@@ -221,6 +229,9 @@ export type SearchMatches = { texts: string[]; scorePct: number; trustedReviews:
 export type AskRequest = { messages: AskMessage[]; featureId?: string; name?: string; reviewTexts?: string[]; filter?: string; removedReviews?: RemovedReviews | null; force?: boolean } & LlmOverrides;
 // The Thread as the page loaded it (threadFromListing).
 export type TallyRequest = { thread: Thread } & LlmOverrides;
+// `chat`: the questions asked of the Thread so far, each with its answer, then
+// the one to answer.
+export type ThreadAskRequest = { thread: Thread; chat: ThreadTurn[] } & LlmOverrides;
 // `score` omits the per-review array — the web only needs the numbers to paint,
 // and a place's reviews run to megabytes. It is the extension's RAW score: the
 // removal penalty is applied by whoever renders, off their own preview meta, so
