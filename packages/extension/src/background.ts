@@ -4,7 +4,7 @@ import { createThrottledFetcher } from './shared/throttled-fetch';
 import { SERVER_SCORE_PORT, type ServerScoreMessage } from './shared/gmaps-bridge-protocol';
 import { getProviderChoice, getReasoningEffort, getTruescorePassword } from './shared/config';
 import { TALLY_PORT, type TallyAsk } from './shared/tally';
-import { featureIdFromPlaceUrl, readNdjson, type HighlightEvent, type HighlightsRequest, type HighlightsResponse, type LookupEvent, type Score, type SearchEvent, type SearchRequest, type TallyEvent, type TallyRequest } from '@truescore/gmaps-shared';
+import { featureIdFromPlaceUrl, readNdjson, type HighlightEvent, type HighlightsRequest, type HighlightsResponse, type LookupEvent, type Score, type SearchEvent, type SearchRequest, type TallyEvent, type TallyRequest, type ThreadAskEvent, type ThreadAskRequest } from '@truescore/gmaps-shared';
 
 // Drop rc_score_* entries older than 30 days. Registered on install/update
 // only — top-level chrome.alarms.create on every SW wake would reset the
@@ -209,8 +209,9 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-// A Reddit Thread's Tally (sites/reddit.ts), streamed from the server with its
-// password. The tab closing or the drawer giving up stops the request.
+// A Reddit Thread's Tally, or a question asked of it (sites/reddit.ts), streamed
+// from the server with its password. The tab closing or the drawer giving up
+// stops the request.
 const tallyError = (status: number) =>
   status === 503 ? "Jev can't read right now — try again in a few minutes"
     : status === 401 ? 'Set the TrueScore password in the popup'
@@ -219,18 +220,18 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== TALLY_PORT) return;
   const abort = new AbortController();
   port.onDisconnect.addListener(() => abort.abort());
-  const post = (e: TallyEvent) => { if (!abort.signal.aborted) port.postMessage(e); };
-  port.onMessage.addListener(async ({ thread }: TallyAsk) => {
+  const post = (e: TallyEvent | ThreadAskEvent) => { if (!abort.signal.aborted) port.postMessage(e); };
+  port.onMessage.addListener(async ({ thread, chat }: TallyAsk) => {
     try {
       const [headers, provider, reasoningEffort] = await Promise.all([authHeaders(), getProviderChoice(), getReasoningEffort()]);
-      const res = await fetch(`${TRUESCORE_API_BASE}/api/tally`, {
+      const res = await fetch(`${TRUESCORE_API_BASE}/api/${chat ? 'thread-ask' : 'tally'}`, {
         method: 'POST',
         signal: abort.signal,
         headers: { 'content-type': 'application/json', ...headers },
-        body: JSON.stringify({ thread, provider, reasoningEffort } satisfies TallyRequest),
+        body: JSON.stringify(chat ? { thread, chat, provider, reasoningEffort } satisfies ThreadAskRequest : { thread, provider, reasoningEffort } satisfies TallyRequest),
       });
       if (!res.ok || !res.body) post({ type: 'error', error: tallyError(res.status) });
-      else for await (const e of readNdjson<TallyEvent>(res.body)) post(e);
+      else for await (const e of readNdjson<TallyEvent | ThreadAskEvent>(res.body)) post(e);
     } catch {
       post({ type: 'error', error: "Couldn't reach the TrueScore server" });
     }

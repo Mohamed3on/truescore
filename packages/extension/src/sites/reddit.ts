@@ -3,9 +3,12 @@
 // the thread, each opening onto the comments behind its count. Nothing runs
 // until the post's "tally" link or Alt+T asks. Old reddit gets the link among
 // the post's buttons and marks the counted comments in the thread; new Reddit a
-// pill under the post and the drawer alone.
-import { countsInTally, MIN_TALLY_PEOPLE, replaceChips, signedNet, speakersOf, STANCE_MARKS, threadFromListing, type ListedOption, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type TitleTally } from '@truescore/gmaps-shared';
-import { requestTally, tallyReady } from '../shared/tally';
+// pill under the post and the drawer alone. At the drawer's foot, a box to ask
+// the thread anything: answered from the same comments, citing the ones each
+// answer rests on, and kept for the thread's next visit.
+import { countsInTally, mdToHtml, MIN_TALLY_PEOPLE, replaceChips, signedNet, speakersOf, STANCE_MARKS, threadFromListing, type ListedOption, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type TitleTally } from '@truescore/gmaps-shared';
+import { loadQAs, saveQA } from '../shared/qa-history';
+import { askThread, requestTally, tallyReady } from '../shared/tally';
 import { el } from '../shared/utils';
 
 const button = (className: string, text?: string) => {
@@ -23,7 +26,10 @@ type View = 'people' | 'upvotes';
 // Makers ranks the Options as listed; products ranks their titles on their own.
 type Level = 'makers' | 'products';
 
-const onThread = () => /^\/r\/[^/]+\/comments\/[a-z0-9]+/i.test(location.pathname);
+const THREAD_PATH = /^\/r\/[^/]+\/comments\/([a-z0-9]+)/i;
+const onThread = () => THREAD_PATH.test(location.pathname);
+// Where the questions asked of this thread are kept (qa-history).
+const qaKey = () => `ts-tally-${location.pathname.match(THREAD_PATH)?.[1]}`;
 const isOld = () => !!document.querySelector('.commentarea');
 
 // The page's own comments: its `.json`, with its sort and count.
@@ -43,6 +49,11 @@ let level: Level = 'makers';
 let openKey: string | null = null;
 let openTitle: string | null = null;
 let stop: (() => void) | null = null;
+// A question asked of the thread, with its answer as far as it's written, or
+// why it couldn't be.
+type Turn = { q: string; a: string; done: boolean; error?: string };
+let turns: Turn[] = [];
+let stopAsk: (() => void) | null = null;
 
 // ---- figures ----
 
@@ -148,7 +159,10 @@ const DRAWER_CSS = `:host { all: initial !important; }
   font-family: var(--ts-font, verdana, arial, helvetica, sans-serif);
   font-size: 12px;
   line-height: 1.45;
+  display: flex;
+  flex-direction: column;
 }
+.ts-tally > * { flex-shrink: 0; }
 .ts-tally[hidden] { display: none; }
 :host-context(.res-nightmode) .ts-tally,
 :host-context(.theme-dark) .ts-tally {
@@ -191,7 +205,9 @@ const DRAWER_CSS = `:host { all: initial !important; }
 .ts-tally-opt,
 .ts-tally-title,
 .ts-tally-receipt,
-.ts-tally-retry {
+.ts-tally-retry,
+.ts-cite,
+.ts-ask-send {
   all: unset;
   box-sizing: border-box;
   cursor: pointer;
@@ -223,7 +239,9 @@ const DRAWER_CSS = `:host { all: initial !important; }
 .ts-tally-opt:focus-visible,
 .ts-tally-title:focus-visible,
 .ts-tally-receipt:focus-visible,
-.ts-tally-retry:focus-visible { outline: 2px solid var(--ts-accent); outline-offset: -2px; }
+.ts-tally-retry:focus-visible,
+.ts-cite:focus-visible,
+.ts-ask-send:focus-visible { outline: 2px solid var(--ts-accent); outline-offset: -2px; }
 .ts-tally-name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
 .ts-tally-opt[aria-expanded='true'] .ts-tally-name { color: var(--ts-accent); }
 .ts-tally-maker { margin-left: 6px; font-weight: 400; color: var(--ts-ink-3); }
@@ -250,6 +268,62 @@ const DRAWER_CSS = `:host { all: initial !important; }
 .ts-tally-mark.ts-praise { color: #15803d; }
 .ts-tally-mark.ts-complain { color: #b91c1c; }
 .ts-tally-mark.ts-mixed { color: #a16207; }
+
+.ts-chat { padding: 0 16px; border-top: 1px solid var(--ts-line); }
+.ts-chat:empty { display: none; }
+.ts-chat-turn { padding: 12px 0; border-bottom: 1px solid var(--ts-line); }
+.ts-chat-turn:last-child { border-bottom: 0; }
+.ts-chat-q { font-weight: 700; overflow-wrap: anywhere; }
+.ts-chat-a { margin-top: 4px; color: var(--ts-ink-2); overflow-wrap: anywhere; }
+.ts-chat-a p, .ts-chat-a ul, .ts-chat-a ol { margin: 0 0 6px; }
+.ts-chat-a ul, .ts-chat-a ol { padding-left: 18px; }
+.ts-chat-a > :last-child { margin-bottom: 0; }
+.ts-chat-a strong { color: var(--ts-ink); }
+.ts-chat-reading { color: var(--ts-ink-3); font-style: italic; animation: ts-pulse 1.4s ease-in-out infinite; }
+@keyframes ts-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .ts-chat-reading { animation: none; } }
+.ts-chat-error { color: #b91c1c; }
+.ts-cite {
+  display: inline;
+  margin: 0 1px;
+  padding: 1px 4px;
+  white-space: nowrap;
+  border-radius: 4px;
+  background: var(--ts-hover);
+  color: var(--ts-accent);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  vertical-align: 1px;
+}
+.ts-cite:hover { background: var(--ts-accent); color: var(--ts-ground); }
+.ts-ask {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+  padding: 10px 16px 12px;
+  background: var(--ts-ground);
+  border-top: 1px solid var(--ts-line);
+}
+.ts-ask-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  border: 1px solid var(--ts-line);
+  border-radius: 6px;
+  background: var(--ts-ground);
+  color: var(--ts-ink);
+  font: inherit;
+}
+.ts-ask-input::placeholder { color: var(--ts-ink-3); }
+.ts-ask-input:focus { outline: 2px solid var(--ts-accent); outline-offset: -1px; }
+.ts-ask-send { padding: 6px 10px; border-radius: 6px; font-weight: 700; color: var(--ts-accent); }
+.ts-ask-send:hover:not(:disabled) { background: var(--ts-hover); }
+.ts-ask-send:disabled { cursor: default; color: var(--ts-ink-3); }
 `;
 
 const host = el('div', 'ts-tally-host');
@@ -282,6 +356,14 @@ const onceLabel = el('summary', 'ts-tally-label');
 const onceList = el('ol', 'ts-tally-list');
 once.append(onceLabel, onceList);
 const failBox = el('div', 'ts-tally-error');
+const chatLog = el('div', 'ts-chat');
+const askForm = el('form', 'ts-ask') as HTMLFormElement;
+const askInput = el('input', 'ts-ask-input') as HTMLInputElement;
+askInput.placeholder = 'Ask the thread…';
+askInput.setAttribute('aria-label', 'Ask a question about this thread');
+const askButton = button('ts-ask-send', 'Ask');
+askButton.type = 'submit';
+askForm.append(askInput, askButton);
 
 {
   const head = el('div', 'ts-tally-head');
@@ -293,7 +375,7 @@ const failBox = el('div', 'ts-tally-error');
   head.append(el('span', 'ts-tally-label', 'Tally'), keys);
   const top = el('div', 'ts-tally-top');
   top.append(head, viewSwitch, close, levelSwitch, status, failBox);
-  drawer.append(top, list, once);
+  drawer.append(top, list, once, chatLog, askForm);
   shadow.append(el('style', '', DRAWER_CSS), drawer);
 }
 
@@ -404,6 +486,87 @@ const onEvent = (e: TallyEvent) => {
   render();
 };
 
+// ---- asking the thread ----
+
+// The comments an answer cites ("[k3j9x2a]", several to a pair of brackets)
+// become buttons onto them, numbered in the order it first cites them. An id
+// the page didn't load stays as written.
+const CITATION = /\[([a-z0-9]+(?:,\s*[a-z0-9]+)*)\]/gi;
+const paintAnswer = (box: HTMLElement, text: string) => {
+  const byId = new Map(thread?.comments.map((c) => [c.id, c]));
+  const cited: string[] = [];
+  const number = (id: string) => (cited.includes(id) ? cited.indexOf(id) : cited.push(id) - 1) + 1;
+  box.innerHTML = mdToHtml(text).replace(CITATION, (written, ids: string) => {
+    const known = ids.split(/,\s*/).filter((id) => byId.has(id));
+    return known.length ? known.map((id) => `<button type="button" class="ts-cite" data-id="${id}">${number(id)}</button>`).join('') : written;
+  });
+  for (const b of box.querySelectorAll<HTMLButtonElement>('.ts-cite')) {
+    const c = byId.get(b.dataset.id!)!;
+    const quote = plain(c.body);
+    b.title = `u/${c.author} · ${c.score} points — ${quote.length > QUOTE_CHARS ? `${quote.slice(0, QUOTE_CHARS)}…` : quote}`;
+    b.addEventListener('click', () => goTo(c.id));
+  }
+};
+
+const turnEl = (t: Turn) => {
+  const box = el('div', 'ts-chat-turn');
+  const answer = el('div', 'ts-chat-a');
+  box.append(el('div', 'ts-chat-q', t.q), answer);
+  if (t.error) answer.append(el('span', 'ts-chat-error', t.error));
+  else if (t.a) paintAnswer(answer, t.a);
+  else answer.append(el('span', 'ts-chat-reading', 'Reading the thread…'));
+  return box;
+};
+
+function renderChat() {
+  chatLog.replaceChildren(...turns.map(turnEl));
+  askButton.disabled = !thread || !!stopAsk;
+}
+
+// The drawer follows an answer as it's written, unless the reader scrolled up.
+const atFoot = () => drawer.scrollHeight - drawer.scrollTop - drawer.clientHeight < 24;
+
+// Asks `q` with the questions answered before it, so a follow-up ("and for
+// beginners?") reads as one. A finished answer is kept for the thread.
+const ask = (q: string) => {
+  const turn: Turn = { q, a: '', done: false };
+  const chat = [...turns.filter((t) => t.done).map((t) => ({ question: t.q, answer: t.a })), { question: q }];
+  turns.push(turn);
+  stopAsk = askThread(thread!, chat, (e) => {
+    const follow = atFoot();
+    if (e.type === 'text') {
+      turn.a += e.text;
+      chatLog.lastElementChild?.replaceWith(turnEl(turn));
+    } else {
+      stopAsk = null;
+      if (e.type === 'error') turn.error = e.error;
+      else if (!turn.a.trim()) turn.error = 'The answer was cut off — try again';
+      else { turn.done = true; saveQA(qaKey(), { q, a: turn.a, ts: Date.now() }); }
+      renderChat();
+    }
+    if (follow) drawer.scrollTop = drawer.scrollHeight;
+  });
+  renderChat();
+  drawer.scrollTop = drawer.scrollHeight;
+};
+
+askForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const q = askInput.value.trim();
+  if (!q || !thread || stopAsk) return;
+  askInput.value = '';
+  ask(q);
+});
+
+// Single-key page shortcuts (RES's, Reddit's own) see a key typed in the
+// drawer as coming from its host, not an input: keys typed in the box stop at
+// the window. Esc still closes the drawer.
+for (const type of ['keydown', 'keypress', 'keyup']) {
+  window.addEventListener(type, (e) => {
+    if (e.composedPath()[0] === askInput && (e as KeyboardEvent).key !== 'Escape') e.stopPropagation();
+  }, true);
+}
+
 async function start() {
   stop?.();
   rows = [];
@@ -412,6 +575,7 @@ async function start() {
   phase = 'listing';
   thread = null;
   render();
+  renderChat();
   try {
     const res = await fetch(threadUrl(), { credentials: 'include' });
     if (!res.ok) throw new Error(`Reddit answered ${res.status}`);
@@ -423,6 +587,9 @@ async function start() {
     return;
   }
   render();
+  // The questions asked of it on earlier visits, oldest first.
+  if (!turns.length) turns = loadQAs(qaKey()).reverse().map((e) => ({ q: e.q, a: e.a, done: true }));
+  renderChat();
   stop = requestTally(thread, onEvent);
 }
 
@@ -468,6 +635,10 @@ const sync = () => {
     shownFor = location.pathname;
     stop?.();
     stop = null;
+    stopAsk?.();
+    stopAsk = null;
+    turns = [];
+    renderChat();
     phase = 'idle';
     rows = [];
     drawer.hidden = true;
