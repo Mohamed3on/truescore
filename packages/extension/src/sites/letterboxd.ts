@@ -241,7 +241,7 @@ const pageSlug = extractSlugFromUrl(location.href);
 
 /** Fetches one recent-reviews page (reviews/by/added) as HTML */
 const fetchReviewPage = (slug: string, page: number) => {
-  const url = `https://letterboxd.com/film/${slug}/reviews/by/added/page/${page}/`;
+  const url = `/film/${slug}/reviews/by/added/page/${page}/`;
   if (slug !== pageSlug) return throttledFetch(url, { credentials: 'include' }).then((r) => r.text());
   let pending = reviewPages.get(url);
   if (!pending) {
@@ -289,8 +289,8 @@ async function fetchImdbRatings(imdbLinks: (string | null)[]): Promise<({ imdbSc
  * Fetches letterboxd page + stats histogram in parallel
  */
 async function getFilmBasicData(slug: string) {
-  const filmUrl = `https://letterboxd.com/film/${slug}/`;
-  const statsUrl = `https://letterboxd.com/csi/film/${slug}/rating-histogram/`;
+  const filmUrl = `/film/${slug}/`;
+  const statsUrl = `/csi/film/${slug}/rating-histogram/`;
 
   // The film page never carries the histogram — it arrives by CSI — so a failed
   // histogram fetch is a failed film (unknown), never a film with no ratings (0).
@@ -565,7 +565,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     if (cached) return { ...cached, films: await unseen(cached.films) };
 
     updateProgress(statusElement, 0);
-    const listsUrl = `https://letterboxd.com/film/${currentSlug}/lists/by/popular/`;
+    const listsUrl = `/film/${currentSlug}/lists/by/popular/`;
     const listsResponse = await throttledFetch(listsUrl, { credentials: 'include' });
     const listsDoc = new DOMParser().parseFromString(await listsResponse.text(), 'text/html');
 
@@ -579,7 +579,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 
     // Paginate until we find the page containing the current film (sorted by rating).
     // Collects all films on the same page or higher — films after it on the same page are included.
-    const listBaseUrl = `https://letterboxd.com${listLink}by/rating/`;
+    const listBaseUrl = `${listLink}by/rating/`;
     const listed: { slug: string; link: string; uid?: string }[] = [];
     let foundCurrentFilm = false;
     let foundOnPage = 0;
