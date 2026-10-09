@@ -1,16 +1,15 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Ratings far from the acceptance threshold are unlikely to change the shelf
- * decision soon. Borderline scores get revisited quickly; decisive scores can
- * stay cached for up to a year.
+ * A shelf's verdict flips only once the viewer's ratings carry its score across the
+ * threshold, and at a couple of books a month that's at most ~2 points a month: a score
+ * `distance` points away holds for distance × 15 days (a week at the threshold, where
+ * Goodreads reshuffling the shelf alone can flip it). Decisive scores, over 10 away, stay
+ * a year — rating a book on its page re-scores the cached shelves it tops anyway.
  */
 export const shelfScoreCacheTtl = (score: number, threshold: number): number => {
   const distance = Math.abs(score - threshold);
-  if (distance <= 1) return 7 * DAY_MS;
-  if (distance <= 5) return 30 * DAY_MS;
-  if (distance <= 10) return 90 * DAY_MS;
-  return 365 * DAY_MS;
+  return (distance > 10 ? 365 : Math.max(7, distance * 15)) * DAY_MS;
 };
 
 /**

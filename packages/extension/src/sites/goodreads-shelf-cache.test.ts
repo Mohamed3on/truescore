@@ -5,20 +5,20 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const THRESHOLD = -2;
 
 describe('shelfScoreCacheTtl', () => {
-  test('refreshes a shelf one point from the threshold after a week', () => {
-    expect(shelfScoreCacheTtl(-3, THRESHOLD)).toBe(7 * DAY_MS);
+  test('refreshes a shelf at the threshold after a week', () => {
+    expect(shelfScoreCacheTtl(-2, THRESHOLD)).toBe(7 * DAY_MS);
   });
 
-  test('keeps increasingly decisive results longer', () => {
-    expect(shelfScoreCacheTtl(-6, THRESHOLD)).toBe(30 * DAY_MS);
-    expect(shelfScoreCacheTtl(-11, THRESHOLD)).toBe(90 * DAY_MS);
-    expect(shelfScoreCacheTtl(-20, THRESHOLD)).toBe(365 * DAY_MS);
+  test('keeps a score 15 days per point from the threshold, a year once decisive', () => {
+    expect(shelfScoreCacheTtl(-3, THRESHOLD)).toBe(15 * DAY_MS);
+    expect(shelfScoreCacheTtl(-6, THRESHOLD)).toBe(60 * DAY_MS);
+    expect(shelfScoreCacheTtl(-12, THRESHOLD)).toBe(150 * DAY_MS);
+    expect(shelfScoreCacheTtl(-13, THRESHOLD)).toBe(365 * DAY_MS);
   });
 
   test('uses distance from the threshold on either side', () => {
-    expect(shelfScoreCacheTtl(-1, THRESHOLD)).toBe(7 * DAY_MS);
-    expect(shelfScoreCacheTtl(3, THRESHOLD)).toBe(30 * DAY_MS);
-    expect(shelfScoreCacheTtl(8, THRESHOLD)).toBe(90 * DAY_MS);
+    expect(shelfScoreCacheTtl(-1, THRESHOLD)).toBe(15 * DAY_MS);
+    expect(shelfScoreCacheTtl(3, THRESHOLD)).toBe(75 * DAY_MS);
     expect(shelfScoreCacheTtl(16, THRESHOLD)).toBe(365 * DAY_MS);
   });
 });
