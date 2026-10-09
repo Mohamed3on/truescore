@@ -24,14 +24,16 @@ const CONFIG = {
   /** The recent % moves with every new rating, so it is refreshed daily. */
   RECENT_CACHE_MS: 1 * DAY_MS,
   SHELVES_CACHE_MS: 7 * DAY_MS,
+  /** Shelves that fill the shelves page (100, more behind it) are an established book's: their order holds. */
+  FULL_SHELVES_CACHE_MS: 60 * DAY_MS,
   SHELF_PAGE_CACHE_MS: 7 * DAY_MS,
   PICKS_CACHE_MS: 7 * DAY_MS,
   SUMMARY_CACHE_MS: 14 * DAY_MS,
   MAX_CONCURRENCY: 15,
   PAGE_BATCH: 2,
   MAX_PAGES: 25,
-  /** How many candidate shelves are scored at once while picking one. */
-  SHELF_PROBE_BATCH: 3,
+  /** How many candidate shelves are scored at once while picking one: a full round of the fetcher. */
+  SHELF_PROBE_BATCH: 15,
   AVG_RATING_TOLERANCE: 0.3,
   /** How many shelf-typical ratings the book's own average is weighed against (see shrunkAverage). */
   AVG_PRIOR_WEIGHT: 100,
@@ -720,11 +722,12 @@ const getRecentStats = async (workId: string): Promise<RecentStats> => {
 // Shelf selection
 // =============================================================================
 
-/** The book's shelves, most people first (the shelves page's order) — kept a week. */
+/** The book's shelves, most people first (the shelves page's order) — kept a week, two months once they fill the page. */
 const getBookShelves = async (bookURL: string): Promise<string[]> => {
   const id = getBookIdFromURL(bookURL);
   const cacheKey = id && `gr_shelves_v1_${id}`;
-  const cached = cacheKey && (await idbGet(cacheKey, CONFIG.SHELVES_CACHE_MS));
+  const cached = cacheKey && (await idbGet(cacheKey, (shelves: string[]) =>
+    shelves.length >= 100 ? CONFIG.FULL_SHELVES_CACHE_MS : CONFIG.SHELVES_CACHE_MS));
   if (cached) return cached;
   const shelvesURL = bookURL.replace('/show/', '/shelves/').replace(/(?<=goodreads\.com)\/[a-z]{2}(?=\/book)/, '');
   const doc = await fetchDoc(shelvesURL);
@@ -850,9 +853,9 @@ const getShelfScore = async (shelf: string, viewerScope: string): Promise<number
 };
 
 /**
- * The first shelf the viewer doesn't hold against the book. A few are scored at
- * once, but each is answered in order: the first nearly always passes, so it returns the
- * moment its own score lands while the runners-up finish warming their caches behind it.
+ * The first shelf the viewer doesn't hold against the book. A round of them is scored at
+ * once, but each is answered in order, so the highest-ranked one that passes wins: it returns
+ * the moment its own score lands while the runners-up finish warming their caches behind it.
  */
 const pickShelf = async (shelves: string[], viewerScope: string): Promise<string | null> => {
   // The first is nearly always the pick, so the pages its scan starts on load alongside its probe.
