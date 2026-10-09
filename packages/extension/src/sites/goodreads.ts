@@ -720,25 +720,7 @@ const getRecentStats = async (workId: string): Promise<RecentStats> => {
 // Shelf selection
 // =============================================================================
 
-/**
- * The shelves the book page already carries: Goodreads' genres are its most-shelved
- * content shelves, in the shelves page's order without the status ones — no fetch.
- */
-const getEmbeddedShelves = (): string[] => {
-  const script = document.querySelector('#__NEXT_DATA__');
-  if (!script?.textContent) return [];
-  try {
-    const apollo = JSON.parse(script.textContent)?.props?.pageProps?.apolloState || {};
-    const id = getBookIdFromURL(window.location.href);
-    const books = (Object.values(apollo) as any[]).filter((e) => Array.isArray(e?.bookGenres) && e.bookGenres.length);
-    const book = books.find((e) => String(e.legacyId) === id) ?? books[0];
-    return (book?.bookGenres ?? [])
-      .map((g: any) => String(g?.genre?.webUrl || '').split('/').pop() || '')
-      .filter(Boolean);
-  } catch { return []; }
-};
-
-/** The shelves page, for a book whose genres give no shelf — kept a week. */
+/** The book's shelves, most people first (the shelves page's order) — kept a week. */
 const getBookShelves = async (bookURL: string): Promise<string[]> => {
   const id = getBookIdFromURL(bookURL);
   const cacheKey = id && `gr_shelves_v1_${id}`;
@@ -820,7 +802,7 @@ const viewerKey = {
   shelfPage: (viewerScope: string) => `gr_shelf_page_v1_${viewerScope}_`,
   shelfScore: (viewerScope: string) => `gr_shelf_score_v2_${viewerScope}_`,
   picks: (viewerScope: string) => `gr_picks_v6_${viewerScope}_`,
-  picksView: (viewerScope: string) => `gr_picks_view7_${viewerScope}_`,
+  picksView: (viewerScope: string) => `gr_picks_view8_${viewerScope}_`,
 };
 
 // One fetch per shelf page per visit, however many steps want it: scoring a shelf reads
@@ -1218,6 +1200,7 @@ const renderSimilarPicks = async (
   //     failed fetches, or bake in an unknown reference recency that struck every pick.
   // v6: v5 rows carried no shelf status and counted unrated Read books as unread.
   // v7: v6 views gated the shelf on the book's raw average — one pick for a book rated seven times.
+  // v8: v7 views took the book's genres before its other shelves, not the shelves page's order.
   const viewerScope = goodreadsViewerCacheScope(document);
   const viewKey = `${viewerKey.picksView(viewerScope)}${getBookIdFromURL(currentBookURL)}`;
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
@@ -1230,18 +1213,13 @@ const renderSimilarPicks = async (
   let currentRecentRatio: number | null;
 
   try {
-    const genres = getEmbeddedShelves();
-    let picked = await pickShelf(genres, viewerScope);
-    // No genre the viewer takes (or none on the page): the rest of the book's shelves page.
-    if (!picked) {
-      const rest = (await getBookShelves(currentBookURL)).filter((s) => !genres.includes(s));
-      if (!genres.length && !rest.length) {
-        section.textContent = '';
-        section.append(winnerBanner('No shelves found for this book.', null));
-        return;
-      }
-      picked = await pickShelf(rest, viewerScope);
+    const shelves = await getBookShelves(currentBookURL);
+    if (!shelves.length) {
+      section.textContent = '';
+      section.append(winnerBanner('No shelves found for this book.', null));
+      return;
     }
+    const picked = await pickShelf(shelves, viewerScope);
     if (!picked) {
       section.textContent = '';
       section.append(winnerBanner('No usable shelf found for this book.', null));
