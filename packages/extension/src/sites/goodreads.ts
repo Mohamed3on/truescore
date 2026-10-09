@@ -738,7 +738,7 @@ const getEmbeddedShelves = (): string[] => {
   } catch { return []; }
 };
 
-/** The shelves page, for a book whose own page carries no genres — kept a week. */
+/** The shelves page, for a book whose genres give no shelf — kept a week. */
 const getBookShelves = async (bookURL: string): Promise<string[]> => {
   const id = getBookIdFromURL(bookURL);
   const cacheKey = id && `gr_shelves_v1_${id}`;
@@ -868,24 +868,15 @@ const getShelfScore = async (shelf: string, viewerScope: string): Promise<number
 };
 
 /**
- * Shelves that say how a reader holds a book, not what it is: reading status, ownership,
- * format, favourites, the year it was read. They open every book's list (to-read,
- * currently-reading), so picks came from "to-read". Matched per hyphenated word —
- * "physical-tbr" and "books-i-own" go, "banned-books" stays.
- */
-const NON_CONTENT_SHELF = /(^|-)(tbr|read|reread|currently-reading|dnf|did-not-finish|default|wish-?list|to-buy|own(ed)?|library|(book)?shelf|fav(ou?rite|e)?s?|kindle|e-?books?|audio(-?books?)?|audible|arcs?|netgalley|(19|20)\d\d)(-|$)/;
-
-/**
- * The first content shelf the viewer doesn't hold against the book. A few are scored at
+ * The first shelf the viewer doesn't hold against the book. A few are scored at
  * once, but each is answered in order: the first nearly always passes, so it returns the
  * moment its own score lands while the runners-up finish warming their caches behind it.
  */
 const pickShelf = async (shelves: string[], viewerScope: string): Promise<string | null> => {
-  const content = shelves.filter(s => !NON_CONTENT_SHELF.test(s));
   // The first is nearly always the pick, so the pages its scan starts on load alongside its probe.
-  if (content.length) prefetchScan(content[0], viewerScope);
-  for (let i = 0; i < content.length; i += CONFIG.SHELF_PROBE_BATCH) {
-    const batch = content.slice(i, i + CONFIG.SHELF_PROBE_BATCH);
+  if (shelves.length) prefetchScan(shelves[0], viewerScope);
+  for (let i = 0; i < shelves.length; i += CONFIG.SHELF_PROBE_BATCH) {
+    const batch = shelves.slice(i, i + CONFIG.SHELF_PROBE_BATCH);
     const probes = batch.map((shelf) => getShelfScore(shelf, viewerScope).catch((e: any) => {
       debug(`shelf ${shelf} failed:`, e.message);
       return null;
@@ -1239,14 +1230,18 @@ const renderSimilarPicks = async (
   let currentRecentRatio: number | null;
 
   try {
-    const shelves = getEmbeddedShelves();
-    if (!shelves.length) shelves.push(...await getBookShelves(currentBookURL));
-    if (!shelves.length) {
-      section.textContent = '';
-      section.append(winnerBanner('No shelves found for this book.', null));
-      return;
+    const genres = getEmbeddedShelves();
+    let picked = await pickShelf(genres, viewerScope);
+    // No genre the viewer takes (or none on the page): the rest of the book's shelves page.
+    if (!picked) {
+      const rest = (await getBookShelves(currentBookURL)).filter((s) => !genres.includes(s));
+      if (!genres.length && !rest.length) {
+        section.textContent = '';
+        section.append(winnerBanner('No shelves found for this book.', null));
+        return;
+      }
+      picked = await pickShelf(rest, viewerScope);
     }
-    const picked = await pickShelf(shelves, viewerScope);
     if (!picked) {
       section.textContent = '';
       section.append(winnerBanner('No usable shelf found for this book.', null));
