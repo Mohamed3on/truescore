@@ -1,0 +1,800 @@
+{
+ "url": "https://www.reddit.com/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/",
+ "fetchedAt": "2026-10-13T15:37:14Z",
+ "listing": [
+  {
+   "kind": "Listing",
+   "data": {
+    "children": [
+     {
+      "kind": "t3",
+      "data": {
+       "id": "1pnhac4",
+       "name": "t3_1pnhac4",
+       "title": "Suggest me some chicken burger places",
+       "selftext": "",
+       "author": "u1",
+       "score": 1,
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/",
+       "subreddit": "berlinsocialclub",
+       "num_comments": 23,
+       "created_utc": 1765828611
+      }
+     }
+    ]
+   }
+  },
+  {
+   "kind": "Listing",
+   "data": {
+    "children": [
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu7ofiz",
+       "name": "t1_nu7ofiz",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u2",
+       "score": 19,
+       "body": "Piris, Boddinstraße ",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu7ofiz/",
+       "depth": 0,
+       "created_utc": 1765829120,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": {
+        "kind": "Listing",
+        "data": {
+         "children": [
+          {
+           "kind": "t1",
+           "data": {
+            "id": "nu84i2j",
+            "name": "t1_nu84i2j",
+            "parent_id": "t1_nu7ofiz",
+            "link_id": "t3_1pnhac4",
+            "author": "u3",
+            "score": 0,
+            "body": "second this",
+            "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu84i2j/",
+            "depth": 1,
+            "created_utc": 1765833927,
+            "distinguished": null,
+            "stickied": false,
+            "is_submitter": false,
+            "score_hidden": false,
+            "replies": ""
+           }
+          },
+          {
+           "kind": "t1",
+           "data": {
+            "id": "nu83ucg",
+            "name": "t1_nu83ucg",
+            "parent_id": "t1_nu7ofiz",
+            "link_id": "t3_1pnhac4",
+            "author": "[deleted]",
+            "score": -2,
+            "body": "[deleted]",
+            "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu83ucg/",
+            "depth": 1,
+            "created_utc": 1765833730,
+            "distinguished": null,
+            "stickied": false,
+            "is_submitter": false,
+            "score_hidden": false,
+            "replies": {
+             "kind": "Listing",
+             "data": {
+              "children": [
+               {
+                "kind": "t1",
+                "data": {
+                 "id": "nu8b1ab",
+                 "name": "t1_nu8b1ab",
+                 "parent_id": "t1_nu83ucg",
+                 "link_id": "t3_1pnhac4",
+                 "author": "u2",
+                 "score": 4,
+                 "body": "They are very popular. ",
+                 "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu8b1ab/",
+                 "depth": 2,
+                 "created_utc": 1765835883,
+                 "distinguished": null,
+                 "stickied": false,
+                 "is_submitter": false,
+                 "score_hidden": false,
+                 "replies": ""
+                }
+               }
+              ]
+             }
+            }
+           }
+          },
+          {
+           "kind": "t1",
+           "data": {
+            "id": "nu8qp8c",
+            "name": "t1_nu8qp8c",
+            "parent_id": "t1_nu7ofiz",
+            "link_id": "t3_1pnhac4",
+            "author": "u4",
+            "score": -1,
+            "body": "Was there once, was very disappointing. The burger was soggy and the fries saltier than trumps tears when reading a mean twitter meesage.",
+            "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu8qp8c/",
+            "depth": 1,
+            "created_utc": 1765841008,
+            "distinguished": null,
+            "stickied": false,
+            "is_submitter": false,
+            "score_hidden": false,
+            "replies": ""
+           }
+          }
+         ]
+        }
+       }
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu86og1",
+       "name": "t1_nu86og1",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u5",
+       "score": 12,
+       "body": "I have spent years in Berlin finding the best fried chicken (burgers included). Goes without saying you have to eat it there. Here's what I found \n\n1. Top top tier: Birds in the kitchen, butter Bronson's \n2. Very good: humble pie (for the biscuit bun), hot ways, \n3. It's alright you're not missing out: Piris, CHIX, munchies, \n4. Avoid: don't go for risa the quality has gone down the drain. \n\nSpecial mention: fried chicken at kooks kochen Bundesplatz. (Not a burger but I never see this place get the love it deserves).",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu86og1/",
+       "depth": 0,
+       "created_utc": 1765834580,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": {
+        "kind": "Listing",
+        "data": {
+         "children": [
+          {
+           "kind": "t1",
+           "data": {
+            "id": "nu9wv20",
+            "name": "t1_nu9wv20",
+            "parent_id": "t1_nu86og1",
+            "link_id": "t3_1pnhac4",
+            "author": "u6",
+            "score": 1,
+            "body": "Biscuit bun! I’m intrigued",
+            "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu9wv20/",
+            "depth": 1,
+            "created_utc": 1765856087,
+            "distinguished": null,
+            "stickied": false,
+            "is_submitter": false,
+            "score_hidden": false,
+            "replies": ""
+           }
+          }
+         ]
+        }
+       }
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu81sti",
+       "name": "t1_nu81sti",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u7",
+       "score": 5,
+       "body": "Humble Pie",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu81sti/",
+       "depth": 0,
+       "created_utc": 1765833132,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": ""
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu7sedb",
+       "name": "t1_nu7sedb",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u8",
+       "score": 3,
+       "body": "Birds in the kitchen on rosenthalerstr.",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu7sedb/",
+       "depth": 0,
+       "created_utc": 1765830312,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": ""
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu83ojl",
+       "name": "t1_nu83ojl",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u9",
+       "score": 2,
+       "body": "Food court in Potsdamer Platz, it's called Butter Bronsons. You won't find anything better.",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu83ojl/",
+       "depth": 0,
+       "created_utc": 1765833682,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": {
+        "kind": "Listing",
+        "data": {
+         "children": [
+          {
+           "kind": "t1",
+           "data": {
+            "id": "nu8fsfi",
+            "name": "t1_nu8fsfi",
+            "parent_id": "t1_nu83ojl",
+            "link_id": "t3_1pnhac4",
+            "author": "[deleted]",
+            "score": 1,
+            "body": "👍👍👍👍",
+            "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu8fsfi/",
+            "depth": 1,
+            "created_utc": 1765837362,
+            "distinguished": null,
+            "stickied": false,
+            "is_submitter": false,
+            "score_hidden": false,
+            "replies": ""
+           }
+          },
+          {
+           "kind": "t1",
+           "data": {
+            "id": "nu8nxtj",
+            "name": "t1_nu8nxtj",
+            "parent_id": "t1_nu83ojl",
+            "link_id": "t3_1pnhac4",
+            "author": "u10",
+            "score": 1,
+            "body": "That's the fuckin' one.",
+            "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu8nxtj/",
+            "depth": 1,
+            "created_utc": 1765840053,
+            "distinguished": null,
+            "stickied": false,
+            "is_submitter": false,
+            "score_hidden": false,
+            "replies": ""
+           }
+          }
+         ]
+        }
+       }
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nuae5c8",
+       "name": "t1_nuae5c8",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u11",
+       "score": 1,
+       "body": "Nola - Fried Chicken in the Torstraße.\n\nI found Bird in the Kitchen quite disappointing for the price range tbh …",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nuae5c8/",
+       "depth": 0,
+       "created_utc": 1765863538,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": ""
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nub8y7p",
+       "name": "t1_nub8y7p",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u12",
+       "score": 1,
+       "body": "There is a fast food shack on Julius-Leber-Brücke that has a really good chicken burger. Their home made falafel is also permissible.",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nub8y7p/",
+       "depth": 0,
+       "created_utc": 1765881123,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": ""
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nuccf4r",
+       "name": "t1_nuccf4r",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u13",
+       "score": 1,
+       "body": "munchies - the sandwich",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nuccf4r/",
+       "depth": 0,
+       "created_utc": 1765897357,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": {
+        "kind": "Listing",
+        "data": {
+         "children": [
+          {
+           "kind": "t1",
+           "data": {
+            "id": "nucclno",
+            "name": "t1_nucclno",
+            "parent_id": "t1_nuccf4r",
+            "link_id": "t3_1pnhac4",
+            "author": "u13",
+            "score": 2,
+            "body": "nashville hot sando",
+            "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nucclno/",
+            "depth": 1,
+            "created_utc": 1765897412,
+            "distinguished": null,
+            "stickied": false,
+            "is_submitter": false,
+            "score_hidden": false,
+            "replies": ""
+           }
+          }
+         ]
+        }
+       }
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu7onk9",
+       "name": "t1_nu7onk9",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u14",
+       "score": 1,
+       "body": "Chicken BUUUURGA!!!",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu7onk9/",
+       "depth": 0,
+       "created_utc": 1765829187,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": {
+        "kind": "Listing",
+        "data": {
+         "children": [
+          {
+           "kind": "t1",
+           "data": {
+            "id": "nu892m3",
+            "name": "t1_nu892m3",
+            "parent_id": "t1_nu7onk9",
+            "link_id": "t3_1pnhac4",
+            "author": "u15",
+            "score": 3,
+            "body": "and chippies!",
+            "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu892m3/",
+            "depth": 1,
+            "created_utc": 1765835288,
+            "distinguished": null,
+            "stickied": false,
+            "is_submitter": false,
+            "score_hidden": false,
+            "replies": ""
+           }
+          }
+         ]
+        }
+       }
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu8jmcy",
+       "name": "t1_nu8jmcy",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u16",
+       "score": 1,
+       "body": "VEG’D @  \nBoxhagener Straße - F’hain  \nRichardstraße - N’kölln  \nEberswalder Straße - P’berg",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu8jmcy/",
+       "depth": 0,
+       "created_utc": 1765838606,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": ""
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu8h5x1",
+       "name": "t1_nu8h5x1",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u17",
+       "score": -1,
+       "body": "Angry chicken!",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu8h5x1/",
+       "depth": 0,
+       "created_utc": 1765837802,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": ""
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu7nba9",
+       "name": "t1_nu7nba9",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u18",
+       "score": -4,
+       "body": "Goldies, Oranienstraße",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu7nba9/",
+       "depth": 0,
+       "created_utc": 1765828788,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": ""
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu7p8ew",
+       "name": "t1_nu7p8ew",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u19",
+       "score": -14,
+       "body": "For Gourmet burgers: RISA",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu7p8ew/",
+       "depth": 0,
+       "created_utc": 1765829362,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": ""
+      }
+     },
+     {
+      "kind": "t1",
+      "data": {
+       "id": "nu8m17j",
+       "name": "t1_nu8m17j",
+       "parent_id": "t3_1pnhac4",
+       "link_id": "t3_1pnhac4",
+       "author": "u20",
+       "score": -5,
+       "body": "Risa Chicken 💯",
+       "permalink": "/r/berlinsocialclub/comments/1pnhac4/suggest_me_some_chicken_burger_places/nu8m17j/",
+       "depth": 0,
+       "created_utc": 1765839409,
+       "distinguished": null,
+       "stickied": false,
+       "is_submitter": false,
+       "score_hidden": false,
+       "replies": ""
+      }
+     }
+    ]
+   }
+  }
+ ],
+ "labels": {
+  "nu7ofiz": [
+   {
+    "option": "Piris",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nu84i2j": [
+   {
+    "option": "Piris",
+    "title": null,
+    "stance": "praise",
+    "how": "context"
+   }
+  ],
+  "nu8b1ab": [
+   {
+    "option": "Piris",
+    "title": null,
+    "stance": "praise",
+    "how": "context"
+   }
+  ],
+  "nu8qp8c": [
+   {
+    "option": "Piris",
+    "title": null,
+    "stance": "complain",
+    "how": "context"
+   }
+  ],
+  "nu86og1": [
+   {
+    "option": "Birds in the Kitchen",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   },
+   {
+    "option": "Butter Bronson's",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   },
+   {
+    "option": "Humble Pie",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   },
+   {
+    "option": "Hot Ways",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   },
+   {
+    "option": "Piris",
+    "title": null,
+    "stance": "mixed",
+    "how": "named"
+   },
+   {
+    "option": "CHIX",
+    "title": null,
+    "stance": "mixed",
+    "how": "named"
+   },
+   {
+    "option": "Munchies",
+    "title": null,
+    "stance": "mixed",
+    "how": "named"
+   },
+   {
+    "option": "Risa",
+    "title": null,
+    "stance": "complain",
+    "how": "named"
+   },
+   {
+    "option": "Kooks Kochen",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nu9wv20": [
+   {
+    "option": "Humble Pie",
+    "title": null,
+    "stance": "mixed",
+    "how": "context"
+   }
+  ],
+  "nu81sti": [
+   {
+    "option": "Humble Pie",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nu7sedb": [
+   {
+    "option": "Birds in the Kitchen",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nu83ojl": [
+   {
+    "option": "Butter Bronson's",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nu8fsfi": [
+   {
+    "option": "Butter Bronson's",
+    "title": null,
+    "stance": "praise",
+    "how": "context"
+   }
+  ],
+  "nu8nxtj": [
+   {
+    "option": "Butter Bronson's",
+    "title": null,
+    "stance": "praise",
+    "how": "context"
+   }
+  ],
+  "nuae5c8": [
+   {
+    "option": "Nola",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   },
+   {
+    "option": "Birds in the Kitchen",
+    "title": null,
+    "stance": "complain",
+    "how": "named"
+   }
+  ],
+  "nub8y7p": [
+   {
+    "option": "Fast food shack on Julius-Leber-Brücke",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nuccf4r": [
+   {
+    "option": "Munchies",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nucclno": [
+   {
+    "option": "Munchies",
+    "title": null,
+    "stance": "praise",
+    "how": "context"
+   }
+  ],
+  "nu7onk9": [],
+  "nu892m3": [],
+  "nu8jmcy": [
+   {
+    "option": "VEG'D",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nu8h5x1": [
+   {
+    "option": "Angry Chicken",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nu7nba9": [
+   {
+    "option": "Goldies",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nu7p8ew": [
+   {
+    "option": "Risa",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ],
+  "nu8m17j": [
+   {
+    "option": "Risa",
+    "title": null,
+    "stance": "praise",
+    "how": "named"
+   }
+  ]
+ },
+ "aliases": {
+  "Piris": [
+   "Piris"
+  ],
+  "Birds in the Kitchen": [
+   "Birds in the kitchen",
+   "Bird in the Kitchen"
+  ],
+  "Butter Bronson's": [
+   "butter Bronson's",
+   "Butter Bronsons"
+  ],
+  "Humble Pie": [
+   "humble pie"
+  ],
+  "Hot Ways": [
+   "hot ways"
+  ],
+  "CHIX": [
+   "CHIX"
+  ],
+  "Munchies": [
+   "munchies"
+  ],
+  "Risa": [
+   "risa",
+   "RISA",
+   "Risa Chicken"
+  ],
+  "Kooks Kochen": [
+   "kooks kochen",
+   "kooks kochen Bundesplatz"
+  ],
+  "Nola": [
+   "Nola",
+   "Nola - Fried Chicken"
+  ],
+  "VEG'D": [
+   "VEG’D"
+  ],
+  "Goldies": [
+   "Goldies"
+  ],
+  "Angry Chicken": [
+   "Angry chicken"
+  ],
+  "Fast food shack on Julius-Leber-Brücke": [
+   "fast food shack on Julius-Leber-Brücke"
+  ]
+ },
+ "notes": "Chicken burger places in Berlin. nu86og1 is a tier list: tiers 1-2 (Birds in the Kitchen, Butter Bronson's, Humble Pie, Hot Ways) are praise, tier 3 \"It's alright you're not missing out\" (Piris, CHIX, Munchies) is mixed: okay, not worth seeking out, neither a pick nor a warning. Tier 4 \"Avoid\" (Risa) is complain. Its special mention of Kooks Kochen (fried chicken, \"not a burger\", \"never get the love it deserves\") is praise.\nnu8b1ab (\"They are very popular\") is the Piris recommender answering a deleted reply: praise for Piris. nu9wv20 (\"Biscuit bun! I'm intrigued\") is considering Humble Pie's biscuit bun: mixed.\nDishes (the biscuit bun, \"the sandwich\", the Nashville hot sando) fold into their place: the question asks for places, so no titles. \"Chicken BUUUURGA!!!\" (nu7onk9) and its \"and chippies!\" name no place: off.\nUnder the score floor, labelled but never counted: \"second this\" (0) and the disappointing soggy Piris burger (-1), the downvoted Risa, Goldies and Angry Chicken picks."
+}
