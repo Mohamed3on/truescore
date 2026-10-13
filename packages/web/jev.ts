@@ -159,7 +159,8 @@ export const stancesFor = (topic: string, texts: string[]): Promise<Stance[] | n
 // replies to, so a bare "this" carries its parent's stance. `option`
 // describes it for the model and `others` names the thread's other Options, so
 // talk of one of them, however alike its name, reads as not about this one.
-// The criteria spell out the cases Jev got wrong (praise read as mixed, thanks
+// The criteria spell out the cases Jev got wrong (praise read as mixed, a
+// tier list's "it's alright, you're not missing out" read as praise, thanks
 // read as agreement, a gripe about every instructional read as one about this
 // one); described as objects with examples instead, they read no better on the
 // labelled threads and cost ~35% more tokens. The memo is keyed by `name` and
@@ -168,7 +169,7 @@ export const stancesFor = (topic: string, texts: string[]): Promise<Stance[] | n
 const OPTION_CRITERIA = {
   for: 'Puts it forward as an answer to `thread` or says what makes it one (where `thread` asks for recommendations: recommends it or speaks well of it; where it asks for the worst or most dangerous: calls it bad or dangerous). Naming it as an answer counts, and so does one with a small caveat',
   against: 'Argues it is a poor answer to `thread` (where `thread` asks for recommendations: advises against it or speaks badly of it; where it asks for the worst or most dangerous: calls it fine or safe), and of it in particular, not just of a whole kind of thing it belongs to',
-  mixed: 'Weighs it as an answer both ways without settling (where `thread` asks for recommendations: weighs a drawback that matters for what the asker needs against its good points), or mentions it without a verdict (owns it, is considering it)',
+  mixed: 'Weighs it as an answer both ways without settling (where `thread` asks for recommendations: weighs a drawback that matters for what the asker needs against its good points, or calls it merely okay, nothing to seek out), or mentions it without a verdict (owns it, is considering it)',
   off: 'Never speaks of it: speaks only of one of `others` (even one with a similar name), only of a whole kind of thing, only asks a question, or speaks of something else',
 };
 const REPLY_CRITERIA = {
