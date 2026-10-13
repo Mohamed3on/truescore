@@ -1354,15 +1354,15 @@ const watchViewerShelving = (bookId: string) => {
 const SUMMARY_SCHEMA = {
   type: 'object' as const,
   properties: {
-    recommendation: { type: 'string' as const, description: 'One sentence: how strongly reviewers recommend it, and to whom.' },
-    loved: { type: 'string' as const, description: 'What readers love, in two or three sentences.' },
-    dislikes: { type: 'string' as const, description: "What readers most commonly didn't enjoy, in a sentence or two. Empty string if there is no shared complaint." },
+    recommendation: { type: 'string' as const, description: 'The verdict: how strongly reviewers recommend it, and to whom.' },
+    loved: { type: 'string' as const, description: 'What readers love: every point several of them make.' },
+    dislikes: { type: 'string' as const, description: "What readers didn't enjoy: every point several of them make. Empty string if there is no shared complaint." },
   },
   required: ['recommendation', 'loved', 'dislikes'],
   additionalProperties: false,
 };
 
-const SUMMARY_PROMPT = `Summarize these Goodreads reviews for someone deciding whether to read this book. Reviews run newest first, each prefixed with its date and star rating. Say each point once, as concretely and briefly as it allows: name what reviewers single out (a character, an idea, a scene, the structure, the prose) and what about it works or grates — "the narrator's deadpan asides keep the grim material bearable", not "great voice" — and keep the concrete things reviewers report rather than recasting them as qualities like "moving", "humane" or "illuminating". Only use points raised by multiple reviewers, leaving out what just one says however vivid; ignore reading-challenge notes, shelving chatter, and contentless one-liners. A plot spoiler (who dies, a twist, how it ends) is fine when many reviewers discuss it: put **SPOILER:** right before it. You may use **bold** for emphasis. No preamble.`;
+const SUMMARY_PROMPT = `Summarize these Goodreads reviews for someone deciding whether to read this book. Reviews run newest first, each prefixed with its date and star rating. Say each point once and concretely: name what reviewers single out (a character, an idea, a scene, the structure, the prose) and what about it works or grates — "the narrator's deadpan asides keep the grim material bearable", not "great voice" — and keep the concrete things reviewers report rather than recasting them as qualities like "moving", "humane" or "illuminating". Only use points raised by multiple reviewers, leaving out what just one says however vivid; ignore reading-challenge notes, shelving chatter, and contentless one-liners. A plot spoiler (who dies, a twist, how it ends) is fine when many reviewers discuss it: put **SPOILER:** right before it. You may use **bold** for emphasis. No preamble.`;
 
 // Whether opinion has shifted is only asked of reviews reaching back a year or more. A
 // popular book's newest reviews span days, and asked anyway the model reports the shift
@@ -1412,7 +1412,7 @@ const collectReviewTexts = (reviews: GrReview[]): string[] => {
   return texts;
 };
 
-const GR_QUESTION_PROMPT = `Answer this question using ONLY evidence from the book reviews below. Reviews run newest first, each prefixed with its date and star rating; when the question is whether the book still holds up, weigh the newest. Quote or paraphrase the concrete details reviewers give. If reviewers disagree, surface the tension. Avoid plot spoilers. Be direct and practical.`;
+const GR_QUESTION_PROMPT = `Answer this question using ONLY evidence from the book reviews below. Reviews run newest first, each prefixed with its date and star rating; when the question is whether the book still holds up, weigh the newest. Quote or paraphrase the concrete details reviewers give. If reviewers disagree, surface the tension. Plot spoilers are fine: put **SPOILER:** right before each one (who dies, a twist, how it ends). Be direct and practical.`;
 
 // Lazy + memoized review fetch for the summary widget: the newest reviews'
 // full text via GraphQL, else the reviews embedded in the page.
@@ -1432,7 +1432,7 @@ const makeGetReviews = (workId: string): (() => Promise<GrReview[]>) => {
 // Review search
 // =============================================================================
 
-const GR_SEARCH_SUMMARY_PROMPT = `Summarize what these book reviews say about the searched topic. Lead with the bottom line, keep it specific to what reviewers actually wrote, and avoid plot spoilers. A short paragraph or a few bullets.`;
+const GR_SEARCH_SUMMARY_PROMPT = `Summarize what these book reviews say about the searched topic. Lead with the bottom line and keep it specific to what reviewers actually wrote. Plot spoilers are fine: put **SPOILER:** right before each one (who dies, a twist, how it ends). A short paragraph or a few bullets.`;
 
 /**
  * Bare searchText ORs its tokens, so "chapter 8" would match every review mentioning

@@ -451,17 +451,17 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
 const SUMMARY_SCHEMA = {
   type: 'object' as const,
   properties: {
-    recommendation: { type: 'string' as const, description: 'One sentence: how strongly reviewers recommend it, and to whom.' },
-    loved: { type: 'string' as const, description: 'What people love, in two or three sentences.' },
-    dislikes: { type: 'string' as const, description: "What people most commonly didn't enjoy, in a sentence or two. Empty string if there is no shared complaint." },
+    recommendation: { type: 'string' as const, description: 'The verdict: how strongly reviewers recommend it, and to whom.' },
+    loved: { type: 'string' as const, description: 'What people love: every point several of them make.' },
+    dislikes: { type: 'string' as const, description: "What people didn't enjoy: every point several of them make. Empty string if there is no shared complaint." },
   },
   required: ['recommendation', 'loved', 'dislikes'],
   additionalProperties: false,
 };
 
-const SUMMARY_PROMPT = `Summarize these recent Letterboxd reviews for someone deciding whether to watch this film. Say each point once, as concretely and briefly as it allows: name what reviewers single out (a performance, a scene, the direction, the writing, the pacing, the tone) and what about it works or grates — "the single-take dinner scene ratchets up the dread", not "tense" — and keep the concrete things reviewers report rather than recasting them as qualities like "stunning", "powerful" or "masterful". Only use points raised by multiple reviewers, leaving out what just one says however vivid; ignore Letterboxd in-jokes and contentless one-liners. A plot spoiler (who dies, a twist, how it ends) is fine when many reviewers discuss it: put **SPOILER:** right before it. You may use **bold** for emphasis. No preamble.`;
+const SUMMARY_PROMPT = `Summarize these recent Letterboxd reviews for someone deciding whether to watch this film. Say each point once and concretely: name what reviewers single out (a performance, a scene, the direction, the writing, the pacing, the tone) and what about it works or grates — "the single-take dinner scene ratchets up the dread", not "tense" — and keep the concrete things reviewers report rather than recasting them as qualities like "stunning", "powerful" or "masterful". Only use points raised by multiple reviewers, leaving out what just one says however vivid; ignore Letterboxd in-jokes and contentless one-liners. A plot spoiler (who dies, a twist, how it ends) is fine when many reviewers discuss it: put **SPOILER:** right before it. You may use **bold** for emphasis. No preamble.`;
 
-const SEARCH_SUMMARY_PROMPT = `Summarize what these film reviews say about the searched topic. Lead with the bottom line, keep it specific to what reviewers actually wrote, and avoid plot spoilers. A short paragraph or a few bullets.`;
+const SEARCH_SUMMARY_PROMPT = `Summarize what these film reviews say about the searched topic. Lead with the bottom line and keep it specific to what reviewers actually wrote. Plot spoilers are fine: put **SPOILER:** right before each one (who dies, a twist, how it ends). A short paragraph or a few bullets.`;
 
 type LbxReview = { text: string; rating: number; date: string };
 
