@@ -1354,16 +1354,25 @@ const watchViewerShelving = (bookId: string) => {
 const SUMMARY_SCHEMA = {
   type: 'object' as const,
   properties: {
-    summary: { type: 'string' as const, description: '1–2 sentences on the overall sentiment and what reviewers make of the book.' },
-    recommendation: { type: 'string' as const, description: 'The verdict: is it worth reading, and how strongly do reviewers recommend it.' },
-    dislikes: { type: 'string' as const, description: "What readers most commonly didn't enjoy. Empty string if there is no shared complaint." },
-    audience: { type: 'string' as const, description: "Who it's for and who it's not for." },
+    recommendation: { type: 'string' as const, description: 'One sentence: how strongly reviewers recommend it, and to whom.' },
+    loved: { type: 'string' as const, description: 'What readers love, in two or three sentences.' },
+    dislikes: { type: 'string' as const, description: "What readers most commonly didn't enjoy, in a sentence or two. Empty string if there is no shared complaint." },
   },
-  required: ['summary', 'recommendation', 'dislikes', 'audience'],
+  required: ['recommendation', 'loved', 'dislikes'],
   additionalProperties: false,
 };
 
-const SUMMARY_PROMPT = `Summarize these Goodreads reviews for someone deciding whether to read this book. Reviews run newest first, each prefixed with its date and star rating: if the newest ones read differently from older ones — content that has dated, a consensus that turned — say so, with the years. Be concise and specific to THIS book (writing style, characters, pacing, plot, themes, ending). Only use points raised by multiple reviewers; ignore reading-challenge notes, shelving chatter, and contentless one-liners. Do not reveal plot spoilers. You may use **bold** for emphasis. Each field is one or two short sentences, no preamble.`;
+const SUMMARY_PROMPT = `Summarize these Goodreads reviews for someone deciding whether to read this book. Reviews run newest first, each prefixed with its date and star rating. Say each point once, as concretely and briefly as it allows: name what reviewers single out (a character, an idea, a scene, the structure, the prose) and what about it works or grates — "the narrator's deadpan asides keep the grim material bearable", not "great voice" — and keep the concrete things reviewers report rather than recasting them as qualities like "moving", "humane" or "illuminating". Only use points raised by multiple reviewers, leaving out what just one says however vivid; ignore reading-challenge notes, shelving chatter, and contentless one-liners. A plot spoiler (who dies, a twist, how it ends) is fine when many reviewers discuss it: put **SPOILER:** right before it. You may use **bold** for emphasis. No preamble.`;
+
+// Whether opinion has shifted is only asked of reviews reaching back a year or more. A
+// popular book's newest reviews span days, and asked anyway the model reports the shift
+// it can't see ("all dated 2026, no change to report") or invents one.
+const summaryPromptFor = (texts: string[]) => {
+  const dates = texts.map((t) => t.match(/^\[(\d{4}-\d{2}-\d{2})/)?.[1]).filter((d): d is string => !!d).sort();
+  const [oldest, newest] = [dates[0], dates.at(-1)];
+  if (!oldest || !newest || Date.parse(newest) - Date.parse(oldest) < 365 * DAY_MS) return SUMMARY_PROMPT;
+  return `${SUMMARY_PROMPT} These reviews run from ${oldest.slice(0, 4)} to ${newest.slice(0, 4)}: if the newest read differently from older ones — content that has dated, a consensus that turned — say so in the verdict, with the years.`;
+};
 
 const stripReviewHtml = (html: string): string =>
   (new DOMParser().parseFromString(html.replace(/<br\s*\/?>/gi, ' '), 'text/html').body.textContent || '')
@@ -1529,9 +1538,9 @@ const appendScore = async (bookTitle: Element) => {
     anchor: document.querySelector('.BookDetails') ?? bookTitle,
     classPrefix: 'gr-summary',
     heading: 'Reader Reviews',
-    summaryPrompt: SUMMARY_PROMPT,
+    summaryPrompt: summaryPromptFor,
     schema: SUMMARY_SCHEMA,
-    sections: [['Summary', 'summary'], ['Verdict', 'recommendation'], ['Didn’t enjoy', 'dislikes'], ['Who it’s for', 'audience']],
+    sections: [['Verdict', 'recommendation'], ['Loved', 'loved'], ['Didn’t enjoy', 'dislikes']],
     summaryCacheKey: currentId ? `gr_summary_${currentId}` : null,
     summaryTtl: CONFIG.SUMMARY_CACHE_MS,
     initialButtonLabel: '✦ Summarize reviews',

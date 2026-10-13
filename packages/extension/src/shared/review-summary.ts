@@ -550,7 +550,8 @@ interface MediaSummaryOpts {
   anchor: Element;
   classPrefix: string;
   heading: string;
-  summaryPrompt: string;
+  // Or built from the fetched reviews, for a rule that only fits some of them.
+  summaryPrompt: string | ((texts: string[]) => string);
   schema: any;
   sections: [string, string][];
   summaryCacheKey: string | null;
@@ -668,7 +669,7 @@ export const buildMediaSummary = ({
       note(`${p}-progress`, '✦ Summarizing…');
       // Each section shows as it's written.
       const draw = mountMediaSummary();
-      const data = await llmSummarize(texts, summaryPrompt, schema, draw);
+      const data = await llmSummarize(texts, typeof summaryPrompt === 'string' ? summaryPrompt : summaryPrompt(texts), schema, draw);
       bumpRateLimit();
       if (summaryCacheKey) cacheSet(summaryCacheKey, data);
       draw(data);
