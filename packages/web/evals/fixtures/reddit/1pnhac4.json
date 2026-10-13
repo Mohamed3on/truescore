@@ -531,7 +531,7 @@
  "labels": {
   "nu7ofiz": [
    {
-    "option": "Piris",
+    "option": "Piri's",
     "title": null,
     "stance": "praise",
     "how": "named"
@@ -539,7 +539,7 @@
   ],
   "nu84i2j": [
    {
-    "option": "Piris",
+    "option": "Piri's",
     "title": null,
     "stance": "praise",
     "how": "context"
@@ -547,7 +547,7 @@
   ],
   "nu8b1ab": [
    {
-    "option": "Piris",
+    "option": "Piri's",
     "title": null,
     "stance": "praise",
     "how": "context"
@@ -555,7 +555,7 @@
   ],
   "nu8qp8c": [
    {
-    "option": "Piris",
+    "option": "Piri's",
     "title": null,
     "stance": "complain",
     "how": "context"
@@ -587,7 +587,7 @@
     "how": "named"
    },
    {
-    "option": "Piris",
+    "option": "Piri's",
     "title": null,
     "stance": "mixed",
     "how": "named"
@@ -747,7 +747,7 @@
   ]
  },
  "aliases": {
-  "Piris": [
+  "Piri's": [
    "Piris"
   ],
   "Birds in the Kitchen": [
