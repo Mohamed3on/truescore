@@ -2,7 +2,7 @@ import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { buildSummarizeWidget } from '../shared/review-summary';
 import { courseContext, SUMMARY_PROMPT } from './bjjfanatics-prompt';
-import { buildReviewCard, buildSearchSection } from '../shared/review-search';
+import { buildSearchSection, quoteCards } from '../shared/review-search';
 import { createIslandShell } from '../shared/score-island';
 
 const STAMPED_API_KEY = '8a204db0-ec09-48cf-baed-db3ca2ef99e6';
@@ -219,8 +219,6 @@ const buildPanel = (
     exampleQuery: 'guard OR mount',
   }));
 
-  // A receipt's reviews show as the search's cards, not the model's "[Ranking: …] Title: body" text.
-  const byText = new Map(bundle.reviews.map((r) => [reviewToText(r), r]));
   buildSummarizeWidget({
     wrapper,
     cacheKey: `bjj-summary-${info.id}`,
@@ -228,10 +226,8 @@ const buildPanel = (
     context: courseContent ? courseContext(courseContent) : undefined,
     fetchReviews: async () => bundle.reviews.map(reviewToText).filter(Boolean),
     autoSummarize,
-    renderQuote: (text) => {
-      const r = byText.get(text);
-      return r ? buildReviewCard(cardFields(r), []) : null;
-    },
+    // A receipt's reviews show as the search's cards, not the model's "[Ranking: …] Title: body" text.
+    renderQuote: quoteCards(() => bundle.reviews, reviewToText, cardFields),
   });
 
   return wrapper;

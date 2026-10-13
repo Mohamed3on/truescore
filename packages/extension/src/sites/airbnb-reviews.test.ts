@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { selectAirbnbReviewSample } from './airbnb-reviews';
+import { sampleText, selectAirbnbReviewSample } from './airbnb-reviews';
 
 test('keeps lowest-rated reviews first, deduplicates the relevant sample, and cleans review markup', () => {
   const sample = selectAirbnbReviewSample(
@@ -17,11 +17,11 @@ test('keeps lowest-rated reviews first, deduplicates the relevant sample, and cl
   );
 
   expect(sample).toEqual({
-    texts: [
-      '1★ Noisy room\nHard bed',
-      '4★ Good host & poor sleep',
-      '5★ Comfortable',
-      '5★ Excellent breakfast',
+    reviews: [
+      { rating: 1, text: 'Noisy room\nHard bed' },
+      { rating: 4, text: 'Good host & poor sleep' },
+      { rating: 5, text: 'Comfortable' },
+      { rating: 5, text: 'Excellent breakfast' },
     ],
     sampled: 4,
     lowRated: 2,
@@ -39,5 +39,5 @@ test('uses Airbnb translated review text and falls back to the original when una
     [],
     3,
   );
-  expect(sample.texts).toEqual(['2★ Very noisy', '3★ It is noisy', '5★ Lovely stay']);
+  expect(sample.reviews.map(sampleText)).toEqual(['2★ Very noisy', '3★ It is noisy', '5★ Lovely stay']);
 });

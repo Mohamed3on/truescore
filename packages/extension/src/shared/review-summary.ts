@@ -103,10 +103,12 @@ export const withReceipts = async (parsed: any, reviews: string[], search?: Sear
   };
 };
 
-type RenderQuote = (text: string) => HTMLElement | null;
+// Draws one of the texts the model read as the site's review card (see
+// quoteCards); null leaves it as the text.
+export type RenderQuote = (text: string) => HTMLElement | null | Promise<HTMLElement | null>;
 
-const receiptFor = (item: HTMLElement, { n, quotes }: Receipt, checkedOf: number | undefined, renderQuote?: RenderQuote) =>
-  receiptButton(item, n, quotes, checkedOf ? `Of the ${RECEIPT_REVIEWS} longest of ${checkedOf} reviews — show the ones that say this` : undefined, renderQuote);
+const receiptFor = (item: HTMLElement, { n, quotes }: Receipt, checkedOf: number | undefined, renderQuote: RenderQuote) =>
+  receiptButton(item, n, quotes, renderQuote, checkedOf ? `Of the ${RECEIPT_REVIEWS} longest of ${checkedOf} reviews — show the ones that say this` : undefined);
 
 // Where a summary on screen stands: being written (each bullet shows as it
 // streams in), written and being checked against the reviews, or checked.
@@ -130,7 +132,7 @@ const sectionOf = (type: string, title: string) => {
 // summary-draw), and the verdict, written last but shown first, holds its
 // place. Drawing a checked summary straight away (a cached one) builds it at
 // once, with nothing moving.
-const mountStructuredSummary = (container: HTMLElement, renderQuote?: RenderQuote) => {
+const mountStructuredSummary = (container: HTMLElement, renderQuote: RenderQuote) => {
   container.textContent = '';
   const conclusion = el('div', 'ars-conclusion');
   let receiptsOf: number | undefined;
@@ -192,7 +194,7 @@ const mountStructuredSummary = (container: HTMLElement, renderQuote?: RenderQuot
   };
 };
 
-export const renderStructuredSummary = (container: HTMLElement, summary: any, renderQuote?: RenderQuote) =>
+export const renderStructuredSummary = (container: HTMLElement, summary: any, renderQuote: RenderQuote) =>
   mountStructuredSummary(container, renderQuote)(summary);
 
 const SUMMARY_SCHEMA = {
@@ -276,8 +278,8 @@ interface SummarizeWidgetOpts {
   // one pass over fetchReviews.
   searchAsk?: SearchAsk;
   // Draws one of fetchReviews' texts as the site's review card, for a summary
-  // point's receipts; without it they show as the plain text.
-  renderQuote?: RenderQuote;
+  // point's receipts.
+  renderQuote: RenderQuote;
 }
 
 const collectAlternates = (prefix: string, currentKey: string): AlternateEntry[] => {
@@ -532,14 +534,15 @@ export const buildSummarizeWidget = ({
 
 // The full summarize widget under a search's matches (buildSearchSection's
 // mountSummarize): a summary of them and an Ask about them, cached per query
-// under `cacheKey`.
-export const summarizeMatches = (cacheKey: string, opts: Pick<SummarizeWidgetOpts, 'context' | 'searchAsk' | 'renderQuote'> = {}) =>
-  (wrapper: HTMLElement, query: string, texts: string[]) => buildSummarizeWidget({
+// under `cacheKey`, its receipts drawn as the matches' cards.
+export const summarizeMatches = (cacheKey: string, opts: Pick<SummarizeWidgetOpts, 'context' | 'searchAsk'> = {}) =>
+  (wrapper: HTMLElement, query: string, texts: string[], renderQuote: RenderQuote) => buildSummarizeWidget({
     wrapper,
     cacheKey: `${cacheKey}-kw-${query.toLowerCase()}`,
     summaryPrompt: keywordSummaryPrompt(query),
     fetchReviews: async () => texts,
     questionPlaceholder: `Ask about “${query}” reviews…`,
+    renderQuote,
     ...opts,
   });
 

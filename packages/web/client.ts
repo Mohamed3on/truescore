@@ -5,11 +5,11 @@ import { DefaultChatTransport } from 'ai';
 import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
-  chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, quotedReview, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   answersOf, bySupport, countAnswers, mountBullets, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
-  type PlacesResponse, type Review, type SearchEvent, type SearchResult,
+  type PlacesResponse, type Quote, type Review, type SearchEvent, type SearchResult,
   type SortStats, type Summary, type SummaryDraft, type SummaryHighlight,
   type AskRequest, type HighlightSummaryRequest, type HighlightsRequest, type HistogramRequest, type LookupRequest, type SearchRequest, type SummarizeRequest,
 } from '@truescore/gmaps-shared';
@@ -684,7 +684,7 @@ const bulletsIn = (ul: HTMLElement) => {
   });
 };
 
-function receipt(li: HTMLElement, support: number, quotes: string[]): HTMLButtonElement {
+function receipt(li: HTMLElement, support: number, quotes: Quote[]): HTMLButtonElement {
   const btn = el('button', 'receipt', `${support} reviews`);
   btn.type = 'button';
   btn.setAttribute('aria-expanded', 'false');
@@ -693,9 +693,13 @@ function receipt(li: HTMLElement, support: number, quotes: string[]): HTMLButton
     const open = li.querySelector('.receipt-quotes');
     btn.setAttribute('aria-expanded', String(!open));
     if (open) { open.remove(); return; }
-    const box = el('div', 'receipt-quotes');
-    for (const q of quotes) box.appendChild(el('p', 'receipt-quote', q));
-    if (support > quotes.length) box.appendChild(el('span', 'micro', `+${support - quotes.length} more`));
+    // Each as the panel lists it; a text none of the reviews here holds stays text.
+    const box = el('ul', 'receipt-quotes review-list');
+    for (const q of quotes) {
+      const r = quotedReview(q, panelReviews());
+      box.appendChild(r ? reviewCard(r, undefined, 'it', []) : el('li', 'receipt-quote', q as string));
+    }
+    if (support > quotes.length) box.appendChild(el('li', 'micro', `+${support - quotes.length} more`));
     li.appendChild(box);
   });
   return btn;

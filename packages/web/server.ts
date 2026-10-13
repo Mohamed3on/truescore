@@ -54,7 +54,7 @@ import { createInflight } from './inflight';
 import index from './index.html';
 import login from './login.html';
 import { errStatus, NoReviews, resolveSubject, type Subject } from './summary-subject';
-import { answersFor, hasReceipts, jevAvailable, mentioning, preferredCount, stanceOfReviews, stancesFor, supportFor, withReceipts } from './jev';
+import { answersFor, hasReceipts, jevAvailable, mentioning, preferredCount, quotingReviews, stanceOfReviews, stancesFor, supportFor, withReceipts } from './jev';
 import { chatOf, tallyThread, threadOf } from './tally';
 
 const json = (v: any, status = 200) =>
@@ -408,7 +408,7 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
   // share or an unchecked bullet never paints only to be replaced.
   const unread = jevAvailable();
   const slimHighlights = cache.highlightsServable(cached) && !(unread && cached.highlights!.some((h) => !h.stance)) ? cached.highlights?.map(slimChip) : undefined;
-  const summary = cached.summary && !(unread && !hasReceipts(cached.summary)) ? cached.summary : undefined;
+  const summary = cached.summary && !(unread && !hasReceipts(cached.summary)) ? quotingReviews(cached.summary, cached.score?.reviews) : undefined;
   const cachedScoreTs = cached.scoreTs ?? 0;
   const cachedHighlightsTs = cached.highlightsTs ?? 0;
   return ndjsonStream<LookupEvent>(async (write) => {
@@ -633,7 +633,7 @@ Bun.serve({
         ]);
         return corsJson({
           found: true,
-          summary: summary || undefined,
+          summary: summary ? quotingReviews(summary, entry.score?.reviews) : undefined,
           highlights,
           highlightSummaries: entry.highlightSummaries,
         } satisfies CachedResponse);
@@ -714,7 +714,7 @@ Bun.serve({
             // overwrite the canonical entry.summary slot.
             if (!filter && entry?.summary && !force) {
               const summary = await summaryWithReceipts(entry.summary, cachedSubject(entry), (s) => cache.putSummary(featureId, s));
-              return { summary, cached: true };
+              return { summary: quotingReviews(summary, entry.score?.reviews), cached: true };
             }
             const subject = resolveSubject({
               entry, name: body.name, reviewTexts: body.reviewTexts, reviews: entry?.score?.reviews, removedReviews: body.removedReviews,
@@ -724,7 +724,7 @@ Bun.serve({
             // show dim until then, and the ones too few reviews make go.
             const summary = await withReceipts(await summarize(subject, filter, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort), onDraft), subject);
             if (!filter && entry) await cache.putSummary(featureId, summary);
-            return { summary, cached: false };
+            return { summary: quotingReviews(summary, entry?.score?.reviews), cached: false };
           };
           if (body.stream) return summaryStream(answer);
           return corsJson((await answer()) satisfies SummarizeResponse);

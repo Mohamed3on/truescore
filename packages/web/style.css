@@ -1001,7 +1001,7 @@ section#result::before {
   flex-direction: column;
   gap: 8px;
 }
-.highlights li {
+.highlights > li {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;

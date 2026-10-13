@@ -1,6 +1,7 @@
 // Booking.com hotel page - recent reviews scoreboard + summary
 import { cacheGet, cacheSet } from '../shared/cache';
 import { betterAlternativeRule, buildSummarizeWidget } from '../shared/review-summary';
+import { quoteCards } from '../shared/review-search';
 import { el } from '../shared/utils';
 import { createIslandShell } from '../shared/score-island';
 
@@ -134,17 +135,26 @@ const groupBy = (
     .sort((a, b) => b.count - a.count);
 };
 
-const formatReviewText = (review: Review) => {
-  const title = review.textDetails?.title?.trim();
+// What a guest liked and disliked, a line each.
+const formatLikes = (review: Review) => {
   const positive = review.textDetails?.positiveText?.trim();
   const negative = review.textDetails?.negativeText?.trim();
-  const parts = [
-    title ? `Title: ${title}` : '',
-    positive ? `Liked: ${positive}` : '',
-    negative ? `Disliked: ${negative}` : '',
-  ].filter(Boolean);
-  return parts.join('\n').trim();
+  return [positive ? `Liked: ${positive}` : '', negative ? `Disliked: ${negative}` : ''].filter(Boolean).join('\n');
 };
+
+const formatReviewText = (review: Review) => {
+  const title = review.textDetails?.title?.trim();
+  return [title ? `Title: ${title}` : '', formatLikes(review)].filter(Boolean).join('\n').trim();
+};
+
+// A review's card: Booking's 10-point score as stars (halved) and in full beside
+// the guest and room, its title over what they liked and disliked.
+const reviewFields = (review: Review) => ({
+  rating: review.reviewScore / 2,
+  title: review.textDetails?.title?.trim(),
+  body: formatLikes(review),
+  meta: [`${review.reviewScore}/10`, formatGuest(review.bookingDetails.customerType), review.bookingDetails.roomType?.name && formatRoom(review.bookingDetails.roomType.name)].filter(Boolean).join(' · '),
+});
 
 const toReviewTexts = (reviews: Review[]) => {
   const seen = new Set<string>();
@@ -675,6 +685,7 @@ waitForHotelData((hotelData) => {
           questionPlaceholder: 'Ask about this hotel\u2026',
           questionPrompt: 'Answer this question using ONLY evidence from the hotel reviews below. Quote or paraphrase the most concrete details about the stay. If reviewers disagree, surface the tension. Be direct and practical.',
           fetchReviews: async () => toReviewTexts((await getReviews(currentFilterState)).reviews),
+          renderQuote: quoteCards(() => allReviews, formatReviewText, reviewFields),
           cacheMeta: { filterState: currentFilterState },
           alternates: {
             prefix: `bk-summary-${hotelData.hotelId}-`,

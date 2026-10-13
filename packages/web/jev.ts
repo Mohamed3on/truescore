@@ -292,3 +292,13 @@ export async function withReceipts(summary: Summary, { placeName, reviewTexts }:
 
 // Whether a summary already carries its receipts (summaries cached before Jev don't).
 export const hasReceipts = (summary: Summary): boolean => summary.highlights.every((h) => h.support != null);
+
+// A summary as a client is sent it: each receipt's quotes the reviews they are,
+// where `reviews` holds them, so it shows them as its review cards — the web has
+// none of a place's reviews to find them in. Stored as the texts, which an
+// extension's own scrape may not match.
+export const quotingReviews = (summary: Summary, reviews: Review[] | undefined): Summary => {
+  if (!reviews?.length) return summary;
+  const byText = new Map(reviews.map((r) => [r.text, r]));
+  return { ...summary, highlights: summary.highlights.map((h) => (h.quotes ? { ...h, quotes: h.quotes.map((q) => (typeof q === 'string' ? byText.get(q) ?? q : q)) } : h)) };
+};

@@ -36,6 +36,7 @@ import {
   overallPctFromHistogram,
   overallScoreFromHistogram,
   parseOrQuery,
+  quotedReview,
   removedCountEstimate,
   removedReviewsFromPreview,
   reviewAge,
@@ -49,6 +50,7 @@ import {
   timeAgo,
   type Locale,
   type PartialScore,
+  type Quote,
   type RemovedReviews,
   type Review,
   type SortKey,
@@ -1456,6 +1458,14 @@ const reviewCardEl = (r: Review, fallbackTerms: string[] = [], stance?: Stance):
   return card;
 };
 
+// A summary point's review as the panel's card: the one its quote carries, or
+// the one with its text among those this tab holds — the place's own scrape, the
+// open topic's, the label search's.
+const quoteCard = (q: Quote) => {
+  const r = quotedReview(q, [...Object.values(store.mergedReviews()), ...(activeHighlight?.reviews ?? []), ...(activeLabelSearch?.reviews ?? [])]);
+  return r ? reviewCardEl(r) : null;
+};
+
 const renderReviewsInto = (container: HTMLElement, reviews: Review[], terms: string[] = [], stances?: Record<string, Stance>) => {
   const fallback = terms.flatMap((t) => t.split(/\s+/)).map((t) => t.trim()).filter(Boolean);
   for (const r of sortedDisplayReviews(reviews)) {
@@ -2362,7 +2372,7 @@ const mountSummary = (panel: HTMLElement) => {
     renderMarkdownInline(text, h.text ?? '');
     row.replaceChildren(text);
     // How many reviews make the point (checked on the server), opened below.
-    if (h.support != null) row.appendChild(receiptButton(row, h.support, h.quotes ?? []));
+    if (h.support != null) row.appendChild(receiptButton(row, h.support, h.quotes ?? [], quoteCard));
   });
   return (result: SummaryResult, checked = true) => {
     panel.className = 'rc-summary-panel';

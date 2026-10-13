@@ -33,7 +33,7 @@ test('Re-summarize gets its label back once the new summary is on screen', async
   const cacheKey = 'review-summary-test-kw-durex';
   localStorage.setItem(cacheKey, JSON.stringify({ parsed: PARSED, ts: 1 }));
   const wrapper = document.createElement('div');
-  buildSummarizeWidget({ wrapper, cacheKey, summaryPrompt: 'p', fetchReviews: async () => ['a review long enough to count'] });
+  buildSummarizeWidget({ wrapper, cacheKey, summaryPrompt: 'p', fetchReviews: async () => ['a review long enough to count'], renderQuote: () => null });
 
   const reBtn = wrapper.querySelector('.ars-resummarize-btn') as HTMLButtonElement;
   expect(reBtn.textContent).toBe('↻ Re-summarize');
@@ -61,6 +61,7 @@ test('a promised auto-summarize waits for its answer, and a no spends no call', 
         summaryPrompt: 'p',
         fetchReviews: async () => ['a review long enough to count'],
         autoSummarize: new Promise<boolean>((resolve) => { decide = resolve; }),
+        renderQuote: () => null,
       });
       const panel = () => wrapper.querySelector('.ars-summary-panel')?.textContent ?? '';
       await new Promise((r) => setTimeout(r, 20));
@@ -76,24 +77,32 @@ test('a promised auto-summarize waits for its answer, and a no spends no call', 
   }
 });
 
-test("a receipt's reviews show as the site's cards, and as text when it has none", async () => {
+test("a receipt's reviews show as the site's cards, found by the text the model read, and as text when none holds it", async () => {
   const { buildSummarizeWidget } = await import('./review-summary');
+  const { quoteCards } = await import('./review-search');
   const cacheKey = 'review-summary-test-receipt-cards';
-  const quotes = ['[Ranking: BLUE] Great: Very detailed', 'an unmatched review text'];
+  const reviews = [{ belt: 'BLUE', rating: 5, title: 'Great', body: 'Very detailed' }];
+  const toText = (r: (typeof reviews)[number]) => `[Ranking: ${r.belt}] ${r.title}: ${r.body}`;
+  const quotes = [toText(reviews[0]!), 'an unmatched review text'];
   localStorage.setItem(cacheKey, JSON.stringify({ parsed: { ...PARSED, receipts: { 'Lasts long': { n: 2, quotes } } }, ts: 1 }));
+  let fetched = 0;
   const wrapper = document.createElement('div');
   buildSummarizeWidget({
     wrapper,
     cacheKey,
     summaryPrompt: 'p',
     fetchReviews: async () => quotes,
-    renderQuote: (text) => (text === quotes[0] ? Object.assign(document.createElement('div'), { className: 'card', textContent: 'Great' }) : null),
+    renderQuote: quoteCards(() => (fetched++, reviews), toText, ({ rating, title, body }) => ({ rating, title, body })),
   });
 
+  // A summary from the cache fetches its reviews only once a receipt opens.
+  expect(fetched).toBe(0);
   (wrapper.querySelector('.ars-receipt') as HTMLButtonElement).click();
+  await new Promise((r) => setTimeout(r, 0));
   const box = wrapper.querySelector('.ars-receipt-quotes')!;
-  expect([...box.children].map((c) => c.className)).toEqual(['card', 'ars-receipt-quote']);
+  expect([...box.children].map((c) => c.className)).toEqual(['ars-search-review', 'ars-receipt-quote']);
   expect(box.textContent).not.toContain('[Ranking');
+  expect(fetched).toBe(1);
 });
 
 test('the better alternative is the rival every review naming it prefers, not the sample', async () => {
@@ -152,7 +161,7 @@ test('a summary shows as it is written, dim until checked, then drops and orders
   // One review makes "Quiet", too few to show; "Cheap" is the best backed.
   jev.support = async (points) => points.map((p) => (p === 'Quiet' ? [0] : p === 'Cheap' ? [0, 1, 2] : [0, 1]));
   try {
-    buildSummarizeWidget({ wrapper, cacheKey: 'stream-test', summaryPrompt: 'p', fetchReviews: async () => ['r1', 'r2', 'r3'] });
+    buildSummarizeWidget({ wrapper, cacheKey: 'stream-test', summaryPrompt: 'p', fetchReviews: async () => ['r1', 'r2', 'r3'], renderQuote: () => null });
     (wrapper.querySelector('.ars-summarize-btn') as HTMLButtonElement).click();
     await new Promise((r) => setTimeout(r, 30));
 

@@ -657,7 +657,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       toText: keywordText,
       summaryPrompt: keywordSummaryPrompt,
       exampleQuery: 'battery OR strap',
-      mountSummarize: summarizeMatches(`review-summary-${cacheASIN}`, { context: productContext(), searchAsk, renderQuote }),
+      mountSummarize: summarizeMatches(`review-summary-${cacheASIN}`, { context: productContext(), searchAsk }),
     }));
   };
 

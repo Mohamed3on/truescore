@@ -2,7 +2,7 @@ import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from '../shared/review-summary';
-import { buildSearchSection, localSearch, runSearch, searchWith } from '../shared/review-search';
+import { buildSearchSection, localSearch, quoteCards, runSearch, searchWith } from '../shared/review-search';
 import type { SearchAsk } from '../shared/review-ask';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
@@ -375,6 +375,7 @@ const buildCard = (
       summaryPrompt: PRODUCT_SUMMARY_PROMPT,
       fetchReviews: () => all.then(reviewTexts),
       searchAsk,
+      renderQuote: quoteCards(() => all, reviewToText, reviewFields),
     });
   }
 

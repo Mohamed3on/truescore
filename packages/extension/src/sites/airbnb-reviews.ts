@@ -10,7 +10,11 @@ type Review = {
   localizedCommentV2?: { comments?: string | null } | null;
 };
 type ReviewPage = { reviews: Review[]; metadata?: { reviewsCount?: number } };
-export type AirbnbReviewSample = { texts: string[]; sampled: number; lowRated: number; total: number };
+export type AirbnbSampleReview = { rating: number; text: string };
+export type AirbnbReviewSample = { reviews: AirbnbSampleReview[]; sampled: number; lowRated: number; total: number };
+
+// A sampled review as the model reads it: its stars, then what the guest wrote.
+export const sampleText = (r: AirbnbSampleReview) => `${r.rating}★ ${r.text}`;
 
 const reviewText = (html: string): string => {
   const withBreaks = html.replace(/<br\s*\/?>/gi, '\n');
@@ -20,7 +24,7 @@ const reviewText = (html: string): string => {
 
 export const selectAirbnbReviewSample = (lowest: Review[], relevant: Review[], total: number): AirbnbReviewSample => {
   const seen = new Set<string>();
-  const texts: string[] = [];
+  const reviews: AirbnbSampleReview[] = [];
   let lowRated = 0;
   for (const review of [...lowest, ...relevant]) {
     if (!review.id || seen.has(review.id)) continue;
@@ -28,9 +32,9 @@ export const selectAirbnbReviewSample = (lowest: Review[], relevant: Review[], t
     const text = reviewText(review.localizedReview?.comments || review.localizedCommentV2?.comments || review.comments || '');
     if (!text || !review.rating) continue;
     if (review.rating < 5) lowRated++;
-    texts.push(`${review.rating}★ ${text}`);
+    reviews.push({ rating: review.rating, text });
   }
-  return { texts, sampled: texts.length, lowRated, total: Math.max(total, texts.length) };
+  return { reviews, sampled: reviews.length, lowRated, total: Math.max(total, reviews.length) };
 };
 
 const getApiKey = (): string | null => {

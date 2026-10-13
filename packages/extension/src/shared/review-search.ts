@@ -1,5 +1,5 @@
 import { addCommas, el, npsColor, npsStats, toneColor } from './utils';
-import { llmSummarize, renderFreeFormAnswer } from './review-summary';
+import { llmSummarize, renderFreeFormAnswer, type RenderQuote } from './review-summary';
 import type { SearchAsk } from './review-ask';
 import { countStances, opinionsOf, opinionTone, parseOrQuery, type SearchReviews, type Stance } from '@truescore/gmaps-shared';
 import { markPressed, opinionFilters, opinionNumbers, opinionsLabel, opinionsSlot, readStances, stanceMark } from './jev';
@@ -122,9 +122,9 @@ export interface ReviewSearchOpts<T> {
   search?: (terms: string[]) => Promise<{ matches: T[]; total?: number }>;
   // Mount your own summarize UI under the results instead of the built-in
   // one-shot pass — for panels that want the full widget (Ask, per-query cache).
-  // Called with a fresh host on every settled search; the built-in button is
-  // hidden when this is set.
-  mountSummarize?: (host: HTMLElement, query: string, texts: string[]) => void;
+  // Called with a fresh host on every settled search, and the matches' cards
+  // for its receipts; the built-in button is hidden when this is set.
+  mountSummarize?: (host: HTMLElement, query: string, texts: string[], renderQuote: RenderQuote) => void;
 }
 
 // The review-search section shared by panels that hold a full review corpus:
@@ -331,7 +331,7 @@ export const buildSearchSection = <T,>({
 
     if (mountSummarize) {
       const texts = matches.map((p) => toText(p.r)).filter(Boolean);
-      if (texts.length) mountSummarize(sumHost, raw, texts);
+      if (texts.length) mountSummarize(sumHost, raw, texts, quoteCards(() => matches, (m) => toText(m.r), (m) => m.f));
     }
   };
 
@@ -414,4 +414,16 @@ export const buildReviewCard = (r: SearchReviewFields, terms: string[], stance?:
     card.appendChild(body);
   }
   return card;
+};
+
+// A summary point's receipts as review cards: each quote is a text the model
+// read (`toText`), found among `reviews` by that text. They're asked for at the
+// first receipt opened, so a summary shown from the cache fetches nothing till then.
+export const quoteCards = <T,>(reviews: () => T[] | Promise<T[]>, toText: (r: T) => string, fields: (r: T) => SearchReviewFields): RenderQuote => {
+  let byText: Promise<Map<string, T>> | undefined;
+  return async (text) => {
+    byText ??= Promise.resolve().then(reviews).then((rs) => new Map(rs.map((r) => [toText(r), r])));
+    const r = await byText.then((m) => m.get(text), () => (byText = undefined));
+    return r ? buildReviewCard(fields(r), []) : null;
+  };
 };

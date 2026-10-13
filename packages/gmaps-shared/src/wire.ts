@@ -16,7 +16,11 @@ import type { Thread } from './thread';
 // as Jev read them (web/jev.ts), and `quotes` the first of those reviews — a
 // bullet fewer than two reviews make is dropped (streamed, it shows dim till
 // then). Both absent on drafts and on summaries Jev didn't check.
-export type SummaryHighlight = { text: string; sentiment: string; support?: number; quotes?: string[] };
+export type SummaryHighlight = { text: string; sentiment: string; support?: number; quotes?: Quote[] };
+// A receipt's review: the whole Review when the server holds it (quotingReviews,
+// web/jev.ts), else the text the model read, which a client finds among the
+// reviews it holds (quotedReview).
+export type Quote = Review | string;
 // `items`: specific things reviewers single out (dishes, animals, exhibits…),
 // as short label-search terms (e.g. "alfajores", "gorilla"). Rendered as their
 // own clickable chips below the topic chips, each auto-scored by a label search.

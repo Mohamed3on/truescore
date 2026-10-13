@@ -4,6 +4,7 @@ import { renderVariationCard, tallyVariationDims } from '../shared/variation-tab
 import { createIslandShell, buildGauge } from '../shared/score-island';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { quoteCards } from '../shared/review-search';
 import { cachedItemScore, fetchEvaluation, parseVariations, productId, type AliReview, type Evaluation } from '../shared/aliexpress';
 
 const EVAL_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -70,6 +71,7 @@ const buildIsland = async (id: string): Promise<HTMLElement | null> => {
         cacheKey: `ali-summary-${id}`,
         summaryPrompt: PRODUCT_SUMMARY_PROMPT,
         fetchReviews: async () => texts,
+        renderQuote: quoteCards(() => reviews, (r) => r.text, (r) => ({ rating: r.rating, body: r.text, meta: r.skuInfo })),
       });
     }
   };

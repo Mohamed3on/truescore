@@ -2,8 +2,9 @@ import { addCommas, el } from '../shared/utils';
 import { airbnbStats, type AirbnbStats } from '../shared/airbnb-stats';
 import { getActiveLLM } from '../shared/config';
 import { betterAlternativeRule, buildSummarizeWidget } from '../shared/review-summary';
+import { quoteCards } from '../shared/review-search';
 import { createIslandShell } from '../shared/score-island';
-import { fetchAirbnbReviewSample } from './airbnb-reviews';
+import { fetchAirbnbReviewSample, sampleText } from './airbnb-reviews';
 
 // The listing score sits in a distinct panel near Airbnb's own rating. Its
 // working opens on hover or keyboard focus.
@@ -141,8 +142,9 @@ if (listingId) {
     fetchReviews: async () => {
       if (!(await getActiveLLM()).key) throw new Error('Set an AI key in the TrueScore popup to summarize reviews.');
       const sample = await loadReviewSample();
-      return sample.texts;
+      return sample.reviews.map(sampleText);
     },
+    renderQuote: quoteCards(async () => (await loadReviewSample()).reviews, sampleText, (r) => ({ rating: r.rating, body: r.text })),
   });
   const mountReviews = (): boolean => {
     const section = document.querySelector('[data-section-id="REVIEWS_DEFAULT"]');

@@ -194,28 +194,29 @@ export const stanceMark = (stance: Stance | undefined, authorReviews?: number): 
 };
 
 // A summary bullet's receipt: how many reviews make its point; a press opens
-// them below it. `title` says what was checked when it wasn't every review;
-// `renderQuote` draws a review as the site's own card, else it shows as text.
-export const receiptButton = (
+// them below it, each as the site's own review card (`renderQuote`, which may
+// fetch the reviews to find it among first), or as its text when none holds it.
+// `title` says what was checked when it wasn't every review.
+export const receiptButton = <Q extends string | { text: string }>(
   item: HTMLElement,
   n: number,
-  quotes: string[],
+  quotes: Q[],
+  renderQuote: (q: Q) => HTMLElement | null | Promise<HTMLElement | null>,
   title = 'Show the reviews that say this',
-  renderQuote?: (text: string) => HTMLElement | null,
 ): HTMLButtonElement => {
   ensureJevStyles();
   const btn = el('button', 'ars-receipt', `${n} reviews`) as HTMLButtonElement;
   btn.type = 'button';
   btn.title = title;
   btn.setAttribute('aria-expanded', 'false');
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     const open = item.querySelector('.ars-receipt-quotes');
     btn.setAttribute('aria-expanded', String(!open));
     if (open) { open.remove(); return; }
-    const box = el('div', 'ars-receipt-quotes');
-    for (const q of quotes) box.appendChild(renderQuote?.(q) ?? el('p', 'ars-receipt-quote', q));
+    // Open at once, so a second press closes it while the cards are found.
+    const box = item.appendChild(el('div', 'ars-receipt-quotes'));
+    box.append(...await Promise.all(quotes.map(async (q) => (await renderQuote(q)) ?? el('p', 'ars-receipt-quote', typeof q === 'string' ? q : q.text))));
     if (n > quotes.length) box.appendChild(el('span', 'ars-receipt-more', `+${n - quotes.length} more`));
-    item.appendChild(box);
   });
   return btn;
 };

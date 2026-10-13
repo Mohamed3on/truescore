@@ -3,6 +3,7 @@ import { cacheGet, cacheSet } from '../shared/cache';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { quoteCards } from '../shared/review-search';
 import { appendStat, buildRecentGauge, createIslandShell } from '../shared/score-island';
 import { adjust, recentRatio } from '../shared/recency';
 
@@ -224,15 +225,19 @@ const renderInsights = (ratingEl: Element, rating: any, reviews: any[]) => {
 
 // === LLM review summary (praised / complaints / better alternative / verdict) ===
 
+const bareText = (r: any) => [r.title, r.comment].filter(Boolean).join(': ').trim();
+// A review as the model reads it: after the size bought, when known.
+const reviewText = (r: any) => (r.purchasedSize ? `[Bought size ${r.purchasedSize}] ${bareText(r)}` : bareText(r));
+
 const reviewTexts = (reviews: any[]): string[] => {
   const seen = new Set<string>();
   const texts: string[] = [];
   for (const r of reviews) {
     // Dedupe on the bare text — syndicated copies of a review repeat it verbatim.
-    const text = [r.title, r.comment].filter(Boolean).join(': ').trim();
+    const text = bareText(r);
     if (!text || seen.has(text)) continue;
     seen.add(text);
-    texts.push(r.purchasedSize ? `[Bought size ${r.purchasedSize}] ${text}` : text);
+    texts.push(reviewText(r));
   }
   return texts;
 };
@@ -264,6 +269,7 @@ const addSummarizeUI = (
     cacheKey: `uniqlo-summary-${productId}`,
     summaryPrompt: UNIQLO_SUMMARY_PROMPT,
     fetchReviews: async () => texts,
+    renderQuote: quoteCards(() => reviews, reviewText, (r) => ({ rating: r.rate, title: r.title, body: r.comment, meta: r.purchasedSize && `Bought size ${r.purchasedSize}` })),
   });
 
   // Sit in the buy-box, directly under the rating row (above the fold) instead of

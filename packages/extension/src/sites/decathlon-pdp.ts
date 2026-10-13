@@ -2,7 +2,7 @@ import { addCommas, afterHydration, el, npsColor, npsStats } from '../shared/uti
 import { cacheGet, cacheSet, NEG_TTL } from '../shared/cache';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from '../shared/review-summary';
-import { buildSearchSection, localSearchAsk, SEARCH_MAX } from '../shared/review-search';
+import { buildSearchSection, localSearchAsk, quoteCards, SEARCH_MAX } from '../shared/review-search';
 import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
@@ -281,6 +281,7 @@ const addSummarizeUI = (
     fetchReviews: () =>
       all.then((reviews) => [...new Set(reviews.slice(0, SAMPLE_MAX).map(reviewToText).filter(Boolean))]),
     searchAsk,
+    renderQuote: quoteCards(() => all, reviewToText, reviewFields),
   });
 
   anchor.after(wrapper);

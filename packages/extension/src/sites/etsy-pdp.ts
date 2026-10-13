@@ -6,7 +6,7 @@ import { appendStat, buildGauge, buildRecentGauge, createIslandShell } from '../
 import { adjust, recentRatio } from '../shared/recency';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
-import { buildReviewCard, buildSearchSection } from '../shared/review-search';
+import { buildReviewCard, buildSearchSection, quoteCards } from '../shared/review-search';
 import {
   fetchItemScore,
   fetchRecentReviews,
@@ -28,6 +28,9 @@ const VARIATION_BATCH = 20;
 const POSTAGE_WARN_RATIO = 0.25;
 
 const throttledFetch = createThrottledFetcher(8);
+
+const reviewFields = (r: EtsyReview) => ({ rating: r.rating, body: r.text, meta: r.date });
+const reviewText = (r: EtsyReview) => r.text;
 
 const chunk = <T,>(items: T[], size: number): T[][] => {
   const out: T[][] = [];
@@ -177,10 +180,10 @@ const topicPage = (meta: ListingMeta, tag: string, page: number) => {
   return reviews;
 };
 
-const topicReviewTexts = async (meta: ListingMeta, tag: string): Promise<string[]> => {
-  const pages = await Promise.all(Array.from({ length: TOPIC_SUMMARY_PAGES }, (_, i) => topicPage(meta, tag, i + 1)));
-  return [...new Set(pages.flat().map((r) => r.text).filter(Boolean))];
-};
+const topicReviews = async (meta: ListingMeta, tag: string): Promise<EtsyReview[]> =>
+  (await Promise.all(Array.from({ length: TOPIC_SUMMARY_PAGES }, (_, i) => topicPage(meta, tag, i + 1)))).flat();
+const topicReviewTexts = async (meta: ListingMeta, tag: string): Promise<string[]> =>
+  [...new Set((await topicReviews(meta, tag)).map(reviewText).filter(Boolean))];
 
 // Lazy: build a topic's detail only when its row is first opened. A scoped
 // summarize widget leads — for a mostly-positive item the raw reviews below are
@@ -195,6 +198,7 @@ const fillTopicDetail = (detail: HTMLElement, meta: ListingMeta, t: Topic) => {
     summaryPrompt: topicSummaryPrompt(t.name),
     fetchReviews: () => topicReviewTexts(meta, t.tag),
     questionPlaceholder: `Ask about ${t.name.toLowerCase()}…`,
+    renderQuote: quoteCards(() => topicReviews(meta, t.tag), reviewText, reviewFields),
   });
 
   const list = el('div', 'ars-search-list');
@@ -206,7 +210,7 @@ const fillTopicDetail = (detail: HTMLElement, meta: ListingMeta, t: Topic) => {
       const reviews = pages.flat().filter((r) => r.text);
       list.replaceChildren();
       if (!reviews.length) return list.appendChild(el('div', 'ars-search-empty', 'No reviews to show'));
-      for (const r of reviews) list.appendChild(buildReviewCard({ rating: r.rating, body: r.text, meta: r.date }, []));
+      for (const r of reviews) list.appendChild(buildReviewCard(reviewFields(r), []));
     })
     .catch(() => list.replaceChildren(el('div', 'ars-search-empty', 'Could not load reviews')));
 };
@@ -332,8 +336,8 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
       // reviews in hand — the same ones the summary reads.
       wrapper.appendChild(buildSearchSection({
         reviews: reviews.filter((r) => r.text),
-        fields: (r) => ({ rating: r.rating, body: r.text, meta: r.date }),
-        toText: (r) => r.text,
+        fields: reviewFields,
+        toText: reviewText,
         summaryPrompt: FILTERED_PRODUCT_SUMMARY_PROMPT,
         exampleQuery: 'size OR gift',
       }));
@@ -342,6 +346,7 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
         cacheKey: `etsy-summary-${meta.listingId}`,
         summaryPrompt: PRODUCT_SUMMARY_PROMPT,
         fetchReviews: async () => texts,
+        renderQuote: quoteCards(() => reviews, reviewText, reviewFields),
       });
     }
     // Variations resolve a beat after the reviews; fill the slot once they land.

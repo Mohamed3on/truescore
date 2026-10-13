@@ -7,6 +7,7 @@
 // it shares.
 
 import { STANCE_MARKS, type Stance } from './stance';
+import type { Quote } from './wire';
 
 export type Review = {
   reviewId: string;
@@ -78,6 +79,12 @@ export const textReviewsFor = (reviews: Review[]): string[] =>
       return `[${date}] ${r.text}`;
     })
     .sort((a, b) => b.length - a.length);
+
+// A receipt's quote as the review it is: the one it carries, else the one in
+// `reviews` with its text — a quote is the text the model read, less the date
+// textReviewsFor put before it.
+export const quotedReview = (q: Quote, reviews: Review[] = []): Review | undefined =>
+  typeof q === 'string' ? reviews.find((r) => r.text === q) : q;
 
 // Reviews for the label-search and highlight panels: drop ones too short to be
 // worth a card, newest first. Web and extension render the cards differently
