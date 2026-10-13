@@ -155,7 +155,9 @@ const setTotalRatingsScore = (totalRatingPercentages: { fiveStars: number; oneSt
 const THREE_DAYS = 3 * 86400000;
 
 // ---- Keyword review search helpers (pure; used by getRatingSummary) ----
-type FilteredReview = { rating: number; title: string; body: string; verified: boolean; meta: string };
+// A review's text in the shopper's language, when Amazon translated it.
+type Shown = { title: string; body: string };
+type FilteredReview = { id: string; rating: number; title: string; body: string; verified: boolean; meta: string; shown?: Shown };
 
 const pickText = (root: Element, sel: string) => {
   const node = root.querySelector(sel);
@@ -167,6 +169,7 @@ const pickText = (root: Element, sel: string) => {
 const parseFilteredReview = (review: Element): FilteredReview => {
   const ratingEl = review.querySelector('[data-hook="review-star-rating"], [data-hook="cmps-review-star-rating"]');
   return {
+    id: review.id,
     rating: parseInt(ratingEl?.textContent?.match(/(\d)(?:\.\d)?/)?.[1] ?? '0', 10),
     title: pickText(review, '[data-hook="review-title"]'),
     body: pickText(review, '[data-hook="review-body"]'),
@@ -293,6 +296,53 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     return true;
   };
 
+  // Amazon translates a page's foreign-language reviews into the shopper's
+  // language with one more POST — its "Translate all reviews" button's, signed
+  // for exactly that page's list. Scores and the model read the originals; only
+  // reviews on show (search results, a summary point's reviews) wear the
+  // translation. By review id.
+  const translatePage = async (doc: Document): Promise<[string, Shown][]> => {
+    const offer = doc.querySelector('.cr-translate-these-reviews-section [data-action="reviews:ajax-post"]')?.getAttribute('data-reviews:ajax-post');
+    if (!offer) return [];
+    const parser = new DOMParser();
+    const byId = new Map<string, Shown>();
+    try {
+      const { url, params } = JSON.parse(offer);
+      const res = await fetch(url, { method: 'POST', credentials: 'include', headers: portalHeaders, body: new URLSearchParams(params) });
+      if (!res.ok) return [];
+      for (const chunk of (await res.text()).split('&&&')) {
+        try {
+          const [action, selector, html] = JSON.parse(chunk);
+          const m = action === 'update' && selector.match(/^#(\w+) \.review-(title|text)-content \.cr-translated-review-content$/);
+          if (!m) continue;
+          const shown = byId.get(m[1]) ?? { title: '', body: '' };
+          shown[m[2] === 'text' ? 'body' : 'title'] = parser.parseFromString(html, 'text/html').body.textContent!.trim();
+          byId.set(m[1], shown);
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return [...byId];
+  };
+
+  // A summary point's reviews are the walk's texts, so their translations are
+  // kept by text, as long as the texts are. The walk's pages are translated
+  // once it's done: neither the score nor the summary waits on them.
+  const translationsKey = `ars-translations-${cacheASIN}`;
+  const shownText = new Map<string, string>(Object.entries(cacheGet(translationsKey, THREE_DAYS) ?? {}));
+  const translateTexts = async (pages: Document[]) => {
+    await Promise.all(pages.map(async (doc) => {
+      for (const [id, { body }] of await translatePage(doc)) {
+        const text = doc.getElementById(id)?.querySelector('[data-hook="review-body"]')?.textContent?.trim();
+        if (text && body) shownText.set(text, body);
+      }
+    }));
+    if (shownText.size) cacheSet(translationsKey, Object.fromEntries(shownText));
+  };
+  const renderQuote = (text: string) => {
+    const shown = shownText.get(text);
+    return shown ? el('p', 'ars-receipt-quote', shown) : null;
+  };
+
   const extractReviewTexts = (doc: Document, seen: Set<string>) => {
     const reviews = doc.querySelectorAll('[data-hook="review"]');
     const texts: string[] = [];
@@ -315,7 +365,9 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
     const seen = new Set<string>();
     const texts: string[] = [];
+    const pages: Document[] = [];
     await fetchReviewPages((doc, page) => {
+      pages.push(doc);
       const { total, texts: newTexts } = extractReviewTexts(doc, seen);
       texts.push(...newTexts);
       if (total > 0 && newTexts.length === 0) {
@@ -325,6 +377,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     });
 
     if (texts.length) cacheSet(reviewsCacheKey, texts);
+    void translateTexts(pages);
     return texts;
   };
 
@@ -398,7 +451,9 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     const seenReviewIds = new Set<string>();
     const collectedReviewTexts: string[] = [];
     const reviewTextsSeen = new Set<string>();
+    const pages: Document[] = [];
     walked = fetchReviewPages((syntheticDocument, page) => {
+      pages.push(syntheticDocument);
       if (!totalRatingPercentages) {
         totalRatingPercentages = getRatingPercentages(syntheticDocument);
         const { calculatedScore, totalScorePercentage } = setTotalRatingsScore(
@@ -459,6 +514,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       if (collectedReviewTexts.length) {
         cacheSet(`ars-reviews-${cacheASIN}`, collectedReviewTexts);
       }
+      void translateTexts(pages);
 
       // Fade out scanning indicator
       const spinner = wrapper.querySelector('[data-ars="scanning"]');
@@ -513,8 +569,10 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   // ---- Keyword review search (server-side filterByKeyword) ----
   // Amazon's review AJAX accepts filterByKeyword, so this spans EVERY review —
   // not just the pages we scored — mirroring the Google Maps label search. One
-  // paged fetch per OR-term, unioned by review id (sharing one DOMParser).
-  const fetchKeywordTerm = async (term: string, seen: Set<string>, onFound?: (found: number) => void): Promise<FilteredReview[]> => {
+  // paged fetch per OR-term, unioned by review id (sharing one DOMParser). With
+  // `translating`, each page is also translated as it lands, for display.
+  type Translating = Promise<[string, Shown][]>[];
+  const fetchKeywordTerm = async (term: string, seen: Set<string>, onFound?: (found: number) => void, translating?: Translating): Promise<FilteredReview[]> => {
     const out: FilteredReview[] = [];
     await fetchReviewPages((doc) => {
       const reviews = doc.querySelectorAll('[data-hook="review"]');
@@ -528,14 +586,15 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         out.push(parseFilteredReview(review));
       }
       if (!added) return 'stop';
+      translating?.push(translatePage(doc));
       onFound?.(seen.size);
     }, { filterByKeyword: term });
     return out;
   };
 
-  const fetchReviewsByKeyword = async (terms: string[], onFound?: (found: number) => void): Promise<FilteredReview[]> => {
+  const fetchReviewsByKeyword = async (terms: string[], onFound?: (found: number) => void, translating?: Translating): Promise<FilteredReview[]> => {
     const seen = new Set<string>();
-    const groups = await Promise.all(terms.map((t) => fetchKeywordTerm(t, seen, onFound)));
+    const groups = await Promise.all(terms.map((t) => fetchKeywordTerm(t, seen, onFound, translating)));
     return groups.flat();
   };
 
@@ -562,17 +621,31 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     host.appendChild(buildSearchSection<FilteredReview>({
       reviews: [],
       total: numOfRatings || numberOfParsedReviews,
-      search: async (terms) => ({ matches: await fetchReviewsByKeyword(terms) }),
+      // The matches are listed translated; a summary of them reads the
+      // originals, its points' reviews shown translated again by text.
+      search: async (terms) => {
+        const translating: Translating = [];
+        const matches = await fetchReviewsByKeyword(terms, undefined, translating);
+        const translated = new Map((await Promise.all(translating)).flat());
+        for (const r of matches) {
+          const t = translated.get(r.id);
+          if (!t) continue;
+          r.shown = { title: t.title || r.title, body: t.body || r.body };
+          const text = keywordText(r);
+          if (text) shownText.set(text, keywordText({ ...r, ...r.shown }));
+        }
+        return { matches };
+      },
       fields: (r) => ({
         rating: r.rating,
-        title: r.title,
-        body: r.body,
+        title: (r.shown ?? r).title,
+        body: (r.shown ?? r).body,
         meta: [r.verified ? '\u2713 Verified' : '', r.meta].filter(Boolean).join(' \u00b7 '),
       }),
       toText: keywordText,
       summaryPrompt: keywordSummaryPrompt,
       exampleQuery: 'battery OR strap',
-      mountSummarize: summarizeMatches(`review-summary-${cacheASIN}`, { context: productContext(), searchAsk }),
+      mountSummarize: summarizeMatches(`review-summary-${cacheASIN}`, { context: productContext(), searchAsk, renderQuote }),
     }));
   };
 
@@ -591,6 +664,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       // After the walk its texts are cached, so this reads them, not a second walk.
       fetchReviews: () => walked.then(fetchFreshReviewTexts),
       searchAsk,
+      renderQuote,
     });
     walked.then(() => { if (!numberOfParsedReviews) tools.remove(); });
   }

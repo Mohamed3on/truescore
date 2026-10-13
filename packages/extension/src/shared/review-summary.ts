@@ -533,7 +533,7 @@ export const buildSummarizeWidget = ({
 // The full summarize widget under a search's matches (buildSearchSection's
 // mountSummarize): a summary of them and an Ask about them, cached per query
 // under `cacheKey`.
-export const summarizeMatches = (cacheKey: string, opts: Pick<SummarizeWidgetOpts, 'context' | 'searchAsk'> = {}) =>
+export const summarizeMatches = (cacheKey: string, opts: Pick<SummarizeWidgetOpts, 'context' | 'searchAsk' | 'renderQuote'> = {}) =>
   (wrapper: HTMLElement, query: string, texts: string[]) => buildSummarizeWidget({
     wrapper,
     cacheKey: `${cacheKey}-kw-${query.toLowerCase()}`,
