@@ -60,10 +60,17 @@ const keyOf = (name: string) => words(name).trim().replace(/ /g, '-');
 // a name of several words, run together ("toehold").
 const needles = (ns: string[]) => [...new Set(ns.map(words))].filter((n) => n.trim().length > 1)
   .flatMap((n) => [...new Set([n, ` ${n.trim().replace(/ /g, '')} `])]).flatMap((n) => [n, `${n.trimEnd()}s `]);
-// Whether a text holds one of the needles, once the `hidden` ones are blanked out.
-const sayer = (ns: string[], hidden: string[] = []) => (text: string) => {
-  for (const h of hidden) while (text.includes(h)) text = text.replace(h, ' ');
-  return ns.some((n) => text.includes(n));
+// Whether a text holds one of the needles, once the `hidden` ones are blanked
+// out in turn. Blanking only takes words away, so a hidden needle whose first
+// word the text lacks is never there: only the rest are looked for, since a
+// thread can list a couple of hundred Options, each hiding all the others.
+const sayer = (ns: string[], hidden: string[] = []) => {
+  const byWord = Map.groupBy(hidden.map((h, i) => [i, h] as const), ([, h]) => h.split(' ')[1]!);
+  return (text: string) => {
+    for (const [, h] of [...new Set(text.split(' '))].flatMap((w) => byWord.get(w) ?? []).sort(([a], [b]) => a - b))
+      while (text.includes(h)) text = text.replace(h, ' ');
+    return ns.some((n) => text.includes(n));
+  };
 };
 const postOf = (thread: Thread) => words(`${thread.title} ${thread.text}`);
 
@@ -141,16 +148,22 @@ const titleOf = (o: ThreadOption, t: Title) => `${o.name}'s ${t.name}`;
 const describeOption = (o: ThreadOption) =>
   `${o.name}${o.titles.length ? ` (including ${o.titles.map((t) => titleOf(o, t)).join(', ')})` : ''}${also(o.aliases)}`;
 const namesOf = (o: ThreadOption) => [o.name, ...o.aliases, ...o.titles.flatMap((t) => [t.name, ...t.aliases])];
+// How many of `all` have each name, as its words.
+const owners = (all: ThreadOption[]) => {
+  const n = new Map<string, number>();
+  for (const x of all) for (const w of new Set(namesOf(x).map(words))) n.set(w, (n.get(w) ?? 0) + 1);
+  return n;
+};
 // The names that pick an Option's comments among the thread's `all`: its own,
 // less any another Option has too, which could mean either.
-const ownNames = (o: ThreadOption, all: ThreadOption[]) => {
-  const theirs = new Set(all.filter((x) => x !== o).flatMap(namesOf).map(words));
-  return namesOf(o).filter((n) => !theirs.has(words(n)));
-};
+const ownNames = (o: ThreadOption, all: ThreadOption[], n = owners(all)) => namesOf(o).filter((name) => n.get(words(name)) === 1);
 // Its rivals (naming): the other Options' names, less any its own hold. So
 // one whose name holds its own ("Inside heel hook" beside "Heel hook") hides
 // from it only its own mentions, as a sibling title's does (tallyOption).
-const rivalsOf = (o: ThreadOption, all: ThreadOption[]) => telling(all.filter((x) => x !== o).flatMap((x) => ownNames(x, all)), ownNames(o, all));
+const rivalsOf = (o: ThreadOption, all: ThreadOption[]) => {
+  const n = owners(all);
+  return telling(all.filter((x) => x !== o).flatMap((x) => ownNames(x, all, n)), ownNames(o, all, n));
+};
 
 // The names that pick a thing's comments: its own, less any that a name of
 // something else holds ("twin" beside a Zoe Twin, "mount" beside Danaher's 4x4
