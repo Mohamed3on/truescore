@@ -3,7 +3,7 @@ import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas, el } from '../shared/utils';
 import { adjust, ratioFromTally } from '../shared/recency';
 import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, summarizeMatches } from '../shared/review-summary';
-import { buildSearchSection, runSearch, searchWith } from '../shared/review-search';
+import { buildReviewCard, buildSearchSection, runSearch, searchWith, type SearchReviewFields } from '../shared/review-search';
 import type { SearchAsk } from '../shared/review-ask';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 import { createIslandShell } from '../shared/score-island';
@@ -161,9 +161,11 @@ type FilteredReview = { id: string; rating: number; title: string; body: string;
 
 const pickText = (root: Element, sel: string) => {
   const node = root.querySelector(sel);
-  // Prefer the original (untranslated) span when Amazon nests one; for local
-  // reviews this also strips the star-rating alt text baked into the title.
-  return (node?.querySelector('.cr-original-review-content')?.textContent ?? node?.textContent ?? '').trim();
+  // Prefer the original (untranslated) span when Amazon nests one. Without it
+  // (a local review), a title also holds its star rating's alt text, dropped.
+  const original = node?.querySelector('.cr-original-review-content');
+  if (original) return original.textContent!.trim();
+  return (node?.textContent ?? '').replace(node?.querySelector('.a-icon-alt')?.textContent ?? '', '').trim();
 };
 
 const parseFilteredReview = (review: Element): FilteredReview => {
@@ -177,6 +179,15 @@ const parseFilteredReview = (review: Element): FilteredReview => {
     meta: review.querySelector('[data-hook="review-date"]')?.textContent?.trim() ?? '',
   };
 };
+
+// A review as the search lists it, and as a summary point's reviews show it:
+// stars, date and title, in the shopper's language when Amazon translated it.
+const cardFields = (r: FilteredReview): SearchReviewFields => ({
+  rating: r.rating,
+  title: r.shown?.title || r.title,
+  body: r.shown?.body || r.body,
+  meta: [r.verified ? '\u2713 Verified' : '', r.meta].filter(Boolean).join(' \u00b7 '),
+});
 
 // The page title goes along as context, so the model knows which product the
 // searched term is a lens on (see keywordSummaryPrompt).
@@ -324,23 +335,31 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     return [...byId];
   };
 
-  // A summary point's reviews are the walk's texts, so their translations are
-  // kept by text, as long as the texts are. The walk's pages are translated
-  // once it's done: neither the score nor the summary waits on them.
-  const translationsKey = `ars-translations-${cacheASIN}`;
-  const shownText = new Map<string, string>(Object.entries(cacheGet(translationsKey, THREE_DAYS) ?? {}));
-  const translateTexts = async (pages: Document[]) => {
+  // A summary point's reviews are the walk's texts, so each one's card is kept
+  // by its text, as long as the texts are. The walk's pages are translated once
+  // it's done: neither the score nor the summary waits on them.
+  const cardsKey = `ars-cards-${cacheASIN}`;
+  const cards = new Map<string, FilteredReview>(Object.entries(cacheGet(cardsKey, THREE_DAYS) ?? {}));
+  const keepCards = async (pages: Document[]) => {
     await Promise.all(pages.map(async (doc) => {
-      for (const [id, { body }] of await translatePage(doc)) {
-        const text = doc.getElementById(id)?.querySelector('[data-hook="review-body"]')?.textContent?.trim();
-        if (text && body) shownText.set(text, body);
+      const byId = new Map<string, FilteredReview>();
+      for (const review of doc.querySelectorAll('[data-hook="review"]')) {
+        const text = review.querySelector('[data-hook="review-body"]')?.textContent?.trim();
+        if (!text) continue;
+        const r = parseFilteredReview(review);
+        byId.set(r.id, r);
+        cards.set(text, r);
+      }
+      for (const [id, shown] of await translatePage(doc)) {
+        const r = byId.get(id);
+        if (r) r.shown = shown;
       }
     }));
-    if (shownText.size) cacheSet(translationsKey, Object.fromEntries(shownText));
+    if (cards.size) cacheSet(cardsKey, Object.fromEntries(cards));
   };
   const renderQuote = (text: string) => {
-    const shown = shownText.get(text);
-    return shown ? el('p', 'ars-receipt-quote', shown) : null;
+    const r = cards.get(text);
+    return r ? buildReviewCard(cardFields(r), []) : null;
   };
 
   const extractReviewTexts = (doc: Document, seen: Set<string>) => {
@@ -377,7 +396,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     });
 
     if (texts.length) cacheSet(reviewsCacheKey, texts);
-    void translateTexts(pages);
+    void keepCards(pages);
     return texts;
   };
 
@@ -514,7 +533,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       if (collectedReviewTexts.length) {
         cacheSet(`ars-reviews-${cacheASIN}`, collectedReviewTexts);
       }
-      void translateTexts(pages);
+      void keepCards(pages);
 
       // Fade out scanning indicator
       const spinner = wrapper.querySelector('[data-ars="scanning"]');
@@ -622,26 +641,19 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       reviews: [],
       total: numOfRatings || numberOfParsedReviews,
       // The matches are listed translated; a summary of them reads the
-      // originals, its points' reviews shown translated again by text.
+      // originals, its points' reviews shown as their cards again by text.
       search: async (terms) => {
         const translating: Translating = [];
         const matches = await fetchReviewsByKeyword(terms, undefined, translating);
         const translated = new Map((await Promise.all(translating)).flat());
         for (const r of matches) {
-          const t = translated.get(r.id);
-          if (!t) continue;
-          r.shown = { title: t.title || r.title, body: t.body || r.body };
+          r.shown = translated.get(r.id);
           const text = keywordText(r);
-          if (text) shownText.set(text, keywordText({ ...r, ...r.shown }));
+          if (text) cards.set(text, r);
         }
         return { matches };
       },
-      fields: (r) => ({
-        rating: r.rating,
-        title: (r.shown ?? r).title,
-        body: (r.shown ?? r).body,
-        meta: [r.verified ? '\u2713 Verified' : '', r.meta].filter(Boolean).join(' \u00b7 '),
-      }),
+      fields: cardFields,
       toText: keywordText,
       summaryPrompt: keywordSummaryPrompt,
       exampleQuery: 'battery OR strap',
