@@ -313,14 +313,16 @@ const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: nu
     wrapper.appendChild(row);
   }
 
-  // Secondary ratings (effect, tolerability…) as meters on their 1–N scale,
-  // under the site's own labels. The fill carries the state, on a lighter step
-  // of its own hue: stone while a dimension keeps up with the item's overall
-  // stars, amber from 0.3 stars behind, red from a whole star. A slider runs
-  // from its bad end to its good end like a rating (its scale shows on hover),
-  // except Passform (fit), which is best in the middle: a dot that never lags.
+  // Secondary ratings (effect, tolerability…) as two small bar tables, a row
+  // each: the site's label, a meter on the rating's 1–N scale, the figure. The
+  // fill carries the state on a lighter track of its own hue: stone while a
+  // dimension keeps up with the item's overall stars, amber from 0.3 stars
+  // behind, red from a whole star. A label pairing synonyms ("Anwender-
+  // freundlichkeit / Handhabung") shows its first; hovering a row shows all of
+  // it, and a slider's scale. A slider runs from its bad end to its good end
+  // like a rating, except Passform (fit), best in the middle: a dot, never lagging.
   const overall = Number(stats.AverageOverallRating) || 0;
-  const meters = (stats.SecondaryRatingsAveragesOrder || []).flatMap((id: string) => {
+  const rows = (stats.SecondaryRatingsAveragesOrder || []).flatMap((id: string) => {
     const metric = stats.SecondaryRatingsAverages?.[id];
     const named = labels?.[id];
     const range = Number(metric?.ValueRange);
@@ -330,14 +332,8 @@ const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: nu
     const tone = lag >= 1 ? 'neg' : lag >= 0.3 ? 'mid' : null;
     const at = Math.min(100, Math.max(0, ((metric.AverageRating - 1) / (range - 1)) * 100));
 
-    const meter = el('div');
-    meter.style.cssText = 'display:flex;flex-direction:column;gap:5px;min-width:0';
-    if (named.ends) meter.title = `1 = ${named.ends[0]}, ${range} = ${named.ends[1]}`;
-    const head = el('div');
-    head.style.cssText = 'display:flex;align-items:baseline;justify-content:space-between;gap:8px';
-    const value = el('span', undefined, metric.AverageRating.toFixed(1));
-    value.style.cssText = 'flex:none;font-weight:700;font-variant-numeric:tabular-nums;color:#1C1917';
-    head.append(el('span', undefined, named.label), value);
+    const label = el('span', undefined, named.label.split(' / ')[0]);
+    label.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
     const track = el('div');
     track.style.cssText = `position:relative;height:4px;border-radius:2px;background:${tone ? toneColor(tone, 90) : '#E7E5E4'}`;
     const mark = el('div');
@@ -345,14 +341,24 @@ const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: nu
       ? `position:absolute;top:-2px;left:calc(${at}% - 4px);width:8px;height:8px;border-radius:50%;background:#78716C;box-shadow:0 0 0 2px #FAFAF9`
       : `width:${at}%;height:100%;border-radius:0 2px 2px 0;background:${tone ? toneColor(tone, 44) : '#78716C'}`;
     track.append(mark);
-    meter.append(head, track);
-    return [meter];
+    const value = el('span', undefined, metric.AverageRating.toFixed(1));
+    value.style.cssText = 'font-weight:700;font-variant-numeric:tabular-nums;color:#1C1917';
+    const hover = named.ends ? `${named.label}: 1 = ${named.ends[0]}, ${range} = ${named.ends[1]}` : named.label;
+    for (const part of [label, track, value]) part.title = hover;
+    return [[label, track, value]];
   });
-  if (meters.length) {
-    const grid = el('div');
-    grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 24px;margin-top:2px;font-size:12px;line-height:1.4;color:#57534E';
-    grid.append(...meters);
-    wrapper.appendChild(grid);
+  if (rows.length) {
+    const half = Math.ceil(rows.length / 2);
+    const tables = el('div');
+    tables.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px 24px;font-size:12px;line-height:1.4;color:#57534E';
+    for (const column of [rows.slice(0, half), rows.slice(half)]) {
+      if (!column.length) continue;
+      const table = el('div');
+      table.style.cssText = 'flex:1 1 240px;display:grid;grid-template-columns:minmax(0,160px) minmax(56px,1fr) auto;align-items:center;gap:6px 8px';
+      table.append(...column.flat());
+      tables.append(table);
+    }
+    wrapper.appendChild(tables);
   }
 };
 
