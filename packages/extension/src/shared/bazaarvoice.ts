@@ -313,32 +313,46 @@ const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: nu
     wrapper.appendChild(row);
   }
 
-  // Secondary ratings (effect, tolerability…) under the site's own labels, as a
-  // ledger: figure first, so the figures line up in columns. Only a dimension
-  // that lags the item's overall stars takes colour, amber from 0.3 stars behind
-  // and red from a whole star. A slider runs from its bad end to its good end
-  // like a rating (its scale shows on hover), except Passform (fit), which is
-  // best in the middle and never lags.
+  // Secondary ratings (effect, tolerability…) as meters on their 1–N scale,
+  // under the site's own labels. The fill carries the state, on a lighter step
+  // of its own hue: stone while a dimension keeps up with the item's overall
+  // stars, amber from 0.3 stars behind, red from a whole star. A slider runs
+  // from its bad end to its good end like a rating (its scale shows on hover),
+  // except Passform (fit), which is best in the middle: a dot that never lags.
   const overall = Number(stats.AverageOverallRating) || 0;
-  const rows = (stats.SecondaryRatingsAveragesOrder || []).flatMap((id: string) => {
+  const meters = (stats.SecondaryRatingsAveragesOrder || []).flatMap((id: string) => {
     const metric = stats.SecondaryRatingsAverages?.[id];
     const named = labels?.[id];
-    if (!named || typeof metric?.AverageRating !== 'number' || !(metric.ValueRange > 0)) return [];
-    const row = el('div');
-    row.style.cssText = 'display:flex;align-items:baseline;gap:8px;min-width:0';
-    if (named.ends) row.title = `1 = ${named.ends[0]}, ${metric.ValueRange} = ${named.ends[1]}`;
+    const range = Number(metric?.ValueRange);
+    if (!named || typeof metric?.AverageRating !== 'number' || !(range > 1)) return [];
+    const centered = /passform/i.test(named.label);
+    const lag = overall && !centered ? overall - metric.AverageRating : 0;
+    const tone = lag >= 1 ? 'neg' : lag >= 0.3 ? 'mid' : null;
+    const at = Math.min(100, Math.max(0, ((metric.AverageRating - 1) / (range - 1)) * 100));
+
+    const meter = el('div');
+    meter.style.cssText = 'display:flex;flex-direction:column;gap:5px;min-width:0';
+    if (named.ends) meter.title = `1 = ${named.ends[0]}, ${range} = ${named.ends[1]}`;
+    const head = el('div');
+    head.style.cssText = 'display:flex;align-items:baseline;justify-content:space-between;gap:8px';
     const value = el('span', undefined, metric.AverageRating.toFixed(1));
     value.style.cssText = 'flex:none;font-weight:700;font-variant-numeric:tabular-nums;color:#1C1917';
-    const lag = overall && !/passform/i.test(named.label) ? overall - metric.AverageRating : 0;
-    if (lag >= 0.3) value.style.color = toneColor(lag >= 1 ? 'neg' : 'mid');
-    row.append(value, el('span', undefined, named.label));
-    return [row];
+    head.append(el('span', undefined, named.label), value);
+    const track = el('div');
+    track.style.cssText = `position:relative;height:4px;border-radius:2px;background:${tone ? toneColor(tone, 90) : '#E7E5E4'}`;
+    const mark = el('div');
+    mark.style.cssText = centered
+      ? `position:absolute;top:-2px;left:calc(${at}% - 4px);width:8px;height:8px;border-radius:50%;background:#78716C;box-shadow:0 0 0 2px #FAFAF9`
+      : `width:${at}%;height:100%;border-radius:0 2px 2px 0;background:${tone ? toneColor(tone, 44) : '#78716C'}`;
+    track.append(mark);
+    meter.append(head, track);
+    return [meter];
   });
-  if (rows.length) {
-    const ledger = el('div');
-    ledger.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:4px 24px;font-size:12px;line-height:1.4;color:#57534E';
-    ledger.append(...rows);
-    wrapper.appendChild(ledger);
+  if (meters.length) {
+    const grid = el('div');
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 24px;margin-top:2px;font-size:12px;line-height:1.4;color:#57534E';
+    grid.append(...meters);
+    wrapper.appendChild(grid);
   }
 };
 
