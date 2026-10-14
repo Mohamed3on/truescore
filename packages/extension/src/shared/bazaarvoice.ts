@@ -79,8 +79,10 @@ const extractStats = (payload: any, requestedProductId: string) => {
   const products = response?.Includes?.Products;
   if (!products) return null;
 
-  if (products[requestedProductId]?.ReviewStatistics) {
-    return products[requestedProductId].ReviewStatistics;
+  // With the product's family: its pack sizes share one, and one set of reviews.
+  const requested = products[requestedProductId];
+  if (requested?.ReviewStatistics) {
+    return { ...requested.ReviewStatistics, FamilyIds: requested.FamilyIds };
   }
 
   const productsOrder = response?.Includes?.ProductsOrder || [];
@@ -100,7 +102,7 @@ const extractStats = (payload: any, requestedProductId: string) => {
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
 const fetchStats = async (site: BvSite, productId: string, fetcher: Fetcher = fetch) => {
-  const cacheKey = `nps_${site.key}_stats_${productId}`;
+  const cacheKey = `nps_${site.key}_stats_v2_${productId}`;
   const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
   if (cached) return cached.value;
 
@@ -398,7 +400,8 @@ const buildCard = (
       search: searchWith((terms) => remote(terms).then((hit) => hit.matches), reviewToText, (r) => r.rating),
       open: (query) => runSearch(wrapper, query),
     } : undefined;
-    const summaryKey = `${site.key}-summary-${productId}`;
+    // One summary per family, so another pack size of the product keeps it.
+    const summaryKey = `${site.key}-summary-${stats.FamilyIds?.[0] ?? productId}`;
 
     // Above the summarize widget, the same way it sits on the other PDP islands.
     wrapper.appendChild(buildSearchSection({
