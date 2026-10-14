@@ -2,7 +2,7 @@ import { homedir } from 'os';
 import { buildListReq, parseReviewsResponse, signReq, type MapsCreds, type Signer } from '@truescore/gmaps-shared';
 import { logEvent } from './events';
 
-const COOKIES_PATH = process.env.TRUESCORE_COOKIES_PATH || `${homedir()}/.truescore-cookies.json`;
+export const COOKIES_PATH = process.env.TRUESCORE_COOKIES_PATH || `${homedir()}/.truescore-cookies.json`;
 const COOKIES_TTL_MS = Number(process.env.TRUESCORE_COOKIES_TTL_MS) || 7 * 24 * 60 * 60 * 1000;
 
 // The residential proxy, its auth inline.
@@ -30,10 +30,21 @@ const FETCH_HEADERS_BASE = {
 // Pre-seeded values that signal "consent already given" — bypasses the EU consent dance.
 // Google then issues __Secure-ENID and __Secure-BUCKET on the next page load, which
 // together with these are enough to authenticate listugcposts and preview/place RPCs.
-const SEED_COOKIES: Record<string, string> = {
-  CONSENT: 'YES+cb.20210720-07-p0.en+FX+410',
-  SOCS: 'CAESHAgBEhJnd3NfMjAyMzAyMDgtMF9SQzIaAmVuIAEaBgiAm6KfBg',
-};
+const SEED_COOKIES = 'CONSENT=YES+cb.20210720-07-p0.en+FX+410; SOCS=CAESHAgBEhJnd3NfMjAyMzAyMDgtMF9SQzIaAmVuIAEaBgiAm6KfBg';
+
+// A Cookie header with each of `updates` (a Set-Cookie line or a `name=value` pair)
+// laid over it, by name.
+export function withCookies(header: string, updates: string[]): string {
+  const jar = new Map<string, string>();
+  for (const c of [...header.split(';'), ...updates]) {
+    const m = c.trim().match(/^([^=]+)=([^;]*)/);
+    if (m?.[1]) jar.set(m[1], m[2] ?? '');
+  }
+  return [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+const setCookiesOf = (r: Response): string[] =>
+  (r.headers as any).getAll ? (r.headers as any).getAll('set-cookie') : ([r.headers.get('set-cookie')].filter(Boolean) as string[]);
 
 // Eiffel Tower — the canonical "always has reviews" place. verifyReviewsLoad probes
 // it to confirm a freshly-minted session serves reviews.
@@ -55,23 +66,27 @@ export function setGoogleCookieOverride(header: string | null): void {
 // baked jar (written to disk) never holds the account. The minter reads the page's
 // session id, BotGuard challenge and XSRF token too.
 export async function fetchMapsPage(accountCookies = ''): Promise<{ html: string; cookies: string }> {
-  const jar: Record<string, string> = { ...SEED_COOKIES };
-  const cookieHeader = () => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
-  const take = (c: string) => {
-    const m = c.trim().match(/^([^=]+)=([^;]*)/);
-    if (m?.[1]) jar[m[1]] = m[2] ?? '';
-  };
-  accountCookies.split(';').forEach(take);
+  const sent = withCookies(SEED_COOKIES, accountCookies.split(';'));
   const r = await fetch('https://www.google.com/maps?hl=en', {
     proxy: PROXY_URL,
     redirect: 'follow',
-    headers: { ...FETCH_HEADERS_BASE, Accept: 'text/html,application/xhtml+xml', Cookie: cookieHeader() },
+    headers: { ...FETCH_HEADERS_BASE, Accept: 'text/html,application/xhtml+xml', Cookie: sent },
   });
-  const setCookies = (r.headers as any).getAll
-    ? (r.headers as any).getAll('set-cookie')
-    : [r.headers.get('set-cookie')].filter(Boolean);
-  ((setCookies || []) as string[]).forEach(take);
-  return { html: await r.text(), cookies: cookieHeader() };
+  return { html: await r.text(), cookies: withCookies(sent, setCookiesOf(r)) };
+}
+
+// A signed-in jar after Google rotates its __Secure-1PSIDTS, as a signed-in browser has
+// it do every few minutes; Google signs out a session that stops. Throws when Google
+// refuses (a 401: the session is gone) or the proxy fails.
+export async function rotateCookies(header: string): Promise<string> {
+  const r = await fetch('https://accounts.google.com/RotateCookies', {
+    method: 'POST',
+    proxy: PROXY_URL,
+    headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/json', Cookie: header },
+    body: '[000,"-0000000000000000000"]',
+  });
+  if (!r.ok) throw new Error(`RotateCookies ${r.status}`);
+  return withCookies(header, setCookiesOf(r));
 }
 
 export async function getGoogleCookieHeader(): Promise<string> {

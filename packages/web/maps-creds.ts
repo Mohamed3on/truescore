@@ -1,5 +1,6 @@
 import { type MapsCreds, type Signer } from '@truescore/gmaps-shared';
-import { setGoogleCookieOverride } from './browser';
+import { setGoogleCookieOverride, withCookies } from './browser';
+import { rotateAccount } from './account';
 import { mintMapsCreds } from './maps-minter';
 import { logEvent } from './events';
 
@@ -140,11 +141,36 @@ async function renew(reason: string): Promise<boolean> {
   return true;
 }
 
+// The account's cookies (see ./account), rotated every ten minutes like a browser with
+// Google open, and handed to the live session, which sends them on every request.
+// Logged on the first success and on every failure.
+const ROTATE_MS = 10 * 60_000;
+let rotated = false;
+
+async function rotate(): Promise<void> {
+  try {
+    const cookies = await rotateAccount();
+    if (session) {
+      session = { ...session, cookies: withCookies(session.cookies, cookies.split(';')) };
+      setGoogleCookieOverride(session.cookies);
+    }
+    if (!rotated) logEvent('rotate', { result: 'ok' });
+    rotated = true;
+  } catch (e) {
+    rotated = false;
+    logEvent('rotate', { result: 'fail', reason: e instanceof Error ? e.message : String(e) });
+  }
+}
+
 // Hands-off engine: mint on boot, then refresh on a timer well inside the ~day a
 // session lasts, so it never expires in front of a user. The reactive path
 // (onStaleRpc) is the backstop. TRUESCORE_MINT_INTERVAL_MIN (default 240; 0 disables).
 export function startMintTimer(): void {
   void renewSession('boot', true);
+  if (process.env.TRUESCORE_ACCOUNT_COOKIES) {
+    void rotate();
+    setInterval(rotate, ROTATE_MS);
+  }
   const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 240);
   if (!(min > 0)) { console.log('[maps-creds] proactive mint disabled'); return; }
   const intervalMs = min * 60_000;

@@ -66,8 +66,11 @@ ssh root@65.108.153.112 'curl -s -X POST localhost/api/maps-creds/renew -H "x-tr
 # Network → reload → the document request → copy its `cookie` request header. Close the
 # window without signing out: signing out kills the cookies. Add the header to .env as
 # one single-quoted line, TRUESCORE_ACCOUNT_COOKIES='SID=…; HSID=…; …', and restart.
-# Every `type=mint` event logs signedIn: false means the cookies no longer sign Maps
-# in, so copy them again.
+# The server rotates the account's cookies every 10 minutes, as a signed-in browser
+# does, and keeps the rotated set in /var/lib/truescore/account.json (mode 600), so
+# restarts carry it on; a new env value supersedes that file. Every `type=mint` event
+# logs signedIn, and a `type=rotate result=fail` event means Google refused a rotation:
+# when mints log signedIn=false, sign in again and replace the env line.
 ssh -t root@65.108.153.112 'nano /opt/truescore/.env && systemctl restart truescore'
 
 # tune proactive mint cadence (minutes; default 240 = every 4h; 0 disables → reactive

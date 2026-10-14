@@ -22,3 +22,5 @@ if (!process.env.TRUESCORE_CACHE_DB_PATH) {
   process.env.TRUESCORE_CACHE_DB_PATH = dbPath;
   process.env.TRUESCORE_CACHE_PATH ??= join(tmpdir(), `truescore-test-${process.pid}-legacy.json`);
 }
+// Likewise the cookie jars browser.ts and account.ts save.
+process.env.TRUESCORE_COOKIES_PATH ??= join(tmpdir(), `truescore-test-${process.pid}-cookies.json`);

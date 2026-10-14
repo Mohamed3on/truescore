@@ -1,5 +1,12 @@
 import { test, expect, describe, afterEach } from 'bun:test';
-import { assertGoogleHost } from './browser';
+import { assertGoogleHost, withCookies } from './browser';
+
+describe('withCookies', () => {
+  test('lays Set-Cookie lines and name=value pairs over a header, by name', () => {
+    expect(withCookies('SID=a; HSID=b=c', ['NID=n; Path=/; Domain=.google.com', ' SID=z'])).toBe('SID=z; HSID=b=c; NID=n');
+    expect(withCookies('', [])).toBe('');
+  });
+});
 
 describe('fetchPlacePreview', () => {
   const origFetch = globalThis.fetch;

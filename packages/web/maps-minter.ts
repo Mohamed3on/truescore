@@ -8,6 +8,7 @@
 // TRUESCORE_ACCOUNT_COOKIES: the Cookie header of a dedicated Google account.
 import { PAGE_SIZE, type Signer } from '@truescore/gmaps-shared';
 import { fetchMapsPage, googleFetch, verifyReviewsLoad, PROXY_URL, USER_AGENT } from './browser';
+import { accountCookies } from './account';
 import type { MapsSession } from './maps-creds';
 import { logEvent } from './events';
 
@@ -106,7 +107,7 @@ async function runMint(): Promise<Minted> {
 }
 
 async function startSession(vm: BotguardWorker): Promise<MapsSession> {
-  const { html, cookies } = await fetchMapsPage(process.env.TRUESCORE_ACCOUNT_COOKIES);
+  const { html, cookies } = await fetchMapsPage(await accountCookies());
   const sessionId = html.match(/kEI='([^']+)'/)?.[1];
   const challenge = html.match(/"USpUDc":("(?:[^"\\]|\\.)*")/)?.[1];
   if (!sessionId || !challenge) throw new Error('no session in the Maps page');
