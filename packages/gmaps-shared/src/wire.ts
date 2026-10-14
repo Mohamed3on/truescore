@@ -13,13 +13,13 @@ import type { Thread } from './thread';
 // A verdict bullet from the LLM: one concrete line + its sentiment. Named apart
 // from Chip so the two "highlights" (prose bullets vs scored topic chips) never
 // collide again. `support`: how many of the summarized reviews make the point,
-// as Jev read them (web/jev.ts), and `quotes` the first of those reviews — a
+// as Jev read them (web/jev.ts), and `quotes` the newest of those reviews — a
 // bullet fewer than two reviews make is dropped (streamed, it shows dim till
 // then). Both absent on drafts and on summaries Jev didn't check.
 export type SummaryHighlight = { text: string; sentiment: string; support?: number; quotes?: Quote[] };
 // A receipt's review: the whole Review when the server holds it (quotingReviews,
 // web/jev.ts), else the text the model read, which a client finds among the
-// reviews it holds (quotedReview).
+// reviews it holds (receiptReviews).
 export type Quote = Review | string;
 // `items`: specific things reviewers single out (dishes, animals, exhibits…),
 // as short label-search terms (e.g. "alfajores", "gorilla"). Rendered as their

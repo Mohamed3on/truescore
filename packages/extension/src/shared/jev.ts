@@ -196,11 +196,12 @@ export const stanceMark = (stance: Stance | undefined, authorReviews?: number): 
 // A summary bullet's receipt: how many reviews make its point; a press opens
 // them below it, each as the site's own review card (`renderQuote`, which may
 // fetch the reviews to find it among first), or as its text when none holds it.
-// `title` says what was checked when it wasn't every review.
+// `quotes` may be read only then, when their order waits on reviews still
+// arriving. `title` says what was checked when it wasn't every review.
 export const receiptButton = <Q extends string | { text: string }>(
   item: HTMLElement,
   n: number,
-  quotes: Q[],
+  quotes: Q[] | (() => Q[]),
   renderQuote: (q: Q) => HTMLElement | null | Promise<HTMLElement | null>,
   title = 'Show the reviews that say this',
 ): HTMLButtonElement => {
@@ -215,8 +216,9 @@ export const receiptButton = <Q extends string | { text: string }>(
     if (open) { open.remove(); return; }
     // Open at once, so a second press closes it while the cards are found.
     const box = item.appendChild(el('div', 'ars-receipt-quotes'));
-    box.append(...await Promise.all(quotes.map(async (q) => (await renderQuote(q)) ?? el('p', 'ars-receipt-quote', typeof q === 'string' ? q : q.text))));
-    if (n > quotes.length) box.appendChild(el('span', 'ars-receipt-more', `+${n - quotes.length} more`));
+    const shown = typeof quotes === 'function' ? quotes() : quotes;
+    box.append(...await Promise.all(shown.map(async (q) => (await renderQuote(q)) ?? el('p', 'ars-receipt-quote', typeof q === 'string' ? q : q.text))));
+    if (n > shown.length) box.appendChild(el('span', 'ars-receipt-more', `+${n - shown.length} more`));
   });
   return btn;
 };

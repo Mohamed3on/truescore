@@ -98,11 +98,11 @@ describe('withReceipts', () => {
     noul: state.point ? (review.includes(state.point.split(' ')[1].toLowerCase()) ? 0.9 : 0.1) : /rather go to Rival/.test(review) ? 0.9 : 0.1,
   });
 
-  test('bullets carry their support and quotes; fewer than two supporters drops one', async () => {
+  test('bullets carry their support and quotes, newest first; fewer than two supporters drops one', async () => {
     setJevClient(fake(pointRule));
-    const reviewTexts = ['[2026-09-01] loved the penguins', '[undated] penguins!', '[2026-09-02] parking was hard', '[2026-09-01] loved the penguins'];
+    const reviewTexts = ['[2026-09-01] loved the penguins', '[undated] penguins!', '[2026-09-02] parking was hard', '[2026-09-01] loved the penguins', '[2026-10-01] the penguins again'];
     const checked = await withReceipts(summary(), { placeName: 'Aquarium', reviewTexts });
-    expect(checked.highlights).toEqual([{ text: 'The penguins are a favourite', sentiment: 'positive', support: 2, quotes: ['loved the penguins', 'penguins!'] }]);
+    expect(checked.highlights).toEqual([{ text: 'The penguins are a favourite', sentiment: 'positive', support: 3, quotes: ['the penguins again', 'loved the penguins', 'penguins!'] }]);
   });
 
   test('a rival stays only when two reviews say they would rather go there', async () => {

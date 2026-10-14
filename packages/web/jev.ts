@@ -230,7 +230,7 @@ export async function stanceOfReviews(topic: string, reviews: Review[]): Promise
 // Summary points need the support of this many reviews to be shown — the
 // prompt's own "2+ reviewers" rule, enforced instead of trusted.
 export const MIN_SUPPORT = 2;
-// Supporting reviews a bullet carries for its click-through.
+// Supporting reviews a bullet carries for its click-through: the newest.
 const QUOTES_MAX = 20;
 
 // Per point, the indices of the texts that make it — every text checked: a
@@ -256,6 +256,7 @@ export async function preferredCount(place: string, rival: string, texts: string
 // textReviewsFor dates each review for the model ("[2026-09-14] …"); a quote
 // shown to a person drops it.
 const undated = (text: string) => text.replace(/^\[(?:\d{4}-\d{2}-\d{2}|undated)\] /, '');
+const dateOf = (text: string) => /^\[(\d{4}-\d{2}-\d{2})\]/.exec(text)?.[1] ?? '';
 // A rival's mentions: reviews holding its name, or failing that its longest word
 // ("Mustafa" for "Mustafa's Gemüse Kebap"), as reviewers rarely write it in full.
 export const mentioning = (texts: string[], name: string): string[] => {
@@ -265,7 +266,8 @@ export const mentioning = (texts: string[], name: string): string[] => {
 };
 
 // A summary with its receipts: each bullet carries how many reviews make its
-// point and the first of them, a bullet fewer than MIN_SUPPORT make is dropped,
+// point and the newest of them, newest first as the panel lists reviews, a
+// bullet fewer than MIN_SUPPORT make is dropped,
 // and an alternative stays only if as many reviews say they'd rather go there.
 // Unchanged when Jev can't check it — the summary shows as it always did.
 export async function withReceipts(summary: Summary, { placeName, reviewTexts }: Subject): Promise<Summary> {
@@ -277,8 +279,9 @@ export async function withReceipts(summary: Summary, { placeName, reviewTexts }:
     Promise.all(alternatives.map((alt) => preferredCount(placeName, alt, mentioning(texts, alt)))),
   ]);
   if (!support) return summary;
+  const newest = (ids: number[]) => ids.toSorted((a, b) => dateOf(texts[b]!).localeCompare(dateOf(texts[a]!))).slice(0, QUOTES_MAX);
   const highlights = summary.highlights
-    .map((h, k) => ({ ...h, support: support[k]!.length, quotes: support[k]!.slice(0, QUOTES_MAX).map((i) => undated(texts[i]!)) }))
+    .map((h, k) => ({ ...h, support: support[k]!.length, quotes: newest(support[k]!).map((i) => undated(texts[i]!)) }))
     .filter((h) => h.support >= MIN_SUPPORT);
   const checked = preferred.every((n) => n != null);
   const kept = checked ? alternatives.filter((_, i) => preferred[i]! >= MIN_SUPPORT) : alternatives;

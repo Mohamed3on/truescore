@@ -80,11 +80,15 @@ export const textReviewsFor = (reviews: Review[]): string[] =>
     })
     .sort((a, b) => b.length - a.length);
 
-// A receipt's quote as the review it is: the one it carries, else the one in
-// `reviews` with its text — a quote is the text the model read, less the date
-// textReviewsFor put before it.
-export const quotedReview = (q: Quote, reviews: Review[] = []): Review | undefined =>
-  typeof q === 'string' ? reviews.find((r) => r.text === q) : q;
+// A receipt's reviews newest first, as the panels list them (sortedDisplayReviews):
+// each quote the review it carries, else the one in `reviews` with its text — a
+// quote is the text the model read, less the date textReviewsFor put before it.
+// Texts none of them holds go last.
+export const receiptReviews = (quotes: Quote[], reviews: Review[] = []): Quote[] => {
+  const byText = new Map(reviews.map((r) => [r.text, r]));
+  const ts = (q: Quote) => (typeof q === 'string' ? 0 : q.timestamp ?? 0);
+  return quotes.map((q) => (typeof q === 'string' ? byText.get(q) ?? q : q)).sort((a, b) => ts(b) - ts(a));
+};
 
 // Reviews for the label-search and highlight panels: drop ones too short to be
 // worth a card, newest first. Web and extension render the cards differently
