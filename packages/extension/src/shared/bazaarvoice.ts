@@ -1,4 +1,4 @@
-import { addCommas, npsColor, npsStats } from './utils';
+import { addCommas, el, npsColor, npsStats, toneColor } from './utils';
 import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
 import { idbGet, idbSet } from './idb-cache';
 import { createThrottledFetcher } from './throttled-fetch';
@@ -313,22 +313,32 @@ const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: nu
     wrapper.appendChild(row);
   }
 
-  // Secondary ratings (effect, tolerability…) on one line, under the site's own
-  // labels. A slider runs from its bad end to its good end like a rating does,
-  // except Passform (fit), which is best in the middle and so goes uncoloured.
-  const ratings = (stats.SecondaryRatingsAveragesOrder || []).flatMap((id: string) => {
+  // Secondary ratings (effect, tolerability…) under the site's own labels, as a
+  // ledger: figure first, so the figures line up in columns. Only a dimension
+  // that lags the item's overall stars takes colour, amber from 0.3 stars behind
+  // and red from a whole star. A slider runs from its bad end to its good end
+  // like a rating (its scale shows on hover), except Passform (fit), which is
+  // best in the middle and never lags.
+  const overall = Number(stats.AverageOverallRating) || 0;
+  const rows = (stats.SecondaryRatingsAveragesOrder || []).flatMap((id: string) => {
     const metric = stats.SecondaryRatingsAverages?.[id];
     const named = labels?.[id];
     if (!named || typeof metric?.AverageRating !== 'number' || !(metric.ValueRange > 0)) return [];
-    const color = /passform/i.test(named.label) ? '#1C1917' : npsColor((metric.AverageRating / metric.ValueRange) * 100);
-    const scale = named.ends ? ` title="1 = ${named.ends[0]}, ${metric.ValueRange} = ${named.ends[1]}"` : '';
-    return `<span${scale}>${named.label} <strong style="color:${color};font-weight:700;font-variant-numeric:tabular-nums">${metric.AverageRating.toFixed(1)}</strong></span>`;
+    const row = el('div');
+    row.style.cssText = 'display:flex;align-items:baseline;gap:8px;min-width:0';
+    if (named.ends) row.title = `1 = ${named.ends[0]}, ${metric.ValueRange} = ${named.ends[1]}`;
+    const value = el('span', undefined, metric.AverageRating.toFixed(1));
+    value.style.cssText = 'flex:none;font-weight:700;font-variant-numeric:tabular-nums;color:#1C1917';
+    const lag = overall && !/passform/i.test(named.label) ? overall - metric.AverageRating : 0;
+    if (lag >= 0.3) value.style.color = toneColor(lag >= 1 ? 'neg' : 'mid');
+    row.append(value, el('span', undefined, named.label));
+    return [row];
   });
-  if (ratings.length) {
-    const line = document.createElement('div');
-    line.style.cssText = 'display:flex;flex-wrap:wrap;gap:2px 14px;font-size:12px;color:#57534E';
-    line.innerHTML = ratings.join('');
-    wrapper.appendChild(line);
+  if (rows.length) {
+    const ledger = el('div');
+    ledger.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:4px 24px;font-size:12px;line-height:1.4;color:#57534E';
+    ledger.append(...rows);
+    wrapper.appendChild(ledger);
   }
 };
 
