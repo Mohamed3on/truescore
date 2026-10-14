@@ -26,5 +26,7 @@ afterHydration().then(() => setupScoreGrid({
     prefetched.delete(id);
     return early ?? scoreOf(id);
   },
-  placeBadge: (card, badge) => card.querySelector('[role="img"][aria-label*="Sternen"]')?.after(badge),
+  // The stars, found by their icons: Chrome's page translation rewrites their
+  // "von 5 Sternen" label.
+  placeBadge: (card, badge) => card.querySelector('[role="img"]:has([data-testid^="rating-star"])')?.after(badge),
 }));
