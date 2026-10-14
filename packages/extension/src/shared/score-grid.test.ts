@@ -232,11 +232,6 @@ describe('markBestRatios', () => {
     expect(badges[1].style.background).toBe('');
   });
 
-  test('a thin card never earns a tint, however perfect its ratio', () => {
-    const badges = [badge(162, 82), badge(1, 100)];
-    expect(markBestRatios(badges)).toEqual([badges[0]]);
-  });
-
   test('skips missing badges and unknown ratios without lowering the bar', () => {
     const [hi, unknown, lo] = [badge(90, 70), badge(80), badge(70, 60)];
     expect(markBestRatios([null, hi, unknown, lo])).toEqual([hi]);

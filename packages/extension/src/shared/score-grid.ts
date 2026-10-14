@@ -146,10 +146,8 @@ export const rankChildren = (container: Element, rankableChild: (child: Element)
 // it — the picks that trade some volume for a better hit rate. Ratios are
 // compared as displayed (`data-nps-ratio`, whole percent), so a one-point edge
 // counts, even where it can be rounding alone (Amazon rounds 5★ and 1★ apart).
-// A card scoring (`data-nps`) under the floor is too thin for its ratio to mean
-// much — one 5★ review reads as 100%. Returns the tinted badges.
+// Returns the tinted badges.
 const BEST_RATIO_MARGIN = 1;
-const BEST_RATIO_MIN_SCORE = 20;
 const BEST_RATIO_TINT = 'rgba(74, 222, 128, 0.2)';
 export const markBestRatios = (badges: (Element | null)[]): HTMLElement[] => {
   const picks: HTMLElement[] = [];
@@ -157,7 +155,7 @@ export const markBestRatios = (badges: (Element | null)[]): HTMLElement[] => {
   for (const badge of badges) {
     if (!(badge instanceof HTMLElement)) continue;
     const ratio = Number(badge.dataset.npsRatio);
-    const on = ratio >= best + BEST_RATIO_MARGIN && Number(badge.dataset.nps) >= BEST_RATIO_MIN_SCORE;
+    const on = ratio >= best + BEST_RATIO_MARGIN;
     if (ratio > best) best = ratio;
     if (on) picks.push(badge);
     badge.style.background = on ? BEST_RATIO_TINT : '';
