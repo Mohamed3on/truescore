@@ -1,5 +1,5 @@
 import { addCommas, npsColor, npsStats } from './utils';
-import { cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
+import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
 import { idbGet, idbSet } from './idb-cache';
 import { createThrottledFetcher } from './throttled-fetch';
 import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from './review-summary';
@@ -114,6 +114,52 @@ const fetchStats = async (site: BvSite, productId: string, fetcher: Fetcher = fe
     if (stats) cacheSet(cacheKey, stats);
     else cacheSetMaybe(cacheKey, null);
     return stats;
+  } catch {
+    return null;
+  }
+};
+
+interface RatingLabel {
+  label: string;
+  ends?: [string, string]; // a slider's 1 and its top value
+}
+
+// The JSON object starting at `start` in `text`.
+const objectAt = (text: string, start: number) => {
+  let depth = 0;
+  for (let i = start, inString = false; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === '\\') i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return text.slice(start, i + 1);
+  }
+  return '';
+};
+
+// The stats name a secondary rating by id only ("EintrittDerWirkung_5"). Its label,
+// and a slider's two ends, are in the site's review-widget config: a script whose
+// "ratings" object is JSON, at the deployment the bfd token names (zone, locale).
+const fetchRatingLabels = async (site: BvSite): Promise<Record<string, RatingLabel> | null> => {
+  const cacheKey = `${site.key}_rating_labels`;
+  const cached = cacheGet(cacheKey, CACHE_TTL);
+  if (cached) return cached;
+
+  const [, zone, locale] = site.token.split(',');
+  try {
+    const res = await fetch(`https://apps.bazaarvoice.com/deployments/${site.client}/${zone}/production/${locale}/swat_reviews-config.js`);
+    if (!res.ok) return null;
+    const js = await res.text();
+    const ratings: any[] = Object.values(JSON.parse(objectAt(js, js.indexOf('"ratings":{') + '"ratings":'.length)));
+    const labels = Object.fromEntries(ratings.filter((r) => !r.hideDisplay).map((r) => [r.id, {
+      // DocMorris marks its retired dimensions "x - …".
+      label: String(r.displayLabel).replace(/^x - /, ''),
+      ends: r.type === 'SLIDER' ? [r.sliderDimension1Label, r.sliderDimension2Label] : undefined,
+    }]));
+    cacheSet(cacheKey, labels);
+    return labels;
   } catch {
     return null;
   }
@@ -252,7 +298,7 @@ const sampleSearch = (reviews: Promise<BvReview[]>) => {
 
 // --- Product page ---
 
-const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: number; nps: number } | null) => {
+const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: number; nps: number } | null, labels: Record<string, RatingLabel> | null) => {
   const total = Number(stats.TotalReviewCount) || 0;
   const recommended = Number(stats.RecommendedCount) || 0;
   const recommendTotal = recommended + (Number(stats.NotRecommendedCount) || 0);
@@ -266,19 +312,41 @@ const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: nu
     row.innerHTML = statParts.join('<div class="ars-stat-div"></div>');
     wrapper.appendChild(row);
   }
+
+  // Secondary ratings (effect, tolerability…) on one line, under the site's own
+  // labels. A slider runs from its bad end to its good end like a rating does,
+  // except Passform (fit), which is best in the middle and so goes uncoloured.
+  const ratings = (stats.SecondaryRatingsAveragesOrder || []).flatMap((id: string) => {
+    const metric = stats.SecondaryRatingsAverages?.[id];
+    const named = labels?.[id];
+    if (!named || typeof metric?.AverageRating !== 'number' || !(metric.ValueRange > 0)) return [];
+    const color = /passform/i.test(named.label) ? '#1C1917' : npsColor((metric.AverageRating / metric.ValueRange) * 100);
+    const scale = named.ends ? ` title="1 = ${named.ends[0]}, ${metric.ValueRange} = ${named.ends[1]}"` : '';
+    return `<span${scale}>${named.label} <strong style="color:${color};font-weight:700;font-variant-numeric:tabular-nums">${metric.AverageRating.toFixed(1)}</strong></span>`;
+  });
+  if (ratings.length) {
+    const line = document.createElement('div');
+    line.style.cssText = 'display:flex;flex-wrap:wrap;gap:2px 14px;font-size:12px;color:#57534E';
+    line.innerHTML = ratings.join('');
+    wrapper.appendChild(line);
+  }
 };
 
+interface PdpData {
+  stats: any;
+  labels: Record<string, RatingLabel> | null;
+  scoreData: { score: number; nps: number } | null;
+  productId: string;
+  reviews: ReturnType<typeof fetchReviews>;
+}
+
 // One unified "Review Intelligence" card: a recent-positive gauge (NPS over the
-// latest reviews, Amazon-style) + score/review/recommend stats, with the
-// summarize/ask widget below it (5+ reviews). The host's own secondary ratings
-// (effect, tolerability…) stay in its review section, labelled there.
+// latest reviews, Amazon-style) + score/review/recommend stats + secondary
+// ratings, with the summarize/ask widget below it (5+ reviews).
 const buildCard = (
   site: BvSite,
   exampleQuery: string,
-  stats: any,
-  scoreData: { score: number; nps: number } | null,
-  productId: string,
-  { recent, all }: ReturnType<typeof fetchReviews>,
+  { stats, labels, scoreData, productId, reviews: { recent, all } }: PdpData,
 ): HTMLElement | null => {
   const total = Number(stats?.TotalReviewCount) || 0;
   const hasRecommend = (Number(stats?.RecommendedCount) || 0) + (Number(stats?.NotRecommendedCount) || 0) > 0;
@@ -290,7 +358,7 @@ const buildCard = (
   const gauge = buildRecentGauge();
   wrapper.appendChild(gauge);
 
-  appendInsights(wrapper, stats, scoreData);
+  appendInsights(wrapper, stats, scoreData, labels);
 
   if (total >= 5) {
     // Past SAMPLE_MAX, BazaarVoice's own search reaches the reviews the Sample
@@ -372,7 +440,7 @@ export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl,
     line.appendChild(badge);
   };
 
-  setupSpaInjector<{ stats: any; scoreData: { score: number; nps: number } | null; productId: string; reviews: ReturnType<typeof fetchReviews> }>({
+  setupSpaInjector<PdpData>({
     match: () => !!productIdFromUrl(),
     load: async () => {
       const productId = productIdFromUrl();
@@ -381,12 +449,14 @@ export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl,
       // Reviews start downloading alongside the stats that size them, not once the
       // host has rendered an anchor for the card.
       const reviews = fetchReviews(site, productId, statsPromise.then((stats) => Number(stats?.TotalReviewCount) || 0));
-      const [stats] = await Promise.all([statsPromise, ready]);
+      // Only a product rated on secondary dimensions needs their labels.
+      const labelsPromise = statsPromise.then((stats) => (stats?.SecondaryRatingsAveragesOrder?.length ? fetchRatingLabels(site) : null));
+      const [stats, labels] = await Promise.all([statsPromise, labelsPromise, ready]);
       if (!stats) return null;
-      return { stats, scoreData: getScoreFromStats(stats), productId, reviews };
+      return { stats, labels, scoreData: getScoreFromStats(stats), productId, reviews };
     },
-    inject: ({ stats, scoreData, productId, reviews }) => {
-      if (scoreData) injectScoreBadge(scoreData);
+    inject: (data) => {
+      if (data.scoreData) injectScoreBadge(data.scoreData);
 
       // Card already placed — skip the anchor resolution on every later mutation.
       if (document.querySelector('.ars-wrapper')) return;
@@ -394,7 +464,7 @@ export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl,
       const anchor = panelAnchor();
       if (!anchor) return;
 
-      const card = buildCard(site, exampleQuery, stats, scoreData, productId, reviews);
+      const card = buildCard(site, exampleQuery, data);
       if (card) {
         if (anchor.position === 'before') anchor.node.before(card);
         else anchor.node.after(card);
