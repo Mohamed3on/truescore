@@ -50,11 +50,18 @@ export function setGoogleCookieOverride(header: string | null): void {
   cookieOverride = header && header.trim() ? header.trim() : null;
 }
 
-// A fresh anonymous google.com jar and the Maps page that set it. The minter reads the
-// page's session id and BotGuard challenge too.
-export async function fetchMapsPage(): Promise<{ html: string; cookies: string }> {
+// A fresh google.com jar and the Maps page that set it: anonymous, or signed in as the
+// account whose Cookie header the minter passes. Only the minter passes one, so the
+// baked jar (written to disk) never holds the account. The minter reads the page's
+// session id, BotGuard challenge and XSRF token too.
+export async function fetchMapsPage(accountCookies = ''): Promise<{ html: string; cookies: string }> {
   const jar: Record<string, string> = { ...SEED_COOKIES };
   const cookieHeader = () => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
+  const take = (c: string) => {
+    const m = c.trim().match(/^([^=]+)=([^;]*)/);
+    if (m?.[1]) jar[m[1]] = m[2] ?? '';
+  };
+  accountCookies.split(';').forEach(take);
   const r = await fetch('https://www.google.com/maps?hl=en', {
     proxy: PROXY_URL,
     redirect: 'follow',
@@ -63,10 +70,7 @@ export async function fetchMapsPage(): Promise<{ html: string; cookies: string }
   const setCookies = (r.headers as any).getAll
     ? (r.headers as any).getAll('set-cookie')
     : [r.headers.get('set-cookie')].filter(Boolean);
-  for (const c of (setCookies || []) as string[]) {
-    const m = c?.match(/^([^=]+)=([^;]*)/);
-    if (m?.[1]) jar[m[1]] = m[2] ?? '';
-  }
+  ((setCookies || []) as string[]).forEach(take);
   return { html: await r.text(), cookies: cookieHeader() };
 }
 
@@ -121,7 +125,7 @@ export async function googleFetch(
   overrideCookie?: string,
 ): Promise<string> {
   assertGoogleHost(url);
-  // overrideCookie lets the minter verify a freshly-minted (anonymous) jar without
+  // overrideCookie lets the minter verify a freshly-minted jar without
   // flipping the global cookie override — so a failed verify can't poison the live session.
   const cookie = overrideCookie ?? await getGoogleCookieHeader();
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {

@@ -1,8 +1,11 @@
-// Self-mint an ANONYMOUS Maps session, hands-off, with no browser. One plain GET of
-// Maps carries all of it: the cookie jar, the session id (the page's kEI) and Maps'
-// BotGuard challenge. Google binds each bgkey to its exact request (gmaps-shared
-// botguard), so the challenge's VM keeps running in a worker (./botguard-worker) and
-// signs every review request of the session until the next mint replaces it.
+// Self-mint a Maps session, hands-off, with no browser. One plain GET of Maps carries
+// all of it: the cookie jar, the session id (the page's kEI), the XSRF token (`at`)
+// and Maps' BotGuard challenge. Google binds each bgkey to its exact request
+// (gmaps-shared botguard), so the challenge's VM keeps running in a worker
+// (./botguard-worker) and signs every review request of the session until the next
+// mint replaces it. Since 2026-10-12 a signed-out session gets Maps' "limited view",
+// 5 reviews a request and no next page, so the GET goes out signed in as
+// TRUESCORE_ACCOUNT_COOKIES: the Cookie header of a dedicated Google account.
 import { PAGE_SIZE, type Signer } from '@truescore/gmaps-shared';
 import { fetchMapsPage, googleFetch, verifyReviewsLoad, PROXY_URL, USER_AGENT } from './browser';
 import type { MapsSession } from './maps-creds';
@@ -14,10 +17,11 @@ const MINT_TIMEOUT_MS = 30_000;
 const SIGN_TIMEOUT_MS = 5_000;
 // The racers share one interpreter download, so one that hangs would sink them all.
 const INTERPRETER_TIMEOUT_MS = 15_000;
-// Google caps about half of fresh sessions for life at 5 reviews a request with no
-// next page (what an unsigned request gets). So a mint races a few sessions and
-// keeps the first uncapped one, starting another the moment one fails rather than
-// waiting out the slowest of a round — up to MINT_ATTEMPTS in all.
+// A session can come back capped for life at 5 reviews a request with no next page:
+// about half of fresh ones did before the limited view, every signed-out one since.
+// So a mint races a few sessions and keeps the first uncapped one, starting another
+// the moment one fails rather than waiting out the slowest of a round — up to
+// MINT_ATTEMPTS in all.
 const MINT_RACE = 3;
 const MINT_ATTEMPTS = 6;
 
@@ -78,35 +82,40 @@ const interpreterAt = (url: string, cookies: string): Promise<string> => {
 async function runMint(): Promise<Minted> {
   const t0 = Date.now();
   const vm = botguardWorker();
+  // Whether Maps took the account's cookies: a signed-out page has no XSRF token. Logged
+  // with the result, so an expired account reads as such, not as a capped session.
+  let signedIn = false;
   try {
     const session = await withTimeout(startSession(vm), MINT_TIMEOUT_MS);
+    signedIn = !!session.creds.at;
     // Verify the session actually serves reviews before we trust it — via a cookie
     // override so a bad mint can't clobber the live session's global jar. The probe
     // place always fills a page, so a short one is a capped session.
     const verify = await verifyReviewsLoad(session.creds, session.cookies, session.sign);
     if (verify < PAGE_SIZE) throw new Error(verify ? 'verify-capped' : 'verify-empty');
     console.log(`[maps-minter] minted session in ${Date.now() - t0}ms (verify: ${verify} reviews)`);
-    logEvent('mint', { result: 'ok', ms: Date.now() - t0, verify });
+    logEvent('mint', { result: 'ok', ms: Date.now() - t0, verify, signedIn });
     return { session, stop: vm.stop };
   } catch (e) {
     vm.stop();
     const reason = e instanceof Error ? e.message : String(e);
     console.warn(`[maps-minter] mint failed in ${Date.now() - t0}ms: ${reason}`);
-    logEvent('mint', { result: 'fail', ms: Date.now() - t0, reason });
+    logEvent('mint', { result: 'fail', ms: Date.now() - t0, reason, signedIn });
     throw e;
   }
 }
 
 async function startSession(vm: BotguardWorker): Promise<MapsSession> {
-  const { html, cookies } = await fetchMapsPage();
+  const { html, cookies } = await fetchMapsPage(process.env.TRUESCORE_ACCOUNT_COOKIES);
   const sessionId = html.match(/kEI='([^']+)'/)?.[1];
   const challenge = html.match(/"USpUDc":("(?:[^"\\]|\\.)*")/)?.[1];
   if (!sessionId || !challenge) throw new Error('no session in the Maps page');
+  const at = html.match(/"SNlM0e":"([^"]*)"/)?.[1] ?? '';
   // jspb: "%.@." then the array minus its "[": [id, script, [,,,interpreterUrl], hash, program, globalName, …]
   const [, , [, , , url], , program, globalName] = JSON.parse(`[${JSON.parse(challenge).slice(4)}`);
   await vm.boot({ interpreter: await interpreterAt(`https:${url}`, cookies), program, globalName });
   await Bun.sleep(WARMUP_MS);
-  return { creds: { bgkey: '', bgbind: '', sessionId, at: '', hl: 'en' }, cookies, sign: vm.sign };
+  return { creds: { bgkey: '', bgbind: '', sessionId, at, hl: 'en' }, cookies, sign: vm.sign };
 }
 
 type BotguardWorker = ReturnType<typeof botguardWorker>;

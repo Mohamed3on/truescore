@@ -86,8 +86,8 @@ export function getMapsCreds(): MapsCreds | null {
 
 // The transport calls these from the actual review-RPC outcome (see gmaps.ts),
 // AFTER its own retries. A stale reply (reviews empty even on retry) triggers a fresh
-// mint; a good reply proves the session works. The mint is anonymous — no extension,
-// no human. A good reply doesn't itself flip the banner; renewSession owns that.
+// mint; a good reply proves the session works. The mint needs no extension and no
+// human. A good reply doesn't itself flip the banner; renewSession owns that.
 export function onStaleRpc(): void { void renewSession('stale-detected'); }
 export function onFreshRpc(): void { setRenewOk(true, 'fresh-rpc'); }
 // A whole scrape the cache refused: no reviews (or one sort empty, or short of a
@@ -98,7 +98,7 @@ export function onFreshRpc(): void { setRenewOk(true, 'fresh-rpc'); }
 export function onThrottledScrape(): void { setRenewOk(false, 'throttled-scrape'); void renewSession('throttled-scrape'); }
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
 
-// --- self-mint: a fresh ANONYMOUS session, no browser, no human (see maps-minter) ---
+// --- self-mint: a fresh session, no browser, no human (see maps-minter) ---
 // A cooldown collapses a stale-storm to one attempt (force bypasses it for the timer /
 // operator endpoint); mintMapsCreds has its own single-flight one layer down.
 const RENEW_COOLDOWN_MS = 60_000;

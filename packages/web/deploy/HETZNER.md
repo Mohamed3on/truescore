@@ -50,13 +50,25 @@ ssh root@65.108.153.112 'rm /var/lib/truescore/cookies.json && systemctl restart
 ssh root@65.108.153.112 'curl -s localhost/api/maps-creds -H "x-truescore-seed: $(sed -n "s/^TRUESCORE_SEED_SECRET=//p" /opt/truescore/.env)"'
 
 # HANDS-OFF SELF-MINT (no browser since 2026-09-29): the server mints its own
-# ANONYMOUS session — no extension, no login. One GET of Maps via the proxy gives the
-# cookies, session id and BotGuard challenge; the challenge's VM runs in a worker
-# (happy-dom) and signs every review request (Google binds each key to its request).
-# About half of fresh sessions are capped at 5 reviews, so maps-minter races 3 and
-# keeps the first uncapped one. Runs on boot, on a timer, and reactively on a stale
-# lookup; if a whole mint fails it emits `needs-reseed`. Force a mint now (~6-12s):
+# session — no extension. One GET of Maps via the proxy gives the cookies, session id,
+# XSRF token and BotGuard challenge; the challenge's VM runs in a worker (happy-dom)
+# and signs every review request (Google binds each key to its request). Since
+# 2026-10-12 Maps gives a signed-out session 5 reviews a request and no next page (its
+# "limited view"), so the GET goes out signed in as the account below. A capped session
+# fails its verify, so maps-minter races 3 and keeps the first uncapped one. Runs on
+# boot, on a timer, and reactively on a stale lookup; if a whole mint fails it emits
+# `needs-reseed`. Force a mint now (~6-12s):
 ssh root@65.108.153.112 'curl -s -X POST localhost/api/maps-creds/renew -H "x-truescore-seed: $(sed -n "s/^TRUESCORE_SEED_SECRET=//p" /opt/truescore/.env)"'
+
+# THE ACCOUNT: a throwaway Google account, never a personal one (Google may lock it).
+# Sign it in, alone, in a fresh Firefox profile (Chrome can bind a Google session to the
+# device, which stops copied cookies working), open google.com/maps, then DevTools →
+# Network → reload → the document request → copy its `cookie` request header. Close the
+# window without signing out: signing out kills the cookies. Add the header to .env as
+# one single-quoted line, TRUESCORE_ACCOUNT_COOKIES='SID=…; HSID=…; …', and restart.
+# Every `type=mint` event logs signedIn: false means the cookies no longer sign Maps
+# in, so copy them again.
+ssh -t root@65.108.153.112 'nano /opt/truescore/.env && systemctl restart truescore'
 
 # tune proactive mint cadence (minutes; default 240 = every 4h; 0 disables → reactive
 # + boot only). Well inside the ~day a session lasts, so it never expires in front of
