@@ -158,6 +158,17 @@
       "run_at": "document_end"
     },
     {
+      "matches": ["*://*.docmorris.de/*"],
+      "js": ["sites/docmorris-pdp.js"],
+      "css": ["sites/amazon-product.css"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.docmorris.de/*"],
+      "js": ["sites/docmorris-plp.js"],
+      "run_at": "document_end"
+    },
+    {
       "matches": ["*://*.etsy.com/*"],
       "js": ["sites/etsy.js"],
       "run_at": "document_end"

@@ -25,6 +25,8 @@ await esbuild.build({
     'src/sites/ikea-plp.ts',
     'src/sites/dm-pdp.ts',
     'src/sites/dm-plp.ts',
+    'src/sites/docmorris-pdp.ts',
+    'src/sites/docmorris-plp.ts',
     'src/sites/bjjfanatics-pdp.ts',
     'src/sites/etsy.ts',
     'src/sites/etsy-pdp.ts',

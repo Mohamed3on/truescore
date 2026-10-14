@@ -16,7 +16,7 @@ TrueScore has no accounts, analytics or ads. It doesn't sell data, share it for 
 
 ## What leaves your device
 
-**The site you're on.** To score an item, TrueScore loads its ratings and reviews from the site you're viewing, or from the review service that site itself uses (Bazaarvoice on dm.de, Stamped on BJJ Fanatics, IMDb's API for films on IMDb and Letterboxd). These requests carry the item's ID, as the site's own requests do.
+**The site you're on.** To score an item, TrueScore loads its ratings and reviews from the site you're viewing, or from the review service that site itself uses (Bazaarvoice on dm.de and DocMorris, Stamped on BJJ Fanatics, IMDb's API for films on IMDb and Letterboxd). These requests carry the item's ID, as the site's own requests do.
 
 **TrueScore's server (truescore.mohamed3on.com).** On Google Maps, when you open a place, the extension sends the place's Google ID, name and page address to get its score, topic highlights and summary. When you summarize, search or ask a question, it also sends the place's public reviews and your search terms or question. Scores and summaries your browser computes are sent too, so the next person to open the place gets them sooner. On other sites, the reviews behind a search, summary or answer are sent so the server can read what each one says. On Reddit, nothing is sent until you open a thread's tally; then the extension sends the thread's title and text and the comments the page loaded, with each one's score, author's username and the comment it replies to. Every request carries the TrueScore password from the popup.
 
