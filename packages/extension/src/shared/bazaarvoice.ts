@@ -266,27 +266,12 @@ const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: nu
     row.innerHTML = statParts.join('<div class="ars-stat-div"></div>');
     wrapper.appendChild(row);
   }
-
-  // Secondary ratings (e.g. effect, tolerability) on one line, when present.
-  // BazaarVoice names them by id only, run together ("PreisLeistungsVerhaltnis").
-  const secondary = stats.SecondaryRatingsAverages || {};
-  const ratings = (stats.SecondaryRatingsAveragesOrder || []).flatMap((key: string) => {
-    const metric = secondary[key];
-    if (!metric || typeof metric.AverageRating !== 'number' || typeof metric.ValueRange !== 'number' || metric.ValueRange <= 0) return [];
-    const color = npsColor((metric.AverageRating / metric.ValueRange) * 100);
-    return `<span>${key.replace(/([a-z])([A-Z])/g, '$1 $2')} <strong style="color:${color};font-weight:700;font-variant-numeric:tabular-nums">${metric.AverageRating.toFixed(1)}</strong></span>`;
-  });
-  if (ratings.length) {
-    const line = document.createElement('div');
-    line.style.cssText = 'display:flex;flex-wrap:wrap;gap:2px 14px;font-size:12px;color:#57534E';
-    line.innerHTML = ratings.join('');
-    wrapper.appendChild(line);
-  }
 };
 
 // One unified "Review Intelligence" card: a recent-positive gauge (NPS over the
-// latest reviews, Amazon-style) + score/review/recommend stats + secondary
-// ratings, with the summarize/ask widget below it (5+ reviews).
+// latest reviews, Amazon-style) + score/review/recommend stats, with the
+// summarize/ask widget below it (5+ reviews). The host's own secondary ratings
+// (effect, tolerability…) stay in its review section, labelled there.
 const buildCard = (
   site: BvSite,
   exampleQuery: string,

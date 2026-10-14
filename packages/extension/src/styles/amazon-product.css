@@ -365,9 +365,10 @@
   color: #1C1917;
 }
 
+/* Hosts style bare paragraphs (DocMorris: 14px Poppins, 1.75 leading). */
 .ars-answer p,
 .ars-conclusion p,
-.ars-section-item p { margin: 0 0 6px 0; }
+.ars-section-item p { margin: 0 0 6px 0; font: inherit; }
 .ars-answer p:last-child,
 .ars-conclusion p:last-child,
 .ars-section-item p:last-child { margin-bottom: 0; }
