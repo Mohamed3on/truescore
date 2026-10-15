@@ -11,6 +11,19 @@ export interface StampedStore {
   cacheKey: (productId: string) => string;
 }
 
+export const BJJ_FANATICS: StampedStore = {
+  apiKey: '8a204db0-ec09-48cf-baed-db3ca2ef99e6',
+  storeUrl: 'bjj-fanatics.myshopify.com',
+  // v2: never holds a sample with a failed page (v1 could, and served the hole for good).
+  cacheKey: (id) => `bjj-reviews-v2-${id}`,
+};
+
+export const PROGRESS: StampedStore = {
+  apiKey: 'pubkey-ujoT7s6a8wmT9Aa1pEoay0to41vJ11',
+  storeUrl: 'progress-jj-europe.myshopify.com',
+  cacheKey: (id) => `progress-reviews-v1-${id}`,
+};
+
 export interface ProductInfo {
   id: string;
   sku: string;
@@ -176,4 +189,97 @@ export const reviewToText = (r: StampedReview): string => {
     .filter(Boolean)
     .join(' | ');
   return [meta && `[${meta}]`, head].filter(Boolean).join(' ').trim();
+};
+
+// --- list cards ---------------------------------------------------------------
+
+// Every 1★–3★ review in the store, tallied per product as [1★, 2★, 3★]. Stamped
+// filters by exact rating, and these are rare (under 50 at Progress, a few
+// hundred at BJJ Fanatics), so a few requests cover the whole store for a day.
+type Census = Record<string, number[]>;
+const CENSUS_MS = 24 * 60 * 60 * 1000;
+
+const storeReviews = async (store: StampedStore, rating: number, page: number) => {
+  const res = await fetch(
+    `https://stamped.io/api/widget/reviews?apiKey=${store.apiKey}&storeUrl=${store.storeUrl}` +
+    `&take=${PAGE_SIZE}&page=${page}&minRating=1&rating=${rating}`);
+  if (!res.ok) throw new Error(`Stamped ${res.status}`);
+  return res.json() as Promise<{ total?: number; data?: { productId: number | string }[] }>;
+};
+
+const fetchCensus = async (store: StampedStore): Promise<Census> => {
+  const census: Census = {};
+  await Promise.all([1, 2, 3].map(async (rating) => {
+    const first = await storeReviews(store, rating, 1);
+    const more = Math.ceil((first.total ?? 0) / PAGE_SIZE) - 1;
+    const rest = await Promise.all(Array.from({ length: Math.max(0, more) }, (_, i) => storeReviews(store, rating, i + 2)));
+    for (const { data = [] } of [first, ...rest]) {
+      for (const { productId } of data) (census[productId] ??= [0, 0, 0])[rating - 1]++;
+    }
+  }));
+  return census;
+};
+
+interface Badge { productId: number | string; count: number; rating: number }
+
+// The call Stamped's own widget makes for a page's star badges: each product's
+// review count and exact average, a hundred products a request.
+const BADGES_PER_CALL = 100;
+const fetchBadges = async (store: StampedStore, ids: string[]): Promise<Badge[]> => {
+  const res = await fetch('https://stamped.io/api/widget/badges', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ productIds: ids.map((productId) => ({ productId })), apiKey: store.apiKey, storeUrl: store.storeUrl }),
+  });
+  if (!res.ok) throw new Error(`Stamped badges ${res.status}`);
+  return res.json();
+};
+
+// List cards' scores without a request per card: the badges give each product's
+// count and exact average, the census its 1★–3★ counts, and the rest are 4★ or
+// 5★ — so the 5★ count is whatever their stars add up to beyond 4 each.
+export const cardScores = (store: StampedStore) => {
+  let census: Promise<Census> | undefined;
+  const loadCensus = () => (census ??= (async () => {
+    const key = `stamped-census-${store.storeUrl}`;
+    const cached = cacheGet(key, CENSUS_MS) as Census | null;
+    if (cached) return cached;
+    const fresh = await fetchCensus(store);
+    cacheSet(key, fresh);
+    return fresh;
+  })().catch((e) => {
+    census = undefined;
+    throw e;
+  }));
+
+  // The grid asks card by card; cards asking in the same task share badge calls.
+  // An answer is kept, so its retries of a product without reviews ask no more.
+  let queued: string[] = [];
+  let batch: Promise<Map<string, Badge>> | undefined;
+  const known = new Map<string, Badge | undefined>();
+  const badgeOf = (id: string) => {
+    if (known.has(id)) return Promise.resolve(known.get(id));
+    queued.push(id);
+    batch ??= new Promise((resolve) => setTimeout(resolve)).then(async () => {
+      const ids = queued;
+      queued = [];
+      batch = undefined;
+      const calls = Array.from({ length: Math.ceil(ids.length / BADGES_PER_CALL) }, (_, i) =>
+        fetchBadges(store, ids.slice(i * BADGES_PER_CALL, (i + 1) * BADGES_PER_CALL)));
+      return new Map((await Promise.all(calls)).flat().map((b) => [String(b.productId), b]));
+    });
+    return batch.then((badges) => {
+      known.set(id, badges.get(id));
+      return badges.get(id);
+    });
+  };
+
+  return async (id: string) => {
+    const [badge, tally] = await Promise.all([badgeOf(id), loadCensus()]);
+    if (!badge?.count) return null;
+    const [one = 0, two = 0, three = 0] = tally[id] ?? [];
+    const high = badge.count - one - two - three;
+    const five = Math.min(high, Math.max(0, Math.round(badge.rating * badge.count) - one - 2 * two - 3 * three - 4 * high));
+    return { ...npsStats(five, one, badge.count), total: badge.count };
+  };
 };

@@ -2,13 +2,7 @@ import { addCommas, el } from '../shared/utils';
 import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { buildSearchSection, quoteCards } from '../shared/review-search';
 import { buildGauge, createIslandShell, type IslandScore } from '../shared/score-island';
-import { computeScore, getProductInfo, loadReviews, reviewToText, type ProductInfo, type ReviewBundle, type StampedReview, type StampedStore } from '../shared/stamped';
-
-const STORE: StampedStore = {
-  apiKey: 'pubkey-ujoT7s6a8wmT9Aa1pEoay0to41vJ11',
-  storeUrl: 'progress-jj-europe.myshopify.com',
-  cacheKey: (id) => `progress-reviews-v1-${id}`,
-};
+import { computeScore, getProductInfo, loadReviews, PROGRESS, reviewToText, type ProductInfo, type ReviewBundle, type StampedReview } from '../shared/stamped';
 
 // Progress sells gis, rash guards and shorts, and its reviews mostly talk fit,
 // so sizing leads as a buying tip, as on Uniqlo.
@@ -78,7 +72,7 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
   };
   if (titleBlock) new MutationObserver(placeLineScore).observe(titleBlock, { childList: true, subtree: true });
 
-  loadReviews(STORE, info, (bundle, autoSummarize) => {
+  loadReviews(PROGRESS, info, (bundle, autoSummarize) => {
     const scored = computeScore(bundle);
     if (!scored || scored.total < 5) return;
     document.querySelector('.ars-wrapper')?.remove();

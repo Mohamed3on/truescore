@@ -3,14 +3,7 @@ import { buildSummarizeWidget } from '../shared/review-summary';
 import { courseContext, SUMMARY_PROMPT } from './bjjfanatics-prompt';
 import { buildSearchSection, quoteCards } from '../shared/review-search';
 import { createIslandShell } from '../shared/score-island';
-import { computeScore, getProductInfo, loadReviews, reviewToText, type ProductInfo, type ReviewBundle, type StampedReview, type StampedStore } from '../shared/stamped';
-
-const STORE: StampedStore = {
-  apiKey: '8a204db0-ec09-48cf-baed-db3ca2ef99e6',
-  storeUrl: 'bjj-fanatics.myshopify.com',
-  // v2: never holds a sample with a failed page (v1 could, and served the hole for good).
-  cacheKey: (id) => `bjj-reviews-v2-${id}`,
-};
+import { BJJ_FANATICS, computeScore, getProductInfo, loadReviews, reviewToText, type ProductInfo, type ReviewBundle, type StampedReview } from '../shared/stamped';
 
 // A reviewer's answers as a card's meta line reads them: "Blue belt · age 26-32 · 1-3 yrs training".
 const optionText = ({ message = '', value = '' }: { message?: string; value?: string }) =>
@@ -156,7 +149,7 @@ openCourseAccordions();
 
   const courseContent = getCourseContent();
 
-  loadReviews(STORE, info, (bundle, autoSummarize) => {
+  loadReviews(BJJ_FANATICS, info, (bundle, autoSummarize) => {
     const scored = computeScore(bundle);
     if (!scored || scored.total < 5) return;
     document.querySelector('.ars-wrapper')?.remove();

@@ -203,6 +203,16 @@
       "run_at": "document_end"
     },
     {
+      "matches": ["*://progressjj.co.uk/*"],
+      "js": ["sites/progress-plp.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://bjjfanatics.com/search*", "*://bjjfanatics.com/collections/*"],
+      "js": ["sites/bjjfanatics-plp.js"],
+      "run_at": "document_end"
+    },
+    {
       "matches": ["*://*.goodreads.com/book/show/*", "*://*.goodreads.com/*/book/show/*"],
       "js": ["sites/goodreads.js"],
       "run_at": "document_end"
