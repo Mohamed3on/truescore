@@ -879,20 +879,24 @@
 :root { --ts-praise: #4ADE80; --ts-complain: #F87171; --ts-mixed: #E8B86D; }
 
 /* Search results sort chip, beside Maps' own "Results" heading: Maps' chip
-   shape and type, sea glass when on. The margin clears the heading's ⓘ button,
-   which overflows its zero-width wrapper by 32px. Both states keep one width:
-   Maps' header row wraps, with ~14px to spare, so a wider "on" chip (a ✓)
-   would push Share onto a line of its own. */
+   shape, an icon alone (see gmaps-search.ts), sea glass when on. The margin
+   clears the heading's ⓘ button, which overflows its zero-width wrapper by
+   32px. Both states keep one width: Maps' header row wraps when full. */
 .ts-review-sort {
   align-self: center;
-  margin-left: 40px;
-  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
   height: 32px;
+  margin-left: 40px;
+  padding: 0 6px;
   border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
   border-radius: 8px;
   background: none;
   color: inherit;
-  font: 500 14px/20px 'Google Sans Text', 'Google Sans', Roboto, Arial, sans-serif;
+  font: 500 13px/1 'Google Sans Text', 'Google Sans', Roboto, Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   cursor: pointer;
 }

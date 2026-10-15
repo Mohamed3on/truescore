@@ -6,6 +6,10 @@
 import { parseRatingAndCount } from '../shared/locale-number';
 
 const RESULT = '[role="article"]';
+// Material Symbols' "sort": the chip is this icon alone, since Maps' header
+// row wraps when full and its own "Sort by" (on some searches) leaves ~120px.
+const SORT_ICON =
+  '<svg viewBox="0 -960 960 960" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M120-240v-80h240v80H120Zm0-200v-80h480v80H120Zm0-200v-80h720v80H120Z"/></svg>';
 let loading = false;
 
 const findFeed = () => document.querySelector<HTMLElement>('[role="feed"]');
@@ -77,11 +81,17 @@ const mountChip = (feed: HTMLElement) => {
   if (!chip) {
     chip = row.appendChild(document.createElement('button'));
     chip.className = 'ts-review-sort';
-    chip.title = 'Sort by number of reviews (⌥Z)\nShift-click: load every result first (⌥⇧Z)';
+    chip.ariaLabel = 'Sort by number of reviews';
+    chip.title = 'Most reviewed first (⌥Z)\nShift-click: load every result first (⌥⇧Z)';
     chip.addEventListener('click', (e) => (e.shiftKey ? loadAllAndSort(feed) : toggle(feed)));
   }
-  const label = loading ? `Loading… ${feed.querySelectorAll(RESULT).length}` : 'Most reviewed';
-  if (chip.textContent !== label) chip.textContent = label;
+  // While ⌥⇧Z loads, the count so far stands in for the icon.
+  const label = loading ? `${feed.querySelectorAll(RESULT).length}…` : '';
+  if (chip.dataset.label !== label) {
+    chip.dataset.label = label;
+    if (label) chip.textContent = label;
+    else chip.innerHTML = SORT_ICON;
+  }
   const pressed = String(sortedQuery === queryOf(feed));
   if (chip.getAttribute('aria-pressed') !== pressed) chip.setAttribute('aria-pressed', pressed);
 };
