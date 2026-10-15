@@ -1,6 +1,7 @@
 import { netScore } from '@truescore/gmaps-shared';
 import { idbEdit, idbGet, idbSet } from '../shared/idb-cache';
 import { couldReach, rankPicks, type RankedPick } from '../shared/better-picks';
+import { loadIgnored, saveIgnored } from '../shared/ignored-picks';
 import { adjust, recentRatio, THIN_SAMPLE, trendClass } from '../shared/recency';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
@@ -203,6 +204,30 @@ const STYLES = `
   .gr-similar-item.-excluded .gr-similar-cover, .gr-similar-item.-excluded .gr-similar-body { opacity: .55; }
   .gr-similar-item.-excluded .gr-similar-title { color: #8b7355 !important; text-decoration: line-through; }
 
+  /* An × per pick mutes it from the winner check into a collapsed drawer, where ↺ restores it. */
+  .gr-similar [hidden] { display: none; }
+  .gr-ignore {
+    flex: none;
+    appearance: none;
+    background: none;
+    border: 0;
+    padding: 0 2px;
+    color: #8b7355;
+    font: inherit;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .15s ease, color .15s ease;
+  }
+  .gr-similar-item:hover .gr-ignore, .gr-ignore:focus-visible { opacity: 1; }
+  .gr-ignore:hover { color: #c24a32; }
+  .gr-ignored-list { margin-top: 8px; }
+  .gr-ignored-list .gr-similar-item { opacity: .45; }
+  .gr-ignored-list .gr-similar-title { text-decoration: line-through; }
+  .gr-ignored-list .gr-ignore { opacity: .55; }
+  .gr-ignored-list .gr-ignore:hover { opacity: 1; color: #00635d; }
+
   .gr-winner {
     display: flex;
     align-items: center;
@@ -256,7 +281,7 @@ const STYLES = `
     50% { transform: scale(1.35); opacity: .7; }
   }
 
-  .gr-debug-toggle {
+  .gr-debug-toggle, .gr-fold-toggle {
     font-size: 12px;
     color: #8b7355;
     cursor: pointer;
@@ -264,7 +289,7 @@ const STYLES = `
     user-select: none;
     display: inline-block;
   }
-  .gr-debug-toggle:hover { color: #382110; }
+  .gr-debug-toggle:hover, .gr-fold-toggle:hover { color: #382110; }
   .gr-debug-content {
     font-family: 'SF Mono', Menlo, Monaco, Consolas, monospace;
     font-size: 11px;
@@ -1135,8 +1160,16 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
 type PickRecent = Record<string, number | null>;
 type SimilarView = { shelf: string; result: SimilarResult; recent: PickRecent; refRecentRatio: number | null };
 
-/** Renders a fully-resolved picks view (no network) — shared by the fresh and cached paths. */
-const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: BookStats) => {
+// Books the user has muted from Better picks, by work so every edition goes with it
+// (see shared/ignored-picks).
+const IGNORED_KEY = 'gr_ignored';
+
+/**
+ * Renders a fully-resolved picks view (no network) — shared by the fresh and cached paths.
+ * Books the user has ignored move to a collapsed drawer and stop counting towards the
+ * winner check; restoring one from the drawer undoes that.
+ */
+const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: BookStats, ignored: Set<string>) => {
   const { shelf, result, recent, refRecentRatio } = view;
   // One verdict, shared with Letterboxd (shared/better-picks.ts): score folded
   // with the recent run into one comparable number. This used to be two
@@ -1173,16 +1206,72 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
     return;
   }
 
+  const banner = winnerBanner('', shelf);
+  const bannerText = banner.querySelector('.gr-winner-text') as HTMLElement;
   const list = el('ul', 'gr-similar-list');
+  const drawerToggle = el('div', 'gr-fold-toggle');
+  const drawer = el('ul', 'gr-similar-list gr-ignored-list');
+  let drawerOpen = false;
+  let drawerRevealed = false;
   // Best adjusted first, the way Letterboxd already ordered its list — the raw
   // score order buried the book that actually wins.
-  for (const ranked of ranking.ranked) list.append(buildItem(ranked, refRecentRatio, threshold));
+  const rows = ranking.ranked.map((ranked) => {
+    const item = buildItem(ranked, refRecentRatio, threshold);
+    const button = el('button', 'gr-ignore') as HTMLButtonElement;
+    button.type = 'button';
+    item.append(button);
+    return { pick: ranked.item, passes: ranked.passes, item, button };
+  });
 
-  // No recent % for this book means no verdict: the picks stay unjudged, not struck
-  // through as if they had lost.
+  /** Re-entrant render — reruns on every ignore, restore and drawer toggle. */
+  const paint = () => {
+    // Re-inserting a row blurs the button inside it — hand focus back, without
+    // scrolling to the row's new list.
+    const focused = section.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
+    let ignoredCount = 0;
+    let passCount = 0;
+    for (const { pick, passes, item, button } of rows) {
+      const isIgnored = ignored.has(pick.workId);
+      if (isIgnored) ignoredCount++;
+      else if (passes) passCount++;
+      button.textContent = isIgnored ? '↺' : '×';
+      const label = isIgnored ? 'Restore — count this as a better pick again' : 'Ignore — don’t count this as a better pick';
+      button.title = label;
+      button.setAttribute('aria-label', `${label}: ${pick.title || `Book ${pick.bookId}`}`);
+      // Appending in ranked order keeps both lists sorted.
+      (isIgnored ? drawer : list).append(item);
+    }
+    focused?.focus({ preventScroll: true });
+
+    drawerToggle.hidden = ignoredCount === 0;
+    drawerToggle.textContent = `${drawerOpen ? '▼' : '▶'} ${ignoredCount} ignored`;
+    drawer.hidden = !drawerOpen || ignoredCount === 0;
+
+    // No recent % for this book means no verdict: no banner, and the picks stay
+    // unjudged rather than struck through as if they had lost.
+    banner.hidden = threshold === null || passCount > 0;
+    bannerText.textContent = ignoredCount === rows.length
+      ? 'Every pick in this shelf is ignored.' : 'Winner! No book beats its recent-adjusted score.';
+  };
+
+  drawerToggle.addEventListener('click', () => { drawerOpen = !drawerOpen; paint(); });
+  for (const { pick, button } of rows) {
+    button.addEventListener('click', () => {
+      if (ignored.has(pick.workId)) {
+        ignored.delete(pick.workId);
+      } else {
+        ignored.add(pick.workId);
+        // First ignore of the visit springs the drawer open once, so undo is discoverable.
+        if (!drawerRevealed) { drawerRevealed = true; drawerOpen = true; }
+      }
+      saveIgnored(IGNORED_KEY, pick.workId, ignored.has(pick.workId));
+      paint();
+    });
+  }
+
   if (threshold === null) section.append(el('p', 'gr-similar-sub', "Can't judge: this book's recent % is unknown."));
-  else if (!ranking.passed.length) section.append(winnerBanner('Winner! No book beats its recent-adjusted score.', shelf));
-  section.append(list);
+  section.append(banner, list, drawerToggle, drawer);
+  paint();
   section.append(debugPane(shelf, result, threshold, currentStats.score));
 };
 
@@ -1195,6 +1284,7 @@ const renderSimilarPicks = async (
 ) => {
   const section = el('section', 'gr-similar');
   anchor.parentNode!.insertBefore(section, anchor.nextSibling);
+  const ignored = loadIgnored(IGNORED_KEY);
 
   // Cached full view → restore instantly; no shelf lookup or book fetches on refresh.
   // v2: bumped to flush entries poisoned by cached "Recent: N/A" from failed fetches.
@@ -1207,7 +1297,7 @@ const renderSimilarPicks = async (
   const viewerScope = goodreadsViewerCacheScope(document);
   const viewKey = `${viewerKey.picksView(viewerScope)}${getBookIdFromURL(currentBookURL)}`;
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
-  if (cachedView) { renderPicksView(section, cachedView, currentStats); return; }
+  if (cachedView) { renderPicksView(section, cachedView, currentStats, await ignored); return; }
 
   renderProgress(section, 0);
 
@@ -1269,7 +1359,7 @@ const renderSimilarPicks = async (
   if (!recentFailed && isComplete(result) && currentRecentRatio !== null) {
     idbSet(viewKey, { ...view, result: { ...result, allScored: [] } });
   }
-  renderPicksView(section, view, currentStats);
+  renderPicksView(section, view, currentStats, await ignored);
 };
 
 // =============================================================================

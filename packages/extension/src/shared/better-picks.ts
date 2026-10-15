@@ -13,7 +13,7 @@ import { adjust } from './recency';
 // Discovery stays per-site: which candidates to consider, how far to crawl, and
 // how to fetch each one's score is genuinely different (a popular-films list vs
 // a Goodreads shelf). So does presentation — Letterboxd folds the losers into a
-// disclosure and keeps an ignore drawer, Goodreads strikes them through inline.
+// disclosure, Goodreads strikes them through inline; both keep an ignore drawer.
 // This module owns only the verdict, which is the part that should never differ.
 
 export type Candidate<T> = {

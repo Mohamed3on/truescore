@@ -1,6 +1,7 @@
 import { netScore } from '@truescore/gmaps-shared';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { couldReach, rankPicks } from '../shared/better-picks';
+import { loadIgnored, saveIgnored } from '../shared/ignored-picks';
 import { adjust, ratioFromTally, TEN_POINT, THIN_SAMPLE, trendClass } from '../shared/recency';
 import { buildMediaSummary } from '../shared/review-summary';
 import { buildSearchSection } from '../shared/review-search';
@@ -166,25 +167,8 @@ const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number
 const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v6_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
 const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v6_${slug}`, data);
 
-// Films the user has muted from Similar Picks. Deliberately not a cache — it's
-// user intent, so it lives in chrome.storage.local: no TTL, survives clearing
-// letterboxd site data, and untouched by the background rc_score_* sweep.
+// Films the user has muted from Similar Picks, by slug (see shared/ignored-picks).
 const IGNORED_KEY = 'lbx_ignored';
-
-const readIgnored = async (): Promise<Set<string>> => {
-  const stored = (await chrome.storage.local.get(IGNORED_KEY))[IGNORED_KEY];
-  return new Set<string>(Array.isArray(stored) ? stored : []);
-};
-
-const loadIgnored = () => readIgnored().catch(() => new Set<string>());
-
-// One film against what is stored now: saving this tab's whole set would drop
-// whatever another open tab ignored since this one loaded.
-const saveIgnored = (slug: string, ignore: boolean) =>
-  readIgnored().then((ignored) => {
-    if (ignore) ignored.add(slug); else ignored.delete(slug);
-    return chrome.storage.local.set({ [IGNORED_KEY]: [...ignored] });
-  }).catch(() => {});
 
 // The oldest release year Similar Picks shows, or null for any — user intent too,
 // kept beside the ignored films.
@@ -734,7 +718,7 @@ function moveTo(element: HTMLElement, target: HTMLElement) {
 function startSimilarPicks(currentSlug: string, currentRuntime: number) {
   const section = el('section', 'lbx-similar');
   section.append(el('span', 'lbx-progress', 'Finding similar picks...'));
-  return { section, found: findSimilarPicks(currentSlug, currentRuntime, section), ignored: loadIgnored(), minYear: loadMinYear() };
+  return { section, found: findSimilarPicks(currentSlug, currentRuntime, section), ignored: loadIgnored(IGNORED_KEY), minYear: loadMinYear() };
 }
 
 /**
@@ -883,7 +867,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
       // First ignore of the visit springs the drawer open once, so undo is discoverable.
       if (!drawerRevealed) { drawerRevealed = true; drawerOpen = true; }
     }
-    saveIgnored(slug, ignored.has(slug));
+    saveIgnored(IGNORED_KEY, slug, ignored.has(slug));
     paint();
   };
 
