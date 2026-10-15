@@ -877,3 +877,30 @@
 .rc-ask-search-pct.mid { color: #E8B86D; }
 /* Review filters (▲ praise / ▼ complain) and stance marks in the panel's own green, red and brass. */
 :root { --ts-praise: #4ADE80; --ts-complain: #F87171; --ts-mixed: #E8B86D; }
+
+/* Search results sort chip, beside Maps' own "Results" heading: Maps' chip
+   shape and type, sea glass when on. The margin clears the heading's ⓘ button,
+   which overflows its zero-width wrapper by 32px. */
+.ts-review-sort {
+  align-self: center;
+  margin-left: 40px;
+  padding: 0 12px;
+  height: 32px;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: 500 14px/20px 'Google Sans Text', 'Google Sans', Roboto, Arial, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ts-review-sort:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.ts-review-sort[aria-pressed='true'] {
+  border-color: rgba(109, 211, 206, 0.5);
+  background: rgba(109, 211, 206, 0.1);
+}
+.ts-review-sort[aria-pressed='true']::before {
+  content: '✓ ';
+}

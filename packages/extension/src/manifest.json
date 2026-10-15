@@ -214,7 +214,7 @@
     },
     {
       "matches": ["*://*.google.com/maps/*", "*://*.google.com/maps*"],
-      "js": ["sites/gmaps.js"],
+      "js": ["sites/gmaps.js", "sites/gmaps-search.js"],
       "css": ["sites/gmaps.css"],
       "world": "MAIN",
       "run_at": "document_end"

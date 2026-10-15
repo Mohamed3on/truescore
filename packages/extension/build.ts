@@ -36,6 +36,7 @@ await esbuild.build({
     'src/sites/gmaps.ts',
     'src/sites/gmaps-bridge.ts',
     'src/sites/gmaps-capture.ts',
+    'src/sites/gmaps-search.ts',
     'src/sites/imdb.ts',
     'src/sites/letterboxd.ts',
     'src/sites/reddit.ts',

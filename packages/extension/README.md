@@ -37,7 +37,7 @@ Each site adapts this formula to what data is available (star histograms, like/d
 
 **Places & Travel**
 - **Airbnb** — Score on listing pages derived from the review histogram.
-- **Google Maps** — Quick score on place details + a floating review analysis panel with time-based filtering, AI summaries, search within reviews, and custom questions about the place.
+- **Google Maps** — Quick score on place details + a floating review analysis panel with time-based filtering, AI summaries, search within reviews, and custom questions about the place. Search results sort by review count on demand (⌥Z; ⌥⇧Z loads every result first).
 
 **Sports**
 - **Transfermarkt** — Click any table header to sort. Shift+click fetches all pages and sorts globally. Adds a ranking column and a points-vs-expected column based on squad market value.
