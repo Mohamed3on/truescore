@@ -880,7 +880,9 @@
 
 /* Search results sort chip, beside Maps' own "Results" heading: Maps' chip
    shape and type, sea glass when on. The margin clears the heading's ⓘ button,
-   which overflows its zero-width wrapper by 32px. */
+   which overflows its zero-width wrapper by 32px. Both states keep one width:
+   Maps' header row wraps, with ~14px to spare, so a wider "on" chip (a ✓)
+   would push Share onto a line of its own. */
 .ts-review-sort {
   align-self: center;
   margin-left: 40px;
@@ -900,7 +902,4 @@
 .ts-review-sort[aria-pressed='true'] {
   border-color: rgba(109, 211, 206, 0.5);
   background: rgba(109, 211, 206, 0.1);
-}
-.ts-review-sort[aria-pressed='true']::before {
-  content: '✓ ';
 }
