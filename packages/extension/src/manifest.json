@@ -197,6 +197,12 @@
       "run_at": "document_end"
     },
     {
+      "matches": ["*://progressjj.co.uk/products/*", "*://progressjj.co.uk/*/products/*"],
+      "js": ["sites/progress-pdp.js"],
+      "css": ["sites/amazon-product.css"],
+      "run_at": "document_end"
+    },
+    {
       "matches": ["*://*.goodreads.com/book/show/*", "*://*.goodreads.com/*/book/show/*"],
       "js": ["sites/goodreads.js"],
       "run_at": "document_end"

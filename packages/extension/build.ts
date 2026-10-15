@@ -28,6 +28,7 @@ await esbuild.build({
     'src/sites/docmorris-pdp.ts',
     'src/sites/docmorris-plp.ts',
     'src/sites/bjjfanatics-pdp.ts',
+    'src/sites/progress-pdp.ts',
     'src/sites/etsy.ts',
     'src/sites/etsy-pdp.ts',
     'src/sites/aliexpress.ts',
