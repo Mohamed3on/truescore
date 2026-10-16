@@ -340,16 +340,15 @@ const STYLES = `
   }
   .gr-summary-btn:hover { background: #00524d; }
   .gr-summary-btn:disabled { opacity: .6; cursor: default; }
-  .gr-summary-sec { margin-bottom: 12px; }
-  .gr-summary-sec:last-child { margin-bottom: 0; }
-  .gr-summary-label {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: .06em;
-    color: #8b7355;
-    margin-bottom: 3px;
-  }
+  /* The verdict leads unlabelled; each point hangs off its stance mark, which
+     stands in for a section label. */
+  .gr-summary-points { list-style: none; margin: 10px 0 0; padding: 0; }
+  .gr-summary-point { display: grid; grid-template-columns: 8px 1fr; column-gap: 9px; margin: 0; padding: 0; font-size: 14px; line-height: 1.55; }
+  .gr-summary-point + .gr-summary-point { margin-top: 6px; }
+  .gr-summary-mark { display: flex; align-items: center; justify-content: center; height: 1.55em; }
+  .gr-summary-point[data-sentiment="loved"] .gr-summary-mark { color: var(--ts-praise, #15803D); }
+  .gr-summary-point[data-sentiment="disliked"] .gr-summary-mark { color: var(--ts-complain, #C2410C); }
+  .gr-summary-point[data-sentiment="divided"] .gr-summary-mark { color: var(--ts-mixed, hsl(40, 70%, 35%)); }
   .gr-summary-text { font-size: 14px; line-height: 1.55; color: #382110; }
   .gr-summary-text strong { font-weight: 700; }
   .gr-summary-progress { color: #8b7355; font-size: 13px; padding: 4px 0; }
@@ -1441,18 +1440,13 @@ const watchViewerShelving = (bookId: string) => {
 // Review summary (AI)
 // =============================================================================
 
-const SUMMARY_SCHEMA = {
-  type: 'object' as const,
-  properties: {
-    recommendation: { type: 'string' as const, description: 'The verdict: how strongly reviewers recommend it, and to whom.' },
-    loved: { type: 'string' as const, description: 'What readers love: every point several of them make.' },
-    dislikes: { type: 'string' as const, description: "What readers didn't enjoy: every point several of them make. Empty string if there is no shared complaint." },
-  },
-  required: ['recommendation', 'loved', 'dislikes'],
-  additionalProperties: false,
-};
+const SUMMARY_PROMPT = `Write the review digest for a Goodreads book page, for someone deciding whether to read the book. They can already see the description, author and rating, so don't retell the plot or premise: tell them what readers make of it. Reviews run newest first, each prefixed with its date and star rating.
 
-const SUMMARY_PROMPT = `Summarize these Goodreads reviews for someone deciding whether to read this book. Reviews run newest first, each prefixed with its date and star rating. Say each point once and concretely: name what reviewers single out (a character, an idea, a scene, the structure, the prose) and what about it works or grates — "the narrator's deadpan asides keep the grim material bearable", not "great voice" — and keep the concrete things reviewers report rather than recasting them as qualities like "moving", "humane" or "illuminating". Only use points raised by multiple reviewers, leaving out what just one says however vivid; ignore reading-challenge notes, shelving chatter, and contentless one-liners. A plot spoiler (who dies, a twist, how it ends) is fine when many reviewers discuss it: put **SPOILER:** right before it. You may use **bold** for emphasis. No preamble.`;
+Give a one-sentence verdict, then the most common points, merging points that overlap. Choose points by how many readers make them, not to balance praise against complaints: a book nearly everyone loves may have no complaint worth listing, and one nearly everyone dislikes may have no praise worth listing. Leave out what only a few say, reading-challenge notes, shelving chatter and contentless one-liners.
+
+Keep each point specific and short: the thing readers single out (a character, an idea, a scene, the structure, the prose) in **bold**, then its effect in a short sentence — "**The narrator's deadpan asides** keep the grim material bearable", not "moving", "humane" or "illuminating". State points outright, not as "readers praise…", and say each only once.
+
+A plot spoiler many readers discuss (who dies, a twist, how it ends) is fine: put **SPOILER:** right before it. No preamble.`;
 
 // Whether opinion has shifted is only asked of reviews reaching back a year or more. A
 // popular book's newest reviews span days, and asked anyway the model reports the shift
@@ -1629,8 +1623,6 @@ const appendScore = async (bookTitle: Element) => {
     classPrefix: 'gr-summary',
     heading: 'Reader Reviews',
     summaryPrompt: summaryPromptFor,
-    schema: SUMMARY_SCHEMA,
-    sections: [['Verdict', 'recommendation'], ['Loved', 'loved'], ['Didn’t enjoy', 'dislikes']],
     summaryCacheKey: currentId ? `gr_summary_${currentId}` : null,
     summaryTtl: CONFIG.SUMMARY_CACHE_MS,
     initialButtonLabel: '✦ Summarize reviews',

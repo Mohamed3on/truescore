@@ -546,14 +546,47 @@ export const summarizeMatches = (cacheKey: string, opts: Pick<SummarizeWidgetOpt
     ...opts,
   });
 
+// A book's or film's summary: a verdict, then the points the most reviewers
+// make, each loved, disliked or divided. A kind no common point falls under has
+// none, so a film everyone loves shows no complaints and one everyone pans no
+// praise. Each point is written before it's judged: with `sentiment` first, the
+// mark led and the text followed (a pan's five complaints came out "loved").
+export const MEDIA_SUMMARY_SCHEMA: JSONSchema7 = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', description: 'One sentence: how strongly reviewers recommend it, and to whom.' },
+    points: {
+      type: 'array',
+      description: 'The most common points, most-made first.',
+      items: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'The thing in **bold**, then its effect in a short sentence.' },
+          sentiment: { type: 'string', enum: ['loved', 'disliked', 'divided'], description: 'Whether the point is praise (loved) or a complaint (disliked); divided only when many reviewers land on each side.' },
+        },
+        required: ['text', 'sentiment'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['verdict', 'points'],
+  additionalProperties: false,
+};
+
+// The stance marks reviews already carry (STANCE_MARKS' ▲ ▼ ●), drawn so the
+// three match in size and centre on a point's first line.
+const MEDIA_MARKS: Record<string, { label: string; shape: string }> = {
+  loved: { label: 'Loved', shape: '<path d="M4 .5 8 7.5H0z"/>' },
+  disliked: { label: 'Didn’t enjoy', shape: '<path d="M0 .5h8L4 7.5z"/>' },
+  divided: { label: 'Divided', shape: '<circle cx="4" cy="4" r="3"/>' },
+};
+
 interface MediaSummaryOpts {
   anchor: Element;
   classPrefix: string;
   heading: string;
   // Or built from the fetched reviews, for a rule that only fits some of them.
   summaryPrompt: string | ((texts: string[]) => string);
-  schema: any;
-  sections: [string, string][];
   summaryCacheKey: string | null;
   summaryTtl: number;
   fetchReviews: () => Promise<string[]>;
@@ -564,8 +597,8 @@ interface MediaSummaryOpts {
 }
 
 // Shared summary + Q&A panel for media-review sites (Goodreads books, Letterboxd
-// films): a labeled structured summary over a caller-supplied schema/sections,
-// instant synchronous restore of the cached summary on mount, and an optional
+// films): a verdict and stance-marked points (MEDIA_SUMMARY_SCHEMA), instant
+// synchronous restore of the cached summary on mount, and an optional
 // free-form Ask with cached recent-question chips. Styled entirely by the host
 // via `classPrefix` (each site ships its own CSS using the same suffixes). This
 // is the editorial counterpart to buildSummarizeWidget (the retail praised/
@@ -576,8 +609,6 @@ export const buildMediaSummary = ({
   classPrefix: p,
   heading,
   summaryPrompt,
-  schema,
-  sections,
   summaryCacheKey,
   summaryTtl,
   fetchReviews,
@@ -616,28 +647,49 @@ export const buildMediaSummary = ({
 
   let showingSummary = false;
 
-  // The summary drawn into `body`, redrawn in place as it streams: a section
-  // joins once its field has words, and only the field that grew is rewritten.
+  // The summary drawn into `body`, redrawn in place as it streams: the verdict
+  // leads, unlabelled, and the marks stand in for section labels, so a kind
+  // with no points takes no room. Points are grouped by sentiment, the kind the
+  // most-made point has first; asked to order them so, the model mislabelled
+  // points to fit the groups. A point joins once its sentiment (written after
+  // it) arrives, straight into its group, so none moves once shown.
   const mountMediaSummary = () => {
-    const secs = sections.map(([label]) => {
-      const sec = el('div', `${p}-sec`);
-      sec.append(el('div', `${p}-label`, label));
-      return { sec, text: sec.appendChild(el('div', `${p}-text`)) };
-    });
-    const show = inOrder(body, () => secs.map((s) => s.sec));
-    let shown = false;
-    return (data: any) => sections.forEach(([, field], i) => {
-      const value = String(data?.[field] ?? '').trim();
-      if (!value) return void secs[i]!.sec.remove();
+    const verdict = el('div', `${p}-verdict ${p}-text`);
+    const list = el('ul', `${p}-points`);
+    const texts = new Map<number, HTMLElement>();
+    const kinds: string[] = [];
+    let started = false;
+    return (data: any) => {
+      const value = String(data?.verdict ?? '').trim();
+      const points: any[] = Array.isArray(data?.points) ? data.points : [];
+      if (!value && !points.length) return;
       // The progress note gives way to the first words.
-      if (!shown) {
-        body.replaceChildren();
+      if (!started) {
+        body.replaceChildren(verdict, list);
         body.style.display = 'block';
-        shown = true;
+        started = true;
       }
-      writeMarkdown(secs[i]!.text, value, renderMarkdownInline);
-      show(secs[i]!.sec);
-    });
+      writeMarkdown(verdict, value, renderMarkdownInline);
+      points.forEach((point, i) => {
+        const mark = MEDIA_MARKS[point?.sentiment];
+        if (!mark) return;
+        if (!texts.has(i)) {
+          if (!kinds.includes(point.sentiment)) kinds.push(point.sentiment);
+          const li = el('li', `${p}-point`);
+          li.dataset.sentiment = point.sentiment;
+          const m = li.appendChild(el('span', `${p}-mark`));
+          m.setAttribute('role', 'img');
+          m.setAttribute('aria-label', mark.label);
+          m.title = mark.label;
+          m.innerHTML = `<svg viewBox="0 0 8 8" width="8" height="8" fill="currentColor" aria-hidden="true">${mark.shape}</svg>`;
+          texts.set(i, li.appendChild(el('span', `${p}-text`)));
+          const kind = kinds.indexOf(point.sentiment);
+          list.insertBefore(li, [...list.children].find((c) => kinds.indexOf((c as HTMLElement).dataset.sentiment!) > kind) ?? null);
+        }
+        // Only some providers write the sentiment last; with it first, the text is still coming.
+        writeMarkdown(texts.get(i)!, String(point.text ?? '').trim(), renderMarkdownInline);
+      });
+    };
   };
   const renderMediaSummary = (data: any) => mountMediaSummary()(data);
 
@@ -667,9 +719,9 @@ export const buildMediaSummary = ({
       const texts = await fetchReviews();
       if (!texts.length) throw new Error('No written reviews found yet.');
       note(`${p}-progress`, '✦ Summarizing…');
-      // Each section shows as it's written.
+      // Each point shows as it's written.
       const draw = mountMediaSummary();
-      const data = await llmSummarize(texts, typeof summaryPrompt === 'string' ? summaryPrompt : summaryPrompt(texts), schema, draw);
+      const data = await llmSummarize(texts, typeof summaryPrompt === 'string' ? summaryPrompt : summaryPrompt(texts), MEDIA_SUMMARY_SCHEMA, draw);
       bumpRateLimit();
       if (summaryCacheKey) cacheSet(summaryCacheKey, data);
       draw(data);
@@ -740,8 +792,9 @@ export const buildMediaSummary = ({
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
   }
 
+  // A summary cached in an older shape is left to be written again.
   const cached = summaryCacheKey ? cacheGet(summaryCacheKey, summaryTtl) : null;
-  if (cached?.summary) {
+  if (cached?.points) {
     renderMediaSummary(cached);
     showingSummary = true;
   }

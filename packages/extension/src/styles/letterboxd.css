@@ -235,15 +235,16 @@
   font-size: .9rem;
   line-height: 1.5;
 }
-.lbx-summary-sec + .lbx-summary-sec { margin-top: .65rem; }
-.lbx-summary-label {
-  font-size: .68rem;
-  font-weight: 700;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-  color: #678;
-  margin-bottom: .12rem;
-}
+/* The verdict leads unlabelled, a step up the ink ladder; each point hangs off
+   its stance mark, which stands in for a section label. */
+.lbx-summary-verdict { color: #cde; }
+.lbx-summary-points { list-style: none; margin: .55rem 0 0; padding: 0; }
+.lbx-summary-point { display: grid; grid-template-columns: 8px 1fr; column-gap: .6em; margin: 0; padding: 0; }
+.lbx-summary-point + .lbx-summary-point { margin-top: .4rem; }
+.lbx-summary-mark { display: flex; align-items: center; justify-content: center; height: 1.5em; }
+.lbx-summary-point[data-sentiment="loved"] .lbx-summary-mark { color: var(--ts-praise); }
+.lbx-summary-point[data-sentiment="disliked"] .lbx-summary-mark { color: var(--ts-complain); }
+.lbx-summary-point[data-sentiment="divided"] .lbx-summary-mark { color: var(--ts-mixed); }
 .lbx-summary-text strong { color: #cde; font-weight: 600; }
 .lbx-summary-text em { color: #bcd; font-style: italic; }
 .lbx-summary-text a { color: #40bcf4; text-decoration: none; }

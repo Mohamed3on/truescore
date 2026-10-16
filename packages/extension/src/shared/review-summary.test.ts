@@ -179,34 +179,58 @@ test('a summary shows as it is written, dim until checked, then drops and orders
   }
 });
 
-test('a media summary keeps its progress note until the first words, then fills each section in place', async () => {
-  const { buildMediaSummary } = await import('./review-summary');
-  const anchor = document.createElement('div').appendChild(document.createElement('div'));
-  const body = () => section.querySelector('.gr-summary-body')!;
+const mediaSummary = async (summaryCacheKey: string | null) => (await import('./review-summary')).buildMediaSummary({
+  anchor: document.createElement('div').appendChild(document.createElement('div')), classPrefix: 'gr-summary', heading: 'Reader Reviews',
+  summaryPrompt: 'p', summaryCacheKey, summaryTtl: 60_000, initialButtonLabel: '✦ Summarize', fetchReviews: async () => ['a review'],
+});
+// The verdict, then each point as "its mark's label: its text".
+const mediaDraft = (section: HTMLElement) => {
+  const body = section.querySelector('.gr-summary-body')!;
+  const verdict = body.querySelector('.gr-summary-verdict');
+  if (!verdict) return body.textContent;
+  const points = [...body.querySelectorAll('.gr-summary-point')].map((li) => `${li.querySelector('.gr-summary-mark')!.getAttribute('aria-label')}: ${li.textContent}`);
+  return [verdict.textContent, ...points].join(' | ');
+};
+
+test('a media summary keeps its progress note until the first words, then adds each point to its kind once its sentiment is written', async () => {
   const seen: string[] = [];
   let first: Element | undefined;
+  const prose = { text: '**Prose** sings', sentiment: 'loved' };
+  const ending = { text: '**The ending** drags', sentiment: 'disliked' };
   stream = {
-    partials: [{ summary: '' }, { summary: 'Loved' }, { summary: 'Loved it', recommendation: 'Read' }],
-    whole: { summary: 'Loved it', recommendation: 'Read it', dislikes: '', audience: 'Fans' },
+    partials: [
+      { verdict: '' },
+      { verdict: 'Read' },
+      { verdict: 'Read it', points: [{ text: '**Prose**' }] },
+      { verdict: 'Read it', points: [{ text: '**Prose** sings', sentiment: 'lov' }] },
+      { verdict: 'Read it', points: [prose, { text: '**The ending**' }] },
+      { verdict: 'Read it', points: [prose, ending, { text: '**Her letters**' }] },
+    ],
+    whole: { verdict: 'Read it', points: [prose, ending, { text: '**Her letters** move', sentiment: 'loved' }] },
     after: (i) => {
-      seen.push([...body().children].map((c) => c.textContent).join(' | '));
-      if (i === 1) first = body().querySelector('.gr-summary-text')!;
+      seen.push(mediaDraft(section));
+      if (i === 4) first = section.querySelector('.gr-summary-point')!;
     },
   };
-  const section = buildMediaSummary({
-    anchor, classPrefix: 'gr-summary', heading: 'Reader Reviews', summaryPrompt: 'p', schema: {},
-    sections: [['Summary', 'summary'], ['Verdict', 'recommendation'], ['Didn’t enjoy', 'dislikes'], ['Who it’s for', 'audience']],
-    summaryCacheKey: null, summaryTtl: 0, initialButtonLabel: '✦ Summarize', fetchReviews: async () => ['a review'],
-  });
+  const section = await mediaSummary(null);
   try {
     (section.querySelector('.gr-summary-btn') as HTMLButtonElement).click();
     await new Promise((r) => setTimeout(r, 20));
-    expect(seen).toEqual(['✦ Summarizing…', 'SummaryLoved', 'SummaryLoved it | VerdictRead']);
-    expect([...body().children].map((c) => c.textContent)).toEqual(['SummaryLoved it', 'VerdictRead it', 'Who it’s forFans']);
-    expect(body().querySelector('.gr-summary-text')).toBe(first!);
+    expect(seen).toEqual(['✦ Summarizing…', 'Read', 'Read it', 'Read it', 'Read it | Loved: Prose sings', 'Read it | Loved: Prose sings | Didn’t enjoy: The ending drags']);
+    // The last loved point joins its kind, above the complaint written before it.
+    expect(mediaDraft(section)).toBe('Read it | Loved: Prose sings | Loved: Her letters move | Didn’t enjoy: The ending drags');
+    expect(section.querySelector('.gr-summary-point')).toBe(first!);
   } finally {
     stream = undefined;
   }
+});
+
+test('a cached media summary shows on mount, and one cached in an older shape waits to be written again', async () => {
+  const cache = (key: string, data: object) => localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
+  cache('media-summary-test-now', { verdict: 'Read it', points: [{ text: '**Prose** sings', sentiment: 'loved' }] });
+  cache('media-summary-test-old', { recommendation: 'Read it', loved: 'Prose', dislikes: '' });
+  expect(mediaDraft(await mediaSummary('media-summary-test-now'))).toBe('Read it | Loved: Prose sings');
+  expect(mediaDraft(await mediaSummary('media-summary-test-old'))).toBe('');
 });
 
 test('a free-form answer grows in place as it streams', async () => {

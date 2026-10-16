@@ -432,18 +432,13 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
 // Recent-review AI summary
 // =============================================================================
 
-const SUMMARY_SCHEMA = {
-  type: 'object' as const,
-  properties: {
-    recommendation: { type: 'string' as const, description: 'The verdict: how strongly reviewers recommend it, and to whom.' },
-    loved: { type: 'string' as const, description: 'What people love: every point several of them make.' },
-    dislikes: { type: 'string' as const, description: "What people didn't enjoy: every point several of them make. Empty string if there is no shared complaint." },
-  },
-  required: ['recommendation', 'loved', 'dislikes'],
-  additionalProperties: false,
-};
+const SUMMARY_PROMPT = `Write the review digest for a Letterboxd film page, for someone deciding whether to watch the film. They can already see the synopsis, cast and rating, so don't retell the plot or premise: tell them what reviewers make of it.
 
-const SUMMARY_PROMPT = `Summarize these recent Letterboxd reviews for someone deciding whether to watch this film. Say each point once and concretely: name what reviewers single out (a performance, a scene, the direction, the writing, the pacing, the tone) and what about it works or grates — "the single-take dinner scene ratchets up the dread", not "tense" — and keep the concrete things reviewers report rather than recasting them as qualities like "stunning", "powerful" or "masterful". Only use points raised by multiple reviewers, leaving out what just one says however vivid; ignore Letterboxd in-jokes and contentless one-liners. A plot spoiler (who dies, a twist, how it ends) is fine when many reviewers discuss it: put **SPOILER:** right before it. You may use **bold** for emphasis. No preamble.`;
+Give a one-sentence verdict, then the most common points, merging points that overlap. Choose points by how many reviewers make them, not to balance praise against complaints: a film nearly everyone loves may have no complaint worth listing, and one nearly everyone dislikes may have no praise worth listing. Leave out what only a few say, Letterboxd in-jokes and contentless one-liners.
+
+Keep each point specific and short: the thing reviewers single out (a scene, a performance, a line, a craft choice) in **bold**, then its effect in a short sentence — "**The single-take dinner scene** ratchets up the dread", not "tense", "stunning" or "masterful". State points outright, not as "reviewers praise…", and say each only once.
+
+A plot spoiler many reviewers discuss (who dies, a twist, how it ends) is fine: put **SPOILER:** right before it. No preamble.`;
 
 const SEARCH_SUMMARY_PROMPT = `Summarize what these film reviews say about the searched topic. Lead with the bottom line and keep it specific to what reviewers actually wrote. Plot spoilers are fine: put **SPOILER:** right before each one (who dies, a twist, how it ends). A short paragraph or a few bullets.`;
 
@@ -1033,8 +1028,6 @@ async function run(histogram: Promise<number[]>) {
         classPrefix: 'lbx-summary',
         heading: 'Recent Reviews',
         summaryPrompt: SUMMARY_PROMPT,
-        schema: SUMMARY_SCHEMA,
-        sections: [['Verdict', 'recommendation'], ['Loved', 'loved'], ['Didn’t enjoy', 'dislikes']],
         summaryCacheKey: `lbx_summary_${currentSlug}`,
         summaryTtl: CONFIG.SUMMARY_CACHE_MS,
         initialButtonLabel: '✦ Summarize recent reviews',
