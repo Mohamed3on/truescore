@@ -93,11 +93,21 @@ export async function* streamNdjson<T extends { type: string }>(url: string, bod
 }
 
 // A summary route asked to `stream`: `onDraft` gets each draft as the model
-// writes it; resolves to the checked summary (or the cached one, alone).
+// writes it; resolves to the checked summary (or the cached one, alone), with
+// `later`: the aliases that follow it on the stream, if any.
 export async function streamSummary(url: string, body: unknown, onDraft: (draft: SummaryDraft) => void, signal?: AbortSignal) {
-  for await (const evt of streamNdjson<SummaryEvent>(url, body, signal)) {
+  const events = streamNdjson<SummaryEvent>(url, body, signal);
+  for (let next = await events.next(); !next.done; next = await events.next()) {
+    const evt = next.value;
     if (evt.type === 'summary-draft') onDraft(evt.summary);
-    else if (evt.type === 'summary') return evt;
+    else if (evt.type === 'summary') return { ...evt, later: lateAliases(events) };
   }
   throw new Error('the summary stream closed without a summary');
 }
+
+const lateAliases = async (events: AsyncGenerator<SummaryEvent>): Promise<Record<string, string[]> | undefined> => {
+  try {
+    for await (const evt of events) if (evt.type === 'aliases') return evt.aliases;
+  } catch {}
+  return undefined;
+};

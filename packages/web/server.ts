@@ -45,7 +45,7 @@ import { resolvePlace } from './resolve';
 import { mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch, type ScoreResult } from './gmaps';
 import { createUIMessageStream, createUIMessageStreamResponse, isStaticToolUIPart } from 'ai';
-import { summarize, ask, askThread, parseProvider, parseReasoningEffort } from './llm';
+import { summarize, aliasesFor, ask, askThread, parseProvider, parseReasoningEffort } from './llm';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, harvestQuick, scoreHighlight, type Harvest } from './highlights';
 import { answerKey, cache, type CachedAnswer, type CacheEntry } from './cache';
@@ -205,13 +205,15 @@ const drafter = (write: (event: SummaryDraftEvent) => void) => {
 
 // A summary route's answer as SummaryEvents, for a client that asked to `stream`:
 // its drafts as the model writes, then the checked summary.
-const summaryStream = (answer: (onDraft: (draft: SummaryDraft) => void) => Promise<HighlightSummaryResponse>) =>
+const summaryStream = (answer: (onDraft: (draft: SummaryDraft) => void) => Promise<HighlightSummaryResponse & { later?: Promise<Summary['aliases']> }>) =>
   ndjsonStream<SummaryEvent>(async (write) => {
     const drafts = drafter(write);
     try {
-      const done = await answer(drafts.onDraft);
+      const { later, ...done } = await answer(drafts.onDraft);
       drafts.stop();
       write({ type: 'summary', ...done });
+      const aliases = await later;
+      if (aliases) write({ type: 'aliases', aliases });
     } finally {
       drafts.stop();
     }
@@ -708,7 +710,7 @@ Bun.serve({
           const entry = cache.get(featureId);
           const force = !!body.force;
           const filter = body.filter?.trim() || undefined;
-          const answer = async (onDraft?: (draft: SummaryDraft) => void): Promise<SummarizeResponse> => {
+          const answer = async (onDraft?: (draft: SummaryDraft) => void): Promise<SummarizeResponse & { later?: Promise<Summary['aliases']> }> => {
             // Only the unfiltered place summary participates in the persisted
             // cache; filtered topic summaries are per-callsite and shouldn't
             // overwrite the canonical entry.summary slot.
@@ -721,13 +723,26 @@ Bun.serve({
               hint: 'look up the place first or pass reviewTexts in the body',
             });
             // Its receipts are read before it's final: streamed, its bullets
-            // show dim until then, and the ones too few reviews make go.
-            const summary = await withReceipts(await summarize(subject, filter, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort), onDraft), subject);
+            // show dim until then, and the ones too few reviews make go. A place
+            // summary's aliases come from a call run beside them: in the summary
+            // when they land first, else sent after it (`later`), never waited on.
+            const provider = parseProvider(body.provider);
+            const drafted = await summarize(subject, filter, provider, parseReasoningEffort(body.reasoningEffort), onDraft);
+            const aliases = filter ? undefined : aliasesFor(subject, drafted.items, provider);
+            const checked = await withReceipts(drafted, subject);
+            const landed = aliases && Bun.peek(aliases);
+            const summary = landed && !(landed instanceof Promise) ? { ...checked, aliases: landed } : checked;
             if (!filter && entry) await cache.putSummary(featureId, summary);
-            return { summary: quotingReviews(summary, entry?.score?.reviews), cached: false };
+            const later = landed instanceof Promise ? landed.then(async (a) => {
+              if (a && !filter && entry) await cache.putSummary(featureId, { ...summary, aliases: a });
+              return a;
+            }) : undefined;
+            return { summary: quotingReviews(summary, entry?.score?.reviews), cached: false, later };
           };
           if (body.stream) return summaryStream(answer);
-          return corsJson((await answer()) satisfies SummarizeResponse);
+          const { later, ...done } = await answer();
+          const aliases = await later;
+          return corsJson((aliases && done.summary ? { ...done, summary: { ...done.summary, aliases } } : done) satisfies SummarizeResponse);
         } catch (e) {
           // No reviews to summarize is the caller's 404, not a server fault.
           if (!(e instanceof NoReviews)) console.error('[summarize]', e);

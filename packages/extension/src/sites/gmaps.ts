@@ -64,6 +64,7 @@ import {
   chipRowOrder,
   pooledReads,
   replaceChips,
+  standoutNames,
   SCORED_CHIP_MIN_REVIEWS,
   type ChipState,
   type StanceCounts,
@@ -81,7 +82,7 @@ const MIN_PAGES_BEFORE_STABILIZE = 2;
 const HIGHLIGHT_FETCH_CONCURRENCY = 3;
 
 type FetchState = { isFetching: boolean; done: boolean; cursor: string; pageCount: number };
-type SummaryResult = { highlights?: SummaryHighlight[]; verdict?: string; valueForMoney?: number; items?: string[]; alternatives?: string[] };
+type SummaryResult = { highlights?: SummaryHighlight[]; verdict?: string; valueForMoney?: number; items?: string[]; aliases?: Record<string, string[]>; alternatives?: string[] };
 type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
 type CardEls = {
   merged?: MergedEls;
@@ -1005,7 +1006,8 @@ const llmContext = async () => {
 };
 
 // Streamed: `onDraft` gets the summary as the model writes it, before it's checked.
-const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null, onDraft: (draft: SummaryDraft) => void): Promise<SummaryResult> => {
+// A place summary's aliases that land after it go to `onAliases`, with it.
+const summarizeReviews = async (reviewTexts: string[], filterQuery: string | null, onDraft: (draft: SummaryDraft) => void, onAliases?: (summary: SummaryResult) => void): Promise<SummaryResult> => {
   const body = {
     ...await llmContext(), reviewTexts,
     filter: filterQuery ?? undefined,
@@ -1016,8 +1018,10 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
     force: true,
     stream: true,
   } satisfies SummarizeRequest;
-  const { summary, error } = await streamSummary(`${TRUESCORE_API_BASE}/api/summarize`, body, onDraft);
+  const { summary, error, later } = await streamSummary(`${TRUESCORE_API_BASE}/api/summarize`, body, onDraft);
   if (!summary) throw new Error(error || '/api/summarize failed');
+  // A turn later, so the caller has filed the summary itself first.
+  if (onAliases) void later.then((aliases) => aliases && setTimeout(() => onAliases({ ...summary, aliases })));
   return summary;
 };
 
@@ -1325,33 +1329,41 @@ const renderHighlights = () => {
   const merged = store.mergedStats(currentOption);
   const overall = toPct(!merged.totalCount && serverScore && currentOption === 'total' ? serverScore.ratio ?? serverScore.scorePct / 100 : merged.mergedPct);
   const ctx = scoredCtx.standouts?.featureId === getFeatureId() ? scoredCtx.standouts : null;
-  const standouts = new Map(ctx?.items.map((item) => [item.toLowerCase(), item]));
-  const at = (key: string) => `${ctx?.featureId}|${key}`;
+  // A standout goes by each of its names; a topic called by one pools into it.
+  const byName = new Map(ctx?.items.flatMap((item) => standoutNames(item, ctx.aliases).map((n) => [n.toLowerCase(), item] as const)));
+  const standouts = new Set(ctx?.items);
+  const at = (item: string) => `${ctx?.featureId}|${item.toLowerCase()}`;
   const rows: (ChipStats & { key: string; state: ChipState; el: HTMLButtonElement })[] = [];
   let settled = !computing;
   for (const h of items) {
     const key = h.label.toLowerCase();
-    const item = standouts.get(key);
-    const view = ctx && item && standoutScoreCache.has(at(key)) ? pooledView(h, ctx.featureId, item) : h;
-    if (!view || (item && standoutScoreInflight.has(at(key)))) settled = false;
+    const item = byName.get(key);
+    // Another topic going by its names holds it already, and its search took
+    // this topic's reviews in too.
+    if (item && !standouts.has(item)) continue;
+    const view = ctx && item && standoutScoreCache.has(at(item)) ? pooledView(h, ctx.featureId, item) : h;
+    if (!view || (item && standoutScoreInflight.has(at(item)))) settled = false;
     const c = view ?? h;
     // A topic fewer than two reviews actually speak to is dropped, as a scored
     // chip is; its standout, if any, still shows on its own.
     if (c.stance && tooFewMentions(opinionsOf(c.stance))) continue;
-    standouts.delete(key);
+    if (item) standouts.delete(item);
     const chip = chipEl(c.label, c, overall, () => onChipClick(c));
     if (activeHighlight?.token === c.token) chip.classList.add('rc-chip-active');
     rows.push({ ...c, key, state: 'done', el: chip });
   }
   for (const c of loading) {
     const key = c.label.toLowerCase();
-    standouts.delete(key);
+    const item = byName.get(key);
+    if (item && !standouts.has(item)) continue;
+    if (item) standouts.delete(item);
     rows.push({ key, state: 'loading', count: c.count, el: pendingChip(c.label, c.count) });
   }
-  for (const [key, item] of standouts) {
-    const stats = standoutScoreCache.get(at(key));
+  for (const item of standouts) {
+    const key = item.toLowerCase();
+    const stats = standoutScoreCache.get(at(item));
     // Scoring, or re-scoring with its old score showing: the row holds its order.
-    const scoring = standoutScoreInflight.has(at(key));
+    const scoring = standoutScoreInflight.has(at(item));
     if (scoring) settled = false;
     const search = () => triggerLabelSearchFor(item);
     if (!stats) {
@@ -2174,20 +2186,23 @@ const updateUI = () => {
 // the topic chips' row (renderHighlights); alternatives keep a labelled row of
 // their own, most-mentioned first.
 type ScoredKind = 'standouts' | 'alternatives';
-const scoredCtx: Record<ScoredKind, { items: string[]; featureId: string } | null> = { standouts: null, alternatives: null };
+// `aliases`: a standout's other names (standoutNames), searched with it.
+const scoredCtx: Record<ScoredKind, { items: string[]; featureId: string; aliases?: Record<string, string[]> } | null> = { standouts: null, alternatives: null };
 
 const triggerLabelSearchFor = (item: string) => {
   const input = cardEls.searchInput;
   if (!input) return;
-  // Raw term in the box; fetchAllForSearch expands it to spelling variants.
-  input.value = item;
+  // The chip's own search in the box; fetchAllForSearch expands each name to
+  // its spelling variants.
+  const query = standoutNames(item, scoredCtx.standouts?.aliases).join(' OR ');
+  input.value = query;
   input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   const featureId = getFeatureId();
   const cached = featureId ? standoutReviewsCache.get(`${featureId}|${item.toLowerCase()}`)?.reviews : undefined;
   if (cached?.length) {
     // Reuse the reviews already fetched to score this chip — no second search.
     labelSearchSeq++;
-    activeLabelSearch = { query: item, reviews: cached, summary: searchSummaryCache[item.toLowerCase()] };
+    activeLabelSearch = { query, reviews: cached, summary: searchSummaryCache[query.toLowerCase()] };
     renderLabelSearchResult();
   } else {
     runLabelSearch();
@@ -2235,6 +2250,7 @@ const redrawScored = (kind: ScoredKind) => {
 // scored isn't searched twice; its run is waited on instead.
 const ensureScored = (featureId: string, items: string[], kind: ScoredKind, withReviews = false) => {
   const limit = createLimiter(HIGHLIGHT_FETCH_CONCURRENCY);
+  const ctx = scoredCtx[kind]?.featureId === featureId ? scoredCtx[kind] : null;
   const runs: Promise<void>[] = [];
   for (const item of items) {
     const key = `${featureId}|${item.toLowerCase()}`;
@@ -2243,7 +2259,8 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
     if ((withReviews ? standoutReviewsCache : standoutScoreCache).has(key) && !standoutScoreStale.has(key)) continue;
     const run = limit(async () => {
       try {
-        const reviews = await fetchAllForSearch(featureId, item);
+        const query = standoutNames(item, ctx?.aliases).join(' OR ');
+        const reviews = await fetchAllForSearch(featureId, query);
         // null = neither this tab nor the server could search: leave the chip
         // pending — nothing may cache or persist a fake zero; the next render or
         // stale-refresh retries.
@@ -2256,7 +2273,7 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
         if (reviews.length) standoutScoreTransient.delete(key);
         else standoutScoreTransient.add(key);
         // Read before the chip shows, so a star share never paints only to be replaced.
-        const read = await readStanceOf(item, reviews);
+        const read = await readStanceOf(query, reviews);
         standoutScoreCache.set(key, { ...statsForReviews(reviews), ...(read && { stance: read.stance, of: read.of }), pooled: standoutScoreCache.get(key)?.pooled });
         standoutReviewsCache.set(key, { reviews, stances: read?.stances });
         standoutScoreStale.delete(key);
@@ -2282,9 +2299,26 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
   return Promise.all(runs);
 };
 
-const renderScoredGroup = (kind: ScoredKind, items: string[]) => {
+// Aliases that land after the summary: its standouts pool by all their names at
+// once, and the ones they name search again by them, after any search of theirs
+// still running.
+const applyStandoutAliases = (aliases: Record<string, string[]>) => {
+  const ctx = scoredCtx.standouts;
+  if (!ctx) return;
+  ctx.aliases = aliases;
+  renderHighlights();
+  for (const item of ctx.items.filter((i) => aliases[i]?.length)) {
+    const key = `${ctx.featureId}|${item.toLowerCase()}`;
+    void (standoutScoreInflight.get(key) ?? Promise.resolve()).then(() => {
+      standoutScoreStale.add(key);
+      return ensureScored(ctx.featureId, [item], 'standouts');
+    });
+  }
+};
+
+const renderScoredGroup = (kind: ScoredKind, items: string[], aliases?: Record<string, string[]>) => {
   const featureId = getFeatureId();
-  scoredCtx[kind] = featureId ? { items, featureId } : null;
+  scoredCtx[kind] = featureId ? { items, featureId, aliases } : null;
   // Scoring starts first, so the redraw tells an item still scoring from one
   // whose search couldn't run.
   if (featureId) ensureScored(featureId, items, kind);
@@ -2392,7 +2426,7 @@ const finishSummary = (panel: HTMLElement, result: SummaryResult) => {
   // — only the main summary, never a label-search/chip sub-summary whose items
   // would spawn nested searches off a filtered set.
   if (panel === cardEls.sumPanel) {
-    if (result.items?.length) renderScoredGroup('standouts', result.items);
+    if (result.items?.length) renderScoredGroup('standouts', result.items, result.aliases);
     else clearScored('standouts');
     if (result.alternatives?.length) renderScoredGroup('alternatives', result.alternatives);
     else clearScored('alternatives');
@@ -2461,6 +2495,13 @@ const triggerSummarize = async () => {
     let draw: ReturnType<typeof mountSummary> | undefined;
     const result = await summarizeReviews(texts, null, (draft) => {
       if (place.featureId === lastFeatureId) (draw ??= mountSummary(panel))(draft, false);
+    }, (withAliases) => {
+      if (place.featureId === lastFeatureId) {
+        summaryCache.all = withAliases;
+        applyStandoutAliases(withAliases.aliases ?? {});
+      }
+      saveSummaryCache(place.featureId, { all: withAliases });
+      pushContribution({ summary: withAliases }, place);
     });
     // Filed and uploaded under the place it was asked about; the in-memory cache
     // and panel only if that's still the place open (see currentPlace).

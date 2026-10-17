@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { capItems, salvageStructured } from './summary-parse';
+import { aliasesOf, capItems, salvageStructured } from './summary-parse';
 
 describe('capItems', () => {
   test('caps at MAX_SCORED_ITEMS, keeping order', () => {
@@ -8,6 +8,14 @@ describe('capItems', () => {
 
   test("passes shorter lists through untouched — hygiene is the prompt's job", () => {
     expect(capItems(['Bravas', 'churros'])).toEqual(['Bravas', 'churros']);
+  });
+});
+
+describe('aliasesOf', () => {
+  test("keeps each item's own aliases, once each and never the item, capped", () => {
+    const written = [{ name: 'koshari', aliases: ['Koshari', 'koshary', 'Koshary', 'kushari', 'kushary', 'koshery'] }, { name: 'other', aliases: ['x'] }, { name: 'foul', aliases: [] }];
+    expect(aliasesOf(['koshari', 'foul'], written)).toEqual({ koshari: ['koshary', 'kushari', 'kushary'] });
+    expect(aliasesOf(['foul'], written)).toBeUndefined();
   });
 });
 

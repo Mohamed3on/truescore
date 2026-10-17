@@ -32,7 +32,11 @@ export type Quote = Review | string;
 // before it (summary-parse.salvageStructured).
 // `preferredBy`: per alternative, how many reviews say they'd rather go there;
 // an alternative fewer than two reviews prefer is dropped. Absent when unchecked.
-export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney?: number; items?: string[]; alternatives?: string[]; preferredBy?: Record<string, number> };
+// `aliases`: per item, the other names reviewers write for that same thing (a
+// spelling, its name in another language), searched with it; a topic chip going
+// by any of them pools into its chip. Only items that have some; absent on
+// summaries from before them.
+export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney?: number; items?: string[]; aliases?: Record<string, string[]>; alternatives?: string[]; preferredBy?: Record<string, number> };
 
 export type Score = {
   featureId: string;
@@ -115,10 +119,15 @@ export type HighlightEvent =
 // ---- streamed summaries (NDJSON) ----
 // A summary as far as the model has written it: its verdict and highlights,
 // none checked yet. A summary request that asks to `stream` gets these as the
-// model writes, then the checked summary — or, cached, just that.
+// model writes, then the checked summary — or, cached, just that. A place
+// summary's aliases that land after it follow it (`aliases`).
 export type SummaryDraft = Pick<Summary, 'verdict' | 'highlights'>;
 export type SummaryDraftEvent = { type: 'summary-draft'; summary: SummaryDraft };
-export type SummaryEvent = SummaryDraftEvent | ({ type: 'summary' } & HighlightSummaryResponse) | { type: 'error'; error: string };
+export type SummaryEvent =
+  | SummaryDraftEvent
+  | ({ type: 'summary' } & HighlightSummaryResponse)
+  | { type: 'aliases'; aliases: Record<string, string[]> }
+  | { type: 'error'; error: string };
 
 // ---- /api/search (NDJSON stream) ----
 export type SearchResponse = { result?: SearchResult; cached?: boolean; error?: string };

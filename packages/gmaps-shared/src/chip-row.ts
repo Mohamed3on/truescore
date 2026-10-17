@@ -7,6 +7,11 @@ import { countStances, opinionPct, opinionsOf, type Stance, type StanceCounts } 
 
 export type ChipState = 'loading' | 'done' | 'error';
 
+// A standout's names: its item, and the other names reviewers write for it
+// (Summary.aliases). Its search looks for each, and a topic going by any of them
+// pools into it.
+export const standoutNames = (item: string, aliases?: Record<string, string[]>): string[] => [item, ...(aliases?.[item] ?? [])];
+
 // A topic and a standout naming the same thing, pooled: both review sets, each
 // review once, with Jev's reads of both (asked the same question, so nothing is
 // read again) — unread unless both were read.

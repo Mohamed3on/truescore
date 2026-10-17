@@ -4,7 +4,7 @@ import { convertToModelMessages, NoObjectGeneratedError, streamObject, streamTex
 import { z } from 'zod';
 import { LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
 import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
-import { capItems, MAX_SCORED_ITEMS, salvageStructured } from './summary-parse';
+import { aliasesOf, capItems, MAX_ALIASES, MAX_SCORED_ITEMS, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
 
 export type { Summary, SummaryHighlight, Provider, ReasoningEffort, Subject };
@@ -181,6 +181,42 @@ ${NOTES}${removal ? `\n\n${removal}` : ''}`;
       }),
   ]);
   return { verdict: verdict.trim(), ...structured };
+}
+
+// GPT-6 Luna with no reasoning, for the aliases call. The API takes effort
+// "none", but the SDK drops it for GPT-6 models (the API then runs its default,
+// medium), so it's written into the request here.
+const lunaNoReasoning = createOpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  fetch: Object.assign((url: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(url, { ...init, body: JSON.stringify({ ...JSON.parse(String(init?.body)), reasoning: { effort: 'none' } }) }), { preconnect: fetch.preconnect }),
+})(PROVIDERS.openai.model.modelId);
+
+// The other names reviewers write for each of a summary's items (Summary.aliases),
+// so a standout searches them all and a topic chip going by one pools into it.
+// Its own call, so the summary's prompt stays as it was: asked for there, the
+// bullets dropped dishes (2026-10-17: Bar La Pilareta's vermouth went from 8 of
+// 12 runs to 0 of 9). Without reasoning it takes ~2-3s, run beside the receipts.
+const ALIASES_SCHEMA = z.object({ items: z.array(z.object({ name: z.string(), aliases: z.array(z.string()) })) });
+export const aliasesRequest = ({ placeName, reviewTexts }: Subject, items: string[]) => ({
+  maxOutputTokens: 1024,
+  schema: ALIASES_SCHEMA,
+  prompt: `${reviewBlock(reviewTexts)}\n\n---\n\nReviewers of ${placeName || 'this place'} single out these things: ${items.map((i) => `"${i}"`).join(', ')}. For each, by its name exactly as given, list up to ${MAX_ALIASES} aliases, the ones the reviews write most often first: other names the reviews write for exactly the same thing — another spelling or transliteration ("kofta": "kufta", "köfte") or another name for it, in any language ("eggplant": "aubergine"). Each alias is searched as that thing, so never a broader thing ("noodles" for "ramen"), an ingredient ("beans" for "chili"), a similar thing ("cappuccino" for "latte"), or another of these things. Skip variants that differ only in capital letters, accents or hyphens: the search already matches those.`,
+});
+
+// None when the call fails: the summary stands without them.
+export async function aliasesFor(subject: Subject, items: string[] | undefined, provider: Provider = active()): Promise<Summary['aliases']> {
+  if (!items?.length) return undefined;
+  const { model, providerOptions } = provider === 'openai'
+    ? { model: lunaNoReasoning, providerOptions: { openai: { promptCacheOptions: PROVIDERS.openai.providerOptions.openai.promptCacheOptions } } }
+    : PROVIDERS[provider];
+  try {
+    const r = await writeObject({ model, providerOptions, ...aliasesRequest(subject, items) });
+    report(provider, 'aliases', r.usage);
+    return aliasesOf(items, r.object.items);
+  } catch (e) {
+    console.warn('[aliases]', e instanceof Error ? e.message : e);
+    return undefined;
+  }
 }
 
 const SEARCH_NOTE = `The reviews given are a sample. When they don't settle the question, call searchReviews before answering: it searches every review of this place. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde). When the sample settles it, just answer.`;

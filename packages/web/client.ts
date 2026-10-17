@@ -5,7 +5,7 @@ import { DefaultChatTransport } from 'ai';
 import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
-  chipPolarity, compileMatchRegex, displayScore, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, receiptReviews, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  chipPolarity, compileMatchRegex, displayScore, standoutNames, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, receiptReviews, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   answersOf, bySupport, countAnswers, mountBullets, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
@@ -75,7 +75,8 @@ let currentHighlights: UiChip[] = [];
 // kind of group: each item is auto-scored by its own label search (a SearchResult
 // once scored); clicking one opens it in the search panel. Standouts join the
 // topic chips' row (renderTopics); alternatives keep a row of their own.
-type ScoredChip = { item: string; state: ChipState; result?: SearchResult };
+// `names`: what its search looks for (standoutNames).
+type ScoredChip = { item: string; names: string[]; state: ChipState; result?: SearchResult };
 const scoredGroups = {
   standouts: { chips: [] as ScoredChip[] },
   alternatives: { chips: [] as ScoredChip[], row: alternativesRow, list: alternativesList, chipClass: 'alternative-chip' },
@@ -235,22 +236,28 @@ function pooledView(h: UiChip, r: SearchResult): UiChip | null {
 }
 
 function renderTopics() {
-  const standouts = new Map(scoredGroups.standouts.chips.map((d) => [d.item.toLowerCase(), d]));
+  // A standout goes by each of its names; a topic called by one pools into it.
+  const byName = new Map(scoredGroups.standouts.chips.flatMap((d) => d.names.map((n) => [n.toLowerCase(), d] as const)));
+  const standouts = new Set(scoredGroups.standouts.chips);
   const entries: TopicEntry[] = [];
   let settled = true;
   for (const h of currentHighlights) {
     const key = h.label.toLowerCase();
-    const s = standouts.get(key);
+    const s = byName.get(key);
+    // Another topic going by its names holds it already, and its search took
+    // this topic's reviews in too.
+    if (s && !standouts.has(s)) continue;
     const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
     const view = state === 'done' && s?.result ? pooledView(h, s.result) : h;
     if (state === 'loading' || s?.state === 'loading' || !view) settled = false;
     const c = view ?? h;
     // Dropped, a topic leaves its standout, if any, to show on its own.
     if (state === 'done' && !spokenOf(c)) continue;
-    standouts.delete(key);
+    if (s) standouts.delete(s);
     entries.push({ key, state, stance: c.stance, score: c.score, count: c.count, chip: () => topicChip(c, state) });
   }
-  for (const [key, d] of standouts) {
+  for (const d of standouts) {
+    const key = d.item.toLowerCase();
     const r = d.result;
     if (d.state === 'loading') {
       settled = false;
@@ -311,25 +318,41 @@ function renderScored(kind: ScoredKind) {
 
 async function scoreChip(kind: ScoredKind, featureId: string, d: ScoredChip) {
   const epoch = currentPlace();
+  const names = d.names;
+  // A search started since by more names (applyAliases) is the one that counts.
+  const current = () => epoch?.featureId === featureId && epoch.alive && d.names === names;
   try {
-    // The server expands the term to its accent/hyphen/space spellings.
+    // The server expands each name to its accent/hyphen/space spellings.
     let result: SearchResult | null = null;
-    for await (const evt of streamNdjson<SearchEvent>('/api/search', { featureId, query: d.item } satisfies SearchRequest)) {
+    for await (const evt of streamNdjson<SearchEvent>('/api/search', { featureId, query: names.join(' OR ') } satisfies SearchRequest)) {
       if (evt.type === 'search') result = evt.result;
     }
-    if (epoch?.featureId !== featureId || !epoch.alive) return;
-    d.result = result ?? undefined;
-    d.state = result ? 'done' : 'error';
+    if (!current()) return;
+    // A search by more names that finds nothing (a throttle) keeps what an earlier one found.
+    if (result?.totalReviews || !d.result) d.result = result ?? undefined;
+    d.state = d.result ? 'done' : 'error';
   } catch {
-    if (epoch?.featureId !== featureId || !epoch.alive) return;
-    d.state = 'error';
+    if (!current()) return;
+    if (!d.result) d.state = 'error';
   }
   renderScored(kind);
 }
 
-function showScored(kind: ScoredKind, items: string[] | undefined, featureId: string) {
+// Aliases that land after the summary: its standouts pool by all their names at
+// once, and the ones they name search again by them.
+function applyAliases(aliases: Record<string, string[]>, featureId: string) {
+  for (const d of scoredGroups.standouts.chips) {
+    const names = standoutNames(d.item, aliases);
+    if (names.length === d.names.length) continue;
+    d.names = names;
+    void scoreChip('standouts', featureId, d);
+  }
+  renderTopics();
+}
+
+function showScored(kind: ScoredKind, items: string[] | undefined, featureId: string, aliases?: Record<string, string[]>) {
   const g = scoredGroups[kind];
-  g.chips = (items ?? []).map((item) => ({ item, state: 'loading' as ChipState }));
+  g.chips = (items ?? []).map((item) => ({ item, names: standoutNames(item, aliases), state: 'loading' as ChipState }));
   renderScored(kind);
   for (const d of g.chips) scoreChip(kind, featureId, d);
 }
@@ -1393,7 +1416,7 @@ function renderSummary(summary: Summary, epoch: PlaceEpoch) {
   renderMarkdown($('verdict'), summary.verdict);
   resummarizeBtn.hidden = false;
   void mainBullets.settle(bySupport(summary.highlights));
-  showScored('standouts', summary.items, epoch.featureId);
+  showScored('standouts', summary.items, epoch.featureId, summary.aliases);
   showScored('alternatives', summary.alternatives, epoch.featureId);
 }
 
@@ -1431,6 +1454,7 @@ async function fetchSummaryFor(epoch: PlaceEpoch, force = false): Promise<{ ok: 
       return { ok: false, ms: Date.now() - t0 };
     }
     if (data.summary) renderSummary(data.summary, epoch);
+    void data.later.then((aliases) => { if (aliases && epoch.alive) applyAliases(aliases, epoch.featureId); });
     return { ok: true, ms: Date.now() - t0 };
   } catch (e) {
     epoch.run(() => renderSummaryError(e instanceof Error ? e.message : String(e)));

@@ -3,13 +3,29 @@
 // with fixture strings — no live model. llm.ts owns the prompts, the zod schema,
 // and the SDK calls; this owns turning a cut-off reply into Summary fields. See
 // summary-parse.test.ts.
-import { salvageNumber, salvageObjects, salvageStringArray, type SummaryHighlight } from '@truescore/gmaps-shared';
+import { salvageNumber, salvageObjects, salvageStringArray, type Summary, type SummaryHighlight } from '@truescore/gmaps-shared';
 
 // Standouts and alternatives each fire one label search per entry, so the cap
 // bounds the fan-out. What the entries say — no blanks, no duplicates — is the
 // prompt's job, not ours.
 export const MAX_SCORED_ITEMS = 6;
 export const capItems = (items: string[]): string[] => items.slice(0, MAX_SCORED_ITEMS);
+// A standout searches each of its aliases too (llm.aliasesFor), so they're
+// capped as well.
+export const MAX_ALIASES = 3;
+
+// The aliases the model wrote, by item (Summary.aliases): only the items asked
+// about, each alias once and never the item itself (the search ignores case), capped.
+export const aliasesOf = (items: string[], written: { name: string; aliases: string[] }[]): Summary['aliases'] => {
+  const aliases = Object.fromEntries(items.flatMap((item) => {
+    const seen = new Set([item.toLowerCase()]);
+    const kept = (written.find((w) => w.name === item)?.aliases ?? [])
+      .filter((a) => { const k = a.trim().toLowerCase(); return !!k && !seen.has(k) && !!seen.add(k); })
+      .slice(0, MAX_ALIASES);
+    return kept.length ? [[item, kept]] : [];
+  }));
+  return Object.keys(aliases).length ? aliases : undefined;
+};
 
 // The structured call occasionally truncates at maxOutputTokens (cut mid-array
 // → invalid JSON → NoObjectGeneratedError). Salvage the complete highlight
