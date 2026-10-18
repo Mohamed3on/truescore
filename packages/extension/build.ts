@@ -1,7 +1,15 @@
 import esbuild from 'esbuild';
-import { cpSync, mkdirSync, rmSync } from 'fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { resolve } from 'path';
+import { TRUESCORE_API_BASE } from './src/shared/api-base';
 
-const OUT = 'truescore';
+// `--api-base=<url> --out=<dir>` builds a copy that calls another server (a local
+// one, for an e2e run). Never into ./truescore: that's the loaded unpacked extension.
+const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+const API_BASE = arg('api-base');
+const OUT = arg('out') ?? 'truescore';
+if (API_BASE && resolve(OUT) === resolve('truescore')) throw new Error('--api-base needs --out=<dir>: ./truescore is the loaded unpacked extension');
+const define = API_BASE ? { __TRUESCORE_API_BASE__: JSON.stringify(API_BASE) } : {};
 
 // Clean
 rmSync(OUT, { recursive: true, force: true });
@@ -50,6 +58,7 @@ await esbuild.build({
   format: 'iife',
   target: ['chrome120'],
   minify: false,
+  define,
 });
 
 // Bundle background
@@ -60,6 +69,7 @@ await esbuild.build({
   format: 'iife',
   target: ['chrome120'],
   minify: false,
+  define,
 });
 
 // Bundle popup
@@ -70,10 +80,15 @@ await esbuild.build({
   format: 'iife',
   target: ['chrome120'],
   minify: false,
+  define,
 });
 
 // Static assets
-cpSync('src/manifest.json', `${OUT}/manifest.json`);
+if (API_BASE) {
+  const manifest = JSON.parse(readFileSync('src/manifest.json', 'utf8'));
+  manifest.host_permissions = manifest.host_permissions.map((p: string) => (p === `${TRUESCORE_API_BASE}/*` ? `${API_BASE}/*` : p));
+  writeFileSync(`${OUT}/manifest.json`, JSON.stringify(manifest, null, 2));
+} else cpSync('src/manifest.json', `${OUT}/manifest.json`);
 cpSync('src/icons', `${OUT}/icons`, { recursive: true });
 cpSync('src/popup/popup.html', `${OUT}/popup/popup.html`);
 cpSync('src/popup/popup.css', `${OUT}/popup/popup.css`);

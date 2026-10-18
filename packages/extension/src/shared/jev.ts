@@ -1,4 +1,5 @@
 import { countStances, isTrusted, MAX_JUDGED, opinionTone, signedNet, mentionsText, reviewMark, type Answer, type Opinions, type ReceiptsResponse, type Review, type Stance, type StanceResponse, type StanceResult, type Tone } from '@truescore/gmaps-shared';
+import { TRUESCORE_API_BASE } from './api-base';
 import { cacheGet, cacheSet } from './cache';
 import { el, npsColor } from './utils';
 
@@ -10,7 +11,6 @@ import { el, npsColor } from './utils';
 // there, see background.ts). Every read is optional: null, and the caller shows
 // what it showed before.
 
-const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
 // A site's content script has the extension's runtime; gmaps.ts, in Maps' own
 // world, has neither it nor the need (see above). Anywhere else — a test — reads
 // nothing.

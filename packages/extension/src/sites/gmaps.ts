@@ -1,3 +1,4 @@
+import { TRUESCORE_API_BASE } from '../shared/api-base';
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
 import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, LLM_SETTINGS_GET, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, SERVER_SCORE_GET, SERVER_SCORE_RESULT, type MapsCapturedCreds, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
@@ -336,7 +337,6 @@ const loadHighlightsCache = () => {
     if (highlightsState) highlightsState.items = highlightsState.items.filter((h) => !chipFetchFailed(h));
   } catch { highlightsState = null; }
 };
-const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
 // Bounds the cloud-cache GET so a slow/hung server can't delay auto-highlights
 // (which now waits on the cloud hydrate) indefinitely.
 const CLOUD_FETCH_TIMEOUT_MS = 5000;

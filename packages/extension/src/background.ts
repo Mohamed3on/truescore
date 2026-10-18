@@ -1,4 +1,5 @@
 // Combined background service worker
+import { TRUESCORE_API_BASE } from './shared/api-base';
 import { SCORE_CACHE_PREFIX } from './shared/cache-keys';
 import { createThrottledFetcher } from './shared/throttled-fetch';
 import { SERVER_SCORE_PORT, type ServerScoreMessage } from './shared/gmaps-bridge-protocol';
@@ -73,7 +74,6 @@ const imdbHistograms = async (ids: string[]): Promise<Record<string, number[]> |
 // only, so the content script can't call it — we hold the host permission and no
 // page CORS applies. Everything is posted back as it lands, so the panel fills in
 // as the server works.
-const TRUESCORE_API_BASE = 'https://truescore.mohamed3on.com';
 type Post = (msg: ServerScoreMessage) => void;
 
 // The server's shared password (set in the popup) rides every call to it.
