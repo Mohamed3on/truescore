@@ -2278,7 +2278,6 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
         standoutReviewsCache.set(key, { reviews, stances: read?.stances });
         standoutScoreStale.delete(key);
         saveScoredCache();
-        if (getFeatureId() === featureId) redrawScored(kind);
       } catch (e) {
         console.error(`[${kind}] score failed for`, item, e);
         // Resolve to zero so the chip drops out (like a no-mention item) instead
@@ -2288,9 +2287,11 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
           standoutScoreTransient.add(key);
           standoutScoreCache.set(key, statsForReviews([]));
         }
-        if (getFeatureId() === featureId) redrawScored(kind);
       } finally {
+        // Drawn once it's no longer in flight, so the last run to land lets the
+        // topic row settle and sort.
         standoutScoreInflight.delete(key);
+        if (getFeatureId() === featureId) redrawScored(kind);
       }
     });
     standoutScoreInflight.set(key, run);
