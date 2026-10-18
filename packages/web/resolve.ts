@@ -18,7 +18,13 @@ export async function resolvePlace(input: string): Promise<PlaceRef> {
       url = u.toString();
     } catch {}
     for (let hop = 0; hop < 5; hop++) {
-      const resp = await fetch(url, { redirect: 'manual', method: 'HEAD' });
+      let resp = await fetch(url, { redirect: 'manual', method: 'HEAD' });
+      // A just-shared link 404s for up to ~3s until Google's shortener has it
+      // everywhere, and a share's early lookup lands inside that window: wait it out.
+      for (let retry = 0; resp.status === 404 && retry < 16; retry++) {
+        await Bun.sleep(500);
+        resp = await fetch(url, { redirect: 'manual', method: 'HEAD' });
+      }
       const loc = resp.headers.get('location');
       hops.push({ status: resp.status, loc });
       if (!loc) break;
