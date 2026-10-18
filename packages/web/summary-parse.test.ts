@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { aliasesOf, capItems, salvageStructured } from './summary-parse';
+import { aliasesOf, capItems, MAX_SCORED_ITEMS, salvageStructured } from './summary-parse';
 
 describe('capItems', () => {
   test('caps at MAX_SCORED_ITEMS, keeping order', () => {
-    expect(capItems(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+    const items = Array.from({ length: MAX_SCORED_ITEMS + 2 }, (_, i) => `item${i}`);
+    expect(capItems(items)).toEqual(items.slice(0, MAX_SCORED_ITEMS));
   });
 
   test("passes shorter lists through untouched — hygiene is the prompt's job", () => {
@@ -40,8 +41,9 @@ describe('salvageStructured', () => {
   });
 
   test('caps salvaged items', () => {
-    const r = salvageStructured('"items":["a","b","c","d","e","f","g"]');
-    expect(r.items).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+    const items = Array.from({ length: MAX_SCORED_ITEMS + 1 }, (_, i) => `item${i}`);
+    const r = salvageStructured(`"items":${JSON.stringify(items)}`);
+    expect(r.items).toEqual(items.slice(0, MAX_SCORED_ITEMS));
   });
 
   test('leaves valueForMoney unset when the field never arrived', () => {

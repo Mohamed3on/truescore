@@ -8,7 +8,7 @@ import { salvageNumber, salvageObjects, salvageStringArray, type Summary, type S
 // Standouts and alternatives each fire one label search per entry, so the cap
 // bounds the fan-out. What the entries say — no blanks, no duplicates — is the
 // prompt's job, not ours.
-export const MAX_SCORED_ITEMS = 6;
+export const MAX_SCORED_ITEMS = 10;
 export const capItems = (items: string[]): string[] => items.slice(0, MAX_SCORED_ITEMS);
 // A standout searches each of its aliases too (llm.aliasesFor), so they're
 // capped as well.
