@@ -339,39 +339,18 @@ export const buildSummarizeWidget = ({
   const summarizeBtn = document.createElement('button');
   summarizeBtn.className = 'ars-summarize-btn';
 
-  // "Summarized on …" + Re-summarize, shown only while the panel holds the
+  // "Summarized on …" + Re-summarize. Shown only while the panel holds the
   // structured summary — never beside a Q&A answer, where "Re-summarize" would
-  // be the wrong label and the wrong action — and Copy reviews, always.
+  // be the wrong label and the wrong action.
   const dateRow = el('div', 'ars-summary-meta');
+  dateRow.style.display = 'none';
   const dateLabel = el('div', 'ars-summary-date');
   const RESUMMARIZE_LABEL = '\u21BB Re-summarize';
   const reBtn = document.createElement('button');
   reBtn.className = 'ars-resummarize-btn';
   reBtn.textContent = RESUMMARIZE_LABEL;
   reBtn.addEventListener('click', () => runSummary(reBtn));
-  // The reviews as the model reads them, under the page's title and URL, to
-  // paste into another tool.
-  const COPY_LABEL = 'Copy reviews';
-  const copyBtn = document.createElement('button');
-  copyBtn.className = 'ars-copy-btn';
-  copyBtn.textContent = COPY_LABEL;
-  let copyReset: ReturnType<typeof setTimeout> | undefined;
-  copyBtn.addEventListener('click', async () => {
-    clearTimeout(copyReset);
-    copyBtn.disabled = true;
-    copyBtn.textContent = '⏳ Fetching reviews…';
-    try {
-      const reviews = await loadReviews();
-      await navigator.clipboard.writeText(`${document.title}\n${location.href}\n\n${reviews.join('\n---\n')}`);
-      copyBtn.textContent = `✓ Copied ${addCommas(reviews.length)} reviews`;
-    } catch (e: any) {
-      copyBtn.textContent = `✕ ${e.message}`;
-    } finally {
-      copyBtn.disabled = false;
-      copyReset = setTimeout(() => { copyBtn.textContent = COPY_LABEL; }, 2000);
-    }
-  });
-  dateRow.append(dateLabel, reBtn, copyBtn);
+  dateRow.append(dateLabel, reBtn);
 
   const summaryPanel = document.createElement('div');
   summaryPanel.className = 'ars-summary-panel';
@@ -388,9 +367,11 @@ export const buildSummarizeWidget = ({
     // Hide the redundant Summarize button only once the summary is on screen.
     summarizeBtn.style.display = !asking && panelMode === 'summary' ? 'none' : '';
     const showDate = !asking && panelMode === 'summary';
-    dateLabel.style.display = showDate ? '' : 'none';
-    reBtn.style.display = showDate && checkRateLimit().count < RL_MAX ? '' : 'none';
-    if (showDate) dateLabel.textContent = `Summarized on ${new Date(summaryTs).toLocaleDateString()}`;
+    dateRow.style.display = showDate ? '' : 'none';
+    if (showDate) {
+      dateLabel.textContent = `Summarized on ${new Date(summaryTs).toLocaleDateString()}`;
+      reBtn.style.display = checkRateLimit().count < RL_MAX ? '' : 'none';
+    }
   };
 
   const loadReviews = async () => {
@@ -517,6 +498,35 @@ export const buildSummarizeWidget = ({
     else runSummary(summarizeBtn);
   });
   questionRow.appendChild(summarizeBtn);
+
+  // The reviews as the model reads them, under the page's title and URL, to
+  // paste into another tool: a quiet icon closing the Ask row, a check once copied.
+  const COPY_ICON = '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/>';
+  const copyBtn = el('button', 'ars-copy-btn') as HTMLButtonElement;
+  copyBtn.type = 'button';
+  const showCopy = (state: 'idle' | 'copied' | 'failed', label: string) => {
+    copyBtn.dataset.state = state;
+    copyBtn.title = label;
+    copyBtn.setAttribute('aria-label', label);
+    copyBtn.innerHTML = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${state === 'copied' ? '<path d="M3.5 8.5l3 3 6-7"/>' : COPY_ICON}</svg>`;
+  };
+  showCopy('idle', 'Copy reviews');
+  let copyReset: ReturnType<typeof setTimeout> | undefined;
+  copyBtn.addEventListener('click', async () => {
+    clearTimeout(copyReset);
+    copyBtn.disabled = true;
+    try {
+      const reviews = await loadReviews();
+      await navigator.clipboard.writeText(`${document.title}\n${location.href}\n\n${reviews.join('\n---\n')}`);
+      showCopy('copied', `Copied ${addCommas(reviews.length)} reviews`);
+    } catch (e: any) {
+      showCopy('failed', `Couldn't copy: ${e.message}`);
+    } finally {
+      copyBtn.disabled = false;
+      copyReset = setTimeout(() => showCopy('idle', 'Copy reviews'), 2000);
+    }
+  });
+  questionRow.appendChild(copyBtn);
 
   // Restore cached summary
   const rawCache = localStorage.getItem(cacheKey);

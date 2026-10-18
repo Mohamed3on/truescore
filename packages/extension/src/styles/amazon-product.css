@@ -248,6 +248,30 @@
   cursor: wait;
 }
 
+/* Copy reviews: a quiet icon closing the Ask row, placeholder-grey until used */
+.ars-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  padding: 0;
+  color: #A8A29E;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.ars-copy-btn:hover,
+.ars-copy-btn[data-state="copied"] { color: #0F766E; }
+.ars-copy-btn[data-state="failed"] { color: #C2410C; }
+.ars-copy-btn:focus-visible { outline: 1px solid #0F766E; outline-offset: -1px; }
+.ars-copy-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 /* Summary meta row */
 .ars-summary-meta {
   display: flex;
@@ -262,8 +286,7 @@
   color: #A8A29E;
   letter-spacing: 0.02em;
 }
-.ars-resummarize-btn,
-.ars-copy-btn {
+.ars-resummarize-btn {
   font-family: inherit;
   font-size: 10px;
   font-weight: 600;
@@ -275,13 +298,11 @@
   cursor: pointer;
   transition: all 0.15s;
 }
-.ars-resummarize-btn:hover,
-.ars-copy-btn:hover {
+.ars-resummarize-btn:hover {
   color: #0F766E;
   border-color: #0F766E;
 }
-.ars-resummarize-btn:disabled,
-.ars-copy-btn:disabled {
+.ars-resummarize-btn:disabled {
   opacity: 0.5;
   cursor: wait;
 }

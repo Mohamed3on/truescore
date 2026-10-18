@@ -440,8 +440,7 @@
 }
 
 .ts-bp .ars-summarize-btn,
-.ts-bp .ars-resummarize-btn,
-.ts-bp .ars-copy-btn {
+.ts-bp .ars-resummarize-btn {
   color: #F7E2B7;
   background: rgba(232, 184, 109, 0.1);
   border: 1px solid rgba(232, 184, 109, 0.26);
@@ -453,12 +452,28 @@
 }
 
 .ts-bp .ars-summarize-btn:hover,
-.ts-bp .ars-resummarize-btn:hover,
-.ts-bp .ars-copy-btn:hover {
+.ts-bp .ars-resummarize-btn:hover {
   color: #FFF3DB;
   background: rgba(232, 184, 109, 0.16);
   border-color: rgba(232, 184, 109, 0.4);
   box-shadow: none;
+}
+
+.ts-bp .ars-copy-btn {
+  color: var(--ts-ink-4);
+}
+
+.ts-bp .ars-copy-btn:hover,
+.ts-bp .ars-copy-btn[data-state="copied"] {
+  color: #F7E2B7;
+}
+
+.ts-bp .ars-copy-btn[data-state="failed"] {
+  color: var(--ts-neg);
+}
+
+.ts-bp .ars-copy-btn:focus-visible {
+  outline-color: rgba(109, 211, 206, 0.7);
 }
 
 .ts-bp .ars-summary-date {
