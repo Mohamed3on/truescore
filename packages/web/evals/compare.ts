@@ -3,13 +3,11 @@
 //   bun evals/compare.ts --judge    # adds blind LLM-judge scoring (gpt-6-sol)
 //   bun evals/compare.ts --judge --luna   # compare gpt-6-luna effort ladder
 //   bun evals/compare.ts --judge --candidates [--only=a,b]   # shipped models vs newer ones (candidates.ts)
-import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject } from 'ai';
-import { z } from 'zod';
 import { summarize, setOnUsage, PROVIDERS, type Provider, type ReasoningEffort, type Summary } from '../llm';
 import { REASONING_EFFORTS } from '@truescore/gmaps-shared';
 import { registerCandidates } from './candidates';
 import baseFixtures from './fixtures.json';
+import { judge, mapPool } from './judge';
 import sukito from './sukito';
 
 const JUDGE = process.argv.includes('--judge');
@@ -54,48 +52,9 @@ const runOne = async (f: (typeof fixtures)[number], c: Contestant): Promise<Run>
   };
 };
 
-// Bounded-parallel map: run fn over items at most `limit` at a time, preserving
-// input order. Lets the slow thinking judge run concurrently without firing
-// every pair at once (which overruns the API → timeouts, as latency.ts showed).
-async function mapPool<T, R>(items: T[], limit: number, fn: (x: T, i: number) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i]!, i);
-      }
-    }),
-  );
-  return out;
-}
-
-const judgeSchema = z.object({
-  a: z.object({ grounded: z.number().int(), coverage: z.number().int(), concise: z.number().int() }),
-  b: z.object({ grounded: z.number().int(), coverage: z.number().int(), concise: z.number().int() }),
-  winner: z.enum(['A', 'B', 'tie']),
-  reason: z.string(),
-});
-
-// GPT-6 Sol at medium reasoning effort — a proper thinking
-// model as the blind judge. Effort is set on the generateObject call below.
-//
-// Accuracy-first rubric: grounding counts the weight of evidence and length
-// earns nothing. The grounded/specific/useful rubric it replaced (2026-09-22)
-// rewarded detail: it picked GPT-5.6 Luna's fuller summaries over GPT-6
-// Luna's 22-2, yet under this one GPT-6 won 18-6 on the same outputs, since
-// 5.6's extra detail was where it overstated consensus.
-const judgeModel = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-6-sol');
-
 const judgeRuns = async (f: (typeof fixtures)[number], r0: Run, r1: Run, flip: boolean) => {
   const [a, b] = flip ? [r1, r0] : [r0, r1];
-  const { object } = await generateObject({
-    model: judgeModel,
-    providerOptions: { openai: { reasoningEffort: 'medium' } },
-    schema: judgeSchema,
-    prompt: `${f.reviewTexts.join('\n\n')}\n\n---\n\nTwo anonymous models summarized the reviews above for ${f.place}${f.filter ? ` (topic: "${f.filter}")` : ''}. Score each output 1-5 on: grounded (every claim traceable to the reviews and given the weight the reviews give it — inventing detail, overstating how many reviewers said something, or presenting a one-off as a pattern are grounding errors), coverage (conveys what matters most for deciding: the points many reviewers raise and any major caveat — leaving out minor or one-off points is not a flaw), concise (no padding or repetition; length is not a virtue). Then pick the overall winner: the output a careful reader should rely on to decide, where a grounding error weighs more than a missed minor detail.\n\nOutput A:\n${JSON.stringify(a.summary, null, 1)}\n\nOutput B:\n${JSON.stringify(b.summary, null, 1)}`,
-  });
+  const object = await judge(f, a.summary, b.summary);
   const label = (x: 'A' | 'B' | 'tie') => (x === 'tie' ? 'tie' : (x === 'A') !== flip ? r0.label : r1.label);
   const scores = flip ? { [r0.label]: object.b, [r1.label]: object.a } : { [r0.label]: object.a, [r1.label]: object.b };
   return { scores, winner: label(object.winner), reason: object.reason };
