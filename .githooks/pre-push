@@ -3,4 +3,15 @@
 # check`) so a broken typecheck or test is caught before it fails the
 # auto-deploy and freezes the box on the old build. Bypass with
 # `git push --no-verify` when you really mean to.
+#
+# Git runs this even for a push it will reject because the remote moved on (a
+# CI release commit landed first), so skip the suite then: a ref git knows is
+# behind never reaches stdin, and one whose new remote tip it hasn't fetched
+# fails the ancestry check.
+refs=$(cat)
+[ -n "$refs" ] || exit 0
+echo "$refs" | while read -r _ local remote_ref remote; do
+  case "$local$remote" in *0000000000000000000000000000000000000000*) continue ;; esac
+  git merge-base --is-ancestor "$remote" "$local" 2>/dev/null || { echo "pre-push: $remote_ref has commits this branch doesn't (a CI release commit?): git pull --rebase, then push" >&2; exit 1; }
+done || exit 1
 exec bun run check
