@@ -67,7 +67,7 @@ const appendScore = (productInfo: Element, apac: boolean, { score, nps }: { scor
   reviewDiv.appendChild(badge);
 };
 
-const renderInsights = (productInfo: Element, stats: any) => {
+const renderInsights = (productInfo: Element, stats: any, before: string) => {
   if (document.querySelector('.nps-insights')) return;
   const { averageAttributeRating, recommendedCount, count } = stats;
   if (!averageAttributeRating?.length) return;
@@ -99,7 +99,7 @@ const renderInsights = (productInfo: Element, stats: any) => {
   panel.className = 'nps-insights';
   panel.style.cssText = 'margin:16px 0;padding:14px;border-radius:8px;background:#f5f5f5;line-height:1.5;color:#333;';
   panel.innerHTML = html;
-  const desc = productInfo.querySelector('.product-info__description');
+  const desc = productInfo.querySelector(before);
   if (desc) desc.before(panel);
   else productInfo.appendChild(panel);
 };
@@ -305,14 +305,16 @@ setupSpaInjector({
     return { apac: site.apac, ids, stats, scoreData: getScoreFromStats(stats), reviews: stats.count >= 5 ? reviews : null };
   },
   inject: ({ apac, ids, stats, scoreData, reviews }) => {
-    // The Asia-Pacific summary column has no description, so the panels close it.
     const productInfo = document.querySelector(apac ? '#product-summary-container' : '.product-info');
     if (!productInfo) return;
+    // The panels go before the description. The Asia-Pacific summary column has
+    // none: there they go right under the buy box, above the delivery block.
+    const before = apac ? `:scope > :has(${APAC_RATING}) + *` : '.product-info__description';
     if (scoreData) appendScore(productInfo, apac, scoreData);
-    renderInsights(productInfo, stats);
+    renderInsights(productInfo, stats, before);
     replaceSizometer(stats);
     if (reviews && !document.querySelector('.ars-wrapper')) {
-      const anchor = document.querySelector('.nps-insights') || productInfo.querySelector('.product-info__description') || productInfo;
+      const anchor = document.querySelector('.nps-insights') || productInfo.querySelector(before) || productInfo;
       addSummarizeUI(anchor, reviews, ids.productId, stats.count, scoreData);
     }
   },
