@@ -86,6 +86,18 @@ describe('naming', () => {
     expect(naming(thread, ['Knee bar'], ['Toe hold', 'Calf slicer'], new Set(['a'])).map((c) => c.id)).toEqual(['a']);
     expect(naming(thread, ['Heel hook'], [], new Set(['a'])).map((c) => c.id)).toEqual([]);
   });
+
+  test('a comment Jev picked as speaking of it in its own words counts as naming it, for its replies too', () => {
+    const thread = threadWith([
+      comment('a', 'the train is quickest'),
+      comment('b', 'trying it tomorrow', { parentId: 'a' }),
+      comment('c', 'hop on a train, or get an Uber'),
+      comment('d', 'will do', { parentId: 'c' }),
+      comment('e', 'cycling is fun'),
+    ], 'Best way to the airport?');
+    // d answers c, which names a rival too.
+    expect(naming(thread, ['Take the train'], ['Uber'], new Set(), true, new Set(['a', 'c'])).map((c) => c.id)).toEqual(['a', 'b', 'c']);
+  });
 });
 
 describe('telling', () => {

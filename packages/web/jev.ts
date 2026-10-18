@@ -209,6 +209,23 @@ export const askedAboutFor = (thread: string, options: string[]): Promise<boolea
     (option) => noul({ question: ASKED_QUESTION, option }), yesNo)
     .then((says) => says && says.map((v) => v === '1'));
 
+// Whether each Option is one the answers put in their own words rather than
+// name (web/tally.ts): "make them at home" is, and its answers ("they're so
+// easy to make", a recipe link) are found by asking, not by its name.
+const DESCRIBED_QUESTION = 'Is `option` a way of doing it, or another thing people describe in their own words, rather than a thing with a name of its own, like a product, a place, a store, a person or a technique?';
+export const describedFor = (thread: string, options: string[]): Promise<boolean[] | null> =>
+  judge('described', `${thread}\u0000${Bun.hash(DESCRIBED_QUESTION).toString(36)}`, { thread }, options,
+    (option) => noul({ question: DESCRIBED_QUESTION, option }), yesNo)
+    .then((says) => says && says.map((v) => v === '1'));
+
+// Whether each comment speaks, in any words, of an Option the answers
+// describe rather than name (describedFor).
+const FORWARD_QUESTION = 'Does this comment clearly put `option` forward, or argue against it, in any words, as an answer to `thread`?';
+export const putsForwardFor = (thread: string, name: string, option: string, comments: string[]): Promise<boolean[] | null> =>
+  judge('forward', `${thread}\u0000${name}\u0000${Bun.hash(FORWARD_QUESTION).toString(36)}`, { thread, option }, comments,
+    (comment) => noul({ question: FORWARD_QUESTION, comment }), yesNo)
+    .then((says) => says && says.map((v) => v === '1'));
+
 // Each text's answer to an Ask's `question`.
 export const answersFor = (question: string, texts: string[]): Promise<Answer[] | null> =>
   judge('answer', question, { question }, texts,

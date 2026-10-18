@@ -1,6 +1,6 @@
 import { countsInTally, MIN_TALLY_PEOPLE, stripAccents, type ListedOption, type LlmOverrides, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type ThreadComment, type ThreadTurn } from '@truescore/gmaps-shared';
 import { db } from './db';
-import { askedAboutFor, groupAnswersFor, optionStancesFor } from './jev';
+import { askedAboutFor, describedFor, groupAnswersFor, optionStancesFor, putsForwardFor } from './jev';
 import { explainOptions, listOptions, optionsRequest, reasonsRequest, type ThreadOption } from './llm';
 
 // A Reddit Thread's Tally (CONTEXT.md). The model lists the Options and how the
@@ -86,9 +86,10 @@ const postOf = (thread: Thread) => words(`${thread.title} ${thread.text}`);
 // lists (groupAnswersOf). Nor a post that names it only as background, not
 // to ask about it (`asked`, askedOf): under "Rewe's are the worst, where
 // else?" an answer speaks of somewhere else. A name inside a rival's isn't
-// one: "Pepsi Max" in "Pepsi Max 10/10", not in "Pepsi Max Lemon". Only these
-// are read, so the rest of a thread costs nothing.
-export const naming = (thread: Thread, names: string[], rivals: string[] = [], group: ReadonlySet<string> = new Set(), asked = true): ThreadComment[] => {
+// one: "Pepsi Max" in "Pepsi Max 10/10", not in "Pepsi Max Lemon". A comment
+// Jev `picked` as speaking of it in its own words (pickedOf) counts as one
+// naming it. Only these are read, so the rest of a thread costs nothing.
+export const naming = (thread: Thread, names: string[], rivals: string[] = [], group: ReadonlySet<string> = new Set(), asked = true, picked: ReadonlySet<string> = new Set()): ThreadComment[] => {
   const theirs = needles(rivals);
   const says = sayer(needles(names), theirs), rival = sayer(theirs);
   const byId = new Map(thread.comments.map((c) => [c.id, c]));
@@ -97,8 +98,8 @@ export const naming = (thread: Thread, names: string[], rivals: string[] = [], g
   return thread.comments.filter((c) => {
     if (!countsInTally(c)) return false;
     const parent = c.parentId ? words(byId.get(c.parentId)?.body ?? '') : undefined;
-    return says(words(c.body)) || (parent !== undefined
-      ? says(parent) && !rival(parent)
+    return says(words(c.body)) || picked.has(c.id) || (parent !== undefined
+      ? (says(parent) || picked.has(c.parentId!)) && !rival(parent)
       : inPost || (listed && group.has(c.id)));
   });
 };
@@ -178,9 +179,9 @@ export const telling = (mine: string[], others: string[]): string[] => {
 // `name` keys the memo, so it holds the maker for a title: two makers' courses
 // can share a name. A `group` answer is read as a reply to the post, the list
 // its "those" points at.
-async function readsOf(thread: Thread, question: string, name: string, names: string[], description: string, others: string, rivals?: string[], group?: ReadonlySet<string>, asked?: boolean): Promise<Record<string, Stance> | null> {
+async function readsOf(thread: Thread, question: string, name: string, names: string[], description: string, others: string, rivals?: string[], group?: ReadonlySet<string>, asked?: boolean, picked?: ReadonlySet<string>): Promise<Record<string, Stance> | null> {
   const byId = new Map(thread.comments.map((c) => [c.id, c]));
-  const comments = naming(thread, names, rivals, group, asked);
+  const comments = naming(thread, names, rivals, group, asked, picked);
   const stances = await optionStancesFor(question, name, description, others,
     comments.map((c) => ({ text: c.body, parent: c.parentId ? byId.get(c.parentId)?.body : group?.has(c.id) ? question : undefined })));
   return stances && Object.fromEntries(comments.flatMap((c, i) => (stances[i] === 'off' ? [] : [[c.id, stances[i]!]])));
@@ -200,14 +201,15 @@ export const listedOf = (o: ThreadOption): ListedOption => {
 // Max") hides from it only that sibling's mentions, not the name. An Option's
 // rivals are the thread's other Options. `group` holds the answers to the
 // post's list as a whole (groupAnswersOf), `asked` the keys of the things the
-// post asks about (askedOf; all of them when not given).
-export async function tallyOption(thread: Thread, question: string, o: ThreadOption, all: ThreadOption[] = [o], group?: ReadonlySet<string>, asked?: ReadonlySet<string>): Promise<OptionTally | null> {
+// post asks about (askedOf; all of them when not given), `picked` the comments
+// speaking of it in their own words (pickedOf).
+export async function tallyOption(thread: Thread, question: string, o: ThreadOption, all: ThreadOption[] = [o], group?: ReadonlySet<string>, asked?: ReadonlySet<string>, picked?: ReadonlySet<string>): Promise<OptionTally | null> {
   const rest = all.filter((x) => x !== o);
   const others = rest.map((x) => x.name);
   const listed = listedOf(o);
   const isAsked = (key: string) => !asked || asked.has(key);
   const [own, ...titles] = await Promise.all([
-    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others.join(', '), rivalsOf(o, all), group, isAsked(listed.key)),
+    readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others.join(', '), rivalsOf(o, all), group, isAsked(listed.key), picked),
     ...o.titles.map((t, i) => {
       const mine = [t.name, ...t.aliases];
       const siblings = o.titles.filter((x) => x !== t);
@@ -268,11 +270,11 @@ const getReasons = db.prepare<{ v: string }, [string]>('SELECT v FROM tally_reas
 const putReasons = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO tally_reasons (k, v, ts) VALUES (?, ?, ?)');
 const QUOTE_CHARS = 800;
 
-async function reasonsOf(thread: Thread, question: string, options: ThreadOption[], { provider, reasoningEffort }: LlmOverrides, write: (e: TallyEvent) => void, asked: ReadonlySet<string>): Promise<void> {
+async function reasonsOf(thread: Thread, question: string, options: ThreadOption[], { provider, reasoningEffort }: LlmOverrides, write: (e: TallyEvent) => void, asked: ReadonlySet<string>, picks: ReadonlySet<string>[]): Promise<void> {
   const index = new Map<ThreadComment, number>();
   const groups = options
-    .map((o) => {
-      const named = naming(thread, ownNames(o, options), rivalsOf(o, options), undefined, asked.has(keyOf(o.name)));
+    .map((o, i) => {
+      const named = naming(thread, ownNames(o, options), rivalsOf(o, options), undefined, asked.has(keyOf(o.name)), picks[i]);
       return { o, named, people: new Set(named.map(personOf)).size, upvotes: named.reduce((n, c) => n + c.score, 0) };
     })
     .filter((g) => g.people >= MIN_TALLY_PEOPLE)
@@ -317,6 +319,17 @@ async function askedOf(question: string, post: string, o: ThreadOption): Promise
   return says ? named.filter((_, i) => says[i]).map((n) => n.key) : [];
 }
 
+// The comments speaking of an Option the answers put in their own words
+// rather than name ("make them at home": "they're so easy to make", a recipe
+// link), which a search for its names misses: Jev says whether it's one, then
+// which comments speak of it. None when Jev can't say.
+async function pickedOf(thread: Thread, question: string, o: ThreadOption): Promise<ReadonlySet<string>> {
+  if (!(await describedFor(question, [describeOption(o)]))?.[0]) return new Set();
+  const counted = thread.comments.filter(countsInTally);
+  const says = await putsForwardFor(question, o.name, describeOption(o), counted.map((c) => c.body));
+  return new Set(says ? counted.filter((_, i) => says[i]).map((c) => c.id) : []);
+}
+
 // The whole Tally as a stream: each Option as soon as the model names it, then
 // each count once Jev has read it, and alongside, why each is rated as it is.
 // Counting waits for the whole list, since a name only picks comments once it's
@@ -330,6 +343,8 @@ export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void
   // ones doesn't change the question.
   let group: Promise<ReadonlySet<string>> | undefined;
   const asking: Promise<string[]>[] = [];
+  // Each Option's comments in its own words (pickedOf), in the order listed.
+  const picking: Promise<ReadonlySet<string>>[] = [];
   await listOptionsOf(thread, question, overrides, (raw) => {
     const o = tidy(raw);
     const key = keyOf(o.name);
@@ -337,17 +352,18 @@ export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void
     options.push(o);
     write({ type: 'listed', option: listedOf(o) });
     asking.push(askedOf(question, post, o));
+    picking.push(pickedOf(thread, question, o));
     if (!group && options.filter((x) => sayer(needles(namesOf(x)))(post)).length >= 2) group = groupAnswersOf(thread, question);
   });
   const answers = await group;
   const asked = new Set((await Promise.all(asking)).flat());
   const [tallies] = await Promise.all([
-    Promise.all(options.map(async (o) => {
-      const t = await tallyOption(thread, question, o, options, answers, asked);
+    Promise.all(options.map(async (o, i) => {
+      const t = await tallyOption(thread, question, o, options, answers, asked, await picking[i]);
       if (t) write({ type: 'option', option: t });
       return t;
     })),
-    reasonsOf(thread, question, options, overrides, write, asked),
+    Promise.all(picking).then((picks) => reasonsOf(thread, question, options, overrides, write, asked, picks)),
   ]);
   if (tallies.some((t) => !t)) throw new Error("Couldn't read every comment right now — try again");
   write({ type: 'done' });
