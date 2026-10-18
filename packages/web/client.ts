@@ -1494,10 +1494,22 @@ form.addEventListener('submit', async (e) => {
   goBtn.disabled = true;
   goBtn.textContent = 'FETCHING';
   setStatus('Resolving link…');
-  const t0 = Date.now();
   try {
-    const resp = await lookupResponse(url);
-    await consumeLookupStream(resp.body!, t0, current);
+    // A connection that drops mid-stream (Safari's "Load failed": it left the
+    // foreground, the network switched, a deploy restarted the server) is past
+    // fetchWithRetry. The server finishes and caches the lookup anyway, so ask
+    // again, once the page is back in view.
+    for (let drops = 0; ; drops++) {
+      const t0 = Date.now();
+      try {
+        const resp = await lookupResponse(url);
+        await consumeLookupStream(resp.body!, t0, current);
+        break;
+      } catch (e) {
+        if (!(e instanceof TypeError) || drops === 2 || !current()) throw e;
+        if (document.hidden) await new Promise((r) => document.addEventListener('visibilitychange', r, { once: true }));
+      }
+    }
   } catch (e) {
     if (!current()) return;
     delete document.body.dataset.state;
