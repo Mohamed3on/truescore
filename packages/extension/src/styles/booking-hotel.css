@@ -440,7 +440,8 @@
 }
 
 .ts-bp .ars-summarize-btn,
-.ts-bp .ars-resummarize-btn {
+.ts-bp .ars-resummarize-btn,
+.ts-bp .ars-copy-btn {
   color: #F7E2B7;
   background: rgba(232, 184, 109, 0.1);
   border: 1px solid rgba(232, 184, 109, 0.26);
@@ -452,7 +453,8 @@
 }
 
 .ts-bp .ars-summarize-btn:hover,
-.ts-bp .ars-resummarize-btn:hover {
+.ts-bp .ars-resummarize-btn:hover,
+.ts-bp .ars-copy-btn:hover {
   color: #FFF3DB;
   background: rgba(232, 184, 109, 0.16);
   border-color: rgba(232, 184, 109, 0.4);

@@ -262,7 +262,8 @@
   color: #A8A29E;
   letter-spacing: 0.02em;
 }
-.ars-resummarize-btn {
+.ars-resummarize-btn,
+.ars-copy-btn {
   font-family: inherit;
   font-size: 10px;
   font-weight: 600;
@@ -274,11 +275,13 @@
   cursor: pointer;
   transition: all 0.15s;
 }
-.ars-resummarize-btn:hover {
+.ars-resummarize-btn:hover,
+.ars-copy-btn:hover {
   color: #0F766E;
   border-color: #0F766E;
 }
-.ars-resummarize-btn:disabled {
+.ars-resummarize-btn:disabled,
+.ars-copy-btn:disabled {
   opacity: 0.5;
   cursor: wait;
 }

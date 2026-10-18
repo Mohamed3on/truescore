@@ -1,5 +1,5 @@
 import { getActiveLLM } from './config';
-import { el, renderMarkdown, renderMarkdownInline } from './utils';
+import { addCommas, el, renderMarkdown, renderMarkdownInline } from './utils';
 import { cacheGet, cacheSet } from './cache';
 import { summarize } from './llm';
 import { findQA, loadQAs, removeQA, saveQA } from './qa-history';
@@ -339,18 +339,39 @@ export const buildSummarizeWidget = ({
   const summarizeBtn = document.createElement('button');
   summarizeBtn.className = 'ars-summarize-btn';
 
-  // "Summarized on …" + Re-summarize. Shown only while the panel holds the
+  // "Summarized on …" + Re-summarize, shown only while the panel holds the
   // structured summary — never beside a Q&A answer, where "Re-summarize" would
-  // be the wrong label and the wrong action.
+  // be the wrong label and the wrong action — and Copy reviews, always.
   const dateRow = el('div', 'ars-summary-meta');
-  dateRow.style.display = 'none';
   const dateLabel = el('div', 'ars-summary-date');
   const RESUMMARIZE_LABEL = '\u21BB Re-summarize';
   const reBtn = document.createElement('button');
   reBtn.className = 'ars-resummarize-btn';
   reBtn.textContent = RESUMMARIZE_LABEL;
   reBtn.addEventListener('click', () => runSummary(reBtn));
-  dateRow.append(dateLabel, reBtn);
+  // The reviews as the model reads them, under the page's title and URL, to
+  // paste into another tool.
+  const COPY_LABEL = 'Copy reviews';
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'ars-copy-btn';
+  copyBtn.textContent = COPY_LABEL;
+  let copyReset: ReturnType<typeof setTimeout> | undefined;
+  copyBtn.addEventListener('click', async () => {
+    clearTimeout(copyReset);
+    copyBtn.disabled = true;
+    copyBtn.textContent = '⏳ Fetching reviews…';
+    try {
+      const reviews = await loadReviews();
+      await navigator.clipboard.writeText(`${document.title}\n${location.href}\n\n${reviews.join('\n---\n')}`);
+      copyBtn.textContent = `✓ Copied ${addCommas(reviews.length)} reviews`;
+    } catch (e: any) {
+      copyBtn.textContent = `✕ ${e.message}`;
+    } finally {
+      copyBtn.disabled = false;
+      copyReset = setTimeout(() => { copyBtn.textContent = COPY_LABEL; }, 2000);
+    }
+  });
+  dateRow.append(dateLabel, reBtn, copyBtn);
 
   const summaryPanel = document.createElement('div');
   summaryPanel.className = 'ars-summary-panel';
@@ -367,11 +388,9 @@ export const buildSummarizeWidget = ({
     // Hide the redundant Summarize button only once the summary is on screen.
     summarizeBtn.style.display = !asking && panelMode === 'summary' ? 'none' : '';
     const showDate = !asking && panelMode === 'summary';
-    dateRow.style.display = showDate ? '' : 'none';
-    if (showDate) {
-      dateLabel.textContent = `Summarized on ${new Date(summaryTs).toLocaleDateString()}`;
-      reBtn.style.display = checkRateLimit().count < RL_MAX ? '' : 'none';
-    }
+    dateLabel.style.display = showDate ? '' : 'none';
+    reBtn.style.display = showDate && checkRateLimit().count < RL_MAX ? '' : 'none';
+    if (showDate) dateLabel.textContent = `Summarized on ${new Date(summaryTs).toLocaleDateString()}`;
   };
 
   const loadReviews = async () => {
