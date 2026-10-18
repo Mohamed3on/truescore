@@ -104,7 +104,11 @@
         "*://*.decathlon.cz/*", "*://*.decathlon.ro/*", "*://*.decathlon.hu/*",
         "*://*.decathlon.gr/*", "*://*.decathlon.dk/*", "*://*.decathlon.ie/*",
         "*://*.decathlon.fi/*", "*://*.decathlon.sk/*", "*://*.decathlon.bg/*",
-        "*://*.decathlon.hr/*", "*://*.decathlon.si/*", "*://*.decathlon.com/*"
+        "*://*.decathlon.hr/*", "*://*.decathlon.si/*", "*://*.decathlon.com/*",
+        "*://*.decathlon.co.th/*", "*://*.decathlon.sg/*", "*://*.decathlon.my/*",
+        "*://*.decathlon.ph/*", "*://*.decathlon.co.id/*", "*://*.decathlon.vn/*",
+        "*://*.decathlon.com.hk/*", "*://*.decathlon.tw/*", "*://*.decathlon.co.kr/*",
+        "*://*.decathlon.co.jp/*", "*://*.decathlon.com.au/*", "*://*.decathlon.com.kh/*"
       ],
       "js": ["sites/decathlon-pdp.js"],
       "css": ["sites/amazon-product.css"],
@@ -119,7 +123,11 @@
         "*://*.decathlon.cz/*", "*://*.decathlon.ro/*", "*://*.decathlon.hu/*",
         "*://*.decathlon.gr/*", "*://*.decathlon.dk/*", "*://*.decathlon.ie/*",
         "*://*.decathlon.fi/*", "*://*.decathlon.sk/*", "*://*.decathlon.bg/*",
-        "*://*.decathlon.hr/*", "*://*.decathlon.si/*", "*://*.decathlon.com/*"
+        "*://*.decathlon.hr/*", "*://*.decathlon.si/*", "*://*.decathlon.com/*",
+        "*://*.decathlon.co.th/*", "*://*.decathlon.sg/*", "*://*.decathlon.my/*",
+        "*://*.decathlon.ph/*", "*://*.decathlon.co.id/*", "*://*.decathlon.vn/*",
+        "*://*.decathlon.com.hk/*", "*://*.decathlon.tw/*", "*://*.decathlon.co.kr/*",
+        "*://*.decathlon.co.jp/*", "*://*.decathlon.com.au/*", "*://*.decathlon.com.kh/*"
       ],
       "js": ["sites/decathlon-plp.js"],
       "run_at": "document_end"

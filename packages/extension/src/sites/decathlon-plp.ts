@@ -1,27 +1,25 @@
 import { afterHydration, npsStats } from '../shared/utils';
 import { cacheGetMaybe, cacheSetMaybe } from '../shared/cache';
-import { extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
+import { APAC_RATING, extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { setupScoreGrid, containersBySelector } from '../shared/score-grid';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const throttledFetch = createThrottledFetcher(8);
-const CONTAINERS = 'ul.product-grid, ul.carousel-slides-wrapper';
-const CARD = `:is(${CONTAINERS}) .product-card`;
-const LINK = 'a[href*="/p/"]';
-
 const site = getDecathlonSite();
 if (!site) throw new Error('unsupported locale');
-const { tld, locale } = site;
+const CONTAINERS = 'ul.product-grid, ul.carousel-slides-wrapper';
+// The Asia-Pacific shops' tiles that show a rating. Their grid places each one
+// absolutely, where CSS `order` can't rank it, so there they keep the host's order.
+const CARD = site.apac ? `[data-testid="producthit-tile-box"]:has(${APAC_RATING})` : `:is(${CONTAINERS}) .product-card`;
+const LINK = 'a[href*="/p/"]';
 
 const fetchScore = async (sku: string, productId: string) => {
   const key = `nps_score_v2_${productId}`; // v2: scores keep their sign (netScore)
   const cached = cacheGetMaybe(key, CACHE_TTL);
   if (cached) return cached.value;
 
-  const res = await throttledFetch(
-    `https://www.decathlon.${tld}/api/reviews/${locale}/reviews-stats/${sku}/product?nbItemsPerPage=0&page=0`
-  );
+  const res = await throttledFetch(site.statsUrl(sku));
   if (!res.ok) return null;
   const dist = (await res.json())?.stats?.ratingDistribution ?? [];
 
@@ -73,12 +71,13 @@ const startGrid = () => setupScoreGrid({
   cardSelector: CARD,
   scoreForCard: (card) => scoreFor(card.querySelector(LINK)),
   placeBadge: (card, badge) => {
-    card.querySelector('.review__fullstars__votes')?.after(badge);
+    if (site.apac) card.querySelector(APAC_RATING)?.append(badge);
+    else card.querySelector('.review__fullstars__votes')?.after(badge);
   },
   // The PLP grid is React-reconciled (fiber keys on its `li`s) and `display:
   // grid`; the default CSS-band ranking is the only kind it doesn't fight, and
   // it also can't corrupt the carousel tracks the way node moves could.
-  discover: containersBySelector(CONTAINERS),
+  discover: site.apac ? undefined : containersBySelector(CONTAINERS),
 });
 afterHydration().then(() => {
   prefetchObs.disconnect();
