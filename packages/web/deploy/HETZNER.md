@@ -99,13 +99,14 @@ genuine expiry → renewal), `throttle`, `needs-reseed` (a whole auto-mint faile
 # live tail of just the session events
 ssh root@65.108.153.112 "journalctl -u truescore -f -n0 | grep --line-buffered '\[ts-event\]'"
 
-# durable history from sqlite (bun, since sqlite3 CLI isn't installed). Last 40:
-ssh root@65.108.153.112 'set -a; . /opt/truescore/.env; set +a
-  bun -e "const {Database}=require(\"bun:sqlite\");const p=process.env.TRUESCORE_CACHE_DB_PATH||\"/var/lib/truescore/cache.sqlite\";const db=new Database(p,{readonly:true});for(const r of db.prepare(\"SELECT ts,type,data FROM session_events ORDER BY ts DESC LIMIT 40\").all())console.log(new Date(r.ts).toISOString(),r.type,r.data)"'
+# durable history from sqlite (sqlite3 CLI, installed 2026-10-18). Last 40:
+ssh root@65.108.153.112 "sqlite3 -readonly /var/lib/truescore/cache.sqlite \"SELECT datetime(ts/1000, 'unixepoch'), type, data FROM session_events ORDER BY ts DESC LIMIT 40\""
 
 # counts by type over the last day (are mints succeeding? any needs-reseed?)
-ssh root@65.108.153.112 'set -a; . /opt/truescore/.env; set +a
-  bun -e "const {Database}=require(\"bun:sqlite\");const p=process.env.TRUESCORE_CACHE_DB_PATH||\"/var/lib/truescore/cache.sqlite\";const db=new Database(p,{readonly:true});const since=Date.now()-864e5;for(const r of db.prepare(\"SELECT type,count(*) n FROM session_events WHERE ts>? GROUP BY type ORDER BY n DESC\").all(since))console.log(String(r.n).padStart(5),r.type)"'
+ssh root@65.108.153.112 "sqlite3 -readonly /var/lib/truescore/cache.sqlite \"SELECT count(*), type FROM session_events WHERE ts > (unixepoch() - 86400) * 1000 GROUP BY type ORDER BY 1 DESC\""
+
+# one place's cached entry: `data` is its JSON (name, score, highlights, summary…)
+ssh root@65.108.153.112 "sqlite3 -readonly /var/lib/truescore/cache.sqlite \"SELECT json_extract(data, '\$.name'), json_extract(data, '\$.summary') FROM entries WHERE featureId = '0x47a84f0c36e2f81f:0x1a88f216b69e4658'\""
 ```
 
 ## Residential proxy (Decodo)
