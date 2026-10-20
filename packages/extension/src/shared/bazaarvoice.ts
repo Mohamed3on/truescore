@@ -3,7 +3,7 @@ import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
 import { idbGet, idbSet } from './idb-cache';
 import { createThrottledFetcher } from './throttled-fetch';
 import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from './review-summary';
-import { buildSearchSection, localSearch, quoteCards, runSearch, searchWith } from './review-search';
+import { buildSearchSection, localSearch, orSearch, quoteCards, runSearch, searchWith } from './review-search';
 import type { SearchAsk } from './review-ask';
 import { setupSpaInjector } from './spa-injector';
 import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from './score-island';
@@ -274,22 +274,8 @@ const searchTerm = async (site: BvSite, productId: string, term: string) => {
 };
 
 // Search every review past the Sample through BazaarVoice, one search per OR term.
-// One term's count is its own; several terms' is what their union holds. Queries
-// are kept, so backspacing doesn't refire them.
-const makeReviewSearch = (site: BvSite, productId: string) => {
-  const cache = new Map<string, { matches: BvReview[]; total: number }>();
-  return async (terms: string[]) => {
-    const key = terms.join(' OR ');
-    let hit = cache.get(key);
-    if (!hit) {
-      const found = await Promise.all(terms.map((t) => searchTerm(site, productId, t)));
-      const matches = dedupe(found.flatMap((f) => f.reviews));
-      hit = { matches, total: found.length === 1 ? found[0].total : matches.length };
-      cache.set(key, hit);
-    }
-    return hit;
-  };
-};
+const makeReviewSearch = (site: BvSite, productId: string) =>
+  orSearch((t) => searchTerm(site, productId, t), { text: reviewToText, date: (r) => r.date });
 
 // Search the Sample itself, which holds every review up to SAMPLE_MAX: exact
 // phrases, and no request per query.

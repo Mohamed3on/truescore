@@ -36,6 +36,36 @@ export const searchWith = <T,>(
   return { texts: matches.map(toText).filter(Boolean), scorePct: Math.round(nps), trustedReviews: rated };
 };
 
+// A site's remote search as the search box's `search`: one `searchTerm` per OR
+// term, the union deduped by text (a review with none dropped) and, past one
+// term, put back newest first. One term's count is the site's own, spanning
+// every review; several terms' is all the union honestly holds. Queries are
+// kept, so backspacing doesn't refire them.
+export const orSearch = <T,>(
+  searchTerm: (term: string) => Promise<{ reviews: T[]; total: number }>,
+  { text, date }: { text: (r: T) => string; date: (r: T) => string },
+) => {
+  const cache = new Map<string, { matches: T[]; total: number }>();
+  return async (terms: string[]) => {
+    const key = terms.join(' OR ');
+    let hit = cache.get(key);
+    if (!hit) {
+      const found = await Promise.all(terms.map(searchTerm));
+      const seen = new Set<string>();
+      const matches = found.flatMap((f) => f.reviews).filter((r) => {
+        const t = text(r);
+        if (!t || seen.has(t)) return false;
+        seen.add(t);
+        return true;
+      });
+      if (found.length > 1) matches.sort((a, b) => date(b).localeCompare(date(a)));
+      hit = { matches, total: found.length === 1 ? found[0].total : matches.length };
+      cache.set(key, hit);
+    }
+    return hit;
+  };
+};
+
 // Run `query` in a search section's box as if typed, and bring it into view.
 export const runSearch = (section: Element, query: string) => {
   const input = section.querySelector<HTMLInputElement>('.ars-search-input');

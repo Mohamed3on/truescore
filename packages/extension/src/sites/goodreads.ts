@@ -6,7 +6,7 @@ import { adjust, recentRatio, THIN_SAMPLE, trendClass } from '../shared/recency'
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 import { buildMediaSummary } from '../shared/review-summary';
-import { buildSearchSection, runSearch, searchWith } from '../shared/review-search';
+import { buildSearchSection, orSearch, runSearch, searchWith } from '../shared/review-search';
 import { shrunkAverage } from './goodreads-picks';
 import {
   goodreadsViewerCacheScope,
@@ -1537,32 +1537,11 @@ const REVIEW_FIELDS = (r: GrReview) => ({ rating: r.rating, body: r.body, meta: 
  * A single term's count is exact, but only the newest REVIEW_PAGE_LIMIT hits come back,
  * so a term with more matches than that has its %-positive read off that newest sample.
  */
-const makeReviewSearch = (workId: string) => {
-  const cache = new Map<string, { matches: GrReview[]; total: number }>();
-  return async (terms: string[]) => {
-    const key = terms.join(' OR ');
-    let hit = cache.get(key);
-    if (!hit) {
-      const pages = await Promise.all(terms.map((t) =>
-        fetchReviewNodes(workId, { withText: true, searchText: phraseQuery(t) })));
-      const seen = new Set<string>();
-      const matches: GrReview[] = [];
-      for (const { nodes } of pages) {
-        for (const n of nodes) {
-          const r = toReview(n);
-          if (r.body && !seen.has(r.body)) { seen.add(r.body); matches.push(r); }
-        }
-      }
-      // Concatenated pages lose the endpoint's newest-first order; one page keeps it.
-      if (pages.length > 1) matches.sort((a, b) => b.date.localeCompare(a.date));
-      // One term: the endpoint's own count spans every review, not just the page we
-      // pulled. Several: all we can honestly claim is what the union actually holds.
-      hit = { matches, total: pages.length === 1 ? pages[0].totalCount : matches.length };
-      cache.set(key, hit);
-    }
-    return hit;
-  };
-};
+const makeReviewSearch = (workId: string) => orSearch(
+  (t) => fetchReviewNodes(workId, { withText: true, searchText: phraseQuery(t) })
+    .then(({ nodes, totalCount }) => ({ reviews: nodes.map(toReview), total: totalCount })),
+  { text: (r) => r.body, date: (r) => r.date },
+);
 
 const buildReviewSearch = (search: ReturnType<typeof makeReviewSearch>, total: number) => buildSearchSection<GrReview>({
   reviews: [],

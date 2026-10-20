@@ -6,7 +6,7 @@ import type { Stance } from '@truescore/gmaps-shared';
 let nextStances: ((texts: string[]) => Stance[]) | null = null;
 const jev = await import('./jev');
 await mock.module('./jev', () => ({ ...jev, readStances: async (_q: string, texts: string[]) => nextStances?.(texts) ?? null }));
-const { buildSearchSection, buildReviewCard, localSearchAsk, queryTerms } = await import('./review-search');
+const { buildSearchSection, buildReviewCard, localSearchAsk, orSearch, queryTerms } = await import('./review-search');
 
 type R = { rating: number; title: string; body: string };
 const review = (rating: number, title: string, body = ''): R => ({ rating, title, body });
@@ -31,6 +31,46 @@ const search = async (section: HTMLElement, query: string, ms = 400) => {
   input.dispatchEvent(new Event('input'));
   await new Promise((r) => setTimeout(r, ms));
 };
+
+// A remote OR-Search over an in-memory term search: each term finds the reviews
+// holding it and claims `counts[term]` hits (a site's endpoint counts past its page).
+type D = { body: string; date: string };
+const termSearch = (reviews: D[], counts: Record<string, number> = {}) => {
+  const calls: string[] = [];
+  const search = orSearch(async (term: string) => {
+    calls.push(term);
+    const hits = reviews.filter((r) => r.body.includes(term));
+    return { reviews: hits, total: counts[term] ?? hits.length };
+  }, { text: (r) => r.body, date: (r) => r.date });
+  return { search, calls };
+};
+
+describe('orSearch', () => {
+  test("unions the terms' hits, each review once, newest first", async () => {
+    const { search } = termSearch([
+      { body: 'dog friendly', date: '2026-01-01' },
+      { body: 'cat and dog', date: '2026-03-01' },
+      { body: 'cat only', date: '2026-02-01' },
+    ]);
+    const { matches } = await search(['dog', 'cat']);
+    expect(matches.map((r) => r.body)).toEqual(['cat and dog', 'cat only', 'dog friendly']);
+  });
+
+  test("one term's count is the site's own; several terms' is the union's size", async () => {
+    const reviews = [{ body: 'dog', date: '2026-01-01' }, { body: 'cat and dog', date: '2026-02-01' }];
+    const { search } = termSearch(reviews, { dog: 140, cat: 90 });
+    expect((await search(['dog'])).total).toBe(140);
+    expect((await search(['dog', 'cat'])).total).toBe(2);
+  });
+
+  test('a repeated query is served from the cache', async () => {
+    const { search, calls } = termSearch([{ body: 'dog', date: '2026-01-01' }]);
+    await search(['dog', 'cat']);
+    const again = await search(['dog', 'cat']);
+    expect(calls).toEqual(['dog', 'cat']);
+    expect(again.matches.map((r) => r.body)).toEqual(['dog']);
+  });
+});
 
 describe('queryTerms', () => {
   test('splits on a case-insensitive OR and lowercases', () => {
