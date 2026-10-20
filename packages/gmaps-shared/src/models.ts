@@ -23,11 +23,9 @@ export type ModelSetup = {
   // The extension's: Anthropic only answers a browser's cross-origin call with
   // its direct-browser-access header.
   browser?: boolean;
-  // OpenAI's request rewrite, for a setting the SDK won't send (web/llm.ts aliasesFor).
-  fetch?: typeof fetch;
 };
 
-export const modelCall = (provider: Provider, { apiKey, reasoningEffort = 'low', explicitCaching, browser, fetch }: ModelSetup): ModelCall => {
+export const modelCall = (provider: Provider, { apiKey, reasoningEffort = 'low', explicitCaching, browser }: ModelSetup): ModelCall => {
   switch (provider) {
     case 'gemini':
       return { model: createGoogleGenerativeAI({ apiKey })(MODELS.gemini), providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 32768 };
@@ -56,7 +54,7 @@ export const modelCall = (provider: Provider, { apiKey, reasoningEffort = 'low',
     // gain — so keep the cheapest level.
     case 'openai':
       return {
-        model: createOpenAI({ apiKey, fetch })(MODELS.openai),
+        model: createOpenAI({ apiKey })(MODELS.openai),
         providerOptions: { openai: { reasoningEffort, ...(explicitCaching ? { promptCacheOptions: { mode: 'explicit' } } : {}) } },
         maxOutputTokens: 32768,
       };

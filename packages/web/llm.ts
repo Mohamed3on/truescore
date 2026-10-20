@@ -19,8 +19,8 @@ const KEYS: Record<Provider, string | undefined> = {
   deepseek: process.env.DEEPSEEK_API_KEY,
   anthropic: process.env.ANTHROPIC_API_KEY,
 };
-const serverModel = (provider: Provider, reasoningEffort?: ReasoningEffort, fetch?: typeof globalThis.fetch) => {
-  const { model, providerOptions } = modelCall(provider, { apiKey: KEYS[provider], reasoningEffort, explicitCaching: true, fetch });
+const serverModel = (provider: Provider, reasoningEffort?: ReasoningEffort) => {
+  const { model, providerOptions } = modelCall(provider, { apiKey: KEYS[provider], reasoningEffort, explicitCaching: true });
   return { model, providerOptions };
 };
 export const PROVIDERS = Object.fromEntries(LLM_PROVIDERS.map((p) => [p, serverModel(p)])) as Record<Provider, ReturnType<typeof serverModel>>;
@@ -150,11 +150,8 @@ ${NOTES}${removal ? `\n\n${removal}` : ''}`;
   return { verdict: verdict.trim(), ...structured };
 }
 
-// GPT-6 Luna with no reasoning, for the aliases call. The API takes effort
-// "none", but the SDK drops it for GPT-6 models (the API then runs its default,
-// medium), so it's written into the request here.
-const lunaNoReasoning = serverModel('openai', undefined,
-  Object.assign((url: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(url, { ...init, body: JSON.stringify({ ...JSON.parse(String(init?.body)), reasoning: { effort: 'none' } }) }), { preconnect: fetch.preconnect }));
+// GPT-6 Luna with no reasoning, for the aliases call.
+const lunaNoReasoning = { ...PROVIDERS.openai, providerOptions: { openai: { ...PROVIDERS.openai.providerOptions.openai, reasoningEffort: 'none' } } };
 
 // The other names reviewers write for each of a summary's items (Summary.aliases),
 // so a standout searches them all and a topic chip going by one pools into it.
