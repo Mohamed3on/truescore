@@ -4,8 +4,8 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
-    "@ai-sdk/deepseek": "^3.0.44",
-    "ai": "^7.0.101",
+    "@ai-sdk/deepseek": "^3.0.69",
+    "ai": "^7.0.146",
     "zod": "^4.4.3"
   },
   "exports": {

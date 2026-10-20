@@ -6,11 +6,12 @@
     "watch": "bun build.ts --watch"
   },
   "dependencies": {
-    "@ai-sdk/deepseek": "^3.0.44",
-    "@ai-sdk/google": "^4.0.70",
-    "@ai-sdk/openai": "^4.0.66",
+    "@ai-sdk/anthropic": "^4.0.84",
+    "@ai-sdk/deepseek": "^3.0.69",
+    "@ai-sdk/google": "^4.0.101",
+    "@ai-sdk/openai": "^4.0.98",
     "@truescore/gmaps-shared": "workspace:*",
-    "ai": "^7.0.101",
+    "ai": "^7.0.146",
     "zod": "^4.4.3"
   },
   "devDependencies": {
