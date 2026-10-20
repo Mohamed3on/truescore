@@ -2,12 +2,11 @@ import { addCommas, el, npsColor, npsStats, toneColor } from './utils';
 import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
 import { idbGet, idbSet } from './idb-cache';
 import { createThrottledFetcher } from './throttled-fetch';
-import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from './review-summary';
-import { buildSearchSection, localSearch, orSearch, quoteCards, runSearch, searchWith } from './review-search';
-import type { SearchAsk } from './review-ask';
+import { SAMPLE_MAX } from './review-summary';
+import { buildReviewPanel } from './review-panel';
 import { setupSpaInjector } from './spa-injector';
-import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from './score-island';
-import { adjust, RECENT_REVIEWS, recentRatio } from './recency';
+import { appendStat, createIslandShell } from './score-island';
+import { RECENT_REVIEWS } from './recency';
 
 // The BazaarVoice review API behind dm's and DocMorris's reviews, called the way
 // each site's own review widget calls it. Only the client and its display config
@@ -258,8 +257,6 @@ const fetchReviews = (site: BvSite, productId: string, total: Promise<number>) =
   return { recent, all };
 };
 
-const reviewTexts = (reviews: BvReview[]) => reviews.map(reviewToText).filter(Boolean);
-
 // Every review holding `term`, through BazaarVoice's own full-text search. It ORs
 // a term's words and drops stop-words ("zu klein" finds every "klein"), so a term
 // of several words reads its hits up to SAMPLE_MAX and keeps the ones holding it
@@ -273,32 +270,19 @@ const searchTerm = async (site: BvSite, productId: string, term: string) => {
   return { reviews, total: reviews.length };
 };
 
-// Search every review past the Sample through BazaarVoice, one search per OR term.
-const makeReviewSearch = (site: BvSite, productId: string) =>
-  orSearch((t) => searchTerm(site, productId, t), { text: reviewToText, date: (r) => r.date });
-
-// Search the Sample itself, which holds every review up to SAMPLE_MAX: exact
-// phrases, and no request per query.
-const sampleSearch = (reviews: Promise<BvReview[]>) => {
-  const find = reviews.then((all) => localSearch(all, reviewFields));
-  return async (terms: string[]) => ({ matches: (await find)(terms) });
-};
-
 // --- Product page ---
 
-const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: number; nps: number } | null, labels: Record<string, RatingLabel> | null) => {
+// The score, review and recommend stats as cells of `row`; the secondary
+// ratings as tables, returned for the caller to place.
+const insights = (row: HTMLElement, stats: any, scoreData: { score: number; nps: number } | null, labels: Record<string, RatingLabel> | null) => {
   const total = Number(stats.TotalReviewCount) || 0;
   const recommended = Number(stats.RecommendedCount) || 0;
   const recommendTotal = recommended + (Number(stats.NotRecommendedCount) || 0);
-  const statParts: string[] = [];
-  if (scoreData) statParts.push(`<div class="ars-stat"><span class="ars-stat-val" style="color:${npsColor(scoreData.nps)}">${addCommas(scoreData.score)}</span><span class="ars-stat-lbl">score</span></div>`);
-  if (total) statParts.push(`<div class="ars-stat"><span class="ars-stat-val">${addCommas(total)}</span><span class="ars-stat-lbl">reviews</span></div>`);
-  if (recommendTotal > 0) statParts.push(`<div class="ars-stat" title="${addCommas(recommended)} of ${addCommas(recommendTotal)} recommend it"><span class="ars-stat-val">${Math.round((recommended / recommendTotal) * 100)}%</span><span class="ars-stat-lbl">recommend</span></div>`);
-  if (statParts.length) {
-    const row = document.createElement('div');
-    row.className = 'ars-stats';
-    row.innerHTML = statParts.join('<div class="ars-stat-div"></div>');
-    wrapper.appendChild(row);
+  if (scoreData) appendStat(row, addCommas(scoreData.score), 'score', npsColor(scoreData.nps));
+  if (total) appendStat(row, addCommas(total), 'reviews');
+  if (recommendTotal > 0) {
+    appendStat(row, `${Math.round((recommended / recommendTotal) * 100)}%`, 'recommend');
+    (row.lastElementChild as HTMLElement).title = `${addCommas(recommended)} of ${addCommas(recommendTotal)} recommend it`;
   }
 
   // Secondary ratings (effect, tolerability…) as two small bar tables, a row
@@ -335,19 +319,18 @@ const appendInsights = (wrapper: HTMLElement, stats: any, scoreData: { score: nu
     for (const part of [label, track, value]) part.title = hover;
     return [[label, track, value]];
   });
-  if (rows.length) {
-    const half = Math.ceil(rows.length / 2);
-    const tables = el('div');
-    tables.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px 24px;font-size:12px;line-height:1.4;color:#57534E';
-    for (const column of [rows.slice(0, half), rows.slice(half)]) {
-      if (!column.length) continue;
-      const table = el('div');
-      table.style.cssText = 'flex:1 1 240px;display:grid;grid-template-columns:minmax(0,160px) minmax(56px,1fr) auto;align-items:center;gap:6px 8px';
-      table.append(...column.flat());
-      tables.append(table);
-    }
-    wrapper.appendChild(tables);
+  if (!rows.length) return null;
+  const half = Math.ceil(rows.length / 2);
+  const tables = el('div');
+  tables.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px 24px;font-size:12px;line-height:1.4;color:#57534E';
+  for (const column of [rows.slice(0, half), rows.slice(half)]) {
+    if (!column.length) continue;
+    const table = el('div');
+    table.style.cssText = 'flex:1 1 240px;display:grid;grid-template-columns:minmax(0,160px) minmax(56px,1fr) auto;align-items:center;gap:6px 8px';
+    table.append(...column.flat());
+    tables.append(table);
   }
+  return tables;
 };
 
 interface PdpData {
@@ -358,77 +341,34 @@ interface PdpData {
   reviews: ReturnType<typeof fetchReviews>;
 }
 
-// One unified "Review Intelligence" card: a recent-positive gauge (NPS over the
-// latest reviews, Amazon-style) + score/review/recommend stats + secondary
-// ratings, with the summarize/ask widget below it (5+ reviews).
+// One unified "Review Intelligence" card: the review panel — its recent-positive
+// gauge leading — with the score/review/recommend stats in its row and the
+// secondary ratings under them.
 const buildCard = (
   site: BvSite,
   exampleQuery: string,
-  { stats, labels, scoreData, productId, reviews: { recent, all } }: PdpData,
+  { stats, labels, scoreData, productId, reviews }: PdpData,
 ): HTMLElement | null => {
   const total = Number(stats?.TotalReviewCount) || 0;
   const hasRecommend = (Number(stats?.RecommendedCount) || 0) + (Number(stats?.NotRecommendedCount) || 0) > 0;
   if (!scoreData && !hasRecommend && total < 5) return null;
 
   const wrapper = createIslandShell();
-
-  // Recent-positive gauge — placeholder now, filled once recent reviews load.
-  const gauge = buildRecentGauge();
-  wrapper.appendChild(gauge);
-
-  appendInsights(wrapper, stats, scoreData, labels);
-
-  if (total >= 5) {
-    // Past SAMPLE_MAX, BazaarVoice's own search reaches the reviews the Sample
-    // lacks, for the box and for an Ask's Searches alike.
-    const remote = total > SAMPLE_MAX ? makeReviewSearch(site, productId) : null;
-    const searchAsk: SearchAsk | undefined = remote ? {
-      search: searchWith((terms) => remote(terms).then((hit) => hit.matches), reviewToText, (r) => r.rating),
-      open: (query) => runSearch(wrapper, query),
-    } : undefined;
+  const { stats: row } = buildReviewPanel(wrapper, {
     // One summary per family, so another pack size of the product keeps it.
-    const summaryKey = `${site.key}-summary-${stats.FamilyIds?.[0] ?? productId}`;
-
-    // Above the summarize widget, the same way it sits on the other PDP islands.
-    wrapper.appendChild(buildSearchSection({
-      reviews: [],
-      total,
-      search: remote ?? sampleSearch(all),
-      fields: reviewFields,
-      toText: reviewToText,
-      summaryPrompt: keywordSummaryPrompt,
-      exampleQuery,
-      mountSummarize: summarizeMatches(summaryKey, { searchAsk }),
-    }));
-
-    buildSummarizeWidget({
-      wrapper,
-      cacheKey: summaryKey,
-      summaryPrompt: PRODUCT_SUMMARY_PROMPT,
-      fetchReviews: () => all.then(reviewTexts),
-      searchAsk,
-      renderQuote: quoteCards(() => all, reviewToText, reviewFields),
-    });
-  }
-
-  // Fill the recent-positive gauge from the newest RECENT_REVIEWS, which land
-  // first. Drop the gauge if none load; land the adjusted stat (score damped by
-  // the recent ratio) beside the others.
-  if (total > 0) {
-    recent
-      .then((reviews) => {
-        const ratio = recentRatio(reviews.slice(0, RECENT_REVIEWS).map((r) => r.rating));
-        fillRecentGauge(gauge, ratio);
-        if (ratio != null && scoreData) {
-          const row = wrapper.querySelector<HTMLElement>('.ars-stats');
-          if (row) appendStat(row, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
-        }
-      })
-      .catch(() => fillRecentGauge(gauge, null));
-  } else {
-    gauge.remove();
-  }
-
+    key: `${site.key}-summary-${stats.FamilyIds?.[0] ?? productId}`,
+    total,
+    ...reviews,
+    allMax: SAMPLE_MAX,
+    score: scoreData?.score,
+    text: reviewToText,
+    card: reviewFields,
+    searchTerm: (term) => searchTerm(site, productId, term),
+    date: (r) => r.date,
+    exampleQuery,
+  });
+  const tables = insights(row!, stats, scoreData, labels);
+  if (tables) row!.after(tables);
   return wrapper;
 };
 

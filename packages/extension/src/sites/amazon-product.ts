@@ -2,13 +2,14 @@ import { netScore } from '@truescore/gmaps-shared';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas, el } from '../shared/utils';
 import { adjust, ratioFromTally } from '../shared/recency';
-import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, summarizeMatches } from '../shared/review-summary';
-import { buildReviewCard, buildSearchSection, runSearch, searchWith, type SearchReviewFields } from '../shared/review-search';
-import type { SearchAsk } from '../shared/review-ask';
+import { type SearchReviewFields } from '../shared/review-search';
+import { buildReviewPanel } from '../shared/review-panel';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 import { createIslandShell } from '../shared/score-island';
 
 const NUMBER_OF_PAGES_TO_PARSE = 10;
+// The newest reviews the walk reads, at ten a page: the Sample.
+const WALK_MAX = NUMBER_OF_PAGES_TO_PARSE * 10;
 
 // 0 → red (hue 0), 1 → vivid green (hue 145)
 const getColorForPercentage = function (pct: number) {
@@ -167,6 +168,9 @@ const pickText = (root: Element, sel: string) => {
   if (original) return original.textContent!.trim();
   return (node?.textContent ?? '').replace(node?.querySelector('.a-icon-alt')?.textContent ?? '', '').trim();
 };
+
+// A review's id, or the start of its text where it has none.
+const reviewId = (review: Element) => review.id || review.querySelector('[data-hook="review-body"]')?.textContent?.trim().slice(0, 80);
 
 const parseFilteredReview = (review: Element): FilteredReview => {
   const ratingEl = review.querySelector('[data-hook="review-star-rating"], [data-hook="cmps-review-star-rating"]');
@@ -335,69 +339,56 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     return [...byId];
   };
 
-  // A summary point's reviews are the walk's texts, so each one's card is kept
-  // by its text, as long as the texts are. The walk's pages are translated once
-  // it's done: neither the score nor the summary waits on them.
-  const cardsKey = `ars-cards-${cacheASIN}`;
-  const cards = new Map<string, FilteredReview>(Object.entries(cacheGet(cardsKey, THREE_DAYS) ?? {}));
-  const keepCards = async (pages: Document[]) => {
-    await Promise.all(pages.map(async (doc) => {
-      const byId = new Map<string, FilteredReview>();
-      for (const review of doc.querySelectorAll('[data-hook="review"]')) {
-        const text = review.querySelector('[data-hook="review-body"]')?.textContent?.trim();
-        if (!text) continue;
-        const r = parseFilteredReview(review);
-        byId.set(r.id, r);
-        cards.set(text, r);
-      }
-      for (const [id, shown] of await translatePage(doc)) {
-        const r = byId.get(id);
-        if (r) r.shown = shown;
-      }
-    }));
-    if (cards.size) cacheSet(cardsKey, Object.fromEntries(cards));
-  };
-  const renderQuote = (text: string) => {
-    const r = cards.get(text);
-    return r ? buildReviewCard(cardFields(r), []) : null;
-  };
-
-  const extractReviewTexts = (doc: Document, seen: Set<string>) => {
-    const reviews = doc.querySelectorAll('[data-hook="review"]');
-    const texts: string[] = [];
-    for (const review of reviews) {
-      const bodyEl = review.querySelector('[data-hook="review-body"]');
-      if (bodyEl) {
-        const txt = bodyEl.textContent!.trim();
-        if (txt && !seen.has(txt)) { seen.add(txt); texts.push(txt); }
-      }
+  // The walk's reviews: the Sample, and a summary point's cards. Its pages are
+  // translated once it's done — neither the score nor the summary waits on them —
+  // and the reviews kept as long as the scores the same walk produced: a shorter
+  // life made a Summarize on days 2–3 walk all ten pages again before the model
+  // could start.
+  const reviewsKey = `ars-reviews-v2-${cacheASIN}`;
+  const readReviews = (doc: Document, seen: Set<string>, into: FilteredReview[]) => {
+    const found = doc.querySelectorAll('[data-hook="review"]');
+    for (const review of found) {
+      const id = reviewId(review);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const r = parseFilteredReview(review);
+      if (r.body) into.push(r);
     }
-    return { total: reviews.length, texts };
+    return found.length;
+  };
+  // The walk's own, which its translations land on — none, when it found none.
+  let kept: FilteredReview[] | undefined;
+  const keepReviews = async (reviews: FilteredReview[], pages: Document[]) => {
+    kept = reviews;
+    if (!reviews.length) return;
+    // Kept before the translations too, which may never come.
+    cacheSet(reviewsKey, reviews);
+    const byId = new Map(reviews.map((r) => [r.id, r]));
+    for (const [id, shown] of (await Promise.all(pages.map(translatePage))).flat()) {
+      const r = byId.get(id);
+      if (r) r.shown = shown;
+    }
+    cacheSet(reviewsKey, reviews);
   };
 
-  const fetchFreshReviewTexts = async () => {
-    const reviewsCacheKey = `ars-reviews-${cacheASIN}`;
-    // Kept as long as the scores the same walk produced: a shorter life made a
-    // Summarize on days 2–3 walk all ten pages again before the model could start.
-    const cachedTexts = cacheGet(reviewsCacheKey, THREE_DAYS);
-    if (cachedTexts) return cachedTexts;
+  const fetchFreshReviews = async (): Promise<FilteredReview[]> => {
+    const cached = kept ?? cacheGet(reviewsKey, THREE_DAYS);
+    if (cached) return cached;
 
     const seen = new Set<string>();
-    const texts: string[] = [];
+    const reviews: FilteredReview[] = [];
     const pages: Document[] = [];
     await fetchReviewPages((doc, page) => {
       pages.push(doc);
-      const { total, texts: newTexts } = extractReviewTexts(doc, seen);
-      texts.push(...newTexts);
-      if (total > 0 && newTexts.length === 0) {
+      const before = seen.size;
+      const total = readReviews(doc, seen, reviews);
+      if (total > 0 && seen.size === before) {
         console.warn(`[ARS] Page ${page}: all ${total} reviews were duplicates — pagination broken, stopping`);
         return 'stop';
       }
     });
-
-    if (texts.length) cacheSet(reviewsCacheKey, texts);
-    void keepCards(pages);
-    return texts;
+    void keepReviews(reviews, pages);
+    return reviews;
   };
 
   // The scoring walk: ten cursor-chained pages, so inherently one after another.
@@ -468,8 +459,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     };
 
     const seenReviewIds = new Set<string>();
-    const collectedReviewTexts: string[] = [];
-    const reviewTextsSeen = new Set<string>();
+    const walkedReviews: FilteredReview[] = [];
     const pages: Document[] = [];
     walked = fetchReviewPages((syntheticDocument, page) => {
       pages.push(syntheticDocument);
@@ -486,9 +476,11 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
       const prevSeen = seenReviewIds.size;
       for (const review of reviews) {
-        const reviewId = review.id || review.querySelector('[data-hook="review-body"]')?.textContent?.trim().slice(0, 80);
-        if (!reviewId || seenReviewIds.has(reviewId)) continue;
-        seenReviewIds.add(reviewId);
+        const id = reviewId(review);
+        if (!id || seenReviewIds.has(id)) continue;
+        seenReviewIds.add(id);
+        const parsed = parseFilteredReview(review);
+        if (parsed.body) walkedReviews.push(parsed);
 
         const ratingElement = review.querySelector('[data-hook="review-star-rating"], [data-hook="cmps-review-star-rating"]');
         if (!ratingElement) continue;
@@ -510,15 +502,6 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         }
       }
 
-      // Collect review texts for summarize (avoids double-fetching)
-      for (const review of reviews) {
-        const bodyEl = review.querySelector('[data-hook="review-body"]');
-        if (bodyEl) {
-          const txt = bodyEl.textContent!.trim();
-          if (txt && !reviewTextsSeen.has(txt)) { reviewTextsSeen.add(txt); collectedReviewTexts.push(txt); }
-        }
-      }
-
       if (seenReviewIds.size === prevSeen) {
         console.warn(`[ARS] Score page ${page}: all ${reviews.length} reviews were duplicates — pagination is broken, stopping`);
         return 'stop';
@@ -530,10 +513,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       if (complete && numberOfParsedReviews > 0) {
         cacheSet(scoresCacheKey, { numberOfParsedReviews, scores, formatRatings });
       }
-      if (collectedReviewTexts.length) {
-        cacheSet(`ars-reviews-${cacheASIN}`, collectedReviewTexts);
-      }
-      void keepCards(pages);
+      void keepReviews(walkedReviews, pages);
 
       // Fade out scanning indicator
       const spinner = wrapper.querySelector('[data-ars="scanning"]');
@@ -586,97 +566,41 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   }
 
   // ---- Keyword review search (server-side filterByKeyword) ----
-  // Amazon's review AJAX accepts filterByKeyword, so this spans EVERY review —
-  // not just the pages we scored — mirroring the Google Maps label search. One
-  // paged fetch per OR-term, unioned by review id (sharing one DOMParser). With
-  // `translating`, each page is also translated as it lands, for display.
-  type Translating = Promise<[string, Shown][]>[];
-  const fetchKeywordTerm = async (term: string, seen: Set<string>, onFound?: (found: number) => void, translating?: Translating): Promise<FilteredReview[]> => {
-    const out: FilteredReview[] = [];
-    await fetchReviewPages((doc) => {
-      const reviews = doc.querySelectorAll('[data-hook="review"]');
-      if (!reviews.length) return 'stop';
-      let added = 0;
-      for (const review of reviews) {
-        const id = review.id || review.querySelector('[data-hook="review-body"]')?.textContent?.trim().slice(0, 80) || '';
-        if (!id || seen.has(id)) continue;
-        seen.add(id);
-        added++;
-        out.push(parseFilteredReview(review));
-      }
-      if (!added) return 'stop';
-      translating?.push(translatePage(doc));
-      onFound?.(seen.size);
-    }, { filterByKeyword: term });
-    return out;
-  };
-
-  const fetchReviewsByKeyword = async (terms: string[], onFound?: (found: number) => void, translating?: Translating): Promise<FilteredReview[]> => {
+  // Amazon's review AJAX accepts filterByKeyword, so a Search spans EVERY review —
+  // not just the pages we scored. Each page is translated as it lands, for display.
+  const searchTerm = async (term: string) => {
     const seen = new Set<string>();
-    const groups = await Promise.all(terms.map((t) => fetchKeywordTerm(t, seen, onFound, translating)));
-    return groups.flat();
+    const reviews: FilteredReview[] = [];
+    const translating: Promise<[string, Shown][]>[] = [];
+    await fetchReviewPages((doc) => {
+      const before = seen.size;
+      if (!readReviews(doc, seen, reviews) || seen.size === before) return 'stop';
+      translating.push(translatePage(doc));
+    }, { filterByKeyword: term });
+    const translated = new Map((await Promise.all(translating)).flat());
+    for (const r of reviews) r.shown = translated.get(r.id);
+    return { reviews, total: reviews.length };
   };
 
-  const keywordText = (r: FilteredReview) => {
-    const t = [r.title, r.body].filter(Boolean).join('. ');
-    return t.length >= 20 ? t : '';
-  };
-
-  // An Ask of the product, or of a keyword's matches, may Search every review
-  // through the same keyword fetch; a Search's row opens it in the search box.
-  const searchAsk: SearchAsk = {
-    search: searchWith(fetchReviewsByKeyword, keywordText, (r) => r.rating),
-    open: (query) => runSearch(wrapper, query),
-  };
-
-  // The shared section (shared/review-search.ts) owns the box, the OR-term
-  // matching, the 50-result cap + truncation notice, the "N of M reviews
-  // mention" copy, the 350ms remote debounce and the Cmd/Ctrl+Shift+F jump.
-  // Amazon used to hand-roll all of it — emitting the module's own class names
-  // while missing every one of those guards. The two genuinely Amazon-specific
-  // parts stay injected: the remote keyword fetch, and the full summarize widget
-  // (Ask + a per-keyword cache) where the section's default is a one-shot pass.
-  const buildKeywordSearch = (host: HTMLElement) => {
-    host.appendChild(buildSearchSection<FilteredReview>({
-      reviews: [],
-      total: numOfRatings || numberOfParsedReviews,
-      // The matches are listed translated; a summary of them reads the
-      // originals, its points' reviews shown as their cards again by text.
-      search: async (terms) => {
-        const translating: Translating = [];
-        const matches = await fetchReviewsByKeyword(terms, undefined, translating);
-        const translated = new Map((await Promise.all(translating)).flat());
-        for (const r of matches) {
-          r.shown = translated.get(r.id);
-          const text = keywordText(r);
-          if (text) cards.set(text, r);
-        }
-        return { matches };
-      },
-      fields: cardFields,
-      toText: keywordText,
-      summaryPrompt: keywordSummaryPrompt,
-      exampleQuery: 'battery OR strap',
-      mountSummarize: summarizeMatches(`review-summary-${cacheASIN}`, { context: productContext(), searchAsk }),
-    }));
-  };
-
-  // The keyword search and Summarize/Ask need nothing from the scoring walk, so
-  // they mount at once rather than after it — gone again if the walk finds no
-  // reviews to analyze. `display: contents` keeps them in the island's own flow.
+  // The search, Summary and Ask need nothing from the scoring walk but its
+  // reviews, so they mount at once rather than after it — gone again if the walk
+  // finds no reviews to analyze. `display: contents` keeps them in the island's
+  // own flow.
   if (usedCache ? numberOfParsedReviews > 0 : numOfRatings > 0) {
     const tools = el('div');
     tools.style.display = 'contents';
     wrapper.appendChild(tools);
-    buildKeywordSearch(tools);
-    buildSummarizeWidget({
-      wrapper: tools,
-      cacheKey: `review-summary-${cacheASIN}`,
-      summaryPrompt: PRODUCT_SUMMARY_PROMPT,
-      // After the walk its texts are cached, so this reads them, not a second walk.
-      fetchReviews: () => walked.then(fetchFreshReviewTexts),
-      searchAsk,
-      renderQuote,
+    buildReviewPanel(tools, {
+      key: `review-summary-${cacheASIN}`,
+      total: numOfRatings || numberOfParsedReviews,
+      // After the walk its reviews are cached, so this reads them, not a second walk.
+      all: () => walked.then(fetchFreshReviews),
+      allMax: WALK_MAX,
+      text: (r) => [r.title, r.body].filter(Boolean).join(': '),
+      card: cardFields,
+      searchTerm,
+      exampleQuery: 'battery OR strap',
+      context: productContext(),
     });
     walked.then(() => { if (!numberOfParsedReviews) tools.remove(); });
   }

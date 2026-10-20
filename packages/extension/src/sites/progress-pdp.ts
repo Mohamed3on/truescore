@@ -1,6 +1,6 @@
 import { addCommas, el } from '../shared/utils';
-import { buildSummarizeWidget, FILTERED_PRODUCT_SUMMARY_PROMPT, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
-import { buildSearchSection, quoteCards } from '../shared/review-search';
+import { PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
+import { buildReviewPanel } from '../shared/review-panel';
 import { buildGauge, createIslandShell, type IslandScore } from '../shared/score-island';
 import { computeScore, getProductInfo, loadReviews, PROGRESS, reviewToText, type ProductInfo, type ReviewBundle, type StampedReview } from '../shared/stamped';
 
@@ -23,20 +23,16 @@ const cardFields = (r: StampedReview) => ({ rating: r.reviewRating, title: r.rev
 const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: IslandScore, autoSummarize: boolean | Promise<boolean>) => {
   const wrapper = createIslandShell();
   wrapper.append(...buildGauge(scored));
-  wrapper.appendChild(buildSearchSection({
-    reviews: bundle.reviews,
-    fields: cardFields,
-    toText,
-    summaryPrompt: FILTERED_PRODUCT_SUMMARY_PROMPT,
+  // Stamped's sample is all a Search reaches.
+  buildReviewPanel(wrapper, {
+    key: `progress-summary-${info.id}`,
+    total: bundle.reviews.length,
+    all: bundle.reviews,
+    text: toText,
+    card: cardFields,
     exampleQuery: 'shrink OR size',
-  }));
-  buildSummarizeWidget({
-    wrapper,
-    cacheKey: `progress-summary-${info.id}`,
     summaryPrompt: SUMMARY_PROMPT,
-    fetchReviews: async () => bundle.reviews.map(toText).filter(Boolean),
     autoSummarize,
-    renderQuote: quoteCards(() => bundle.reviews, toText, cardFields),
   });
   return wrapper;
 };

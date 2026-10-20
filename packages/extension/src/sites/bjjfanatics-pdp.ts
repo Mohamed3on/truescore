@@ -1,7 +1,6 @@
 import { addCommas, el, npsColor } from '../shared/utils';
-import { buildSummarizeWidget } from '../shared/review-summary';
 import { courseContext, SUMMARY_PROMPT } from './bjjfanatics-prompt';
-import { buildSearchSection, quoteCards } from '../shared/review-search';
+import { buildReviewPanel } from '../shared/review-panel';
 import { createIslandShell } from '../shared/score-island';
 import { BJJ_FANATICS, computeScore, getProductInfo, loadReviews, reviewToText, type ProductInfo, type ReviewBundle, type StampedReview } from '../shared/stamped';
 
@@ -18,8 +17,6 @@ const cardFields = (r: StampedReview) => ({
   body: r.reviewMessage,
   meta: (r.reviewOptionsList || []).filter(o => o.value).map(optionText).join(' · '),
 });
-
-const FILTERED_SUMMARY_PROMPT = `Summarize these BJJ instructional course reviews. Lead with the bottom line — what most reviewers walk away with. Cite specific volumes, parts, chapters, techniques, sweeps, or positions by name when reviewers mention them. Ignore shipping, delivery, packaging, and seller issues — focus only on the course content. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
 
 const renderScoreCard = (wrapper: HTMLElement, score: number, nps: number, total: number) => {
   const card = document.createElement('a');
@@ -63,23 +60,18 @@ const buildPanel = (
 
   renderScoreCard(wrapper, scored.score, scored.nps, scored.total);
 
-  wrapper.appendChild(buildSearchSection({
-    reviews: bundle.reviews,
-    fields: cardFields,
-    toText: reviewToText,
-    summaryPrompt: FILTERED_SUMMARY_PROMPT,
+  // Stamped's sample is all a Search reaches. A receipt's reviews show as the
+  // search's cards, not the model's "[Ranking: …] Title: body" text.
+  buildReviewPanel(wrapper, {
+    key: `bjj-summary-${info.id}`,
+    total: bundle.reviews.length,
+    all: bundle.reviews,
+    text: reviewToText,
+    card: cardFields,
     exampleQuery: 'guard OR mount',
-  }));
-
-  buildSummarizeWidget({
-    wrapper,
-    cacheKey: `bjj-summary-${info.id}`,
     summaryPrompt: SUMMARY_PROMPT,
     context: courseContent ? courseContext(courseContent) : undefined,
-    fetchReviews: async () => bundle.reviews.map(reviewToText).filter(Boolean),
     autoSummarize,
-    // A receipt's reviews show as the search's cards, not the model's "[Ranking: …] Title: body" text.
-    renderQuote: quoteCards(() => bundle.reviews, reviewToText, cardFields),
   });
 
   return wrapper;

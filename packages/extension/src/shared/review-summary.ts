@@ -30,11 +30,7 @@ ${betterAlternativeRule('competing product')}
 
 conclusion: 2–4 sentences — the overall verdict: what owners consistently say, who it suits best or the main thing to watch out for, and whether it's good value when reviewers mention price. Don't just restate the bullets, and don't mention what reviewers didn't say.`;
 
-// Free-form prompt for summarizing a searched subset of product reviews
-// (the review-search section's "Summarize <query>" pass).
-export const FILTERED_PRODUCT_SUMMARY_PROMPT = `These are reviews of the product on this page, filtered to the ones that mention the searched term. Summarize what they say about this product where that term comes up. The product is always the subject: if the term is a competing product or brand, describe how reviewers compare this product to it instead of reviewing the competitor. Lead with the bottom line. Ignore shipping, delivery, packaging, or seller issues — focus only on the product itself. Be punchy and decisive, no hedging. A few short paragraphs or bullets are fine.`;
-
-// The structured counterpart, for the full summarize widget under a search's
+// The prompt for the summarize widget under a search's
 // matches (see summarizeMatches). The searched term is only a lens: without this
 // framing a brand-name search ("Durex") on a competitor page came back as a
 // review of Durex.
