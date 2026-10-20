@@ -1,4 +1,4 @@
-import { netScore } from '@truescore/gmaps-shared';
+import { animates, netScore } from '@truescore/gmaps-shared';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { couldReach, rankPicks } from '../shared/better-picks';
 import { loadIgnored, saveIgnored } from '../shared/ignored-picks';
@@ -440,6 +440,8 @@ Keep each point specific and short: the thing reviewers single out (a scene, a p
 
 A plot spoiler many reviewers discuss (who dies, a twist, how it ends) is fine: put **SPOILER:** right before it. No preamble.`;
 
+const QUESTION_PROMPT = `Answer this question using ONLY evidence from the film reviews below, newest first. Quote or paraphrase the concrete details reviewers give. If reviewers disagree, surface the tension. Plot spoilers are fine: put **SPOILER:** right before each one (who dies, a twist, how it ends). Be direct and practical.`;
+
 const SEARCH_SUMMARY_PROMPT = `Summarize what these film reviews say about the searched topic. Lead with the bottom line and keep it specific to what reviewers actually wrote. Plot spoilers are fine: put **SPOILER:** right before each one (who dies, a twist, how it ends). A short paragraph or a few bullets.`;
 
 type LbxReview = { text: string; rating: number; date: string };
@@ -691,19 +693,25 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 // UI Display
 // =============================================================================
 
-/** Appends `element` to `target`, fading it in only when it actually changed lists. */
-function moveTo(element: HTMLElement, target: HTMLElement) {
+const EASE = 'cubic-bezier(0.16, 1, 0.3, 1)';
+
+/**
+ * Places `element` in `target` right after `after` (first when null), touching the
+ * DOM only when it isn't there already, and fades it in when it changed lists.
+ */
+function moveTo(element: HTMLElement, target: HTMLElement, after: Element | null) {
+  if (element.parentElement === target && element.previousElementSibling === after) return;
   const moved = element.parentElement !== target;
   // Re-inserting a node blurs whatever inside it had focus — hand it back so the
   // ignore/restore button stays keyboard-reachable after it flips or its list
   // re-sorts under a landing check. Without preventScroll, focus() scrolls the
   // row's new list into view, jumping the page.
   const focused = element.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
-  target.append(element);
+  if (after) after.after(element);
+  else target.prepend(element);
   focused?.focus({ preventScroll: true });
-  if (!moved) return;
-  element.classList.add('lbx-moved');
-  element.addEventListener('animationend', () => element.classList.remove('lbx-moved'), { once: true });
+  // A script animation, unlike a CSS one, survives the row being placed again mid-way.
+  if (moved && animates(element)) element.animate([{ opacity: 0, transform: 'translateY(-3px)' }, {}], { duration: 280, easing: EASE });
 }
 
 /**
@@ -797,9 +805,14 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     let ignoredCount = 0;
     let pendingCount = 0;
     let hiddenCount = 0;
-    // Appending in adjusted order re-sorts both lists; an entry still being checked
+    // Placing in adjusted order re-sorts both lists; an entry still being checked
     // carries its score, so unchecked films keep the initial score order.
     const ordered = [...items.values()].sort((a, b) => (b.adjusted ?? -Infinity) - (a.adjusted ?? -Infinity));
+    // Where each main-list row sat, so the ones that stay glide to their new
+    // place instead of jumping when a film leaves or re-sorts.
+    const top = (row: Element) => row.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    const was = new Map([...list.children].map((row) => [row, top(row)]));
+    const last = new Map<HTMLElement, Element>();
     for (const entry of ordered) {
       // Too old: off every list and out of every count but its own.
       if (!shown(entry.film)) { hiddenCount++; entry.element.remove(); continue; }
@@ -813,7 +826,16 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
       entry.button.setAttribute('aria-label', `${label}: ${entry.film.name}`);
       // Until its own recents settle nothing has disproved a film yet, so it
       // stays in the main list rather than flickering through the fold.
-      moveTo(entry.element, isIgnored ? drawer : entry.passes || !entry.settled ? list : below);
+      const target = isIgnored ? drawer : entry.passes || !entry.settled ? list : below;
+      moveTo(entry.element, target, last.get(target) ?? null);
+      last.set(target, entry.element);
+    }
+    for (const row of list.children as HTMLCollectionOf<HTMLElement>) {
+      if (!was.has(row)) continue;
+      // From where it shows now, a glide already under way included.
+      for (const a of row.getAnimations()) if (a.id === 'glide') a.cancel();
+      const dy = was.get(row)! - top(row);
+      if (Math.abs(dy) > 0.5 && animates(row)) row.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { id: 'glide', duration: 220, easing: EASE });
     }
 
     // The films that lost are receipts, not results: one folded line each way.
@@ -1034,6 +1056,8 @@ async function run(histogram: Promise<number[]>) {
         summaryTtl: CONFIG.SUMMARY_CACHE_MS,
         initialButtonLabel: '✦ Summarize recent reviews',
         fetchReviews: () => getRecentReviews(currentSlug).then((reviews) => reviews.map((r) => r.text)),
+        // No searchAsk: the Ask already reads every review the page fetched.
+        ask: { placeholder: 'Ask about this film…', questionPrompt: QUESTION_PROMPT, qaCacheKey: `lbx_summary_${currentSlug}` },
       })
     : reviewSection;
 

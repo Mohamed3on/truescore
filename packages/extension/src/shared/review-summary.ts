@@ -4,7 +4,7 @@ import { cacheGet, cacheSet } from './cache';
 import { askTransport, bumpRateLimit, checkRateLimit, RL_MAX, summarize } from './llm';
 import { loadQAs, removeQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
-import { bySupport, foldAway, mountBullets, parseOrQuery, receiptsFor, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
+import { bySupport, enter, fadeIn, foldAway, mountBullets, parseOrQuery, receiptsFor, smoothDrafts, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
 import type { JSONSchema7 } from 'ai';
 import { readAnswers, readSupport, receiptButton } from './jev';
 
@@ -646,7 +646,8 @@ export const buildMediaSummary = ({
   // most-made point has first; asked to order them so, the model mislabelled
   // points to fit the groups. A point joins once its sentiment (written after
   // it) arrives, straight into its group, so none moves once shown.
-  const mountMediaSummary = () => {
+  // A cached one draws at once; only a streamed one fades in and rises row by row.
+  const mountMediaSummary = (animate = true) => {
     const verdict = el('div', `${p}-verdict ${p}-text`);
     const list = el('ul', `${p}-points`);
     const texts = new Map<number, HTMLElement>();
@@ -660,6 +661,7 @@ export const buildMediaSummary = ({
       if (!started) {
         body.replaceChildren(verdict, list);
         body.style.display = 'block';
+        if (animate) fadeIn(body);
         started = true;
       }
       writeMarkdown(verdict, value, renderMarkdownInline);
@@ -678,13 +680,14 @@ export const buildMediaSummary = ({
           texts.set(i, li.appendChild(el('span', `${p}-text`)));
           const kind = kinds.indexOf(point.sentiment);
           list.insertBefore(li, [...list.children].find((c) => kinds.indexOf((c as HTMLElement).dataset.sentiment!) > kind) ?? null);
+          if (animate) enter(li, '1');
         }
         // Only some providers write the sentiment last; with it first, the text is still coming.
         writeMarkdown(texts.get(i)!, String(point.text ?? '').trim(), renderMarkdownInline);
       });
     };
   };
-  const renderMediaSummary = (data: any) => mountMediaSummary()(data);
+  const renderMediaSummary = (data: any) => mountMediaSummary(false)(data);
 
   const renderAnswer = (text: string, searches: AskSearch[] = []) => {
     mountAskView(body, `${p}-text`, searchAsk?.open)({ searches, text, done: true });
@@ -712,9 +715,15 @@ export const buildMediaSummary = ({
       const texts = await fetchReviews();
       if (!texts.length) throw new Error('No written reviews found yet.');
       note(`${p}-progress`, '✦ Summarizing…');
-      // Each point shows as it's written.
+      // Each point shows as it's written, flowing in a frame at a time: the
+      // partials come in bursts, a few at once after a stall of up to ~300ms.
       const draw = mountMediaSummary();
-      const data = await llmSummarize(texts, typeof summaryPrompt === 'string' ? summaryPrompt : summaryPrompt(texts), MEDIA_SUMMARY_SCHEMA, draw);
+      const drafts = smoothDrafts<any>(draw, (shown, target, grow) => ({
+        verdict: grow(shown?.verdict, String(target?.verdict ?? '')),
+        points: (Array.isArray(target?.points) ? target.points : []).map((point: any, i: number) => ({ ...point, text: grow(shown?.points?.[i]?.text, String(point?.text ?? '')) })),
+      }));
+      const data = await llmSummarize(texts, typeof summaryPrompt === 'string' ? summaryPrompt : summaryPrompt(texts), MEDIA_SUMMARY_SCHEMA, drafts.push)
+        .finally(drafts.stop);
       bumpRateLimit();
       if (summaryCacheKey) cacheSet(summaryCacheKey, data);
       draw(data);

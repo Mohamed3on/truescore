@@ -9,7 +9,7 @@
 // The daylight skin's ease (DESIGN.md).
 const EASE = 'cubic-bezier(0.25, 1, 0.5, 1)';
 const DIM = '0.5';
-const animates = (node: HTMLElement) => typeof node.animate === 'function' && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+export const animates = (node: HTMLElement) => typeof node.animate === 'function' && !matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // Markdown written into `node`, rewritten only when it changed: a streamed
 // partial redraws just what grew.
@@ -30,14 +30,15 @@ export const foldAway = async (node: HTMLElement) => {
 };
 const fadeOut = (node: HTMLElement) =>
   animates(node) ? node.animate([{ opacity: 0 }], { duration: 120, easing: EASE, fill: 'forwards' }).finished.catch(() => {}) : undefined;
-const fadeIn = (node: HTMLElement) => {
+export const fadeIn = (node: HTMLElement) => {
   if (!animates(node)) return;
   for (const a of node.getAnimations()) a.cancel();
   node.animate([{ opacity: 0 }, {}], { duration: 220, easing: EASE });
 };
-// A drafted row rises into place as it's added, instead of popping in.
-const enter = (node: HTMLElement) => {
-  if (animates(node)) node.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: DIM, transform: 'none' }], { duration: 180, easing: EASE });
+// A drafted row rises into place as it's added, instead of popping in: to the
+// dimmed draft's opacity, unless the row is never dimmed.
+export const enter = (node: HTMLElement, opacity = DIM) => {
+  if (animates(node)) node.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity, transform: 'none' }], { duration: 180, easing: EASE });
 };
 const brighten = (node: HTMLElement) => {
   if (animates(node)) node.animate([{ opacity: DIM }, {}], { duration: 200, easing: EASE });

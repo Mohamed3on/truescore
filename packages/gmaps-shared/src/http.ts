@@ -113,10 +113,17 @@ export async function streamSummary(url: string, body: unknown, onDraft: (draft:
 // Drafts land in clumps, a few words each, one per DRAFT_MS. Passed on frame by
 // frame instead, each string growing by its share of what it has left, so the
 // text flows in and catches up just as the next draft is due. `stop` before
-// drawing the checked summary, so no draft lands after it.
-export const smoothDrafts = (onDraft: (draft: SummaryDraft) => void) => {
-  let target: SummaryDraft | undefined;
-  let shown: SummaryDraft = { verdict: '', highlights: [] };
+// drawing the checked summary, so no draft lands after it. Another shape of
+// draft (the extension's streamed partials, bursty rather than periodic) brings
+// its own `step`, growing each of its strings with `grow`.
+type DraftStep<T> = (shown: T | undefined, target: T, grow: (from: string | undefined, to: string) => string) => T;
+const stepSummary: DraftStep<SummaryDraft> = (shown, target, grow) => ({
+  verdict: grow(shown?.verdict, target.verdict),
+  highlights: target.highlights.map((h, i) => ({ ...h, text: grow(shown?.highlights[i]?.text, h.text) })),
+});
+export const smoothDrafts = <T = SummaryDraft>(onDraft: (draft: T) => void, step = stepSummary as unknown as DraftStep<T>) => {
+  let target: T | undefined;
+  let shown: T | undefined;
   let due = 0;
   let last = 0;
   let frame: number | undefined;
@@ -126,13 +133,12 @@ export const smoothDrafts = (onDraft: (draft: SummaryDraft) => void) => {
     const now = performance.now();
     const share = Math.min(1, (now - last) / Math.max(1, due - last));
     last = now;
-    const grow = (from: string, to: string) => to.slice(0, from.length + Math.ceil((to.length - from.length) * share));
-    shown = { verdict: grow(shown.verdict, target.verdict), highlights: target.highlights.map((h, i) => ({ ...h, text: grow(shown.highlights[i]?.text ?? '', h.text) })) };
+    shown = step(shown, target, (from = '', to) => to.slice(0, from.length + Math.ceil((to.length - from.length) * share)));
     onDraft(shown);
     if (share < 1) frame = requestAnimationFrame(tick);
   };
   return {
-    push(draft: SummaryDraft) {
+    push(draft: T) {
       target = draft;
       last = performance.now();
       due = last + DRAFT_MS;

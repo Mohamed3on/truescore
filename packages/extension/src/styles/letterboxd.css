@@ -230,6 +230,44 @@
 }
 .lbx-summary-btn:hover:not(:disabled) { border-color: #00e054; color: #00e054; }
 .lbx-summary-btn:disabled { opacity: .55; cursor: default; }
+.lbx-summary-ask { display: flex; gap: .5rem; margin-bottom: .7rem; }
+.lbx-summary-input {
+  flex: 1;
+  min-width: 0;
+  padding: .4rem .7rem;
+  font: inherit;
+  font-size: .85rem;
+  color: #def;
+  background: #2c3440;
+  border: 1px solid #456;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color .15s ease;
+}
+.lbx-summary-input::placeholder { color: #567; }
+.lbx-summary-input:focus { border-color: #00e054; }
+.lbx-summary-qa { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .8rem; }
+.lbx-summary-qa-label { font-size: .7rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #678; }
+.lbx-summary-qa-chip {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: .2rem .7rem;
+  font: inherit;
+  font-size: .78rem;
+  color: #9ab;
+  background: transparent;
+  border: 1px solid #456;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color .15s ease, color .15s ease;
+}
+.lbx-summary-qa-chip:hover { border-color: #00e054; color: #00e054; }
+/* An Ask pulses until its first words land (see shared/review-ask.ts). */
+.ars-ask-reading:empty::before { content: 'Reading reviews…'; color: #678; animation: lbx-ask-pulse 1.5s ease-in-out infinite; }
+@keyframes lbx-ask-pulse { 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .ars-ask-reading:empty::before { animation: none; } }
 .lbx-summary-body {
   color: #9ab;
   font-size: .9rem;
@@ -357,7 +395,5 @@
 .lbx-ignored-list .lbx-similar-link { text-decoration: line-through; }
 .lbx-ignored-list .lbx-ignore { opacity: .55; }
 .lbx-ignored-list .lbx-ignore:hover { opacity: 1; color: #00e054; }
-.lbx-similar-item.lbx-moved { animation: lbx-slide-in .28s cubic-bezier(0.16, 1, 0.3, 1); }
-@keyframes lbx-slide-in { from { opacity: 0; transform: translateY(-3px); } }
 /* Review filters (▲ praise / ▼ complain) and stance marks in Letterboxd's own green, orange and slate. */
 :root { --ts-praise: #00e054; --ts-complain: #ff8000; --ts-mixed: #9ab; }

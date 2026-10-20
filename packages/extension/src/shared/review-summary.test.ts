@@ -6,13 +6,15 @@ const PARSED = { praised: ['Lasts long'], complaints: [], conclusion: 'Good.', b
 // Keep the rest of the module intact: module mocks are process-wide, and a bare
 // factory blanked salvageObject for llm.test.ts whenever it ran after this file.
 // A streamed summary, for the test that sets one: its partials, then the whole.
-let stream: { partials: any[]; whole: any; after?: (i: number) => void } | undefined;
+// `settle`: ms to wait after each, for a panel that draws them frame by frame.
+let stream: { partials: any[]; whole: any; settle?: number; after?: (i: number) => void } | undefined;
 mock.module('./llm', () => ({
   ...realLlm,
   summarize: async (_reviews: string[], _prompt: string, _schema: unknown, onPartial?: (partial: any) => void) => {
     if (!stream) return PARSED;
     for (const [i, partial] of stream.partials.entries()) {
       onPartial?.(partial);
+      if (stream.settle) await new Promise((r) => setTimeout(r, stream!.settle));
       stream.after?.(i);
     }
     return stream.whole;
@@ -203,6 +205,8 @@ test('a media summary keeps its progress note until the first words, then adds e
       { verdict: 'Read it', points: [prose, ending, { text: '**Her letters**' }] },
     ],
     whole: { verdict: 'Read it', points: [prose, ending, { text: '**Her letters** move', sentiment: 'loved' }] },
+    // Past DRAFT_MS, so each partial has flowed in whole.
+    settle: 200,
     after: (i) => {
       seen.push(mediaDraft(section));
       if (i === 4) first = section.querySelector('.gr-summary-point')!;
@@ -211,7 +215,7 @@ test('a media summary keeps its progress note until the first words, then adds e
   const section = await mediaSummary(null);
   try {
     (section.querySelector('.gr-summary-btn') as HTMLButtonElement).click();
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 6 * 200 + 50));
     expect(seen).toEqual(['✦ Summarizing…', 'Read', 'Read it', 'Read it', 'Read it | Loved: Prose sings', 'Read it | Loved: Prose sings | Didn’t enjoy: The ending drags']);
     // The last loved point joins its kind, above the complaint written before it.
     expect(mediaDraft(section)).toBe('Read it | Loved: Prose sings | Loved: Her letters move | Didn’t enjoy: The ending drags');
