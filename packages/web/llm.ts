@@ -1,3 +1,4 @@
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { convertToModelMessages, NoObjectGeneratedError, streamObject, streamText, type ModelMessage } from 'ai';
@@ -10,14 +11,15 @@ import { removalNote, type Subject } from './summary-subject';
 export type { Summary, SummaryHighlight, Provider, ReasoningEffort, Subject };
 
 // The providers all run the same prompts and schema so the models are directly
-// comparable (see evals/compare.ts). LLM_PROVIDER=gemini|openai|deepseek picks
-// the active one; defaults to Gemini. The google provider reads GEMINI_API_KEY
+// comparable (see evals/compare.ts). LLM_PROVIDER=gemini|openai|deepseek|anthropic
+// picks the active one; defaults to Gemini. The google provider reads GEMINI_API_KEY
 // (this repo's name for it), not the SDK default GOOGLE_GENERATIVE_AI_API_KEY;
-// deepseek reads DEEPSEEK_API_KEY.
+// deepseek reads DEEPSEEK_API_KEY, anthropic ANTHROPIC_API_KEY.
 const google = createGoogleGenerativeAI({
   apiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY,
 });
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export const PROVIDERS = {
   gemini: {
@@ -48,6 +50,12 @@ export const PROVIDERS = {
     // output goes through a strict tool call (gmaps-shared/deepseek.ts).
     model: deepseekModel(process.env.DEEPSEEK_API_KEY, 'deepseek-flash'),
     providerOptions: { deepseek: { thinking: { type: 'disabled' as const } } },
+  },
+  anthropic: {
+    // Claude Sonnet 5.5 at low effort, the default since 2026-10-20 (Ask and
+    // summaries; evals/candidates.ts has the results). Medium scored no better.
+    model: anthropic('claude-sonnet-5-5'),
+    providerOptions: { anthropic: { effort: 'low' as const } },
   },
 };
 
@@ -290,10 +298,14 @@ aliases: every other way the answers write it, exactly as written: first names, 
 Not Options: answers to another question than this one (the store a product came from, where it asks which product to get), general advice ("try before you buy"), kinds of thing where it asks for a particular one ("wireless ones", "an open-back pair", where it asks which headphones), or the asker's own situation. Each Option and title once.`,
 });
 
+// The Tally stays on luna, not the default provider: it hasn't been eval'd on
+// any other model.
+const TALLY_PROVIDER: Provider = 'openai';
+
 // Streams the listing: each Option goes to `onOption` once the model has moved
 // on to the next one (the last when the list ends), so counting it can start
 // while the rest are still being written.
-export async function listOptions(question: string, comments: string[], onOption: (o: Partial<ThreadOption>) => void, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
+export async function listOptions(question: string, comments: string[], onOption: (o: Partial<ThreadOption>) => void, provider: Provider = TALLY_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const listing = streamObject({ model, providerOptions, ...optionsRequest(question, comments) });
   let sent = 0;
@@ -324,7 +336,7 @@ export const reasonsRequest = (question: string, comments: string[], groups: Rea
 
 // Streams each line to `onReason` once the model has started the next key (the
 // model writes them in the schema's order), the last when it ends.
-export async function explainOptions(question: string, comments: string[], groups: ReasonGroup[], onReason: (key: string, why: string) => void, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Record<string, string>> {
+export async function explainOptions(question: string, comments: string[], groups: ReasonGroup[], onReason: (key: string, why: string) => void, provider: Provider = TALLY_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<Record<string, string>> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const writing = streamObject({ model, providerOptions, ...reasonsRequest(question, comments, groups) });
   const keys = groups.map((g) => g.key);

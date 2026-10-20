@@ -177,10 +177,12 @@ export const stripAccents = (s: string): string =>
 // "europa-park", "europa park" and the quoted phrase differently and returns
 // different counts, so we search the spellings and union the hits rather than
 // betting on one. A plain single word is just itself. At most six: two bases,
-// each with at most one hyphen and one space swap.
-export const spellingVariants = (term: string): string[] => {
+// each with at most one hyphen and one space swap. `fold` off keeps the
+// accents: an Ask's model writes every spelling it wants, and a folded short
+// word lands on another one ("hoț", thief, → "hot").
+export const spellingVariants = (term: string, fold = true): string[] => {
   const variants = new Set<string>();
-  for (const base of [term, stripAccents(term)]) {
+  for (const base of fold ? [term, stripAccents(term)] : [term]) {
     variants.add(base);
     if (base.includes('-')) variants.add(base.replace(/-/g, ' '));
     if (/\s/.test(base)) variants.add(base.replace(/\s+/g, '-'));
@@ -195,8 +197,8 @@ export const spellingVariants = (term: string): string[] => {
 // space swap of "hit-or-miss" would split on its own "or". Both the extension
 // and the server feed this to collectSearchTerms, so a typed query gets the same
 // spelling-variant recall as a chip's auto-search.
-export const expandSearchTerms = (query: string): string[] =>
-  [...new Set(parseOrQuery(query).flatMap(spellingVariants))];
+export const expandSearchTerms = (query: string, fold = true): string[] =>
+  [...new Set(parseOrQuery(query).flatMap((t) => spellingVariants(t, fold)))];
 
 // Google retired GET /maps/rpc/listugcposts — it now returns [null,…,1] for
 // everyone, Maps' own page included. Reviews come only from the batchexecute

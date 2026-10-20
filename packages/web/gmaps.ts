@@ -104,18 +104,20 @@ export type ScoreProgressCallback = (partial: PartialScore) => void;
 // so a query sharing terms with an earlier one — an Ask's `dog OR Hund` after a
 // typed `dog` — searches only its new terms; only while the session is healthy,
 // since a stale page cuts a search short without failing it. `force`
-// re-searches every term, refreshing the cache.
+// re-searches every term, refreshing the cache. `asWritten`: an Ask's search,
+// not accent-folded.
 export async function fetchAllForSearch(
   featureId: string,
   query: string,
   onPage?: SortPageCallback,
   force = false,
+  asWritten = false,
 ): Promise<Review[]> {
   const creds = await mapsCredsReady();
   if (!creds) { warnNoCreds('search'); return []; }
   const terms = cache.terms(featureId);
   return collectSearchTerms(
-    expandSearchTerms(query),
+    expandSearchTerms(query, !asWritten),
     (term, c) => buildSearchReq(featureId, term, creds, c),
     transport,
     onPage ? (merged) => onPage('relevant', merged) : undefined,

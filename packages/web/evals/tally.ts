@@ -26,8 +26,9 @@ process.env.TRUESCORE_CACHE_DB_PATH = arg('db') ?? join(tmpdir(), `truescore-tal
 const { combine, countOf, tallyThread } = await import('../tally');
 const { spent } = await import('../jev');
 const { setOnUsage } = await import('../llm');
+type Provider = import('../llm').Provider;
 
-const provider = (arg('provider') ?? 'openai') as 'openai' | 'gemini' | 'deepseek';
+const provider = (arg('provider') ?? 'openai') as Provider;
 const DIR = join(import.meta.dir, 'fixtures/reddit');
 
 type Label = { option: string; title: string | null; stance: Exclude<Stance, 'off'> };

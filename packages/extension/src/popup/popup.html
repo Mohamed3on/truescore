@@ -37,6 +37,7 @@
         <button data-provider="gemini">Gemini</button>
         <button data-provider="openai">GPT Luna</button>
         <button data-provider="deepseek">DeepSeek</button>
+        <button data-provider="anthropic">Sonnet</button>
       </div>
       <span class="field-hint">Used on this device and for Google Maps.</span>
     </div>
@@ -75,6 +76,15 @@
       <span class="field-label">DeepSeek <a href="https://platform.deepseek.com/api_keys" target="_blank">Get key ↗</a></span>
       <div class="input-row">
         <input type="password" id="deepseek-key" placeholder="sk-…" spellcheck="false" autocomplete="off">
+        <button class="toggle-vis" title="Show/hide">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </label>
+    <label class="field">
+      <span class="field-label">Anthropic <a href="https://console.anthropic.com/settings/keys" target="_blank">Get key ↗</a></span>
+      <div class="input-row">
+        <input type="password" id="anthropic-key" placeholder="sk-ant-…" spellcheck="false" autocomplete="off">
         <button class="toggle-vis" title="Show/hide">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>

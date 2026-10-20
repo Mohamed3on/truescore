@@ -2,13 +2,11 @@
 // (2026-09). Each is registered as an extra PROVIDERS entry under its label, so
 // summarize() and ask() resolve it like a provider name and token usage is
 // reported per contestant.
-import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { PROVIDERS, type Provider } from '../llm';
 
 export const registerCandidates = () => {
   const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
-  const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const candidates = {
     'luna:low': PROVIDERS.openai,
     'flash-3:min': PROVIDERS.gemini,
@@ -22,7 +20,7 @@ export const registerCandidates = () => {
     // Sonnet took SEARCH_NOTE's "just answer" exit (45% recall); without it,
     // 62% recall and 13.71/15 vs luna's 13.00. Medium effort changed nothing,
     // so only low stays.
-    'sonnet-5.5:low': { model: anthropic('claude-sonnet-5-5'), providerOptions: { anthropic: { effort: 'low' as const } } },
+    'sonnet-5.5:low': PROVIDERS.anthropic,
   };
   Object.assign(PROVIDERS, candidates);
   // --only=a,b keeps just those labels.

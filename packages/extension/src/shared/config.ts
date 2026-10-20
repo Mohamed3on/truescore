@@ -1,4 +1,4 @@
-import { REASONING_EFFORTS, type ReasoningEffort, type Provider as LLMProvider } from '@truescore/gmaps-shared';
+import { LLM_PROVIDERS, REASONING_EFFORTS, type ReasoningEffort, type Provider as LLMProvider } from '@truescore/gmaps-shared';
 
 // API keys are per-user: set in the TrueScore popup, stored in
 // chrome.storage.sync. They are deliberately NOT bundled — a key compiled into
@@ -26,24 +26,22 @@ export { REASONING_EFFORTS };
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 
 // Active provider for extension-direct summaries: the popup toggle wins;
-// unset falls back to OpenAI-if-keyed, else Gemini. (Google Maps summaries
-// are server-side and follow the server's LLM_PROVIDER instead.)
+// unset falls back to Sonnet-if-keyed, then OpenAI-if-keyed, else Gemini.
+// (Google Maps summaries are server-side and follow the server's LLM_PROVIDER instead.)
 export async function getReasoningEffort(): Promise<ReasoningEffort> {
   const effort = await storedKey('openaiReasoningEffort');
   return (REASONING_EFFORTS as readonly string[]).includes(effort) ? (effort as ReasoningEffort) : DEFAULT_REASONING_EFFORT;
 }
 
 export async function getActiveLLM(): Promise<{ provider: LLMProvider; key: string; reasoningEffort: ReasoningEffort }> {
-  const [pref, openaiKey, geminiKey, deepseekKey, reasoningEffort] = await Promise.all([
-    storedKey('llmProvider'),
-    storedKey('openaiApiKey'),
-    storedKey('geminiApiKey'),
-    storedKey('deepseekApiKey'),
+  const [pref, keys, reasoningEffort] = await Promise.all([
+    getProviderChoice(),
+    Promise.all([storedKey('anthropicApiKey'), storedKey('openaiApiKey'), storedKey('geminiApiKey'), storedKey('deepseekApiKey')])
+      .then(([anthropic, openai, gemini, deepseek]): Record<LLMProvider, string> => ({ anthropic, openai, gemini, deepseek })),
     getReasoningEffort(),
   ]);
-  const provider: LLMProvider = pref === 'gemini' || pref === 'openai' || pref === 'deepseek' ? pref : openaiKey ? 'openai' : 'gemini';
-  const key = provider === 'openai' ? openaiKey : provider === 'deepseek' ? deepseekKey : geminiKey;
-  return { provider, key, reasoningEffort };
+  const provider: LLMProvider = pref ?? (keys.anthropic ? 'anthropic' : keys.openai ? 'openai' : 'gemini');
+  return { provider, key: keys[provider], reasoningEffort };
 }
 
 // Google Maps summaries run server-side on the server's key, so the popup's
@@ -51,12 +49,14 @@ export async function getActiveLLM(): Promise<{ provider: LLMProvider; key: stri
 // unset toggle returns undefined and leaves the server on its own default.
 export async function getProviderChoice(): Promise<LLMProvider | undefined> {
   const pref = await storedKey('llmProvider');
-  return pref === 'gemini' || pref === 'openai' || pref === 'deepseek' ? pref : undefined;
+  return (LLM_PROVIDERS as readonly string[]).includes(pref) ? (pref as LLMProvider) : undefined;
 }
 
 export const GEMINI_MODEL = 'gemini-3-flash-preview';
 
 export const OPENAI_MODEL = 'gpt-6-luna';
+
+export const ANTHROPIC_MODEL = 'claude-sonnet-5-5';
 
 // DeepSeek V4.1 Flash, always non-thinking (fastest, and its thinking ladder didn't
 // improve summary quality — see web evals/latency.ts).

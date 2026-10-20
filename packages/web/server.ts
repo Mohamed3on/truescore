@@ -873,7 +873,7 @@ Bun.serve({
                 const reviews = await fetchAllForSearch(featureId, term, (_, rs) => {
                   const stats = statsForReviews(rs);
                   write({ type: 'search-progress', query: term, ...stats });
-                }, force);
+                }, force, !!body.asWritten);
                 result = { query: term, ...statsForReviews(reviews), reviews, ts: Date.now() };
               }
               // What the matches say about the query, read before the result first shows.

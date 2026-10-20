@@ -861,7 +861,7 @@ const fetchAllForToken = (featureId: string, token: string, creds: MapsCapturedC
 // The server's session searches when this tab can't, over the channel
 // fetchServerScore uses. The bridge searches the page's own place, so only while
 // that is still `featureId`.
-const serverSearch = (featureId: string, query: string, onFound?: (found: number) => void): Promise<Review[] | null> => new Promise((resolve) => {
+const serverSearch = (featureId: string, query: string, onFound?: (found: number) => void, asWritten = false): Promise<Review[] | null> => new Promise((resolve) => {
   if (getFeatureId() !== featureId) return resolve(null);
   const id = `q${++serverScoreId}`;
   let reviews: Review[] | null = null;
@@ -876,7 +876,7 @@ const serverSearch = (featureId: string, query: string, onFound?: (found: number
     resolve(reviews);
   };
   document.addEventListener(SERVER_SCORE_RESULT, handler);
-  document.dispatchEvent(new CustomEvent(SERVER_SCORE_GET, { detail: { id, query } }));
+  document.dispatchEvent(new CustomEvent(SERVER_SCORE_GET, { detail: { id, query, asWritten } }));
 });
 
 // Gmail-style ` OR ` splits the query and each term expands to its
@@ -885,11 +885,12 @@ const serverSearch = (featureId: string, query: string, onFound?: (found: number
 // captured bgkey like every other review fetch; without one the server searches.
 // null means neither could — distinct from a genuine empty result: callers must
 // not score/cache it as zero. `onFound` gets the running match count as pages land.
-const fetchAllForSearch = async (featureId: string, query: string, onFound?: (found: number) => void): Promise<Review[] | null> => {
+// `asWritten`: an Ask's search, not accent-folded.
+const fetchAllForSearch = async (featureId: string, query: string, onFound?: (found: number) => void, asWritten = false): Promise<Review[] | null> => {
   const creds = await ensureCreds();
-  if (!creds) return serverSearch(featureId, query, onFound);
+  if (!creds) return serverSearch(featureId, query, onFound, asWritten);
   return collectSearchTerms(
-    expandSearchTerms(query), (term, c) => buildSearchReq(featureId, term, creds, c), tabTransport,
+    expandSearchTerms(query, !asWritten), (term, c) => buildSearchReq(featureId, term, creds, c), tabTransport,
     onFound && ((merged) => onFound(merged.length)), searchTermCache.forPlace(featureId),
   );
 };
@@ -1074,7 +1075,7 @@ const askReviews = async (panel: HTMLElement, job: AskJob, force = false) => {
   const paint = mountAsk(panel, job, reads);
   const ctrl = new AbortController();
   const search: SearchReviews = async (query, onFound) => {
-    const reviews = await fetchAllForSearch(context.featureId, query, onFound);
+    const reviews = await fetchAllForSearch(context.featureId, query, onFound, true);
     if (!reviews) return null;
     const { scorePct, trustedReviews } = statsForReviews(reviews);
     const texts = textReviewsFor(reviews);

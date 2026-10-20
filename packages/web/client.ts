@@ -502,7 +502,7 @@ async function streamAsk(box: HTMLElement, question: string, body: Omit<AskReque
   box.replaceChildren(rows, text, note);
   const ctrl = new AbortController();
   const search: SearchReviews = async (query, onFound) => {
-    for await (const e of streamNdjson<SearchEvent>('/api/search', { featureId: epoch.featureId, query } satisfies SearchRequest, ctrl.signal)) {
+    for await (const e of streamNdjson<SearchEvent>('/api/search', { featureId: epoch.featureId, query, asWritten: true } satisfies SearchRequest, ctrl.signal)) {
       if (e.type === 'search-progress') onFound(e.totalReviews);
       else if (e.type === 'search') {
         const texts = textReviewsFor(e.result.reviews);

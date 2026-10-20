@@ -10,7 +10,7 @@ TLS: Cloudflare edge (Flexible mode — edge ↔ origin is plain HTTP)
 | | |
 |---|---|
 | App dir | `/opt/truescore` |
-| .env | `/opt/truescore/.env` (PORT=80, Decodo creds, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `LLM_PROVIDER`, `TRUESCORE_PASSWORD`, `TYPESAFE_API_KEY` for review stance and summary receipts, paths) |
+| .env | `/opt/truescore/.env` (PORT=80, Decodo creds, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LLM_PROVIDER`, `TRUESCORE_PASSWORD`, `TYPESAFE_API_KEY` for review stance and summary receipts, paths) |
 | Code/cache state | `/var/lib/truescore/{cache.sqlite,cookies.json}` (legacy `cache.json` migrated on first start) |
 | systemd unit | `/etc/systemd/system/truescore.service` |
 | Service user | `truescore` |
@@ -78,8 +78,8 @@ ssh -t root@65.108.153.112 'nano /opt/truescore/.env && systemctl restart truesc
 # a user. Watch mints: journalctl … | grep 'type=mint'
 ssh root@65.108.153.112 'echo "TRUESCORE_MINT_INTERVAL_MIN=240" >> /opt/truescore/.env && systemctl restart truescore'
 
-# switch summarization model (llm.ts): gemini (default when unset) or openai
-ssh root@65.108.153.112 'sed -i "s/^LLM_PROVIDER=.*/LLM_PROVIDER=gemini/" /opt/truescore/.env && systemctl restart truescore'
+# switch summarization model (llm.ts): anthropic (production, Sonnet 5.5), openai, deepseek, or gemini (default when unset)
+ssh root@65.108.153.112 'sed -i "s/^LLM_PROVIDER=.*/LLM_PROVIDER=anthropic/" /opt/truescore/.env && systemctl restart truescore'
 ```
 
 ## Session observability (`[ts-event]`)

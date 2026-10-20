@@ -9,7 +9,7 @@ const flashSaved = (msg: string) => {
 };
 
 // Provider toggle: explicit choice in llmProvider; unset falls back to
-// OpenAI-if-keyed else Gemini (mirrors getActiveLLM in shared/config.ts).
+// Sonnet-if-keyed, then OpenAI-if-keyed, else Gemini (mirrors getActiveLLM in shared/config.ts).
 const seg = document.getElementById('provider-seg')!;
 const segBtns = [...seg.querySelectorAll<HTMLButtonElement>('button')];
 const markActive = (provider: string) =>
@@ -20,9 +20,9 @@ const markActive = (provider: string) =>
 const reasoningField = document.getElementById('reasoning-field')!;
 const showReasoning = (provider: string) => { reasoningField.style.display = provider === 'openai' ? '' : 'none'; };
 
-chrome.storage.sync.get(['llmProvider', 'openaiApiKey'], (items) => {
-  const { llmProvider, openaiApiKey } = items as Record<string, string | undefined>;
-  const active = llmProvider || (openaiApiKey ? 'openai' : 'gemini');
+chrome.storage.sync.get(['llmProvider', 'anthropicApiKey', 'openaiApiKey'], (items) => {
+  const { llmProvider, anthropicApiKey, openaiApiKey } = items as Record<string, string | undefined>;
+  const active = llmProvider || (anthropicApiKey ? 'anthropic' : openaiApiKey ? 'openai' : 'gemini');
   markActive(active);
   showReasoning(active);
 });
@@ -57,11 +57,12 @@ for (const btn of reasoningBtns) {
   });
 }
 
-// One field per provider key; review summaries prefer OpenAI when both are set.
+// One field per provider key; review summaries prefer Sonnet, then OpenAI, when several are set.
 const FIELDS = [
   { id: 'apikey', storageKey: 'geminiApiKey' },
   { id: 'openai-key', storageKey: 'openaiApiKey' },
   { id: 'deepseek-key', storageKey: 'deepseekApiKey' },
+  { id: 'anthropic-key', storageKey: 'anthropicApiKey' },
   { id: 'truescore-key', storageKey: 'truescorePassword' },
 ];
 

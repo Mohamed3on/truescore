@@ -209,15 +209,15 @@ export type ReceiptsResponse = { support?: number[][]; preferredBy?: number[]; e
 // The full set of summarization providers and reasoning levels the server
 // accepts. Canonical here so web/llm.ts and the extension's config.ts share one
 // definition instead of each re-declaring the union + its validation list.
-export const LLM_PROVIDERS = ['gemini', 'openai', 'deepseek'] as const;
+export const LLM_PROVIDERS = ['gemini', 'openai', 'deepseek', 'anthropic'] as const;
 export type Provider = (typeof LLM_PROVIDERS)[number];
 // No 'none': the AI SDK won't send it to GPT-6 models, which then run at the
 // API default (medium) instead.
 export const REASONING_EFFORTS = ['low', 'medium', 'high'] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 // Optional per-request overrides on the summarize/ask bodies. Unset leaves the
-// server on its own default (LLM_PROVIDER env, luna:low). reasoningEffort is
-// gpt-6-luna only; the server ignores it on Gemini/DeepSeek.
+// server on its own default (LLM_PROVIDER env, Sonnet 5.5 at low). reasoningEffort
+// is gpt-6-luna only; the server ignores it on the other providers.
 export type LlmOverrides = { reasoningEffort?: ReasoningEffort; provider?: Provider };
 
 // ---- request bodies ----
@@ -235,7 +235,8 @@ export type HistogramRequest = { featureId: string };
 // `token`: just that chip, read from the cache — the web client opening one.
 export type HighlightsRequest = { featureId: string; force?: boolean; wait?: boolean; token?: string };
 export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean; stream?: boolean } & LlmOverrides;
-export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean } & LlmOverrides;
+// `asWritten`: an Ask's search, whose terms aren't accent-folded (spellingVariants).
+export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean; asWritten?: boolean } & LlmOverrides;
 // A Search's matches as a client finds them: review texts and their TrueScore.
 export type SearchMatches = { texts: string[]; scorePct: number; trustedReviews: number };
 // `messages`: the Ask so far (see AskMessage). `force`: skip a replayed Answer.

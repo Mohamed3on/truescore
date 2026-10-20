@@ -178,14 +178,14 @@ const serverScore = async (url: string, post: Post): Promise<void> => {
 
 // Search a place's reviews on truescore's session, for a tab that can't: the running
 // match count as pages land, then the matches.
-const serverSearch = async (url: string, query: string, post: Post): Promise<void> => {
+const serverSearch = async (url: string, query: string, post: Post, asWritten: boolean): Promise<void> => {
   const featureId = isMapsPlace(url) && featureIdFromPlaceUrl(url);
   if (!featureId) return;
   try {
     const res = await fetch(`${TRUESCORE_API_BASE}/api/search`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...await authHeaders() },
-      body: JSON.stringify({ featureId, query } satisfies SearchRequest),
+      body: JSON.stringify({ featureId, query, asWritten } satisfies SearchRequest),
     });
     if (!res.ok || !res.body) return;
     for await (const ev of readNdjson<SearchEvent>(res.body)) {
@@ -204,7 +204,7 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener((msg) => {
     if (typeof msg?.url !== 'string') return;
     const post: Post = (m) => { if (open) port.postMessage(m); };
-    void (typeof msg.query === 'string' ? serverSearch(msg.url, msg.query, post) : serverScore(msg.url, post))
+    void (typeof msg.query === 'string' ? serverSearch(msg.url, msg.query, post, msg.asWritten === true) : serverScore(msg.url, post))
       .finally(() => { if (open) port.disconnect(); });
   });
 });

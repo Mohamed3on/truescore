@@ -1,22 +1,26 @@
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { DirectChatTransport, generateObject, generateText, jsonSchema, NoObjectGeneratedError, streamObject, streamText, ToolLoopAgent, type ChatTransport, type JSONSchema7, type LanguageModel, type LanguageModelUsage } from 'ai';
 import { salvageString, salvageStringArray, searchesLeft, searchReviewsTool, type AskMessage } from '@truescore/gmaps-shared';
 import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
-import { DEEPSEEK_MODEL, GEMINI_MODEL, getActiveLLM, OPENAI_MODEL } from './config';
+import { ANTHROPIC_MODEL, DEEPSEEK_MODEL, GEMINI_MODEL, getActiveLLM, OPENAI_MODEL } from './config';
 
 // Every LLM call the extension makes itself (retail and book pages; Google Maps
 // asks the server), on the popup's model and key, via AI SDK.
 
-const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', deepseek: 'DeepSeek' };
+const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', deepseek: 'DeepSeek', anthropic: 'Anthropic' };
 
-// Luna at the popup's reasoning effort; Gemini and DeepSeek non-thinking
-// (DeepSeek's thinking ladder was slower for no quality gain — web evals/latency.ts).
+// Luna at the popup's reasoning effort; Sonnet at low effort, as on the server;
+// Gemini and DeepSeek non-thinking (DeepSeek's thinking ladder was slower for no
+// quality gain — web evals/latency.ts). Anthropic only answers a browser's
+// cross-origin call with its direct-browser-access header.
 const activeModel = async (): Promise<{ model: LanguageModel; providerOptions: Record<string, Record<string, any>>; maxOutputTokens: number }> => {
   const { provider, key: apiKey, reasoningEffort } = await getActiveLLM();
   if (!apiKey) throw new Error(`No ${PROVIDER_LABEL[provider]} API key — set one in the TrueScore popup`);
   if (provider === 'gemini') return { model: createGoogleGenerativeAI({ apiKey })(GEMINI_MODEL), providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 32768 };
   if (provider === 'deepseek') return { model: deepseekModel(apiKey, DEEPSEEK_MODEL), providerOptions: { deepseek: { thinking: { type: 'disabled' } } }, maxOutputTokens: 8192 };
+  if (provider === 'anthropic') return { model: createAnthropic({ apiKey, headers: { 'anthropic-dangerous-direct-browser-access': 'true' } })(ANTHROPIC_MODEL), providerOptions: { anthropic: { effort: 'low' } }, maxOutputTokens: 32768 };
   return { model: createOpenAI({ apiKey })(OPENAI_MODEL), providerOptions: { openai: { reasoningEffort } }, maxOutputTokens: 32768 };
 };
 
@@ -75,7 +79,7 @@ export const summarize = async (reviewTexts: string[], prompt: string, schema: J
   }
 };
 
-const SEARCH_NOTE = `The reviews given are a sample. When they don't settle the question, call searchReviews before answering: it searches every review. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde). When the sample settles it, just answer.`;
+const SEARCH_NOTE = `The reviews given are a sample; the rest can say otherwise. Unless the sample clearly settles the question, call searchReviews before answering: it searches every review. Check specifics such as what is allowed, accepted or charged even when the sample seems to answer them. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde).`;
 const SEARCH_DESCRIPTION = 'Search every review, not just the sample, for any of the terms. Returns how many reviews match (found); the net share of them rating 5★ over 1★ (scorePct, from -100 to 100, resting on trustedReviews rated ones — cite it when it helps); and the matches not already in the sample (reviews).';
 
 // An Ask's model for runAsk, in-process: the site's `prompt` and the `sample`

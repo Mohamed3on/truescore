@@ -49,12 +49,13 @@ const places = Object.fromEntries(Object.entries(corpora).map(([name, reviews]) 
   return [name, { reviews, sample: new Set(sample), sampleTexts: textReviewsFor(sample) }];
 }));
 
-const matching = (reviews: Review[], query: string) => {
-  const re = compileMatchRegex(expandSearchTerms(query));
+const matching = (reviews: Review[], query: string, fold = true) => {
+  const re = compileMatchRegex(expandSearchTerms(query, fold));
   return re ? reviews.filter((r) => r.text.search(re) !== -1) : [];
 };
+// As production searches an Ask's terms: as written, not accent-folded.
 const searchOver = (reviews: Review[]): SearchReviews => async (query) => {
-  const matches = matching(reviews, query);
+  const matches = matching(reviews, query, false);
   const { scorePct, trustedReviews } = statsForReviews(matches);
   return { texts: textReviewsFor(matches), scorePct, trustedReviews };
 };
@@ -98,7 +99,7 @@ const recallOf = (question: Question, run: Run) => {
   const { reviews, sample } = places[question.place]!;
   const wanted = matching(reviews, question.terms).filter((r) => !sample.has(r));
   if (!wanted.length) return undefined;
-  const reached = new Set(run.searches.flatMap((s) => matching(reviews, s.query)));
+  const reached = new Set(run.searches.flatMap((s) => matching(reviews, s.query, false)));
   return wanted.filter((r) => reached.has(r)).length / wanted.length;
 };
 
@@ -125,7 +126,7 @@ if (JUDGE) {
   const judge = async (question: Question, rs: Run[], order: Run[]) => {
     const { reviews, sample, sampleTexts } = places[question.place]!;
     const bearing = matching(reviews, question.terms);
-    const reached = rs.flatMap((r) => r.searches.flatMap((s) => matching(reviews, s.query))).filter((r) => !bearing.includes(r));
+    const reached = rs.flatMap((r) => r.searches.flatMap((s) => matching(reviews, s.query, false))).filter((r) => !bearing.includes(r));
     const searchable = [...textReviewsFor(bearing.filter((r) => !sample.has(r))), ...textReviewsFor([...new Set(reached)].filter((r) => !sample.has(r)))].slice(0, 150);
     const { scorePct, trustedReviews } = statsForReviews(bearing);
     const answers = order.map((r, k) => {

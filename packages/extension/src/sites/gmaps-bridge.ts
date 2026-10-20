@@ -42,7 +42,7 @@ document.addEventListener(LLM_SETTINGS_GET, async (e) => {
 // page this bridge is running in, which we can read ourselves; only the search
 // text comes from the event.
 document.addEventListener(SERVER_SCORE_GET, (e) => {
-  const { id, query } = (e as CustomEvent).detail || {};
+  const { id, query, asWritten } = (e as CustomEvent).detail || {};
   if (!id) return;
   const relay = (msg: ServerScoreMessage) => document.dispatchEvent(
     new CustomEvent(SERVER_SCORE_RESULT, { detail: { id, msg } }));
@@ -51,7 +51,7 @@ document.addEventListener(SERVER_SCORE_GET, (e) => {
     const port = chrome.runtime.connect({ name: SERVER_SCORE_PORT });
     port.onMessage.addListener(relay);
     port.onDisconnect.addListener(() => relay({ kind: 'end' }));
-    port.postMessage({ url: location.href, query });
+    port.postMessage({ url: location.href, query, asWritten: asWritten === true });
   } catch {
     relay({ kind: 'end' }); // context invalidated (extension reloaded)
   }
