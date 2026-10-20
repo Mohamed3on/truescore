@@ -19,7 +19,8 @@
 /// <reference types="chrome" />
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject, type LanguageModelUsage } from 'ai';
+import type { LanguageModelUsage } from 'ai';
+import { writeObject } from '@truescore/gmaps-shared';
 import { z } from 'zod';
 import { setOnUsage } from '../../extension/src/shared/llm';
 import { llmSummarize, withContext } from '../../extension/src/shared/review-summary';
@@ -186,7 +187,7 @@ if (JUDGE && KEYS.openai) {
       pairs.map(async ([r0, r1], k) => {
         const flip = (gi + k) % 2 === 1;
         const [a, b] = flip ? [r1, r0] : [r0, r1];
-        const { object } = await generateObject({
+        const { object } = await writeObject({
           model: judgeModel,
           providerOptions: { openai: { reasoningEffort: 'medium' } },
           schema: judgeSchema,

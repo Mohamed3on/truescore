@@ -15,7 +15,8 @@
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject, generateText, tool, type LanguageModel } from 'ai';
+import { generateText, tool, type LanguageModel } from 'ai';
+import { writeObject } from '@truescore/gmaps-shared';
 import type { SharedV4ProviderOptions } from '@ai-sdk/provider';
 import { z } from 'zod';
 import { PROVIDERS, structuredRequest } from '../llm';
@@ -74,7 +75,7 @@ const SAMPLE_REVIEWS = [
 ];
 const REVIEWS: string[] = reviewsFile ? await Bun.file(reviewsFile).json() : SAMPLE_REVIEWS;
 const REQUEST = structuredRequest({ placeName: '', reviewTexts: REVIEWS });
-const extract = (model: LanguageModel, providerOptions: SharedV4ProviderOptions) => () => generateObject({ model, providerOptions, ...REQUEST });
+const extract = (model: LanguageModel, providerOptions: SharedV4ProviderOptions) => () => writeObject({ model, providerOptions, ...REQUEST });
 
 const median = (xs: number[]): number => {
   const s = [...xs].sort((a, b) => a - b);
@@ -90,7 +91,7 @@ type Q = { grounded: number; coverage: number; concise: number };
 const judge = openai('gpt-6-sol');
 const QUALITY_SCHEMA = z.object({ grounded: z.number().int(), coverage: z.number().int(), concise: z.number().int() });
 const scoreQuality = async (summary: unknown): Promise<Q> => {
-  const { object } = await generateObject({
+  const { object } = await writeObject({
     model: judge,
     providerOptions: { openai: { reasoningEffort: 'medium' } },
     schema: QUALITY_SCHEMA,
@@ -143,7 +144,7 @@ const settled = await Promise.all(
       try {
         const r = await v.run();
         // Stop the clock before judging so the judge's own call never counts.
-        const s: Sample = { label: v.label, ms: performance.now() - t0, reason: r.usage.outputTokenDetails.reasoningTokens ?? 0, out: r.usage.outputTokens ?? 0 };
+        const s: Sample = { label: v.label, ms: performance.now() - t0, reason: r.usage?.outputTokenDetails.reasoningTokens ?? 0, out: r.usage?.outputTokens ?? 0 };
         if (JUDGE) s.q = await scoreQuality(r.object).catch((e: any) => (console.log(`  judge ${v.label}: ERROR ${e.message?.slice(0, 70)}`), undefined));
         return s;
       } catch (e: any) {

@@ -8,9 +8,9 @@
 //   bun evals/ask.ts --judge    # + blind gpt-6-sol scores and ranking per question
 //   bun evals/ask.ts --only=a,b # just those candidates.ts labels
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject, type ChatTransport } from 'ai';
+import type { ChatTransport } from 'ai';
 import { z } from 'zod';
-import { compileMatchRegex, expandSearchTerms, runAsk, statsForReviews, textReviewsFor, type AskMessage, type AskSearch, type Review, type SearchReviews } from '@truescore/gmaps-shared';
+import { compileMatchRegex, expandSearchTerms, runAsk, statsForReviews, textReviewsFor, writeObject, type AskMessage, type AskSearch, type Review, type SearchReviews } from '@truescore/gmaps-shared';
 import { ask, setOnUsage, type Provider, type Subject } from '../llm';
 import { registerCandidates } from './candidates';
 
@@ -133,7 +133,7 @@ if (JUDGE) {
       const searches = r.searches.map((s) => `- searchReviews("${s.query}") → ${s.found ?? 'failed'} found${s.scorePct != null ? `, TrueScore ${s.scorePct}% on ${s.trustedReviews} trusted` : ''}`).join('\n') || '- (none)';
       return `## Answer ${IDS[k]}\nSearches:\n${searches}\n\n${r.error ? `(failed: ${r.error})` : r.text}`;
     });
-    const { object } = await generateObject({
+    const { object } = await writeObject({
       model: judgeModel,
       providerOptions: { openai: { reasoningEffort: 'medium' } },
       schema: judgeSchema,

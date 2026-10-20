@@ -1,7 +1,7 @@
 // The blind pairwise judge the summary evals share (compare.ts, ab.ts), and the
 // bounded pool they run it in.
 import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject } from 'ai';
+import { writeObject } from '@truescore/gmaps-shared';
 import { z } from 'zod';
 import type { Summary } from '../llm';
 
@@ -32,7 +32,7 @@ const judgeSchema = z.object({
 });
 
 // GPT-6 Sol at medium reasoning effort — a proper thinking
-// model as the blind judge. Effort is set on the generateObject call below.
+// model as the blind judge. Effort is set on the writeObject call below.
 //
 // Accuracy-first rubric: grounding counts the weight of evidence and length
 // earns nothing. The grounded/specific/useful rubric it replaced (2026-09-22)
@@ -43,7 +43,7 @@ const judgeModel = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-6-s
 
 // Scores two summaries of one fixture's reviews, shown as anonymous outputs A and B.
 export const judge = async (f: Fixture, a: Summary, b: Summary) => {
-  const { object } = await generateObject({
+  const { object } = await writeObject({
     model: judgeModel,
     providerOptions: { openai: { reasoningEffort: 'medium' } },
     schema: judgeSchema,
