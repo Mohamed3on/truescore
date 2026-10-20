@@ -1,4 +1,4 @@
-import { countStances, isTrusted, MAX_JUDGED, opinionTone, signedNet, mentionsText, reviewMark, type Answer, type Opinions, type ReceiptsResponse, type Review, type Stance, type StanceResponse, type StanceResult, type Tone } from '@truescore/gmaps-shared';
+import { MAX_JUDGED, opinionTone, signedNet, mentionsText, reviewMark, trustedStance, type Answer, type Opinions, type ReceiptsResponse, type Review, type Stance, type StanceResponse, type StanceResult, type Tone } from '@truescore/gmaps-shared';
 import { TRUESCORE_API_BASE } from './api-base';
 import { cacheGet, cacheSet } from './cache';
 import { el, npsColor } from './utils';
@@ -70,17 +70,9 @@ export const readAnswers = (question: string, texts: string[]): Promise<Answer[]
   return kept('answer', [question, read], () => post<StanceResponse>('stance', { question, texts: read }).then((r) => (r?.answers?.every(Boolean) ? (r.answers as Answer[]) : null)));
 };
 
-// A Maps chip's or Search's reviews read for their stance on `topic`: the trusted
-// ones with text, the same reviews its TrueScore counts (as the server reads them).
-// None of those, and Jev reachable: read, with no review speaking to it.
-export const readStanceOf = async (topic: string, reviews: Review[]): Promise<StanceResult | null> => {
-  const readable = reviews.filter((r) => isTrusted(r.reviewerReviewCount) && r.text.trim().length > 1);
-  const read = readable.slice(0, MAX_JUDGED);
-  if (!read.length) return reachable() ? { stance: countStances([]), stances: {} } : null;
-  const labels = await readStances(topic, read.map((r) => r.text));
-  if (!labels) return null;
-  return { stance: countStances(labels), stances: Object.fromEntries(read.map((r, i) => [r.reviewId, labels[i]!])), ...(readable.length > read.length ? { of: readable.length } : {}) };
-};
+// A Maps chip's or Search's reviews read for their stance on `topic` (trustedStance).
+export const readStanceOf = (topic: string, reviews: Review[]): Promise<StanceResult | null> =>
+  trustedStance(topic, reviews, { reachable, stances: readStances });
 
 // Per point, the indices of `texts` that make it.
 export const readSupport = (points: string[], texts: string[]): Promise<number[][] | null> =>

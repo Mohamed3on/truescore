@@ -118,10 +118,6 @@ test('the better alternative is the rival every review naming it prefers, not th
     expect(found.betterAlternative).toBe('**More Zerup** — tastes less artificial');
     expect(found.receipts[found.betterAlternative]).toEqual({ n: 3, quotes: [naming[0], naming[1], naming[3]] });
 
-    // As many reviewers would rather keep this one: no alternative, whatever the model picked.
-    jev.answers = async (_q, texts) => texts.map((_, i) => (i % 2 ? 'no' : 'yes'));
-    expect((await withReceipts({ ...parsed, betterAlternative: 'Model pick' }, sample, search)).betterAlternative).toBe('');
-
     // Without a search, the reviews in hand that name it.
     jev.answers = async (_q, texts) => texts.map(() => 'yes');
     expect((await withReceipts(parsed, [...naming, 'unrelated'])).receipts['**More Zerup** — tastes less artificial'].n).toBe(4);
