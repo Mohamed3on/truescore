@@ -224,9 +224,9 @@ const reviewPages = new Map<string, Promise<string>>();
 const pageSlug = extractSlugFromUrl(location.href);
 
 /** Fetches one recent-reviews page (reviews/by/added) as HTML */
-const fetchReviewPage = (slug: string, page: number) => {
+const fetchReviewPage = (slug: string, page: number, priority?: number) => {
   const url = `/film/${slug}/reviews/by/added/page/${page}/`;
-  if (slug !== pageSlug) return throttledFetch(url, { credentials: 'include' }).then((r) => r.text());
+  if (slug !== pageSlug) return throttledFetch(url, { credentials: 'include' }, priority).then((r) => r.text());
   let pending = reviewPages.get(url);
   if (!pending) {
     pending = throttledFetch(url, { credentials: 'include' }).then((r) => r.text());
@@ -381,7 +381,7 @@ async function getRecentRatingsSummary(slug: string | null = null): Promise<Rece
  * Only complete tallies enter the shared recent cache; a stopped one is kept apart
  * so a revisit can re-check it without refetching.
  */
-async function getCandidateRecentRatings(slug: string, score: number, threshold: number | null, bar: number): Promise<CandidateRecent> {
+async function getCandidateRecentRatings(slug: string, score: number, threshold: number | null, bar: number, priority: number): Promise<CandidateRecent> {
   const [full, partial] = await Promise.all([getCachedRecentRatings(slug), getCachedRecentPartial(slug)]);
   if (full) return { ratio: full.ratio, tally: full };
 
@@ -410,7 +410,7 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
   const tally = emptyTally();
   let perPage = 0;
   for (let page = 1; page <= CONFIG.RECENT_RATING_PAGES; page++) {
-    const doc = parser.parseFromString(await fetchReviewPage(slug, page), 'text/html');
+    const doc = parser.parseFromString(await fetchReviewPage(slug, page, priority), 'text/html');
     tallyRatings(doc, tally);
     tally.ratio = ratioFromTally(tally.net, tally.total); // kept current: the bar check and the row both read it
     const entries = doc.querySelectorAll('.js-review-body').length;
@@ -888,7 +888,9 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
   const check = async (film: any) => {
     const recent = film.fetchFailed
       ? null
-      : await getCandidateRecentRatings(film.slug, film.score, threshold, bar).catch(() => null);
+      // Ranked by score: a higher film's next page goes ahead of a lower one's first,
+      // so the rows settle top-down rather than all at once near the end.
+      : await getCandidateRecentRatings(film.slug, film.score, threshold, bar, films.indexOf(film) + 1).catch(() => null);
     // One verdict, shared with Goodreads (shared/better-picks.ts). A film with no
     // tally at all — unscored, or its fetch out of retries — was never measured, so
     // it keeps the benefit of the doubt instead of counting as one that didn't reach.
