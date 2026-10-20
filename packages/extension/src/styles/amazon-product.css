@@ -123,6 +123,8 @@
   align-items: center;
   gap: 14px;
 }
+/* A panel's stats row holds its place empty until its first cell lands. */
+.ars-stats:empty { display: none; }
 .ars-stat { display: flex; flex-direction: column; gap: 1px; }
 .ars-stat-val {
   font-size: 14px;

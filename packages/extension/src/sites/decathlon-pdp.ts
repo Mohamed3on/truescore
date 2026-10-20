@@ -1,13 +1,13 @@
-import { addCommas, afterHydration, el, npsColor, npsStats } from '../shared/utils';
+import { addCommas, afterHydration, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet, NEG_TTL } from '../shared/cache';
 import { idbGet, idbSet } from '../shared/idb-cache';
-import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from '../shared/review-summary';
-import { buildSearchSection, localSearchAsk, quoteCards, SEARCH_MAX } from '../shared/review-search';
+import { SEARCH_MAX } from '../shared/review-search';
+import { buildReviewPanel } from '../shared/review-panel';
 import { APAC_RATING, type DecathlonSite, extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
-import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
+import { createIslandShell } from '../shared/score-island';
 import { renderScoreBadge } from '../shared/score-grid';
-import { adjust, RECENT_REVIEWS, recentRatio } from '../shared/recency';
+import { RECENT_REVIEWS } from '../shared/recency';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -233,63 +233,6 @@ const fetchReviews = (site: DecathlonSite, sku: string, productId: string, total
   return { recent, all };
 };
 
-const addSummarizeUI = (
-  anchor: Element,
-  { recent, all }: ReturnType<typeof fetchReviews>,
-  productId: string,
-  total: number,
-  scoreData: { score: number; nps: number } | null
-) => {
-  if (document.querySelector('.ars-wrapper')) return;
-
-  const wrapper = createIslandShell();
-
-  // Recent-positive gauge and the adjusted/analyzed stats row from the newest
-  // RECENT_REVIEWS, which land first; the search waits for every review.
-  const gauge = buildRecentGauge();
-  const searchSlot = el('div');
-  wrapper.append(gauge, searchSlot);
-  // The Sample stops at SAMPLE_MAX; past it, an Ask Searches the rest.
-  const searchAsk = total > SAMPLE_MAX ? localSearchAsk(all, reviewFields, reviewToText, wrapper) : undefined;
-  recent
-    .then((reviews) => {
-      const newest = reviews.slice(0, RECENT_REVIEWS);
-      const ratio = recentRatio(newest.map((r) => r.rating));
-      fillRecentGauge(gauge, ratio);
-      if (ratio == null) return;
-      const stats = el('div', 'ars-stats') as HTMLElement;
-      if (scoreData) appendStat(stats, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
-      appendStat(stats, String(newest.length), 'analyzed');
-      gauge.after(stats);
-    })
-    .catch(() => fillRecentGauge(gauge, null));
-
-  // Between the stats row and the summarize widget's question row.
-  all.then((reviews) => {
-    if (!reviews.length) return;
-    searchSlot.appendChild(buildSearchSection({
-      reviews,
-      fields: reviewFields,
-      toText: reviewToText,
-      summaryPrompt: keywordSummaryPrompt,
-      exampleQuery: 'size OR quality',
-      mountSummarize: summarizeMatches(`dkt-summary-${productId}`, { searchAsk }),
-    }));
-  });
-
-  buildSummarizeWidget({
-    wrapper,
-    cacheKey: `dkt-summary-${productId}`,
-    summaryPrompt: PRODUCT_SUMMARY_PROMPT,
-    fetchReviews: () =>
-      all.then((reviews) => [...new Set(reviews.slice(0, SAMPLE_MAX).map(reviewToText).filter(Boolean))]),
-    searchAsk,
-    renderQuote: quoteCards(() => all, reviewToText, reviewFields),
-  });
-
-  anchor.after(wrapper);
-};
-
 setupSpaInjector({
   match: () => !!extractDecathlonIds(),
   load: async () => {
@@ -315,7 +258,17 @@ setupSpaInjector({
     replaceSizometer(stats);
     if (reviews && !document.querySelector('.ars-wrapper')) {
       const anchor = document.querySelector('.nps-insights') || productInfo.querySelector(before) || productInfo;
-      addSummarizeUI(anchor, reviews, ids.productId, stats.count, scoreData);
+      const island = createIslandShell();
+      buildReviewPanel(island, {
+        key: `dkt-summary-${ids.productId}`,
+        total: stats.count,
+        ...reviews,
+        score: scoreData?.score,
+        text: reviewToText,
+        card: reviewFields,
+        exampleQuery: 'size OR quality',
+      });
+      anchor.after(island);
     }
   },
   cleanup: () => {

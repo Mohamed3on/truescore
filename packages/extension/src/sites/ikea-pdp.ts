@@ -1,11 +1,11 @@
-import { addCommas, el, npsColor, npsStats } from '../shared/utils';
+import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet, NEG_TTL } from '../shared/cache';
 import { idbGet, idbSet } from '../shared/idb-cache';
-import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from '../shared/review-summary';
-import { buildSearchSection, localSearchAsk, quoteCards, SEARCH_MAX } from '../shared/review-search';
+import { SEARCH_MAX } from '../shared/review-search';
+import { buildReviewPanel } from '../shared/review-panel';
 import { setupSpaInjector } from '../shared/spa-injector';
-import { appendStat, buildRecentGauge, createIslandShell, fillRecentGauge } from '../shared/score-island';
-import { adjust, RECENT_REVIEWS, recentRatio } from '../shared/recency';
+import { createIslandShell } from '../shared/score-island';
+import { RECENT_REVIEWS } from '../shared/recency';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -158,63 +158,6 @@ const fetchReviews = (country: string, lang: string, itemNo: string) => {
   return { recent, all };
 };
 
-const addSummarizeUI = (
-  anchor: Element,
-  { recent, all }: ReturnType<typeof fetchReviews>,
-  itemNo: string,
-  total: number,
-  scoreData: { score: number; nps: number } | null
-) => {
-  if (document.querySelector('.ars-wrapper')) return;
-
-  const wrapper = createIslandShell();
-
-  // Recent-positive gauge and the adjusted/analyzed stats row from the newest
-  // RECENT_REVIEWS, which land first; the search waits for every review.
-  const gauge = buildRecentGauge();
-  const searchSlot = el('div');
-  wrapper.append(gauge, searchSlot);
-  // The Sample stops at SAMPLE_MAX; past it, an Ask Searches the rest.
-  const searchAsk = total > SAMPLE_MAX ? localSearchAsk(all, reviewFields, reviewToText, wrapper) : undefined;
-  recent
-    .then((reviews) => {
-      const newest = reviews.slice(0, RECENT_REVIEWS);
-      const ratio = recentRatio(newest.map((r) => r.rating));
-      fillRecentGauge(gauge, ratio);
-      if (ratio == null) return;
-      const stats = el('div', 'ars-stats');
-      if (scoreData) appendStat(stats, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
-      appendStat(stats, String(newest.length), 'analyzed');
-      gauge.after(stats);
-    })
-    .catch(() => fillRecentGauge(gauge, null));
-
-  // Between the stats row and the summarize widget's question row.
-  all.then((reviews) => {
-    if (!reviews.length) return;
-    searchSlot.appendChild(buildSearchSection({
-      reviews,
-      fields: reviewFields,
-      toText: reviewToText,
-      summaryPrompt: keywordSummaryPrompt,
-      exampleQuery: 'quality OR assembly',
-      mountSummarize: summarizeMatches(`ikea-summary-${itemNo}`, { searchAsk }),
-    }));
-  });
-
-  buildSummarizeWidget({
-    wrapper,
-    cacheKey: `ikea-summary-${itemNo}`,
-    summaryPrompt: PRODUCT_SUMMARY_PROMPT,
-    fetchReviews: () =>
-      all.then((reviews) => [...new Set(reviews.slice(0, SAMPLE_MAX).map(reviewToText).filter(Boolean))]),
-    searchAsk,
-    renderQuote: quoteCards(() => all, reviewToText, reviewFields),
-  });
-
-  anchor.after(wrapper);
-};
-
 const cleanup = () => {
   document.querySelectorAll('.nps-insights').forEach((el) => el.remove());
   document.querySelectorAll('.nps-pdp-badge').forEach((el) => el.remove());
@@ -242,9 +185,19 @@ setupSpaInjector({
     }
     const ugc = document.querySelector('.js-ugc-container');
     if (panel && !document.body.contains(panel) && ugc) ugc.after(panel);
-    if (reviews) {
-      const anchor = document.querySelector('.nps-insights') || ugc;
-      if (anchor) addSummarizeUI(anchor, reviews, itemNo, reviewCount, scoreData);
+    const anchor = document.querySelector('.nps-insights') || ugc;
+    if (reviews && anchor && !document.querySelector('.ars-wrapper')) {
+      const island = createIslandShell();
+      buildReviewPanel(island, {
+        key: `ikea-summary-${itemNo}`,
+        total: reviewCount,
+        ...reviews,
+        score: scoreData?.score,
+        text: reviewToText,
+        card: reviewFields,
+        exampleQuery: 'quality OR assembly',
+      });
+      anchor.after(island);
     }
   },
   cleanup,
