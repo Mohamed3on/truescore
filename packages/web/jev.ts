@@ -251,7 +251,7 @@ export async function supportFor(points: string[], texts: string[]): Promise<num
 
 // A rival's mentions: reviews holding its name, or failing that its longest word
 // ("Mustafa" for "Mustafa's Gemüse Kebap"), as reviewers rarely write it in full.
-export const mentioning = (texts: string[], name: string): string[] => {
+const mentioning = (texts: string[], name: string): string[] => {
   const full = fold(name).replace(/['’]s\b/g, '');
   const word = full.split(/\s+/).filter((w) => w.length >= 4).sort((a, b) => b.length - a.length)[0];
   return texts.filter((t) => { const f = fold(t); return f.includes(full) || (!!word && f.includes(word)); });
@@ -262,8 +262,10 @@ export const mentioning = (texts: string[], name: string): string[] => {
 // dropped, and an alternative stays only if reviewers naming it prefer it.
 // Unchanged when Jev can't check it — the summary shows as it always did.
 export async function withReceipts(summary: Summary, { reviewTexts }: Subject): Promise<Summary> {
-  const rivals = (summary.alternatives ?? []).map((name) => ({ name, texts: mentioning(reviewTexts, name) }));
-  const checked = await receiptsFor(summary.highlights.map((h) => h.text), reviewTexts, rivals, jevReader);
+  // Google hands some reviews over twice; a point is made once per reviewer.
+  const texts = [...new Set(reviewTexts)];
+  const rivals = (summary.alternatives ?? []).map((name) => ({ name, texts: mentioning(texts, name) }));
+  const checked = await receiptsFor(summary.highlights.map((h) => h.text), texts, rivals, jevReader);
   if (!checked) return summary;
   const { points, alternatives } = checked;
   return {

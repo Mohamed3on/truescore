@@ -15,9 +15,17 @@ const reader = (answer: (text: string) => Answer = () => 'none'): SupportReader 
 
 describe('receiptsFor', () => {
   test('each point carries how many reviews make it and the newest of them; one fewer than two make is dropped', async () => {
-    const texts = ['[2026-09-01] loved the penguins', '[undated] penguins!', '[2026-09-02] parking was hard', '[2026-09-01] loved the penguins', '[2026-10-01] the penguins again'];
+    const texts = ['[2026-09-01] loved the penguins', '[undated] penguins!', '[2026-09-02] parking was hard', '[2026-10-01] the penguins again'];
     const r = await receiptsFor(['Loved penguins', 'Hard parking'], texts, [], reader());
     expect(r!.points).toEqual([{ support: 3, quotes: ['the penguins again', 'loved the penguins', 'penguins!'] }, null]);
+  });
+
+  test('a receipt quotes at most the newest 20 of the reviews making it', async () => {
+    const texts = Array.from({ length: 25 }, (_, i) => `[2026-09-${String(i + 1).padStart(2, '0')}] penguins ${i + 1}`);
+    const [point] = (await receiptsFor(['Loved penguins'], texts, [], reader()))!.points;
+    expect(point!.support).toBe(25);
+    expect(point!.quotes).toHaveLength(20);
+    expect(point!.quotes[0]).toBe('penguins 25');
   });
 
   test('an alternative stays when two or more reviews prefer it and more do than don\'t', async () => {

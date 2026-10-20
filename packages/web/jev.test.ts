@@ -82,11 +82,10 @@ describe('withReceipts', () => {
     ? { noul: review.includes(state.point.split(' ')[1].toLowerCase()) ? 0.9 : 0.1 }
     : { choice: /rather go to/.test(review) ? 'yes' : /rather stay/.test(review) ? 'no' : 'none' });
 
-  test('bullets carry their support and dateless quotes, newest first; fewer than two supporters drops one', async () => {
+  test('a review Google hands over twice makes a point once', async () => {
     setJevClient(fake(rule));
-    const reviewTexts = ['[2026-09-01] loved the penguins', '[undated] penguins!', '[2026-09-02] parking was hard', '[2026-09-01] loved the penguins', '[2026-10-01] the penguins again'];
-    const checked = await withReceipts(summary(), { placeName: 'Aquarium', reviewTexts });
-    expect(checked.highlights).toEqual([{ text: 'The penguins are a favourite', sentiment: 'positive', support: 3, quotes: ['the penguins again', 'loved the penguins', 'penguins!'] }]);
+    const checked = await withReceipts(summary(), { placeName: 'Aquarium', reviewTexts: ['[2026-09-01] penguins!', '[2026-09-01] penguins!', '[2026-09-02] the penguins again'] });
+    expect(checked.highlights.map((h) => h.support)).toEqual([2]);
   });
 
   test('a rival stays when the reviews naming it, in full or by its longest word, prefer it', async () => {

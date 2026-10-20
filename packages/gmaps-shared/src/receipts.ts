@@ -6,9 +6,9 @@ import type { Answer } from './stance';
 
 // Summary points need the support of this many reviews to be shown — the
 // prompt's own "2+ reviewers" rule, enforced instead of trusted.
-export const MIN_SUPPORT = 2;
+const MIN_SUPPORT = 2;
 // Supporting reviews a receipt carries for its click-through: the newest.
-export const QUOTES_MAX = 20;
+const QUOTES_MAX = 20;
 
 export type SupportReader = {
   // Per point, the indices of `texts` that make it; null when they couldn't all be read.
@@ -17,8 +17,9 @@ export type SupportReader = {
   answers: (question: string, texts: string[]) => Promise<Answer[] | null>;
 };
 export type Receipt = { support: number; quotes: string[] };
-// A better alternative the model named, with the reviews naming it.
-export type Rival = { name: string; texts: string[] };
+// A better alternative the model named, with the reviews naming it — a promise
+// when finding them takes a search, so it runs beside the points' read.
+export type Rival = { name: string; texts: string[] | Promise<string[]> };
 // `points` is aligned with the points asked about, null where too few reviews
 // make one; `alternatives` the rivals kept, absent when they couldn't be read.
 export type Receipts = { points: (Receipt | null)[]; alternatives?: (Receipt & { name: string })[] };
@@ -37,7 +38,7 @@ const receipt = (texts: string[]): Receipt => ({
 // Asked "Is it better than what this review is about?", Jev read reviews
 // preferring the rival as no, and one ranking this Item above it as yes.
 const preferring = async ({ name, texts }: Rival, reader: SupportReader): Promise<string[] | null | undefined> => {
-  const naming = [...new Set(texts)];
+  const naming = await texts;
   if (!naming.length) return null;
   const answers = await reader.answers(`Does this reviewer prefer ${name} to the one they're reviewing?`, naming);
   if (!answers) return undefined;
@@ -47,9 +48,7 @@ const preferring = async ({ name, texts }: Rival, reader: SupportReader): Promis
 
 // The Receipts of `points` over the reviews' texts, and the rivals reviewers
 // prefer — every one, in the order given; null when the points couldn't be checked.
-export async function receiptsFor(points: string[], reviewTexts: string[], rivals: Rival[], reader: SupportReader): Promise<Receipts | null> {
-  // Some reviews come over twice; a point is made once per reviewer.
-  const texts = [...new Set(reviewTexts)];
+export async function receiptsFor(points: string[], texts: string[], rivals: Rival[], reader: SupportReader): Promise<Receipts | null> {
   const [support, preferred] = await Promise.all([
     points.length ? reader.support(points, texts) : [],
     Promise.all(rivals.map((r) => preferring(r, reader))),
