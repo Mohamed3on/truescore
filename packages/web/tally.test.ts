@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { TallyEvent, Thread, ThreadComment } from '@truescore/gmaps-shared';
 import { fakeModel } from './fake-model';
 import { setJevClient } from './jev';
@@ -261,6 +261,7 @@ describe('tallyOption', () => {
 });
 
 describe('tallyThread', () => {
+  afterEach(() => setModel(null));
   test('streams each Option the model lists, its count from what Jev reads, and why it is rated so', async () => {
     // The model lists Sony and Bose, and writes a line for each Option it is asked about.
     setModel(fakeModel((fields) => JSON.stringify(fields.includes('options')
@@ -274,7 +275,6 @@ describe('tallyThread', () => {
     ]);
     const events: TallyEvent[] = [];
     await tallyThread(thread, (e) => events.push(e));
-    setModel(null);
     expect(events.filter((e) => e.type === 'listed').map((e) => e.option.name)).toEqual(['Sony', 'Bose']);
     expect(Object.fromEntries(events.flatMap((e) => (e.type === 'option' ? [[e.option.key, e.option.count]] : [])))).toEqual({
       sony: { for: 2, against: 0, mixed: 0, upFor: 2, upAgainst: 0 },

@@ -16,7 +16,7 @@ test('a streamed text grows to what the call wrote', async () => {
 
 test('a streamed text that fails throws its own error, not "no output"', async () => {
   const model = streaming([{ type: 'error', error: new Error('Incorrect API key') }]);
-  expect(writeText({ model, prompt: 'p' }, () => {})).rejects.toThrow('Incorrect API key');
+  await expect(writeText({ model, prompt: 'p' }, () => {})).rejects.toThrow('Incorrect API key');
 });
 
 test('a streamed object is read as it is written', async () => {
@@ -39,5 +39,5 @@ test('an object cut off at the cap keeps what made it, whole or streamed', async
 
 test('a failed object call throws its own error, salvage or not', async () => {
   const model = streaming([{ type: 'error', error: new Error('Incorrect API key') }]);
-  expect(writeObject({ model, prompt: 'p', schema }, () => {}, keepVerdict)).rejects.toThrow('Incorrect API key');
+  await expect(writeObject({ model, prompt: 'p', schema }, () => {}, keepVerdict)).rejects.toThrow('Incorrect API key');
 });
