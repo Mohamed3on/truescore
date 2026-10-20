@@ -298,14 +298,10 @@ aliases: every other way the answers write it, exactly as written: first names, 
 Not Options: answers to another question than this one (the store a product came from, where it asks which product to get), general advice ("try before you buy"), kinds of thing where it asks for a particular one ("wireless ones", "an open-back pair", where it asks which headphones), or the asker's own situation. Each Option and title once.`,
 });
 
-// The Tally stays on luna, not the default provider: it hasn't been eval'd on
-// any other model.
-const TALLY_PROVIDER: Provider = 'openai';
-
 // Streams the listing: each Option goes to `onOption` once the model has moved
 // on to the next one (the last when the list ends), so counting it can start
 // while the rest are still being written.
-export async function listOptions(question: string, comments: string[], onOption: (o: Partial<ThreadOption>) => void, provider: Provider = TALLY_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
+export async function listOptions(question: string, comments: string[], onOption: (o: Partial<ThreadOption>) => void, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const listing = streamObject({ model, providerOptions, ...optionsRequest(question, comments) });
   let sent = 0;
@@ -336,7 +332,7 @@ export const reasonsRequest = (question: string, comments: string[], groups: Rea
 
 // Streams each line to `onReason` once the model has started the next key (the
 // model writes them in the schema's order), the last when it ends.
-export async function explainOptions(question: string, comments: string[], groups: ReasonGroup[], onReason: (key: string, why: string) => void, provider: Provider = TALLY_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<Record<string, string>> {
+export async function explainOptions(question: string, comments: string[], groups: ReasonGroup[], onReason: (key: string, why: string) => void, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Record<string, string>> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const writing = streamObject({ model, providerOptions, ...reasonsRequest(question, comments, groups) });
   const keys = groups.map((g) => g.key);
