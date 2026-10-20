@@ -14,6 +14,9 @@ export type ModelSetup = {
   apiKey: string | undefined;
   // gpt-6-luna's only; the other providers' thinking is fixed below.
   reasoningEffort?: ReasoningEffort;
+  // For a call that needs no reasoning (web/llm.ts aliasesFor): each provider's
+  // lowest setting. Gemini and DeepSeek already run at theirs.
+  noReasoning?: boolean;
   // The server's: OpenAI then writes a prompt cache only at a breakpoint a call
   // places. Its default (implicit) mode bills a cache write at 1.25x input on
   // every request, at the end of the prompt, which a call with a different
@@ -25,7 +28,7 @@ export type ModelSetup = {
   browser?: boolean;
 };
 
-export const modelCall = (provider: Provider, { apiKey, reasoningEffort = 'low', explicitCaching, browser }: ModelSetup): ModelCall => {
+export const modelCall = (provider: Provider, { apiKey, reasoningEffort = 'low', noReasoning, explicitCaching, browser }: ModelSetup): ModelCall => {
   switch (provider) {
     case 'gemini':
       return { model: createGoogleGenerativeAI({ apiKey })(MODELS.gemini), providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 32768 };
@@ -41,7 +44,8 @@ export const modelCall = (provider: Provider, { apiKey, reasoningEffort = 'low',
     case 'anthropic':
       return {
         model: createAnthropic({ apiKey, ...(browser ? { headers: { 'anthropic-dangerous-direct-browser-access': 'true' } } : {}) })(MODELS.anthropic),
-        providerOptions: { anthropic: { effort: 'low' } },
+        // Sonnet 5.5 refuses thinking disabled; between_tools is its lowest setting.
+        providerOptions: { anthropic: { effort: 'low', ...(noReasoning ? { thinking: { type: 'between_tools' } } : {}) } },
         maxOutputTokens: 32768,
       };
     // GPT-6 Luna (the fast/cheap GPT-6 tier), low reasoning effort unless the
@@ -55,7 +59,7 @@ export const modelCall = (provider: Provider, { apiKey, reasoningEffort = 'low',
     case 'openai':
       return {
         model: createOpenAI({ apiKey })(MODELS.openai),
-        providerOptions: { openai: { reasoningEffort, ...(explicitCaching ? { promptCacheOptions: { mode: 'explicit' } } : {}) } },
+        providerOptions: { openai: { reasoningEffort: noReasoning ? 'none' : reasoningEffort, ...(explicitCaching ? { promptCacheOptions: { mode: 'explicit' } } : {}) } },
         maxOutputTokens: 32768,
       };
   }

@@ -1,7 +1,7 @@
 import { convertToModelMessages, streamObject, streamText, type LanguageModel, type ModelMessage } from 'ai';
 import { z } from 'zod';
 import { DEFAULT_PROVIDER, LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
-import { modelCall } from '@truescore/gmaps-shared/models';
+import { modelCall, type ModelSetup } from '@truescore/gmaps-shared/models';
 import { aliasesOf, capItems, MAX_ALIASES, MAX_SCORED_ITEMS, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
 
@@ -19,8 +19,8 @@ const KEYS: Record<Provider, string | undefined> = {
   deepseek: process.env.DEEPSEEK_API_KEY,
   anthropic: process.env.ANTHROPIC_API_KEY,
 };
-const serverModel = (provider: Provider, reasoningEffort?: ReasoningEffort) => {
-  const { model, providerOptions } = modelCall(provider, { apiKey: KEYS[provider], reasoningEffort, explicitCaching: true });
+const serverModel = (provider: Provider, setup: Omit<ModelSetup, 'apiKey'> = {}) => {
+  const { model, providerOptions } = modelCall(provider, { apiKey: KEYS[provider], explicitCaching: true, ...setup });
   return { model, providerOptions };
 };
 export const PROVIDERS = Object.fromEntries(LLM_PROVIDERS.map((p) => [p, serverModel(p)])) as Record<Provider, ReturnType<typeof serverModel>>;
@@ -39,7 +39,7 @@ let fakeModel: LanguageModel | null = null;
 export const setModel = (fake: LanguageModel | null) => { fakeModel = fake; };
 
 const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
-  fakeModel ? { model: fakeModel, providerOptions: {} } : effort && provider === 'openai' ? serverModel(provider, effort) : PROVIDERS[provider];
+  fakeModel ? { model: fakeModel, providerOptions: {} } : effort && provider === 'openai' ? serverModel(provider, { reasoningEffort: effort }) : PROVIDERS[provider];
 
 // evals/compare.ts hooks this to collect per-call token usage; the server
 // never sets it.
@@ -150,14 +150,17 @@ ${NOTES}${removal ? `\n\n${removal}` : ''}`;
   return { verdict: verdict.trim(), ...structured };
 }
 
-// GPT-6 Luna with no reasoning, for the aliases call.
-const lunaNoReasoning = { ...PROVIDERS.openai, providerOptions: { openai: { ...PROVIDERS.openai.providerOptions.openai, reasoningEffort: 'none' } } };
+// Each provider at its lowest reasoning, for the aliases call. An eval's extra
+// contestant (evals/candidates.ts) runs as it is.
+const NO_REASONING = Object.fromEntries(LLM_PROVIDERS.map((p) => [p, serverModel(p, { noReasoning: true })])) as Partial<typeof PROVIDERS>;
 
 // The other names reviewers write for each of a summary's items (Summary.aliases),
 // so a standout searches them all and a topic chip going by one pools into it.
 // Its own call, so the summary's prompt stays as it was: asked for there, the
 // bullets dropped dishes (2026-10-17: Bar La Pilareta's vermouth went from 8 of
-// 12 runs to 0 of 9). Without reasoning it takes ~2-3s, run beside the receipts.
+// 12 runs to 0 of 9). Without reasoning it takes ~2-3s on Luna, ~4s on Sonnet,
+// run beside the receipts. Sonnet at low effort skips thinking here anyway: 0
+// thinking tokens over 20 places (2026-10-20), aliases the same within noise.
 const ALIASES_SCHEMA = z.object({ items: z.array(z.object({ name: z.string(), aliases: z.array(z.string()) })) });
 export const aliasesRequest = ({ placeName, reviewTexts }: Subject, items: string[]) => ({
   maxOutputTokens: 1024,
@@ -168,7 +171,7 @@ export const aliasesRequest = ({ placeName, reviewTexts }: Subject, items: strin
 // None when the call fails: the summary stands without them.
 export async function aliasesFor(subject: Subject, items: string[] | undefined, provider: Provider = DEFAULT_PROVIDER): Promise<Summary['aliases']> {
   if (!items?.length) return undefined;
-  const { model, providerOptions } = provider === 'openai' && !fakeModel ? lunaNoReasoning : providerFor(provider);
+  const { model, providerOptions } = (!fakeModel && NO_REASONING[provider]) || providerFor(provider);
   try {
     const r = await writeObject({ model, providerOptions, ...aliasesRequest(subject, items) });
     if (r.usage) report(provider, 'aliases', r.usage);
