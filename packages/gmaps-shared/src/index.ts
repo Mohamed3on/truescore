@@ -715,6 +715,9 @@ export * from './markdown';
 // What reviews say about a topic or a question, as Jev reads them on the server.
 export * from './stance';
 
+// A Summary's Receipts: the support policy both packages check summaries by.
+export * from './receipts';
+
 // A Reddit Thread as a Tally reads it.
 export * from './thread';
 

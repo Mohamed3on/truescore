@@ -1,5 +1,5 @@
 import { choice, noul, TypeSafeClient, type Question } from '@typesafe-ai/sdk';
-import { countStances, isTrusted, MAX_JUDGED, stripAccents, type Answer, type Review, type Stance, type StanceResult, type Summary } from '@truescore/gmaps-shared';
+import { receiptsFor, stripAccents, trustedStance, type Answer, type Review, type Stance, type StanceReader, type StanceResult, type Summary, type SupportReader } from '@truescore/gmaps-shared';
 import { db } from './db';
 import type { Subject } from './summary-subject';
 
@@ -231,24 +231,11 @@ export const answersFor = (question: string, texts: string[]): Promise<Answer[] 
   judge('answer', question, { question }, texts,
     (review) => choice({ question: 'What does this review say in answer to `question`?', review }, ANSWER_CRITERIA), inCriteria(ANSWER_CRITERIA));
 
-// A chip's or a Search's reviews read for their stance on `topic`: the trusted
-// ones with text, the same reviews its TrueScore counts, up to MAX_JUDGED. Null
-// when Jev couldn't read them all.
-export async function stanceOfReviews(topic: string, reviews: Review[]): Promise<StanceResult | null> {
-  const readable = reviews.filter((r) => isTrusted(r.reviewerReviewCount) && r.text.trim().length > 1);
-  const read = readable.slice(0, MAX_JUDGED);
-  if (!read.length) return jevAvailable() ? { stance: countStances([]), stances: {} } : null;
-  const labels = await stancesFor(topic, read.map((r) => r.text));
-  if (!labels) return null;
-  const stances = Object.fromEntries(read.map((r, i) => [r.reviewId, labels[i]!]));
-  return { stance: countStances(labels), stances, ...(readable.length > read.length ? { of: readable.length } : {}) };
-}
+// Jev in-process, as the shared Stance read and Receipts reach it.
+const jevReader: StanceReader & SupportReader = { reachable: jevAvailable, stances: stancesFor, support: supportFor, answers: answersFor };
 
-// Summary points need the support of this many reviews to be shown — the
-// prompt's own "2+ reviewers" rule, enforced instead of trusted.
-export const MIN_SUPPORT = 2;
-// Supporting reviews a bullet carries for its click-through: the newest.
-const QUOTES_MAX = 20;
+// A chip's or a Search's reviews read for their stance on `topic` (trustedStance).
+export const stanceOfReviews = (topic: string, reviews: Review[]): Promise<StanceResult | null> => trustedStance(topic, reviews, jevReader);
 
 // Per point, the indices of the texts that make it — every text checked: a
 // keyword shortlist kept the same points but missed 28% of their support.
@@ -262,18 +249,6 @@ export async function supportFor(points: string[], texts: string[]): Promise<num
   return support.every(Boolean) ? (support as number[][]) : null;
 }
 
-// How many of `texts` (a rival's mentions) say they'd rather go to `rival` than `place`.
-export async function preferredCount(place: string, rival: string, texts: string[]): Promise<number | null> {
-  if (!texts.length) return 0;
-  const says = await judge('rival', `${place}\u0000${rival}`, { place: place || 'this place', rival }, texts,
-    (review) => noul({ question: "Does this review say `rival` is better than `place`, somewhere they'd rather go?", review }), yesNo);
-  return says && says.filter((v) => v === '1').length;
-}
-
-// textReviewsFor dates each review for the model ("[2026-09-14] …"); a quote
-// shown to a person drops it.
-const undated = (text: string) => text.replace(/^\[(?:\d{4}-\d{2}-\d{2}|undated)\] /, '');
-const dateOf = (text: string) => /^\[(\d{4}-\d{2}-\d{2})\]/.exec(text)?.[1] ?? '';
 // A rival's mentions: reviews holding its name, or failing that its longest word
 // ("Mustafa" for "Mustafa's Gemüse Kebap"), as reviewers rarely write it in full.
 export const mentioning = (texts: string[], name: string): string[] => {
@@ -282,31 +257,19 @@ export const mentioning = (texts: string[], name: string): string[] => {
   return texts.filter((t) => { const f = fold(t); return f.includes(full) || (!!word && f.includes(word)); });
 };
 
-// A summary with its receipts: each bullet carries how many reviews make its
-// point and the newest of them, newest first as the panel lists reviews, a
-// bullet fewer than MIN_SUPPORT make is dropped,
-// and an alternative stays only if as many reviews say they'd rather go there.
+// A summary with its Receipts (receiptsFor): each bullet carries how many
+// reviews make its point and the newest of them, a bullet too few make is
+// dropped, and an alternative stays only if reviewers naming it prefer it.
 // Unchanged when Jev can't check it — the summary shows as it always did.
-export async function withReceipts(summary: Summary, { placeName, reviewTexts }: Subject): Promise<Summary> {
-  // Google hands some reviews over twice; a point is made once per reviewer.
-  const texts = [...new Set(reviewTexts)];
-  const alternatives = summary.alternatives ?? [];
-  const [support, preferred] = await Promise.all([
-    supportFor(summary.highlights.map((h) => h.text), texts),
-    Promise.all(alternatives.map((alt) => preferredCount(placeName, alt, mentioning(texts, alt)))),
-  ]);
-  if (!support) return summary;
-  const newest = (ids: number[]) => ids.toSorted((a, b) => dateOf(texts[b]!).localeCompare(dateOf(texts[a]!))).slice(0, QUOTES_MAX);
-  const highlights = summary.highlights
-    .map((h, k) => ({ ...h, support: support[k]!.length, quotes: newest(support[k]!).map((i) => undated(texts[i]!)) }))
-    .filter((h) => h.support >= MIN_SUPPORT);
-  const checked = preferred.every((n) => n != null);
-  const kept = checked ? alternatives.filter((_, i) => preferred[i]! >= MIN_SUPPORT) : alternatives;
+export async function withReceipts(summary: Summary, { reviewTexts }: Subject): Promise<Summary> {
+  const rivals = (summary.alternatives ?? []).map((name) => ({ name, texts: mentioning(reviewTexts, name) }));
+  const checked = await receiptsFor(summary.highlights.map((h) => h.text), reviewTexts, rivals, jevReader);
+  if (!checked) return summary;
+  const { points, alternatives } = checked;
   return {
     ...summary,
-    highlights,
-    alternatives: kept,
-    ...(checked ? { preferredBy: Object.fromEntries(kept.map((alt) => [alt, preferred[alternatives.indexOf(alt)]!])) } : {}),
+    highlights: summary.highlights.flatMap((h, k) => (points[k] ? [{ ...h, ...points[k] }] : [])),
+    ...(alternatives ? { alternatives: alternatives.map((a) => a.name), preferredBy: Object.fromEntries(alternatives.map((a) => [a.name, a.support])) } : {}),
   };
 }
 

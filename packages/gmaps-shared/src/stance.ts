@@ -4,6 +4,8 @@
 // in passing judges nothing. Jev (TypeSafe's decision model) reads them on the
 // server (web/jev.ts); these are the shapes and the counting both clients share.
 
+import { isTrusted, type Review } from './index';
+
 // A review's stance on a topic. 'mixed' is both, or a mention without a verdict;
 // 'off' isn't about the topic at all — the word matched by chance, or the chip is
 // a mistranslation ("snake" for a bakery's queue: German Schlange).
@@ -98,6 +100,24 @@ export const answersOf = (c: AnswerCounts, of?: number): Opinions => {
 // by reviewId so a client can list exactly the reviews behind a count, and `of`
 // the reviews there were when only the first were read.
 export type StanceResult = { stance: StanceCounts; stances: Record<string, Stance>; of?: number };
+
+// Jev as a Stance read reaches it: in-process on the server, through the
+// server's endpoint from the extension. `stances` is null when it couldn't
+// read them all.
+export type StanceReader = { reachable: () => boolean; stances: (topic: string, texts: string[]) => Promise<Stance[] | null> };
+
+// A Chip's or a Search's reviews read for their stance on `topic`: the trusted
+// ones with text, the same reviews its TrueScore counts, up to MAX_JUDGED. None
+// of those, and Jev reachable: read, with no review speaking to it. Null when
+// Jev couldn't read them.
+export async function trustedStance(topic: string, reviews: Review[], reader: StanceReader): Promise<StanceResult | null> {
+  const readable = reviews.filter((r) => isTrusted(r.reviewerReviewCount) && r.text.trim().length > 1);
+  const read = readable.slice(0, MAX_JUDGED);
+  if (!read.length) return reader.reachable() ? { stance: countStances([]), stances: {} } : null;
+  const labels = await reader.stances(topic, read.map((r) => r.text));
+  if (!labels) return null;
+  return { stance: countStances(labels), stances: Object.fromEntries(read.map((r, i) => [r.reviewId, labels[i]!])), ...(readable.length > read.length ? { of: readable.length } : {}) };
+}
 
 // How an opinion split reads: mostly positive, mostly negative, or split. The
 // star-share chips grade against the place's overall score instead

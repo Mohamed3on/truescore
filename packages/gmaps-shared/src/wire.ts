@@ -31,7 +31,8 @@ export type Quote = Review | string;
 // when fewer than two reviews judge the price, or a truncated reply was cut
 // before it (summary-parse.salvageStructured).
 // `preferredBy`: per alternative, how many reviews say they'd rather go there;
-// an alternative fewer than two reviews prefer is dropped. Absent when unchecked.
+// one fewer than two prefer, or no more than don't, is dropped (receipts.ts).
+// Absent when unchecked.
 // `aliases`: per item, the other names reviewers write for that same thing (a
 // spelling, its name in another language), searched with it; a topic chip going
 // by any of them pools into its chip. Only items that have some; absent on
@@ -202,10 +203,9 @@ export type ContributeResponse = { ok?: boolean; error?: string };
 // `question`, aligned with `texts` (null where it couldn't be read).
 export type StanceRequest = { texts: string[]; topic?: string; question?: string };
 export type StanceResponse = { stances?: (Stance | null)[]; answers?: (Answer | null)[]; error?: string };
-// Which of `texts` make each summary point (indices, per point), and per rival
-// how many say they'd rather go there than `place`.
-export type ReceiptsRequest = { points: string[]; texts: string[]; place?: string; rivals?: string[] };
-export type ReceiptsResponse = { support?: number[][]; preferredBy?: number[]; error?: string };
+// Which of `texts` make each summary point (indices, per point).
+export type ReceiptsRequest = { points: string[]; texts: string[] };
+export type ReceiptsResponse = { support?: number[][]; error?: string };
 
 // ---- LLM provider selection (server-side; the popup threads its choice) ----
 // The full set of summarization providers and reasoning levels the server

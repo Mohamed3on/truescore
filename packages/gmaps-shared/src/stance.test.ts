@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { answersOf, countAnswers, countStances, opinionPct, opinionTone, opinionsOf, signedNet } from './stance';
-import { reviewMark } from './index';
+import { answersOf, countAnswers, countStances, MAX_JUDGED, opinionPct, opinionTone, opinionsOf, signedNet, trustedStance, type Stance } from './stance';
+import { reviewMark, type Review } from './index';
 
 describe('countStances', () => {
   test('tallies every stance, skipping unread ones', () => {
@@ -52,5 +52,35 @@ describe('reviewMark', () => {
     expect(reviewMark(undefined, 1)).toMatchObject({ cls: 'untrusted', text: 'untrusted · 1 review' });
     expect(reviewMark(undefined, 2)?.text).toBe('untrusted · 2 reviews');
     expect(reviewMark(undefined, 7)).toBeNull();
+  });
+});
+
+describe('trustedStance', () => {
+  const review = (reviewId: string, text: string, reviewerReviewCount = 10): Review => ({ reviewId, stars: 5, reviewerReviewCount, timestamp: null, text });
+  const reader = (reachable = true) => {
+    const read: string[][] = [];
+    const stances = async (_topic: string, texts: string[]) => { read.push(texts); return texts.map((t): Stance => (t.includes('bad') ? 'complain' : 'praise')); };
+    return { read, reader: { reachable: () => reachable, stances } };
+  };
+
+  test('reads only the trusted reviews with text — the ones TrueScore counts — keyed by reviewId', async () => {
+    const { read, reader: r } = reader();
+    const result = await trustedStance('parking', [review('a', 'great parking'), review('b', 'bad parking'), review('c', 'bad parking too', 1), review('d', '')], r);
+    expect(read).toEqual([['great parking', 'bad parking']]);
+    expect(result).toEqual({ stance: { praise: 1, complain: 1, mixed: 0, off: 0 }, stances: { a: 'praise', b: 'complain' } });
+  });
+
+  test('nothing readable reads as zero when Jev is reachable, and as unread when not', async () => {
+    const { read, reader: r } = reader();
+    expect(await trustedStance('parking', [review('a', 'great parking', 1)], r)).toEqual({ stance: { praise: 0, complain: 0, mixed: 0, off: 0 }, stances: {} });
+    expect(read).toEqual([]);
+    expect(await trustedStance('parking', [], reader(false).reader)).toBeNull();
+  });
+
+  test(`past ${MAX_JUDGED} it reads the first and says how many there were`, async () => {
+    const { read, reader: r } = reader();
+    const reviews = Array.from({ length: MAX_JUDGED + 5 }, (_, i) => review(`r${i}`, `great ${i}`));
+    expect((await trustedStance('parking', reviews, r))!.of).toBe(MAX_JUDGED + 5);
+    expect(read[0]).toHaveLength(MAX_JUDGED);
   });
 });

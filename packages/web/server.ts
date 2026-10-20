@@ -57,7 +57,7 @@ import { createInflight } from './inflight';
 import index from './index.html';
 import login from './login.html';
 import { errStatus, NoReviews, resolveSubject } from './summary-subject';
-import { answersFor, hasReceipts, jevAvailable, mentioning, preferredCount, quotingReviews, stanceOfReviews, stancesFor, supportFor } from './jev';
+import { answersFor, hasReceipts, jevAvailable, quotingReviews, stanceOfReviews, stancesFor, supportFor } from './jev';
 import { chatOf, tallyThread, threadOf } from './tally';
 
 const json = (v: any, status = 200) =>
@@ -890,21 +890,17 @@ Bun.serve({
       },
       OPTIONS: corsOptions,
     },
-    // Which of the texts a summary was built from make each of its points, and
-    // how many prefer each rival it names — for summaries the extension writes
-    // itself (see ReceiptsRequest). 503 when Jev is off.
+    // Which of the texts a summary was built from make each of its points — the
+    // extension's support reader for the summaries it writes itself (see
+    // ReceiptsRequest). 503 when Jev is off.
     '/api/receipts': {
       POST: async (req) => {
         try {
           const body = await req.json() as ReceiptsRequest;
           const strings = (v: unknown) => (Array.isArray(v) ? v : []).filter((t): t is string => typeof t === 'string');
-          const points = strings(body.points), texts = strings(body.texts).slice(0, MAX_JUDGED), rivals = strings(body.rivals);
-          const [support, preferredBy] = await Promise.all([
-            supportFor(points, texts),
-            Promise.all(rivals.map((r) => preferredCount(body.place ?? '', r, mentioning(texts, r)))),
-          ]);
-          if (!support || preferredBy.some((n) => n == null)) return corsJson({ error: 'unavailable' } satisfies ReceiptsResponse, 503);
-          return corsJson({ support, preferredBy: preferredBy as number[] } satisfies ReceiptsResponse);
+          const support = await supportFor(strings(body.points), strings(body.texts).slice(0, MAX_JUDGED));
+          if (!support) return corsJson({ error: 'unavailable' } satisfies ReceiptsResponse, 503);
+          return corsJson({ support } satisfies ReceiptsResponse);
         } catch (e) {
           console.error('[receipts]', e);
           return corsJson(errBody(e), 400);

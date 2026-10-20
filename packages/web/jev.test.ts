@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { Review, Summary } from '@truescore/gmaps-shared';
-import { answersFor, setJevClient, stanceOfReviews, stancesFor, withReceipts } from './jev';
+import type { Summary } from '@truescore/gmaps-shared';
+import { answersFor, setJevClient, stancesFor, withReceipts } from './jev';
 
 // A fake Jev: answers each question by a rule over the review text inside it,
 // and records every request so a test can see what was asked and how batched.
@@ -63,22 +63,6 @@ describe('stancesFor', () => {
   });
 });
 
-describe('stanceOfReviews', () => {
-  const review = (text: string, reviewerReviewCount = 10): Review => ({ reviewId: uniq('id'), stars: 5, reviewerReviewCount, timestamp: null, text });
-
-  test('reads the trusted reviews with text — the ones TrueScore counts — keyed by reviewId', async () => {
-    const reviews = [review(uniq('great parking')), review(uniq('bad parking')), review(uniq('awful parking'), 1), review('')];
-    const result = await stanceOfReviews('parking', reviews);
-    expect(result!.stance).toEqual({ praise: 1, complain: 1, mixed: 0, off: 0 });
-    expect(result!.stances).toEqual({ [reviews[0]!.reviewId]: 'praise', [reviews[1]!.reviewId]: 'complain' });
-    expect(result!.of).toBeUndefined();
-  });
-
-  test('nothing readable reads as no mentions', async () => {
-    expect(await stanceOfReviews('parking', [review(uniq('great parking'), 1)])).toEqual({ stance: { praise: 0, complain: 0, mixed: 0, off: 0 }, stances: {} });
-  });
-});
-
 describe('answersFor', () => {
   test('asks the question, not a topic', async () => {
     setJevClient(fake((r) => ({ choice: /no dogs/.test(r) ? 'no' : 'yes' })));
@@ -93,21 +77,21 @@ describe('withReceipts', () => {
     highlights: [{ text: 'The penguins are a favourite', sentiment: 'positive' }, { text: 'Parking is a nightmare', sentiment: 'negative' }],
     alternatives,
   });
-  // A review makes a point when it shares its key word.
-  const pointRule = (review: string, state: any) => ({
-    noul: state.point ? (review.includes(state.point.split(' ')[1].toLowerCase()) ? 0.9 : 0.1) : /rather go to Rival/.test(review) ? 0.9 : 0.1,
-  });
+  // A review makes a point when it shares its key word; one prefers a rival when it says it would rather go there.
+  const rule = (review: string, state: any) => (state.point
+    ? { noul: review.includes(state.point.split(' ')[1].toLowerCase()) ? 0.9 : 0.1 }
+    : { choice: /rather go to/.test(review) ? 'yes' : /rather stay/.test(review) ? 'no' : 'none' });
 
-  test('bullets carry their support and quotes, newest first; fewer than two supporters drops one', async () => {
-    setJevClient(fake(pointRule));
+  test('bullets carry their support and dateless quotes, newest first; fewer than two supporters drops one', async () => {
+    setJevClient(fake(rule));
     const reviewTexts = ['[2026-09-01] loved the penguins', '[undated] penguins!', '[2026-09-02] parking was hard', '[2026-09-01] loved the penguins', '[2026-10-01] the penguins again'];
     const checked = await withReceipts(summary(), { placeName: 'Aquarium', reviewTexts });
     expect(checked.highlights).toEqual([{ text: 'The penguins are a favourite', sentiment: 'positive', support: 3, quotes: ['the penguins again', 'loved the penguins', 'penguins!'] }]);
   });
 
-  test('a rival stays only when two reviews say they would rather go there', async () => {
-    setJevClient(fake(pointRule));
-    const reviewTexts = ['penguins a', 'penguins b', 'rather go to Rival Zoo', "I'd rather go to Rival Zoo", 'Other Zoo was fine'];
+  test('a rival stays when the reviews naming it, in full or by its longest word, prefer it', async () => {
+    setJevClient(fake(rule));
+    const reviewTexts = ['penguins a', 'penguins b', 'rather go to Rival Zoo', "I'd rather go to the Rival", 'Other Zoo: rather go to it', 'Other Zoo? I would rather stay here', 'Other Zoo, I would rather stay'];
     const checked = await withReceipts(summary(['Rival Zoo', 'Other Zoo']), { placeName: 'Aquarium', reviewTexts });
     expect(checked.alternatives).toEqual(['Rival Zoo']);
     expect(checked.preferredBy).toEqual({ 'Rival Zoo': 2 });
