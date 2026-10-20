@@ -230,7 +230,10 @@ const ASK_INSTRUCTIONS = `Answer the question about the place using its reviews.
 ${NOTES}
 
 ${SEARCH_NOTE}`;
-const CACHE_BREAKPOINT = { openai: { promptCacheBreakpoint: { mode: 'explicit' as const } } };
+const CACHE_BREAKPOINT = {
+  openai: { promptCacheBreakpoint: { mode: 'explicit' as const } },
+  anthropic: { cacheControl: { type: 'ephemeral' as const } },
+};
 
 const SEARCH_DESCRIPTION = 'Search every review of this place, not just the sample, for any of the terms. Returns how many reviews match (found); their TrueScore (scorePct: the net share of trusted reviewers rating 5★ over 1★, from -100 to 100, resting on trustedReviews of them — cite it when it helps); and the matches not already in the sample (reviews).';
 
