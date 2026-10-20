@@ -7,12 +7,16 @@ import { wrapLanguageModel, type LanguageModelMiddleware } from 'ai';
 // cap (2 of 15 runs in web evals/latency.ts). A strict tool call holds its
 // arguments to the schema at about the same latency (0 of 15), so each
 // schema'd generate call goes out as one and its arguments come back as the
-// text generateObject parses — a cut-off reply still reaches salvage. Streamed,
-// the arguments arrive as the text streamObject reads, as they're written.
+// text generateText parses — a cut-off reply still reaches salvage. Streamed,
+// the arguments arrive as the text streamText reads, as they're written. The
+// call then ends as a reply, not a tool call: generateText reads no output from
+// a step that finished calling tools.
+const asReply = <R extends { unified: string }>(reason: R): R => (reason.unified === 'tool-calls' ? { ...reason, unified: 'stop' } : reason);
 const asText = (part: LanguageModelV4StreamPart): LanguageModelV4StreamPart | null => {
   if (part.type === 'tool-input-start') return { type: 'text-start', id: part.id };
   if (part.type === 'tool-input-delta') return { type: 'text-delta', id: part.id, delta: part.delta };
   if (part.type === 'tool-input-end') return { type: 'text-end', id: part.id };
+  if (part.type === 'finish') return { ...part, finishReason: asReply(part.finishReason) };
   return part.type === 'tool-call' ? null : part;
 };
 export const strictJsonViaTool: LanguageModelMiddleware = {
@@ -30,7 +34,7 @@ export const strictJsonViaTool: LanguageModelMiddleware = {
   wrapGenerate: async ({ doGenerate, params }) => {
     const result = await doGenerate();
     if (params.toolChoice?.type !== 'tool' || params.toolChoice.toolName !== 'json') return result;
-    return { ...result, content: result.content.map((part) => (part.type === 'tool-call' ? { type: 'text' as const, text: part.input } : part)) };
+    return { ...result, finishReason: asReply(result.finishReason), content: result.content.map((part) => (part.type === 'tool-call' ? { type: 'text' as const, text: part.input } : part)) };
   },
   wrapStream: async ({ doStream, params }) => {
     const result = await doStream();

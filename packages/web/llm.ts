@@ -1,4 +1,4 @@
-import { convertToModelMessages, streamObject, streamText, type LanguageModel, type ModelMessage } from 'ai';
+import { convertToModelMessages, streamText, type LanguageModel, type ModelMessage } from 'ai';
 import { z } from 'zod';
 import { DEFAULT_PROVIDER, LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
 import { modelCall, type ModelSetup } from '@truescore/gmaps-shared/models';
@@ -258,15 +258,14 @@ Not Options: answers to another question than this one (the store a product came
 // while the rest are still being written.
 export async function listOptions(question: string, comments: string[], onOption: (o: Partial<ThreadOption>) => void, provider: Provider = DEFAULT_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
-  const listing = streamObject({ model, providerOptions, ...optionsRequest(question, comments) });
   let sent = 0;
-  for await (const partial of listing.partialObjectStream) {
+  const listing = await writeObject({ model, providerOptions, ...optionsRequest(question, comments) }, (partial) => {
     const options = partial.options ?? [];
     while (sent < options.length - 1) onOption(options[sent++] as Partial<ThreadOption>);
-  }
-  const { options } = await listing.object;
+  });
+  const { options } = listing.object;
   while (sent < options.length) onOption(options[sent++]!);
-  report(provider, 'options', await listing.usage);
+  if (listing.usage) report(provider, 'options', listing.usage);
   return options;
 }
 
@@ -289,18 +288,17 @@ export const reasonsRequest = (question: string, comments: string[], groups: Rea
 // model writes them in the schema's order), the last when it ends.
 export async function explainOptions(question: string, comments: string[], groups: ReasonGroup[], onReason: (key: string, why: string) => void, provider: Provider = DEFAULT_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<Record<string, string>> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
-  const writing = streamObject({ model, providerOptions, ...reasonsRequest(question, comments, groups) });
   const keys = groups.map((g) => g.key);
   let sent = 0;
-  for await (const partial of writing.partialObjectStream) {
+  const writing = await writeObject({ model, providerOptions, ...reasonsRequest(question, comments, groups) }, (partial) => {
     while (sent < keys.length - 1 && (partial as Record<string, unknown>)[keys[sent + 1]!] !== undefined) {
       onReason(keys[sent]!, String((partial as Record<string, unknown>)[keys[sent]!] ?? ''));
       sent++;
     }
-  }
-  const reasons = (await writing.object) as Record<string, string>;
+  });
+  const reasons = writing.object as Record<string, string>;
   while (sent < keys.length) { onReason(keys[sent]!, reasons[keys[sent]!] ?? ''); sent++; }
-  report(provider, 'reasons', await writing.usage);
+  if (writing.usage) report(provider, 'reasons', writing.usage);
   return reasons;
 }
 
