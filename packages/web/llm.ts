@@ -219,7 +219,7 @@ export async function aliasesFor(subject: Subject, items: string[] | undefined, 
   }
 }
 
-const SEARCH_NOTE = `The reviews given are a sample. When they don't settle the question, call searchReviews before answering: it searches every review of this place. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde). When the sample settles it, just answer.`;
+const SEARCH_NOTE = `The reviews given are a sample; the rest can say otherwise. Unless the sample clearly settles the question, call searchReviews before answering: it searches every review of this place. Check specifics such as what is allowed, accepted or charged even when the sample seems to answer them. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde).`;
 
 // What every Ask shares leads the prompt — these instructions and the tool —
 // then the place's Sample, closed by a cache breakpoint; only the scope and

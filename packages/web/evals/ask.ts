@@ -33,7 +33,7 @@ const QUESTIONS: Question[] = [
   { place: 'Coves del Drach', q: 'Would someone claustrophobic be okay?', terms: 'claustrophobic OR claustrophobia', expect: 'search' },
   { place: "Caru' cu bere", q: 'Do they pad the bill or overcharge tourists?', terms: 'bill OR overcharge OR overcharged OR receipt OR scam', expect: 'search' },
   { place: "Caru' cu bere", q: 'Is smoking allowed anywhere?', terms: 'smoking OR smoke OR smokers', expect: 'search' },
-  { place: "Caru' cu bere", q: 'Are the papanasi worth ordering?', terms: 'papanasi', expect: 'sample' },
+  { place: "Caru' cu bere", q: 'Are the papanasi worth ordering?', terms: 'papanasi', expect: 'search' },
   { place: "Caru' cu bere", q: 'Is pickpocketing a problem there?', terms: 'pickpocket OR pickpockets OR theft OR stolen', expect: 'search' },
 ];
 

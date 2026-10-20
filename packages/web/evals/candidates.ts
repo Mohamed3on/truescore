@@ -18,8 +18,9 @@ export const registerCandidates = () => {
     'deepseek-flash:off': PROVIDERS.deepseek,
     // 2026-10-20 vs luna:low, the verdict depends on the judge: gpt-6-sol
     // picked luna in all 8 summary pairs, blind Claude judges picked Sonnet in
-    // all 8. Both agree Sonnet covers more and luna is better grounded; Sonnet
-    // also under-searches in Ask (45% recall). Medium effort changed nothing,
+    // all 8. Both agree Sonnet covers more and luna is better grounded. In Ask
+    // Sonnet took SEARCH_NOTE's "just answer" exit (45% recall); without it,
+    // 62% recall and 13.71/15 vs luna's 13.00. Medium effort changed nothing,
     // so only low stays.
     'sonnet-5.5:low': { model: anthropic('claude-sonnet-5-5'), providerOptions: { anthropic: { effort: 'low' as const } } },
   };
