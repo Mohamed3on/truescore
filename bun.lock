@@ -37,7 +37,10 @@
     "packages/gmaps-shared": {
       "name": "@truescore/gmaps-shared",
       "dependencies": {
+        "@ai-sdk/anthropic": "^4.0.84",
         "@ai-sdk/deepseek": "^3.0.69",
+        "@ai-sdk/google": "^4.0.101",
+        "@ai-sdk/openai": "^4.0.98",
         "ai": "^7.0.146",
         "zod": "^4.4.3",
       },

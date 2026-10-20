@@ -1,9 +1,6 @@
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
-import { DirectChatTransport, generateObject, generateText, jsonSchema, NoObjectGeneratedError, streamObject, streamText, ToolLoopAgent, type ChatTransport, type JSONSchema7, type LanguageModel, type LanguageModelUsage } from 'ai';
-import { MODELS, salvageString, salvageStringArray, searchesLeft, searchReviewsTool, type AskMessage } from '@truescore/gmaps-shared';
-import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
+import { DirectChatTransport, jsonSchema, ToolLoopAgent, type ChatTransport, type JSONSchema7, type LanguageModelUsage } from 'ai';
+import { salvageString, salvageStringArray, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage } from '@truescore/gmaps-shared';
+import { modelCall } from '@truescore/gmaps-shared/models';
 import { getActiveLLM } from './config';
 
 // Every LLM call the extension makes itself (retail and book pages; Google Maps
@@ -11,17 +8,11 @@ import { getActiveLLM } from './config';
 
 const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', deepseek: 'DeepSeek', anthropic: 'Anthropic' };
 
-// Luna at the popup's reasoning effort; Sonnet at low effort, as on the server;
-// Gemini and DeepSeek non-thinking (DeepSeek's thinking ladder was slower for no
-// quality gain — web evals/latency.ts). Anthropic only answers a browser's
-// cross-origin call with its direct-browser-access header.
-const activeModel = async (): Promise<{ model: LanguageModel; providerOptions: Record<string, Record<string, any>>; maxOutputTokens: number }> => {
+// The popup's provider and key, on that provider's settings (gmaps-shared/models.ts).
+const activeModel = async () => {
   const { provider, key: apiKey, reasoningEffort } = await getActiveLLM();
   if (!apiKey) throw new Error(`No ${PROVIDER_LABEL[provider]} API key — set one in the TrueScore popup`);
-  if (provider === 'gemini') return { model: createGoogleGenerativeAI({ apiKey })(MODELS.gemini), providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 32768 };
-  if (provider === 'deepseek') return { model: deepseekModel(apiKey, MODELS.deepseek), providerOptions: { deepseek: { thinking: { type: 'disabled' } } }, maxOutputTokens: 8192 };
-  if (provider === 'anthropic') return { model: createAnthropic({ apiKey, headers: { 'anthropic-dangerous-direct-browser-access': 'true' } })(MODELS.anthropic), providerOptions: { anthropic: { effort: 'low' } }, maxOutputTokens: 32768 };
-  return { model: createOpenAI({ apiKey })(MODELS.openai), providerOptions: { openai: { reasoningEffort } }, maxOutputTokens: 32768 };
+  return modelCall(provider, { apiKey, reasoningEffort, browser: true });
 };
 
 // Reviews arrive in the page's locale (amazon.es, booking.de, …), so without the
@@ -47,36 +38,14 @@ export const setOnUsage = (fn: typeof onUsage) => { onUsage = fn; };
 // text or object as far as it's written, each time it grows.
 export const summarize = async (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null, onPartial?: (partial: any) => void) => {
   const call = { ...await activeModel(), prompt: withReviews(prompt, reviewTexts) };
-  if (!schema && onPartial) {
-    // A failed call reaches only onError; the stream itself just ends.
-    let failure: unknown;
-    const stream = streamText({ ...call, onError: ({ error }) => { failure = error; } });
-    let text = '';
-    for await (const delta of stream.textStream) onPartial((text += delta));
-    if (failure) throw failure;
-    onUsage?.(await stream.usage);
-    return text;
-  }
   if (!schema) {
-    const { text, usage } = await generateText(call);
+    const { text, usage } = await writeText(call, onPartial);
     onUsage?.(usage);
     return text;
   }
-  try {
-    if (onPartial) {
-      const stream = streamObject({ ...call, schema: jsonSchema(schema) });
-      for await (const partial of stream.partialObjectStream) onPartial(partial);
-      const object = await stream.object;
-      onUsage?.(await stream.usage);
-      return object;
-    }
-    const { object, usage } = await generateObject({ ...call, schema: jsonSchema(schema) });
-    onUsage?.(usage);
-    return object;
-  } catch (e) {
-    if (NoObjectGeneratedError.isInstance(e) && e.text) return salvageObject(e.text, schema);
-    throw e;
-  }
+  const { object, usage } = await writeObject({ ...call, schema: jsonSchema(schema) }, onPartial, (text) => salvageObject(text, schema));
+  if (usage) onUsage?.(usage);
+  return object;
 };
 
 const SEARCH_NOTE = `The reviews given are a sample; the rest can say otherwise. Unless the sample clearly settles the question, call searchReviews before answering: it searches every review. Check specifics such as what is allowed, accepted or charged even when the sample seems to answer them. Search the few words a review answering it would use, in English and in the language(s) the reviews are written in, with plurals and close synonyms, joined with " OR " (dog OR dogs OR Hund OR Hunde).`;

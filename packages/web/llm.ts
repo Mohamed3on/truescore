@@ -1,64 +1,29 @@
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import { createOpenAI } from '@ai-sdk/openai';
-import { convertToModelMessages, NoObjectGeneratedError, streamObject, streamText, type ModelMessage } from 'ai';
+import { convertToModelMessages, streamObject, streamText, type LanguageModel, type ModelMessage } from 'ai';
 import { z } from 'zod';
-import { DEFAULT_PROVIDER, LLM_PROVIDERS, MODELS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
-import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
+import { DEFAULT_PROVIDER, LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
+import { modelCall } from '@truescore/gmaps-shared/models';
 import { aliasesOf, capItems, MAX_ALIASES, MAX_SCORED_ITEMS, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
 
 export type { Summary, SummaryHighlight, Provider, ReasoningEffort, Subject };
 
 // The providers all run the same prompts and schema so the models are directly
-// comparable (see evals/compare.ts). DEFAULT_PROVIDER and MODELS
-// (gmaps-shared/wire.ts) pick the active one and each one's model. The google provider reads GEMINI_API_KEY
-// (this repo's name for it), not the SDK default GOOGLE_GENERATIVE_AI_API_KEY;
+// comparable (see evals/compare.ts). Their settings are gmaps-shared/models.ts's;
+// the server adds its keys and explicit prompt caching (ask() places a
+// breakpoint after the Sample). The google provider reads GEMINI_API_KEY (this
+// repo's name for it), not the SDK default GOOGLE_GENERATIVE_AI_API_KEY;
 // deepseek reads DEEPSEEK_API_KEY, anthropic ANTHROPIC_API_KEY.
-const google = createGoogleGenerativeAI({
-  apiKey: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY,
-});
-const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-export const PROVIDERS = {
-  gemini: {
-    model: google(MODELS.gemini),
-    providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' as const } } },
-  },
-  openai: {
-    // GPT-6 Luna (the fast/cheap GPT-6 tier), low reasoning effort. 2026-09-22
-    // evals against GPT-5.6 Luna at low (gpt-6-sol judge): its summaries are
-    // terser but beat 5.6's 26-6 once grounding counts the weight of evidence
-    // (5.6's extra detail overstated consensus), 1.5-3x faster at about half
-    // the cost; Ask quality matches. Medium effort brought back 5.6's
-    // latency for no gain, and 5.6's ladder showed high/xhigh burning 20-60x
-    // the reasoning tokens for no quality gain — so keep the cheapest level.
-    //
-    // Explicit prompt caching: Luna's default (implicit) mode bills a cache
-    // write at 1.25x input on every request, at the end of the prompt, which
-    // a call with a different ending never reads — so summaries and varied
-    // questions paid 25% more for nothing. Explicit mode writes only at a
-    // `promptCacheBreakpoint` we place (ask() puts one after the Sample).
-    model: openai(MODELS.openai),
-    providerOptions: { openai: { reasoningEffort: 'low', promptCacheOptions: { mode: 'explicit' as const } } },
-  },
-  deepseek: {
-    // V4.1 Flash, non-thinking. V4 Flash tied nano/flash on latency+quality at
-    // a fraction of the cost (evals/latency.ts) and its thinking ladder ran
-    // 2.5-7x slower for no quality gain, so it stays disabled. Structured
-    // output goes through a strict tool call (gmaps-shared/deepseek.ts).
-    model: deepseekModel(process.env.DEEPSEEK_API_KEY, MODELS.deepseek),
-    providerOptions: { deepseek: { thinking: { type: 'disabled' as const } } },
-  },
-  anthropic: {
-    // Claude Sonnet 5.5 at low effort, the default since 2026-10-20 (Ask,
-    // summaries and the Tally; evals/candidates.ts has the results). Medium
-    // scored no better.
-    model: anthropic(MODELS.anthropic),
-    providerOptions: { anthropic: { effort: 'low' as const } },
-  },
+const KEYS: Record<Provider, string | undefined> = {
+  gemini: process.env.GEMINI_API_KEY ?? process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+  openai: process.env.OPENAI_API_KEY,
+  deepseek: process.env.DEEPSEEK_API_KEY,
+  anthropic: process.env.ANTHROPIC_API_KEY,
 };
+const serverModel = (provider: Provider, reasoningEffort?: ReasoningEffort, fetch?: typeof globalThis.fetch) => {
+  const { model, providerOptions } = modelCall(provider, { apiKey: KEYS[provider], reasoningEffort, explicitCaching: true, fetch });
+  return { model, providerOptions };
+};
+export const PROVIDERS = Object.fromEntries(LLM_PROVIDERS.map((p) => [p, serverModel(p)])) as Record<Provider, ReturnType<typeof serverModel>>;
 
 // Validate untrusted request-body overrides against the canonical wire lists
 // (gmaps-shared/wire.ts): the server only honors a configured provider/effort,
@@ -69,10 +34,12 @@ export const parseReasoningEffort = (v: unknown): ReasoningEffort | undefined =>
 export const parseProvider = (v: unknown): Provider | undefined =>
   typeof v === 'string' && (LLM_PROVIDERS as readonly string[]).includes(v) ? (v as Provider) : undefined;
 
+// Tests swap in a fake model for every call; the server never calls this.
+let fakeModel: LanguageModel | null = null;
+export const setModel = (fake: LanguageModel | null) => { fakeModel = fake; };
+
 const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
-  effort && provider === 'openai'
-    ? { model: PROVIDERS.openai.model, providerOptions: { openai: { ...PROVIDERS.openai.providerOptions.openai, reasoningEffort: effort } } }
-    : PROVIDERS[provider];
+  fakeModel ? { model: fakeModel, providerOptions: {} } : effort && provider === 'openai' ? serverModel(provider, effort) : PROVIDERS[provider];
 
 // evals/compare.ts hooks this to collect per-call token usage; the server
 // never sets it.
@@ -174,14 +141,10 @@ ${NOTES}${removal ? `\n\n${removal}` : ''}`;
     // A sentiment still being written reads as neutral, not as half a word.
     writeObject({ model, providerOptions, ...structuredRequest({ placeName, reviewTexts, removedReviews }, filterQuery) }, drafting && ((partial) => drafting({
       highlights: (partial.highlights ?? []).flatMap((h) => (h?.text ? [{ text: h.text, sentiment: SENTIMENTS.find((s) => s === h.sentiment) ?? 'neutral' }] : [])),
-    })))
+    })), salvageStructured)
       .then((r) => {
-        report(provider, 'structured', r.usage);
+        if (r.usage) report(provider, 'structured', r.usage);
         return { ...r.object, valueForMoney: r.object.valueForMoney ?? undefined, items: capItems(r.object.items), alternatives: capItems(r.object.alternatives) };
-      })
-      .catch((e) => {
-        if (NoObjectGeneratedError.isInstance(e) && e.text) return salvageStructured(e.text);
-        throw e;
       }),
   ]);
   return { verdict: verdict.trim(), ...structured };
@@ -190,10 +153,8 @@ ${NOTES}${removal ? `\n\n${removal}` : ''}`;
 // GPT-6 Luna with no reasoning, for the aliases call. The API takes effort
 // "none", but the SDK drops it for GPT-6 models (the API then runs its default,
 // medium), so it's written into the request here.
-const lunaNoReasoning = createOpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  fetch: Object.assign((url: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(url, { ...init, body: JSON.stringify({ ...JSON.parse(String(init?.body)), reasoning: { effort: 'none' } }) }), { preconnect: fetch.preconnect }),
-})(PROVIDERS.openai.model.modelId);
+const lunaNoReasoning = serverModel('openai', undefined,
+  Object.assign((url: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(url, { ...init, body: JSON.stringify({ ...JSON.parse(String(init?.body)), reasoning: { effort: 'none' } }) }), { preconnect: fetch.preconnect }));
 
 // The other names reviewers write for each of a summary's items (Summary.aliases),
 // so a standout searches them all and a topic chip going by one pools into it.
@@ -210,12 +171,10 @@ export const aliasesRequest = ({ placeName, reviewTexts }: Subject, items: strin
 // None when the call fails: the summary stands without them.
 export async function aliasesFor(subject: Subject, items: string[] | undefined, provider: Provider = DEFAULT_PROVIDER): Promise<Summary['aliases']> {
   if (!items?.length) return undefined;
-  const { model, providerOptions } = provider === 'openai'
-    ? { model: lunaNoReasoning, providerOptions: { openai: { promptCacheOptions: PROVIDERS.openai.providerOptions.openai.promptCacheOptions } } }
-    : PROVIDERS[provider];
+  const { model, providerOptions } = provider === 'openai' && !fakeModel ? lunaNoReasoning : providerFor(provider);
   try {
     const r = await writeObject({ model, providerOptions, ...aliasesRequest(subject, items) });
-    report(provider, 'aliases', r.usage);
+    if (r.usage) report(provider, 'aliases', r.usage);
     return aliasesOf(items, r.object.items);
   } catch (e) {
     console.warn('[aliases]', e instanceof Error ? e.message : e);
@@ -387,10 +346,10 @@ export const threadAskRequest = (thread: Thread, chat: ThreadTurn[]) => ({
 // `onText` as the model writes it.
 export async function askThread(thread: Thread, chat: ThreadTurn[], onText: (text: string) => void, { provider = DEFAULT_PROVIDER, reasoningEffort, abortSignal }: AskOptions = {}): Promise<void> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
-  // A failed call reaches only onError; the stream itself just ends.
-  let failure: unknown;
-  const answer = streamText({ model, providerOptions, maxOutputTokens: 32768, abortSignal, ...threadAskRequest(thread, chat), onError: ({ error }) => { failure = error; } });
-  for await (const text of answer.textStream) onText(text);
-  if (failure) throw failure;
-  report(provider, 'thread-ask', await answer.usage);
+  let sent = 0;
+  const { usage } = await writeText({ model, providerOptions, maxOutputTokens: 32768, abortSignal, ...threadAskRequest(thread, chat) }, (text) => {
+    onText(text.slice(sent));
+    sent = text.length;
+  });
+  report(provider, 'thread-ask', usage);
 }

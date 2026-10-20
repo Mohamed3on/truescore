@@ -26,3 +26,18 @@ test('a streamed object is read as it is written', async () => {
   expect(object).toEqual({ verdict: 'Good' });
   expect(seen).toContainEqual({ verdict: 'Go' });
 });
+
+const schema = jsonSchema<{ verdict: string; items: string[] }>({ type: 'object', properties: { verdict: { type: 'string' }, items: { type: 'array', items: { type: 'string' } } }, required: ['verdict', 'items'], additionalProperties: false });
+const keepVerdict = (cut: string) => ({ verdict: cut.match(/"verdict":"([^"]*)"/)?.[1] ?? '', items: [] });
+const whole = (reply: string) => new MockLanguageModelV4({ doGenerate: async () => ({ content: [{ type: 'text', text: reply }], finishReason: { unified: 'length', raw: 'length' }, usage, warnings: [] }) as any });
+
+test('an object cut off at the cap keeps what made it, whole or streamed', async () => {
+  const cut = '{"verdict":"Good","items":["bra';
+  expect((await writeObject({ model: whole(cut), prompt: 'p', schema }, undefined, keepVerdict)).object).toEqual({ verdict: 'Good', items: [] });
+  expect((await writeObject({ model: streaming(text([cut])), prompt: 'p', schema }, () => {}, keepVerdict)).object).toEqual({ verdict: 'Good', items: [] });
+});
+
+test('a failed object call throws its own error, salvage or not', async () => {
+  const model = streaming([{ type: 'error', error: new Error('Incorrect API key') }]);
+  expect(writeObject({ model, prompt: 'p', schema }, () => {}, keepVerdict)).rejects.toThrow('Incorrect API key');
+});
