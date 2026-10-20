@@ -35,6 +35,10 @@ const fadeIn = (node: HTMLElement) => {
   for (const a of node.getAnimations()) a.cancel();
   node.animate([{ opacity: 0 }, {}], { duration: 220, easing: EASE });
 };
+// A drafted row rises into place as it's added, instead of popping in.
+const enter = (node: HTMLElement) => {
+  if (animates(node)) node.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: DIM, transform: 'none' }], { duration: 180, easing: EASE });
+};
 const brighten = (node: HTMLElement) => {
   if (animates(node)) node.animate([{ opacity: DIM }, {}], { duration: 200, easing: EASE });
 };
@@ -63,6 +67,7 @@ export const mountBullets = <T>(list: HTMLElement, key: (item: T) => string, mak
           rows[i] = fresh();
           rows[i]!.el.style.opacity = DIM;
           list.appendChild(rows[i]!.el);
+          enter(rows[i]!.el);
         }
         draw(rows[i]!, item);
       }

@@ -2,9 +2,9 @@
 // fetch-with-retry (Cloudflare 5xx returns an HTML error page that would blow up
 // resp.json() as "Unexpected token '<'"), the JSON helpers, and the NDJSON stream
 // reader used by /api/lookup, /api/search, /api/highlights, /api/ask.
-// Deliberately DOM-free so it's unit-testable in bun without a browser (fetch /
+// DOM-free (bar the summary drafts' requestAnimationFrame) so it's unit-testable in bun without a browser (fetch /
 // ReadableStream / TextDecoder are all globals).
-import type { SummaryDraft, SummaryEvent } from './wire';
+import { DRAFT_MS, type SummaryDraft, type SummaryEvent } from './wire';
 
 const RETRY_STATUSES = new Set([502, 503, 504, 521, 522, 524]);
 
@@ -97,13 +97,53 @@ export async function* streamNdjson<T extends { type: string }>(url: string, bod
 // `later`: the aliases that follow it on the stream, if any.
 export async function streamSummary(url: string, body: unknown, onDraft: (draft: SummaryDraft) => void, signal?: AbortSignal) {
   const events = streamNdjson<SummaryEvent>(url, body, signal);
-  for (let next = await events.next(); !next.done; next = await events.next()) {
-    const evt = next.value;
-    if (evt.type === 'summary-draft') onDraft(evt.summary);
-    else if (evt.type === 'summary') return { ...evt, later: lateAliases(events) };
+  const drafts = smoothDrafts(onDraft);
+  try {
+    for (let next = await events.next(); !next.done; next = await events.next()) {
+      const evt = next.value;
+      if (evt.type === 'summary-draft') drafts.push(evt.summary);
+      else if (evt.type === 'summary') return { ...evt, later: lateAliases(events) };
+    }
+  } finally {
+    drafts.stop();
   }
   throw new Error('the summary stream closed without a summary');
 }
+
+// Drafts land in clumps, a few words each, one per DRAFT_MS. Passed on frame by
+// frame instead, each string growing by its share of what it has left, so the
+// text flows in and catches up just as the next draft is due. `stop` before
+// drawing the checked summary, so no draft lands after it.
+export const smoothDrafts = (onDraft: (draft: SummaryDraft) => void) => {
+  let target: SummaryDraft | undefined;
+  let shown: SummaryDraft = { verdict: '', highlights: [] };
+  let due = 0;
+  let last = 0;
+  let frame: number | undefined;
+  const tick = () => {
+    frame = undefined;
+    if (!target) return;
+    const now = performance.now();
+    const share = Math.min(1, (now - last) / Math.max(1, due - last));
+    last = now;
+    const grow = (from: string, to: string) => to.slice(0, from.length + Math.ceil((to.length - from.length) * share));
+    shown = { verdict: grow(shown.verdict, target.verdict), highlights: target.highlights.map((h, i) => ({ ...h, text: grow(shown.highlights[i]?.text ?? '', h.text) })) };
+    onDraft(shown);
+    if (share < 1) frame = requestAnimationFrame(tick);
+  };
+  return {
+    push(draft: SummaryDraft) {
+      target = draft;
+      last = performance.now();
+      due = last + DRAFT_MS;
+      frame ??= requestAnimationFrame(tick);
+    },
+    stop() {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = target = undefined;
+    },
+  };
+};
 
 const lateAliases = async (events: AsyncGenerator<SummaryEvent>): Promise<Record<string, string[]> | undefined> => {
   try {

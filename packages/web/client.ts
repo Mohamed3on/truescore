@@ -6,7 +6,7 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, standoutNames, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, receiptReviews, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
-  answersOf, bySupport, countAnswers, mountBullets, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
+  answersOf, bySupport, countAnswers, mountBullets, smoothDrafts, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Quote, type Review, type SearchEvent, type SearchResult,
@@ -799,22 +799,28 @@ async function summarizeActiveSearch() {
     let result: SearchResult | null = null;
     let cached = false;
     let draw: ReturnType<typeof mountChipSummary> | undefined;
-    for await (const evt of streamNdjson<SearchEvent>('/api/search', {
-      featureId: epoch.featureId, query: r.query, summarize: true,
-    } satisfies SearchRequest)) {
-      if (!epoch.alive) return;
-      if (evt.type === 'search') {
-        result = evt.result;
-        cached = evt.cached;
-      } else if (evt.type === 'summary-draft') {
-        (draw ??= mountChipSummary())(evt.summary);
-      } else if (evt.type === 'search-summary') {
-        if (result) {
-          result.summary = evt.summary;
-          activePanel = { kind: 'search', result };
+    const drafts = smoothDrafts((draft) => { if (epoch.alive) (draw ??= mountChipSummary())(draft); });
+    try {
+      for await (const evt of streamNdjson<SearchEvent>('/api/search', {
+        featureId: epoch.featureId, query: r.query, summarize: true,
+      } satisfies SearchRequest)) {
+        if (!epoch.alive) return;
+        if (evt.type === 'search') {
+          result = evt.result;
+          cached = evt.cached;
+        } else if (evt.type === 'summary-draft') {
+          drafts.push(evt.summary);
+        } else if (evt.type === 'search-summary') {
+          drafts.stop();
+          if (result) {
+            result.summary = evt.summary;
+            activePanel = { kind: 'search', result };
+          }
+          (draw ?? mountChipSummary())(evt.summary, true);
         }
-        (draw ?? mountChipSummary())(evt.summary, true);
       }
+    } finally {
+      drafts.stop();
     }
     chipSummarizeBtn.disabled = false;
     chipSummarizeBtn.textContent = result?.summary ? 'SHOW REVIEWS' : 'SUMMARIZE';

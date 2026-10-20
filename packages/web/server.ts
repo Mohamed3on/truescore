@@ -33,6 +33,7 @@ import {
   type Summary,
   type SummarizeRequest,
   type SummarizeResponse,
+  DRAFT_MS,
   type SummaryDraft,
   type SummaryDraftEvent,
   type SummaryEvent,
@@ -184,7 +185,6 @@ function ndjsonStream<E extends { type: string }>(producer: (write: (event: E) =
 // A summary's drafts as the model writes it, at most one per DRAFT_MS: each
 // carries the whole draft so far, so one skipped costs nothing. Stopped before
 // the checked summary goes out, so no draft lands after it.
-const DRAFT_MS = 150;
 const drafter = (write: (event: SummaryDraftEvent) => void) => {
   let next: SummaryDraft | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;

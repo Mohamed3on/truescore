@@ -71,16 +71,23 @@ describe('streamSummary', () => {
   const origFetch = globalThis.fetch;
   afterEach(() => { globalThis.fetch = origFetch; });
 
-  test('hands each draft on, then resolves to the checked summary', async () => {
-    const lines = [
-      { type: 'summary-draft', summary: { verdict: 'Go', highlights: [] } },
-      { type: 'summary-draft', summary: { verdict: 'Good', highlights: [{ text: 'Fast', sentiment: 'positive' }] } },
-      { type: 'summary', summary: { verdict: 'Good', highlights: [{ text: 'Fast', sentiment: 'positive', support: 3 }] }, cached: false },
-    ];
-    globalThis.fetch = (async () => new Response(lines.map((l) => JSON.stringify(l)).join('\n') + '\n', { headers: { 'content-type': 'application/x-ndjson' } })) as unknown as typeof fetch;
+  test('grows the drafts frame by frame up to the newest, then resolves to the checked summary', async () => {
+    const line = (l: unknown) => new TextEncoder().encode(JSON.stringify(l) + '\n');
+    const body = new ReadableStream<Uint8Array>({
+      async start(c) {
+        c.enqueue(line({ type: 'summary-draft', summary: { verdict: 'Go', highlights: [] } }));
+        c.enqueue(line({ type: 'summary-draft', summary: { verdict: 'Good food, fair prices', highlights: [{ text: 'Fast', sentiment: 'positive' }] } }));
+        await new Promise((r) => setTimeout(r, 300));
+        c.enqueue(line({ type: 'summary', summary: { verdict: 'Good', highlights: [{ text: 'Fast', sentiment: 'positive', support: 3 }] }, cached: false }));
+        c.close();
+      },
+    });
+    globalThis.fetch = (async () => new Response(body, { headers: { 'content-type': 'application/x-ndjson' } })) as unknown as typeof fetch;
     const drafts: string[] = [];
     const done = await streamSummary('/api/summarize', {}, (d) => drafts.push(d.verdict));
-    expect(drafts).toEqual(['Go', 'Good']);
+    expect(drafts.length).toBeGreaterThan(2);
+    expect(drafts.every((v, i) => 'Good food, fair prices'.startsWith(v) && v.length >= (drafts[i - 1]?.length ?? 0))).toBe(true);
+    expect(drafts.at(-1)).toBe('Good food, fair prices');
     expect(done.summary?.highlights[0]?.support).toBe(3);
   });
 

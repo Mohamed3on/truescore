@@ -380,7 +380,7 @@
 }
 .ars-conclusion-wait > span:nth-child(2) { width: 88%; }
 .ars-conclusion-wait > span:nth-child(3) { width: 55%; }
-.ars-arrive { animation: ars-enter 0.35s cubic-bezier(0.25, 1, 0.5, 1) both; }
+.ars-arrive { animation: ars-enter 0.25s cubic-bezier(0.25, 1, 0.5, 1) both; }
 
 /* Free-form answer */
 .ars-answer {

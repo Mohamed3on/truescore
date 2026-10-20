@@ -122,6 +122,8 @@ export type HighlightEvent =
 // model writes, then the checked summary — or, cached, just that. A place
 // summary's aliases that land after it follow it (`aliases`).
 export type SummaryDraft = Pick<Summary, 'verdict' | 'highlights'>;
+// At most one draft per DRAFT_MS on the stream.
+export const DRAFT_MS = 150;
 export type SummaryDraftEvent = { type: 'summary-draft'; summary: SummaryDraft };
 export type SummaryEvent =
   | SummaryDraftEvent
