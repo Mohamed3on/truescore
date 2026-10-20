@@ -16,6 +16,9 @@ export const registerCandidates = () => {
     // 3.8 has no minimal thinking level; low is its floor.
     'flash-3.8:low': { model: google('gemini-3.8-flash'), providerOptions: { google: { thinkingConfig: { thinkingLevel: 'low' as const } } } },
     'deepseek-flash:off': PROVIDERS.deepseek,
+    // 2026-10-20 vs luna:low: lost summaries 0-4 (overstates thin evidence,
+    // wordier) and Ask on score (under-searches, 45% recall). Medium effort
+    // scored no better on either, so only low stays.
     'sonnet-5.5:low': { model: anthropic('claude-sonnet-5-5'), providerOptions: { anthropic: { effort: 'low' as const } } },
   };
   Object.assign(PROVIDERS, candidates);
