@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { Thread, ThreadComment } from '@truescore/gmaps-shared';
+import type { TallyEvent, Thread, ThreadComment } from '@truescore/gmaps-shared';
+import { fakeModel } from './fake-model';
 import { setJevClient } from './jev';
-import { chatOf, combine, countOf, naming, tallyOption, telling, threadOf } from './tally';
+import { setModel } from './llm';
+import { chatOf, combine, countOf, naming, tallyOption, tallyThread, telling, threadOf } from './tally';
 
 let n = 0;
 const comment = (id: string, body: string, more: Partial<ThreadComment> = {}): ThreadComment =>
@@ -156,6 +158,7 @@ describe('chatOf', () => {
 });
 
 // A fake Jev reading each comment by a rule; a reply reads through its parent.
+// Its yes/no questions (is it asked about, described, a group answer) are all no.
 type Req = { state: any; questions: Record<string, any> };
 let requests: Req[] = [];
 const verdict = (text: string) => (/awful|bad/.test(text) ? 'against' : /great|best/.test(text) ? 'for' : /^(this|same)\b/.test(text) ? 'agree' : 'off');
@@ -166,7 +169,7 @@ beforeEach(() => {
       requests.push(req);
       const answers = Object.fromEntries(Object.entries(req.questions).map(([id, q]) => {
         const own = verdict(q.instructions.comment);
-        return [id, { choice: own === 'agree' ? verdict(q.instructions.replying_to ?? '') : own }];
+        return [id, { choice: own === 'agree' ? verdict(q.instructions.replying_to ?? '') : own, noul: 0 }];
       }));
       return Promise.resolve({ answers, usage: { input_tokens: 100, output_tokens: 0 }, model: 'jev-test' }) as any;
     },
@@ -254,5 +257,30 @@ describe('tallyOption', () => {
     await tallyOption(thread, 'q', { name: 'Schreiner', aliases: [], titles: [{ name: 'Pressure Passing', aliases: [] }] });
     // Schreiner's own read and his title's: none borrowed from Lovato's.
     expect(requests.flatMap((r) => Object.keys(r.questions))).toHaveLength(2);
+  });
+});
+
+describe('tallyThread', () => {
+  test('streams each Option the model lists, its count from what Jev reads, and why it is rated so', async () => {
+    // The model lists Sony and Bose, and writes a line for each Option it is asked about.
+    setModel(fakeModel((fields) => JSON.stringify(fields.includes('options')
+      ? { options: [{ name: 'Sony', aliases: [], titles: [] }, { name: 'Bose', aliases: [], titles: [] }] }
+      : Object.fromEntries(fields.map((key) => [key, ` why ${key} `])))));
+    const thread = threadWith([
+      comment('a', 'Sony is great', { author: 'x' }),
+      comment('b', 'this', { author: 'y', parentId: 'a' }),
+      comment('c', 'Bose is awful', { author: 'z' }),
+      comment('d', 'Bose is the best', { author: 'w' }),
+    ]);
+    const events: TallyEvent[] = [];
+    await tallyThread(thread, (e) => events.push(e));
+    setModel(null);
+    expect(events.filter((e) => e.type === 'listed').map((e) => e.option.name)).toEqual(['Sony', 'Bose']);
+    expect(Object.fromEntries(events.flatMap((e) => (e.type === 'option' ? [[e.option.key, e.option.count]] : [])))).toEqual({
+      sony: { for: 2, against: 0, mixed: 0, upFor: 2, upAgainst: 0 },
+      bose: { for: 1, against: 1, mixed: 0, upFor: 1, upAgainst: 1 },
+    });
+    expect(events.filter((e) => e.type === 'why')).toEqual([{ type: 'why', key: 'sony', text: 'why sony' }, { type: 'why', key: 'bose', text: 'why bose' }]);
+    expect(events.at(-1)).toEqual({ type: 'done' });
   });
 });

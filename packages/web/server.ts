@@ -15,6 +15,7 @@ import {
   type HighlightEvent,
   type HighlightSummaryRequest,
   type HighlightSummaryResponse,
+  type LlmOverrides,
   type HighlightsRequest,
   type HighlightsResponse,
   type HistogramRequest,
@@ -45,7 +46,8 @@ import { resolvePlace } from './resolve';
 import { mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch, type ScoreResult } from './gmaps';
 import { createUIMessageStream, createUIMessageStreamResponse, isStaticToolUIPart } from 'ai';
-import { summarize, aliasesFor, ask, askThread, parseProvider, parseReasoningEffort } from './llm';
+import { ask, askThread, parseProvider, parseReasoningEffort } from './llm';
+import { cachedSubject, checkedSummary, summaryWithReceipts } from './checked-summary';
 import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
 import { harvestTokens, harvestQuick, scoreHighlight, type Harvest } from './highlights';
 import { answerKey, cache, type CachedAnswer, type CacheEntry } from './cache';
@@ -53,8 +55,8 @@ import { logEvent } from './events';
 import { createInflight } from './inflight';
 import index from './index.html';
 import login from './login.html';
-import { errStatus, NoReviews, resolveSubject, type Subject } from './summary-subject';
-import { answersFor, hasReceipts, jevAvailable, mentioning, preferredCount, quotingReviews, stanceOfReviews, stancesFor, supportFor, withReceipts } from './jev';
+import { errStatus, NoReviews, resolveSubject } from './summary-subject';
+import { answersFor, hasReceipts, jevAvailable, mentioning, preferredCount, quotingReviews, stanceOfReviews, stancesFor, supportFor } from './jev';
 import { chatOf, tallyThread, threadOf } from './tally';
 
 const json = (v: any, status = 200) =>
@@ -124,6 +126,8 @@ function friendlyError(e: unknown): string {
   return m;
 }
 const errBody = (e: unknown) => ({ error: friendlyError(e) });
+// A body's model overrides, honoured only for a configured provider or effort.
+const llmOf = (body: LlmOverrides) => ({ provider: parseProvider(body.provider), reasoningEffort: parseReasoningEffort(body.reasoningEffort) });
 
 // A kept Answer, streamed as a fresh one would be: its Searches, then its text,
 // with when it was written.
@@ -267,23 +271,15 @@ const recordHarvest = (featureId: string, { chips, ok }: Harvest): Promise<void>
 // A chip as a lookup ships it: its counts, not its reviews or their stances.
 const slimChip = ({ reviews: _r, stances: _s, ...rest }: Chip) => rest;
 
-// Chips and summaries cached before Jev read them are read now, once, and kept —
-// by /api/highlights and /api/summarize, which a lookup leaves them to (see
-// streamCachedLookup), so they first paint with their counts and receipts.
+// Chips cached before Jev read them are read now, once, and kept — by
+// /api/highlights, which a lookup leaves them to (see streamCachedLookup), so
+// they first paint with their counts. Summaries likewise (checked-summary.ts).
 async function chipsWithStance(featureId: string, chips: Chip[]): Promise<Chip[]> {
   if (!jevAvailable() || chips.every((c) => c.stance)) return chips;
   const read = await Promise.all(chips.map(async (c) => (c.stance || !c.reviews ? c : { ...c, ...(await stanceOfReviews(c.label, c.reviews)) })));
   if (read.every((c) => c.stance)) await cache.putHighlights(featureId, read);
   return read;
 }
-async function summaryWithReceipts(summary: Summary, subject: Subject | null, keep: (s: Summary) => Promise<void>): Promise<Summary> {
-  if (hasReceipts(summary) || !subject || !jevAvailable()) return summary;
-  const checked = await withReceipts(summary, subject);
-  if (hasReceipts(checked)) await keep(checked);
-  return checked;
-}
-const cachedSubject = (entry: CacheEntry, reviews = entry.score?.reviews): Subject | null =>
-  reviews?.length ? { placeName: entry.name, reviewTexts: textReviewsFor(reviews), removedReviews: entry.meta?.removedReviews } : null;
 
 // Score every chip in parallel: collect successes, count failures, and cache
 // whatever succeeded. A set missing a chip that threw is stored as short, so
@@ -707,38 +703,11 @@ Bun.serve({
           const featureId = body.featureId;
           if (!featureId) return corsJson({ error: 'missing featureId' }, 400);
 
-          const entry = cache.get(featureId);
-          const force = !!body.force;
+          // A filtered summary is per-callsite: never kept in the Place's slot.
           const filter = body.filter?.trim() || undefined;
-          const answer = async (onDraft?: (draft: SummaryDraft) => void): Promise<SummarizeResponse & { later?: Promise<Summary['aliases']> }> => {
-            // Only the unfiltered place summary participates in the persisted
-            // cache; filtered topic summaries are per-callsite and shouldn't
-            // overwrite the canonical entry.summary slot.
-            if (!filter && entry?.summary && !force) {
-              const summary = await summaryWithReceipts(entry.summary, cachedSubject(entry), (s) => cache.putSummary(featureId, s));
-              return { summary: quotingReviews(summary, entry.score?.reviews), cached: true };
-            }
-            const subject = resolveSubject({
-              entry, name: body.name, reviewTexts: body.reviewTexts, reviews: entry?.score?.reviews, removedReviews: body.removedReviews,
-              hint: 'look up the place first or pass reviewTexts in the body',
-            });
-            // Its receipts are read before it's final: streamed, its bullets
-            // show dim until then, and the ones too few reviews make go. A place
-            // summary's aliases come from a call run beside them: in the summary
-            // when they land first, else sent after it (`later`), never waited on.
-            const provider = parseProvider(body.provider);
-            const drafted = await summarize(subject, filter, provider, parseReasoningEffort(body.reasoningEffort), onDraft);
-            const aliases = filter ? undefined : aliasesFor(subject, drafted.items, provider);
-            const checked = await withReceipts(drafted, subject);
-            const landed = aliases && Bun.peek(aliases);
-            const summary = landed && !(landed instanceof Promise) ? { ...checked, aliases: landed } : checked;
-            if (!filter && entry) await cache.putSummary(featureId, summary);
-            const later = landed instanceof Promise ? landed.then(async (a) => {
-              if (a && !filter && entry) await cache.putSummary(featureId, { ...summary, aliases: a });
-              return a;
-            }) : undefined;
-            return { summary: quotingReviews(summary, entry?.score?.reviews), cached: false, later };
-          };
+          const answer = (onDraft?: (draft: SummaryDraft) => void) => checkedSummary({
+            featureId, entry: cache.get(featureId), of: filter ? { filter } : undefined, sent: body, force: !!body.force, llm: llmOf(body), onDraft,
+          });
           if (body.stream) return summaryStream(answer);
           const { later, ...done } = await answer();
           const aliases = await later;
@@ -817,17 +786,10 @@ Bun.serve({
           const label = highlight?.label ?? body.label;
           if (!(cached && !force) && !label) return corsJson({ error: 'missing label (and no cached highlight)' }, 400);
           const answer = async (onDraft?: (draft: SummaryDraft) => void): Promise<HighlightSummaryResponse> => {
-            if (cached && !force) {
-              const summary = await summaryWithReceipts(cached, entry && cachedSubject(entry, highlight?.reviews), (s) => cache.putHighlightSummary(featureId, token, s));
-              return { summary, label: label ?? '', cached: true };
-            }
-            const subject = resolveSubject({
-              entry, name: body.name, reviewTexts: body.reviewTexts, reviews: highlight?.reviews,
-              hint: 'pass reviewTexts in the body or run highlights first',
+            const { summary, cached } = await checkedSummary({
+              featureId, entry, of: { chip: { token, label: label ?? '', reviews: highlight?.reviews } }, sent: body, force, llm: llmOf(body), onDraft,
             });
-            const summary = await withReceipts(await summarize(subject, label, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort), onDraft), subject);
-            if (entry) await cache.putHighlightSummary(featureId, token, summary);
-            return { summary, label, cached: false };
+            return { summary, label: label ?? '', cached };
           };
           if (body.stream) return summaryStream(answer);
           return corsJson((await answer()) satisfies HighlightSummaryResponse);
@@ -889,19 +851,12 @@ Bun.serve({
               const cacheable = mapsSessionHealthy();
               if (cacheable) await cache.putSearch(featureId, term, result);
 
-              if (entry && doSummarize && (!result.summary || force)) {
-                const reviewTexts = textReviewsFor(result.reviews);
-                if (reviewTexts.length) {
-                  const subject = { placeName: entry.name, reviewTexts, removedReviews: entry.meta?.removedReviews };
-                  const drafts = drafter(write);
-                  try {
-                    result.summary = await withReceipts(await summarize(subject, term, parseProvider(body.provider), parseReasoningEffort(body.reasoningEffort), drafts.onDraft), subject);
-                  } finally {
-                    drafts.stop();
-                  }
-                  write({ type: 'search-summary', summary: result.summary });
-                  if (cacheable) await cache.putSearch(featureId, term, result);
-                }
+              if (entry && doSummarize && textReviewsFor(result.reviews).length) {
+                const drafts = drafter(write);
+                const { summary } = await checkedSummary({ featureId, entry, of: { search: result, keep: cacheable }, force, llm: llmOf(body), onDraft: drafts.onDraft })
+                  .finally(drafts.stop);
+                // Sent unless it's the one the result already carried.
+                if (summary !== result.summary) write({ type: 'search-summary', summary });
               }
             } catch (e) {
               console.error(`[search] "${term}" (${featureId}):`, e);
