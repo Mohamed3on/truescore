@@ -1,4 +1,4 @@
-import { LLM_PROVIDERS, REASONING_EFFORTS, type ReasoningEffort, type Provider as LLMProvider } from '@truescore/gmaps-shared';
+import { DEFAULT_PROVIDER, LLM_PROVIDERS, REASONING_EFFORTS, type ReasoningEffort, type Provider as LLMProvider } from '@truescore/gmaps-shared';
 
 // API keys are per-user: set in the TrueScore popup, stored in
 // chrome.storage.sync. They are deliberately NOT bundled — a key compiled into
@@ -25,9 +25,10 @@ export type { ReasoningEffort, LLMProvider };
 export { REASONING_EFFORTS };
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 
-// Active provider for extension-direct summaries: the popup toggle wins;
-// unset falls back to Sonnet-if-keyed, then OpenAI-if-keyed, else Gemini.
-// (Google Maps summaries are server-side and follow the server's LLM_PROVIDER instead.)
+// Active provider for extension-direct summaries: the popup toggle wins; unset,
+// DEFAULT_PROVIDER (gmaps-shared/wire.ts) if its key is saved, else the first
+// provider with one. (Google Maps summaries are server-side and follow the
+// server's default instead.)
 export async function getReasoningEffort(): Promise<ReasoningEffort> {
   const effort = await storedKey('openaiReasoningEffort');
   return (REASONING_EFFORTS as readonly string[]).includes(effort) ? (effort as ReasoningEffort) : DEFAULT_REASONING_EFFORT;
@@ -40,7 +41,7 @@ export async function getActiveLLM(): Promise<{ provider: LLMProvider; key: stri
       .then(([anthropic, openai, gemini, deepseek]): Record<LLMProvider, string> => ({ anthropic, openai, gemini, deepseek })),
     getReasoningEffort(),
   ]);
-  const provider: LLMProvider = pref ?? (keys.anthropic ? 'anthropic' : keys.openai ? 'openai' : 'gemini');
+  const provider: LLMProvider = pref ?? [DEFAULT_PROVIDER, ...LLM_PROVIDERS].find((p) => keys[p]) ?? DEFAULT_PROVIDER;
   return { provider, key: keys[provider], reasoningEffort };
 }
 
@@ -51,13 +52,3 @@ export async function getProviderChoice(): Promise<LLMProvider | undefined> {
   const pref = await storedKey('llmProvider');
   return (LLM_PROVIDERS as readonly string[]).includes(pref) ? (pref as LLMProvider) : undefined;
 }
-
-export const GEMINI_MODEL = 'gemini-3-flash-preview';
-
-export const OPENAI_MODEL = 'gpt-6-luna';
-
-export const ANTHROPIC_MODEL = 'claude-sonnet-5-5';
-
-// DeepSeek V4.1 Flash, always non-thinking (fastest, and its thinking ladder didn't
-// improve summary quality — see web evals/latency.ts).
-export const DEEPSEEK_MODEL = 'deepseek-flash';

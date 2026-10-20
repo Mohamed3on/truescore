@@ -209,15 +209,27 @@ export type ReceiptsResponse = { support?: number[][]; preferredBy?: number[]; e
 // The full set of summarization providers and reasoning levels the server
 // accepts. Canonical here so web/llm.ts and the extension's config.ts share one
 // definition instead of each re-declaring the union + its validation list.
-export const LLM_PROVIDERS = ['gemini', 'openai', 'deepseek', 'anthropic'] as const;
+// In the order the extension falls back to when the default's key isn't saved.
+export const LLM_PROVIDERS = ['anthropic', 'openai', 'gemini', 'deepseek'] as const;
 export type Provider = (typeof LLM_PROVIDERS)[number];
+// The default model everywhere: server summaries, Ask and the Tally, and the
+// extension's own calls when the popup's toggle is unset and its key is saved.
+// Changing it here changes all of them.
+export const DEFAULT_PROVIDER: Provider = 'anthropic';
+// The model each provider runs, on the server and in the extension.
+export const MODELS: Record<Provider, string> = {
+  anthropic: 'claude-sonnet-5-5',
+  openai: 'gpt-6-luna',
+  gemini: 'gemini-3-flash-preview',
+  deepseek: 'deepseek-flash',
+};
 // No 'none': the AI SDK won't send it to GPT-6 models, which then run at the
 // API default (medium) instead.
 export const REASONING_EFFORTS = ['low', 'medium', 'high'] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 // Optional per-request overrides on the summarize/ask bodies. Unset leaves the
-// server on its own default (LLM_PROVIDER env, Sonnet 5.5 at low). reasoningEffort
-// is gpt-6-luna only; the server ignores it on the other providers.
+// server on DEFAULT_PROVIDER. reasoningEffort is gpt-6-luna only; the server
+// ignores it on the other providers.
 export type LlmOverrides = { reasoningEffort?: ReasoningEffort; provider?: Provider };
 
 // ---- request bodies ----

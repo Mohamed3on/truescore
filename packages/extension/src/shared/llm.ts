@@ -2,9 +2,9 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { DirectChatTransport, generateObject, generateText, jsonSchema, NoObjectGeneratedError, streamObject, streamText, ToolLoopAgent, type ChatTransport, type JSONSchema7, type LanguageModel, type LanguageModelUsage } from 'ai';
-import { salvageString, salvageStringArray, searchesLeft, searchReviewsTool, type AskMessage } from '@truescore/gmaps-shared';
+import { MODELS, salvageString, salvageStringArray, searchesLeft, searchReviewsTool, type AskMessage } from '@truescore/gmaps-shared';
 import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
-import { ANTHROPIC_MODEL, DEEPSEEK_MODEL, GEMINI_MODEL, getActiveLLM, OPENAI_MODEL } from './config';
+import { getActiveLLM } from './config';
 
 // Every LLM call the extension makes itself (retail and book pages; Google Maps
 // asks the server), on the popup's model and key, via AI SDK.
@@ -18,10 +18,10 @@ const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', deepseek: 'DeepSeek
 const activeModel = async (): Promise<{ model: LanguageModel; providerOptions: Record<string, Record<string, any>>; maxOutputTokens: number }> => {
   const { provider, key: apiKey, reasoningEffort } = await getActiveLLM();
   if (!apiKey) throw new Error(`No ${PROVIDER_LABEL[provider]} API key — set one in the TrueScore popup`);
-  if (provider === 'gemini') return { model: createGoogleGenerativeAI({ apiKey })(GEMINI_MODEL), providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 32768 };
-  if (provider === 'deepseek') return { model: deepseekModel(apiKey, DEEPSEEK_MODEL), providerOptions: { deepseek: { thinking: { type: 'disabled' } } }, maxOutputTokens: 8192 };
-  if (provider === 'anthropic') return { model: createAnthropic({ apiKey, headers: { 'anthropic-dangerous-direct-browser-access': 'true' } })(ANTHROPIC_MODEL), providerOptions: { anthropic: { effort: 'low' } }, maxOutputTokens: 32768 };
-  return { model: createOpenAI({ apiKey })(OPENAI_MODEL), providerOptions: { openai: { reasoningEffort } }, maxOutputTokens: 32768 };
+  if (provider === 'gemini') return { model: createGoogleGenerativeAI({ apiKey })(MODELS.gemini), providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' } } }, maxOutputTokens: 32768 };
+  if (provider === 'deepseek') return { model: deepseekModel(apiKey, MODELS.deepseek), providerOptions: { deepseek: { thinking: { type: 'disabled' } } }, maxOutputTokens: 8192 };
+  if (provider === 'anthropic') return { model: createAnthropic({ apiKey, headers: { 'anthropic-dangerous-direct-browser-access': 'true' } })(MODELS.anthropic), providerOptions: { anthropic: { effort: 'low' } }, maxOutputTokens: 32768 };
+  return { model: createOpenAI({ apiKey })(MODELS.openai), providerOptions: { openai: { reasoningEffort } }, maxOutputTokens: 32768 };
 };
 
 // Reviews arrive in the page's locale (amazon.es, booking.de, …), so without the

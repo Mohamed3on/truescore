@@ -3,7 +3,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { convertToModelMessages, NoObjectGeneratedError, streamObject, streamText, type ModelMessage } from 'ai';
 import { z } from 'zod';
-import { LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
+import { DEFAULT_PROVIDER, LLM_PROVIDERS, MODELS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
 import { deepseekModel } from '@truescore/gmaps-shared/deepseek';
 import { aliasesOf, capItems, MAX_ALIASES, MAX_SCORED_ITEMS, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
@@ -11,8 +11,8 @@ import { removalNote, type Subject } from './summary-subject';
 export type { Summary, SummaryHighlight, Provider, ReasoningEffort, Subject };
 
 // The providers all run the same prompts and schema so the models are directly
-// comparable (see evals/compare.ts). LLM_PROVIDER=gemini|openai|deepseek|anthropic
-// picks the active one; defaults to Gemini. The google provider reads GEMINI_API_KEY
+// comparable (see evals/compare.ts). DEFAULT_PROVIDER and MODELS
+// (gmaps-shared/wire.ts) pick the active one and each one's model. The google provider reads GEMINI_API_KEY
 // (this repo's name for it), not the SDK default GOOGLE_GENERATIVE_AI_API_KEY;
 // deepseek reads DEEPSEEK_API_KEY, anthropic ANTHROPIC_API_KEY.
 const google = createGoogleGenerativeAI({
@@ -23,7 +23,7 @@ const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export const PROVIDERS = {
   gemini: {
-    model: google('gemini-3-flash-preview'),
+    model: google(MODELS.gemini),
     providerOptions: { google: { thinkingConfig: { thinkingLevel: 'minimal' as const } } },
   },
   openai: {
@@ -40,7 +40,7 @@ export const PROVIDERS = {
     // a call with a different ending never reads — so summaries and varied
     // questions paid 25% more for nothing. Explicit mode writes only at a
     // `promptCacheBreakpoint` we place (ask() puts one after the Sample).
-    model: openai('gpt-6-luna'),
+    model: openai(MODELS.openai),
     providerOptions: { openai: { reasoningEffort: 'low', promptCacheOptions: { mode: 'explicit' as const } } },
   },
   deepseek: {
@@ -48,20 +48,21 @@ export const PROVIDERS = {
     // a fraction of the cost (evals/latency.ts) and its thinking ladder ran
     // 2.5-7x slower for no quality gain, so it stays disabled. Structured
     // output goes through a strict tool call (gmaps-shared/deepseek.ts).
-    model: deepseekModel(process.env.DEEPSEEK_API_KEY, 'deepseek-flash'),
+    model: deepseekModel(process.env.DEEPSEEK_API_KEY, MODELS.deepseek),
     providerOptions: { deepseek: { thinking: { type: 'disabled' as const } } },
   },
   anthropic: {
-    // Claude Sonnet 5.5 at low effort, the default since 2026-10-20 (Ask and
-    // summaries; evals/candidates.ts has the results). Medium scored no better.
-    model: anthropic('claude-sonnet-5-5'),
+    // Claude Sonnet 5.5 at low effort, the default since 2026-10-20 (Ask,
+    // summaries and the Tally; evals/candidates.ts has the results). Medium
+    // scored no better.
+    model: anthropic(MODELS.anthropic),
     providerOptions: { anthropic: { effort: 'low' as const } },
   },
 };
 
 // Validate untrusted request-body overrides against the canonical wire lists
 // (gmaps-shared/wire.ts): the server only honors a configured provider/effort,
-// never one injected from the body. Unset → active() default. Gemini/DeepSeek
+// never one injected from the body. Unset → DEFAULT_PROVIDER. Gemini/DeepSeek
 // ignore reasoningEffort (it's gpt-6-luna only).
 export const parseReasoningEffort = (v: unknown): ReasoningEffort | undefined =>
   typeof v === 'string' && (REASONING_EFFORTS as readonly string[]).includes(v) ? (v as ReasoningEffort) : undefined;
@@ -72,11 +73,6 @@ const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
   effort && provider === 'openai'
     ? { model: PROVIDERS.openai.model, providerOptions: { openai: { ...PROVIDERS.openai.providerOptions.openai, reasoningEffort: effort } } }
     : PROVIDERS[provider];
-
-const active = (): Provider => {
-  const p = process.env.LLM_PROVIDER;
-  return p && (LLM_PROVIDERS as readonly string[]).includes(p) ? (p as Provider) : 'gemini';
-};
 
 // evals/compare.ts hooks this to collect per-call token usage; the server
 // never sets it.
@@ -157,7 +153,7 @@ ${NOTES}${removal ? `\n\n${removal} If they do, add one negative highlight for i
 // shows Google's banner).
 // `onDraft` gets the summary as far as it's written (the verdict and the
 // highlights so far) each time either grows; both halves then stream.
-export async function summarize({ placeName, reviewTexts, removedReviews }: Subject, filterQuery?: string, provider: Provider = active(), reasoningEffort?: ReasoningEffort, onDraft?: (draft: SummaryDraft) => void): Promise<Summary> {
+export async function summarize({ placeName, reviewTexts, removedReviews }: Subject, filterQuery?: string, provider: Provider = DEFAULT_PROVIDER, reasoningEffort?: ReasoningEffort, onDraft?: (draft: SummaryDraft) => void): Promise<Summary> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const subject = subjectOf(placeName, filterQuery);
   const block = reviewBlock(reviewTexts);
@@ -212,7 +208,7 @@ export const aliasesRequest = ({ placeName, reviewTexts }: Subject, items: strin
 });
 
 // None when the call fails: the summary stands without them.
-export async function aliasesFor(subject: Subject, items: string[] | undefined, provider: Provider = active()): Promise<Summary['aliases']> {
+export async function aliasesFor(subject: Subject, items: string[] | undefined, provider: Provider = DEFAULT_PROVIDER): Promise<Summary['aliases']> {
   if (!items?.length) return undefined;
   const { model, providerOptions } = provider === 'openai'
     ? { model: lunaNoReasoning, providerOptions: { openai: { promptCacheOptions: PROVIDERS.openai.providerOptions.openai.promptCacheOptions } } }
@@ -249,7 +245,7 @@ export type AskOptions = { filterQuery?: string; provider?: Provider; reasoningE
 
 // One round of an Ask (see AskMessage): the model streams the Answer, or calls
 // for Searches, which end the round.
-export async function ask({ placeName, reviewTexts, removedReviews }: Subject, messages: AskMessage[], { filterQuery, provider = active(), reasoningEffort, abortSignal }: AskOptions = {}) {
+export async function ask({ placeName, reviewTexts, removedReviews }: Subject, messages: AskMessage[], { filterQuery, provider = DEFAULT_PROVIDER, reasoningEffort, abortSignal }: AskOptions = {}) {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const removal = removalNote(removedReviews);
   const tools = { searchReviews: searchReviewsTool(reviewTexts, SEARCH_DESCRIPTION) };
@@ -301,7 +297,7 @@ Not Options: answers to another question than this one (the store a product came
 // Streams the listing: each Option goes to `onOption` once the model has moved
 // on to the next one (the last when the list ends), so counting it can start
 // while the rest are still being written.
-export async function listOptions(question: string, comments: string[], onOption: (o: Partial<ThreadOption>) => void, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
+export async function listOptions(question: string, comments: string[], onOption: (o: Partial<ThreadOption>) => void, provider: Provider = DEFAULT_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const listing = streamObject({ model, providerOptions, ...optionsRequest(question, comments) });
   let sent = 0;
@@ -332,7 +328,7 @@ export const reasonsRequest = (question: string, comments: string[], groups: Rea
 
 // Streams each line to `onReason` once the model has started the next key (the
 // model writes them in the schema's order), the last when it ends.
-export async function explainOptions(question: string, comments: string[], groups: ReasonGroup[], onReason: (key: string, why: string) => void, provider: Provider = active(), reasoningEffort?: ReasoningEffort): Promise<Record<string, string>> {
+export async function explainOptions(question: string, comments: string[], groups: ReasonGroup[], onReason: (key: string, why: string) => void, provider: Provider = DEFAULT_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<Record<string, string>> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const writing = streamObject({ model, providerOptions, ...reasonsRequest(question, comments, groups) });
   const keys = groups.map((g) => g.key);
@@ -389,7 +385,7 @@ export const threadAskRequest = (thread: Thread, chat: ThreadTurn[]) => ({
 
 // The answer to the last question in `chat`, each piece of its text to
 // `onText` as the model writes it.
-export async function askThread(thread: Thread, chat: ThreadTurn[], onText: (text: string) => void, { provider = active(), reasoningEffort, abortSignal }: AskOptions = {}): Promise<void> {
+export async function askThread(thread: Thread, chat: ThreadTurn[], onText: (text: string) => void, { provider = DEFAULT_PROVIDER, reasoningEffort, abortSignal }: AskOptions = {}): Promise<void> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   // A failed call reaches only onError; the stream itself just ends.
   let failure: unknown;

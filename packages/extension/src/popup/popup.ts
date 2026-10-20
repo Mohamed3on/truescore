@@ -1,4 +1,4 @@
-import { getReasoningEffort } from '../shared/config';
+import { getActiveLLM, getReasoningEffort } from '../shared/config';
 
 const status = document.getElementById('status')!;
 
@@ -8,8 +8,8 @@ const flashSaved = (msg: string) => {
   setTimeout(() => { status.textContent = ''; }, 1500);
 };
 
-// Provider toggle: explicit choice in llmProvider; unset falls back to
-// Sonnet-if-keyed, then OpenAI-if-keyed, else Gemini (mirrors getActiveLLM in shared/config.ts).
+// Provider toggle: explicit choice in llmProvider; unset shows what getActiveLLM
+// falls back to.
 const seg = document.getElementById('provider-seg')!;
 const segBtns = [...seg.querySelectorAll<HTMLButtonElement>('button')];
 const markActive = (provider: string) =>
@@ -20,11 +20,9 @@ const markActive = (provider: string) =>
 const reasoningField = document.getElementById('reasoning-field')!;
 const showReasoning = (provider: string) => { reasoningField.style.display = provider === 'openai' ? '' : 'none'; };
 
-chrome.storage.sync.get(['llmProvider', 'anthropicApiKey', 'openaiApiKey'], (items) => {
-  const { llmProvider, anthropicApiKey, openaiApiKey } = items as Record<string, string | undefined>;
-  const active = llmProvider || (anthropicApiKey ? 'anthropic' : openaiApiKey ? 'openai' : 'gemini');
-  markActive(active);
-  showReasoning(active);
+getActiveLLM().then(({ provider }) => {
+  markActive(provider);
+  showReasoning(provider);
 });
 
 for (const btn of segBtns) {
@@ -57,7 +55,7 @@ for (const btn of reasoningBtns) {
   });
 }
 
-// One field per provider key; review summaries prefer Sonnet, then OpenAI, when several are set.
+// One field per provider key; with no model picked, summaries prefer the default's key (getActiveLLM).
 const FIELDS = [
   { id: 'apikey', storageKey: 'geminiApiKey' },
   { id: 'openai-key', storageKey: 'openaiApiKey' },
