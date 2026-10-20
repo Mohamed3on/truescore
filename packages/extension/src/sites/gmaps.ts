@@ -4,8 +4,9 @@ import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, LLM_SETTINGS_GET, PREVIEW_CAP
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import type { LLMProvider, ReasoningEffort } from '../shared/config';
-import { findQA, loadQAs, removeQA, saveQA } from '../shared/qa-history';
-import { markPressed, opinionFilters, opinionNumbers, opinionsEl, opinionsLabel, opinionsSlot, readAnswers, readStanceOf, receiptButton, stanceMark, type NumberStyle } from '../shared/jev';
+import { loadQAs, removeQA } from '../shared/qa-history';
+import { askReviews, type Read } from '../shared/review-ask';
+import { markPressed, opinionFilters, opinionNumbers, opinionsEl, opinionsLabel, opinionsSlot, readStanceOf, receiptButton, stanceMark, type NumberStyle } from '../shared/jev';
 
 // The panel's own number styles, so stance numbers sit where the star share sat:
 // a chip's % and ·count; plain text in a panel title; the search header's colours.
@@ -19,8 +20,6 @@ import {
   type AskMessage,
   type AskSearch,
   type AskView,
-  type SearchReviews,
-  runAsk,
   signReq,
   buildSearchReq,
   chipPolarity,
@@ -58,7 +57,6 @@ import {
   type Transport,
   answersOf,
   bySupport,
-  countAnswers,
   opinionsOf,
   opinionTone,
   tooFewMentions,
@@ -1027,18 +1025,16 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
 };
 
 // One Ask: its Sample, scope and question; `live` false (the user moved on)
-// stops it, and `onSettled` gets its final view.
-type AskJob = { reviewTexts: string[]; filter: string | null; question: string; live: () => boolean; onSettled?: (v: AskView) => void };
+// stops it. `qaKey`: the place's Recent questions, which replay and keep it.
+type AskJob = { reviewTexts: string[]; filter: string | null; question: string; live: () => boolean; qaKey?: string };
 
 // An Ask's DOM in `panel`, returning its painter: a row per Search the model
 // had us run — count climbing, then kept, and clicking opens it as a label
 // search — a reading pulse while the model works, the Answer's markdown as
 // it's written, and for a replayed Answer when it was written + Ask again.
-// What each Search's matches say to the question, once Jev has read them:
-// settled, being read, or null (the row keeps its matches' TrueScore).
-type AnswersRead = AnswerCounts | Promise<AnswerCounts | null> | null;
-
-const mountAsk = (panel: HTMLElement, job: AskJob, reads = new Map<string, AnswersRead>()) => {
+// `reads`: what each Search's matches say to the question, once Jev has read
+// them (the row keeps its matches' TrueScore until then, or without one).
+const mountAsk = (panel: HTMLElement, job: AskJob, reads: Map<string, Read>) => {
   panel.textContent = '';
   panel.className = 'rc-summary-panel';
   panel.style.display = 'block';
@@ -1054,7 +1050,7 @@ const mountAsk = (panel: HTMLElement, job: AskJob, reads = new Map<string, Answe
     if (v.answeredAt && !shown?.answeredAt) {
       const again = el('button', 'rc-ask-again', 'Ask again') as HTMLButtonElement;
       again.type = 'button';
-      again.onclick = () => askReviews(panel, job, true).catch((e) => {
+      again.onclick = () => askPlace(panel, job, true).catch((e) => {
         if (!job.live()) return;
         console.error('[ask] re-ask failed', e);
         panel.textContent = 'Ask failed';
@@ -1065,33 +1061,24 @@ const mountAsk = (panel: HTMLElement, job: AskJob, reads = new Map<string, Answe
   };
 };
 
-// Run an Ask into `panel`, its Searches going through this tab's own Maps
-// session. `force` skips a replayed Answer (the server's day-long cache).
-// Each Search's matches are read for their answer as they come in, without
-// holding up the model; the settled view carries those reads for the replay.
-const askReviews = async (panel: HTMLElement, job: AskJob, force = false) => {
-  const context = await llmContext();
-  const reads = new Map<string, AnswersRead>();
-  const paint = mountAsk(panel, job, reads);
-  const ctrl = new AbortController();
-  const search: SearchReviews = async (query, onFound) => {
-    const reviews = await fetchAllForSearch(context.featureId, query, onFound, true);
-    if (!reviews) return null;
-    const { scorePct, trustedReviews } = statsForReviews(reviews);
-    const texts = textReviewsFor(reviews);
-    if (!reads.has(query)) {
-      reads.set(query, readAnswers(job.question, texts).then((a) => {
-        const counts = a && countAnswers(a);
-        reads.set(query, counts);
-        return counts;
-      }));
-    }
-    return { texts, scorePct, trustedReviews };
-  };
-  const transport = new DefaultChatTransport<AskMessage>({ api: `${TRUESCORE_API_BASE}/api/ask`, body: { ...context, reviewTexts: job.reviewTexts, filter: job.filter ?? undefined, force } });
-  const settled = await runAsk(transport, job.question, search, (v) => (job.live() ? paint(v) : ctrl.abort()), ctrl.signal);
-  const searches = await Promise.all(settled.searches.map(async (s) => ({ ...s, answers: s.answers ?? (await reads.get(s.query)) ?? undefined })));
-  if (job.live()) job.onSettled?.({ ...settled, searches });
+// Run an Ask into `panel` on the server's /api/ask, its Searches going through
+// this tab's own Maps session. `force` skips a replayed Answer (the Recent
+// questions' and the server's day-long cache).
+const askPlace = async (panel: HTMLElement, job: AskJob, force = false) => {
+  let context: ReturnType<typeof llmContext> | undefined;
+  const ctx = () => (context ??= llmContext());
+  await askReviews({
+    question: job.question, qaKey: job.qaKey, fresh: force, live: job.live,
+    mount: (reads) => mountAsk(panel, job, reads),
+    transport: async () => new DefaultChatTransport<AskMessage>({ api: `${TRUESCORE_API_BASE}/api/ask`, body: { ...await ctx(), reviewTexts: job.reviewTexts, filter: job.filter ?? undefined, force } }),
+    search: async (query, onFound) => {
+      const reviews = await fetchAllForSearch((await ctx()).featureId, query, onFound, true);
+      if (!reviews) return null;
+      const { scorePct, trustedReviews } = statsForReviews(reviews);
+      return { texts: textReviewsFor(reviews), scorePct, trustedReviews };
+    },
+  });
+  if (job.qaKey && job.live()) renderRecentQuestions();
 };
 
 // The main ask's Recent questions, as one-click replays under the ask box like
@@ -1122,7 +1109,7 @@ const renderRecentQuestions = () => {
   }
 };
 
-const askSearchRow = (s: AskSearch, read?: AnswersRead) => {
+const askSearchRow = (s: AskSearch, read?: Read) => {
   const row = el('button', s.done ? 'rc-ask-search' : 'rc-ask-search live') as HTMLButtonElement;
   row.type = 'button';
   row.disabled = !s.done || !s.found;
@@ -1657,7 +1644,7 @@ const askActiveChip = async () => {
   const texts = textReviewsFor(h.reviews ?? []);
   if (!texts.length) { body.textContent = 'No review text available'; return; }
   try {
-    await askReviews(body, { reviewTexts: texts, filter: h.label, question: q, live: () => activeHighlight === h });
+    await askPlace(body, { reviewTexts: texts, filter: h.label, question: q, live: () => activeHighlight === h });
     input.value = '';
   } catch (e) {
     if (activeHighlight !== h) return;
@@ -1841,7 +1828,7 @@ const askLabelSearch = async () => {
   panel.style.display = 'block';
   if (!texts.length) { panel.textContent = 'No review text available'; panel.className = 'rc-summary-panel'; return; }
   try {
-    await askReviews(panel, { reviewTexts: texts, filter: search.query, question: q, live: () => activeLabelSearch === search });
+    await askPlace(panel, { reviewTexts: texts, filter: search.query, question: q, live: () => activeLabelSearch === search });
     if (cardEls.searchQuestionInput) cardEls.searchQuestionInput.value = '';
   } catch (e) {
     if (activeLabelSearch !== search) return;
@@ -2480,18 +2467,11 @@ const triggerSummarize = async () => {
   try {
     if (customQuestion) {
       // A Recent question replays from here; anything else asks, and is kept.
-      const key = getSummaryCacheKey(place.featureId);
-      const job: AskJob = {
+      await askPlace(panel, {
         reviewTexts: texts, filter: null, question: customQuestion,
         live: () => place.featureId === lastFeatureId,
-        onSettled: (v) => {
-          saveQA(key, { q: customQuestion, a: v.text, ts: v.answeredAt ?? Date.now(), searches: v.searches });
-          renderRecentQuestions();
-        },
-      };
-      const recent = findQA(key, customQuestion);
-      if (recent) mountAsk(panel, job)({ searches: recent.searches ?? [], text: recent.a, done: true, answeredAt: recent.ts });
-      else await askReviews(panel, job);
+        qaKey: getSummaryCacheKey(place.featureId),
+      });
       return;
     }
     let draw: ReturnType<typeof mountSummary> | undefined;

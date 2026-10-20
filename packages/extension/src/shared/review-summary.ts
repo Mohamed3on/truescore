@@ -1,8 +1,8 @@
 import { getActiveLLM } from './config';
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from './utils';
 import { cacheGet, cacheSet } from './cache';
-import { summarize } from './llm';
-import { findQA, loadQAs, removeQA, saveQA } from './qa-history';
+import { askTransport, bumpRateLimit, checkRateLimit, RL_MAX, summarize } from './llm';
+import { loadQAs, removeQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
 import { bySupport, foldAway, mountBullets, parseOrQuery, receiptsFor, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
 import type { JSONSchema7 } from 'ai';
@@ -225,22 +225,7 @@ export const renderFreeFormAnswer = (container: HTMLElement, text: string) => {
   writeMarkdown(answer, text, renderMarkdown);
 };
 
-const RL_KEY = 'ars-gemini-rate-limit';
-const RL_MAX = 20;
-
 const QUESTION_PROMPT = `Answer this question using ONLY evidence from the product reviews below. Quote or paraphrase the most concrete details. If reviewers disagree, surface the tension. Be direct and practical.`;
-
-const checkRateLimit = () => {
-  let rl = JSON.parse(localStorage.getItem(RL_KEY) || '{"count":0,"resetAt":0}');
-  if (Date.now() > rl.resetAt) rl = { count: 0, resetAt: Date.now() + 86400000 };
-  return rl;
-};
-
-const bumpRateLimit = () => {
-  const rl = checkRateLimit();
-  rl.count++;
-  localStorage.setItem(RL_KEY, JSON.stringify(rl));
-};
 
 interface AlternateEntry { key: string; meta: any; ts: number }
 
@@ -411,28 +396,23 @@ export const buildSummarizeWidget = ({
   };
 
   const runAsk = async (btn: HTMLButtonElement, question: string) => {
-    const hit = findQA(cacheKey, question);
-    if (hit) {
-      showAnswer(hit.a, hit.searches);
-      syncControls();
-      return;
-    }
-    btn.disabled = true;
-    btn.textContent = '\u23F3 Fetching reviews\u2026';
     try {
-      const reviews = await loadReviews();
-      btn.textContent = '\u23F3 Asking\u2026';
-      let answer: string, searches: AskSearch[] | undefined;
-      if (searchAsk) {
-        summaryPanel.style.display = 'block';
-        panelMode = 'answer';
-        ({ text: answer, searches } = await askReviews(summaryPanel, 'ars-answer', searchAsk, reviews, withContext(questionPrompt, context), question));
-      } else {
-        answer = await llmSummarize(reviews, `${withContext(questionPrompt, context)}\n\nQuestion: ${question}`, null);
-        showAnswer(answer);
-      }
-      bumpRateLimit();
-      saveQA(cacheKey, { q: question, a: answer, ts: Date.now(), searches });
+      await askReviews({
+        question, search: searchAsk?.search, qaKey: cacheKey, limited: true,
+        live: () => summaryPanel.isConnected,
+        transport: async (canSearch) => {
+          btn.disabled = true;
+          btn.textContent = '\u23F3 Fetching reviews\u2026';
+          const reviews = await loadReviews();
+          btn.textContent = '\u23F3 Asking\u2026';
+          return askTransport(withContext(questionPrompt, context), reviews, canSearch);
+        },
+        mount: (reads) => {
+          summaryPanel.style.display = 'block';
+          panelMode = 'answer';
+          return mountAskView(summaryPanel, 'ars-answer', searchAsk?.open, reads);
+        },
+      });
       renderQAHistory();
     } catch (e: any) {
       summaryPanel.textContent = `Error: ${e.message}`;
@@ -620,7 +600,7 @@ interface MediaSummaryOpts {
 // via `classPrefix` (each site ships its own CSS using the same suffixes). This
 // is the editorial counterpart to buildSummarizeWidget (the retail praised/
 // complaints product widget with hardcoded ars-* styling); both share the
-// llmSummarize / rate-limit / Q&A primitives above.
+// llmSummarize, the rate limit (llm.ts) and the Ask run (review-ask.ts).
 export const buildMediaSummary = ({
   anchor,
   classPrefix: p,
@@ -773,22 +753,22 @@ export const buildMediaSummary = ({
 
   const runAsk = async (question: string) => {
     if (!ask) return;
-    const hit = ask.qaCacheKey ? findQA(ask.qaCacheKey, question) : undefined;
-    if (hit) { renderAnswer(hit.a, hit.searches); showingSummary = false; syncBtn(); return; }
-    btn.disabled = true;
-    note(`${p}-progress`, '⏳ Reading reviews…');
     try {
-      const texts = await fetchReviews();
-      if (!texts.length) throw new Error('No written reviews found yet.');
-      let answer: string, searches: AskSearch[] | undefined;
-      if (searchAsk) ({ text: answer, searches } = await askReviews(body, `${p}-text`, searchAsk, texts, ask.questionPrompt, question));
-      else {
-        note(`${p}-progress`, '⏳ Asking…');
-        answer = (await llmSummarize(texts, `${ask.questionPrompt}\n\nQuestion: ${question}`, null)) as string;
-        renderAnswer(answer);
-      }
-      bumpRateLimit();
-      if (ask.qaCacheKey) saveQA(ask.qaCacheKey, { q: question, a: answer, ts: Date.now(), searches });
+      await askReviews({
+        question, search: searchAsk?.search, qaKey: ask.qaCacheKey, limited: true,
+        live: () => body.isConnected,
+        transport: async (canSearch) => {
+          btn.disabled = true;
+          note(`${p}-progress`, '⏳ Reading reviews…');
+          const texts = await fetchReviews();
+          if (!texts.length) throw new Error('No written reviews found yet.');
+          return askTransport(ask.questionPrompt, texts, canSearch);
+        },
+        mount: (reads) => {
+          body.style.display = 'block';
+          return mountAskView(body, `${p}-text`, searchAsk?.open, reads);
+        },
+      });
       showingSummary = false;
       renderQA();
     } catch (e: any) {

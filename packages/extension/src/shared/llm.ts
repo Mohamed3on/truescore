@@ -8,6 +8,23 @@ import { getActiveLLM } from './config';
 
 const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', deepseek: 'DeepSeek', anthropic: 'Anthropic' };
 
+// The popup key's day of summaries and Answers, counted: past RL_MAX the
+// summary widgets stop offering Re-summarize.
+const RL_KEY = 'ars-gemini-rate-limit';
+export const RL_MAX = 20;
+
+export const checkRateLimit = () => {
+  let rl = JSON.parse(localStorage.getItem(RL_KEY) || '{"count":0,"resetAt":0}');
+  if (Date.now() > rl.resetAt) rl = { count: 0, resetAt: Date.now() + 86400000 };
+  return rl;
+};
+
+export const bumpRateLimit = () => {
+  const rl = checkRateLimit();
+  rl.count++;
+  localStorage.setItem(RL_KEY, JSON.stringify(rl));
+};
+
 // The popup's provider and key, on that provider's settings (gmaps-shared/models.ts).
 const activeModel = async () => {
   const { provider, key: apiKey, reasoningEffort } = await getActiveLLM();
@@ -52,12 +69,13 @@ const SEARCH_NOTE = `The reviews given are a sample; the rest can say otherwise.
 const SEARCH_DESCRIPTION = 'Search every review, not just the sample, for any of the terms. Returns how many reviews match (found); the net share of them rating 5★ over 1★ (scorePct, from -100 to 100, resting on trustedReviews rated ones — cite it when it helps); and the matches not already in the sample (reviews).';
 
 // An Ask's model for runAsk, in-process: the site's `prompt` and the `sample`
-// reviews as its instructions, and the searchReviews tool the page answers.
-export const askTransport = async (prompt: string, sample: string[]) => new DirectChatTransport({
+// reviews as its instructions, and — when the page can Search — the
+// searchReviews tool it answers; without one it answers in a single pass.
+export const askTransport = async (prompt: string, sample: string[], canSearch: boolean) => new DirectChatTransport({
   agent: new ToolLoopAgent({
     ...await activeModel(),
-    instructions: withReviews(`${prompt}\n\n${SEARCH_NOTE}`, sample),
-    tools: { searchReviews: searchReviewsTool(sample, SEARCH_DESCRIPTION) },
+    instructions: withReviews(canSearch ? `${prompt}\n\n${SEARCH_NOTE}` : prompt, sample),
+    tools: canSearch ? { searchReviews: searchReviewsTool(sample, SEARCH_DESCRIPTION) } : {},
     prepareStep: ({ messages }) => (searchesLeft(messages) ? {} : { toolChoice: 'none' }),
   }),
 }) as ChatTransport<AskMessage>;
