@@ -227,6 +227,17 @@
       "run_at": "document_end"
     },
     {
+      "matches": ["*://wearthepeace.com/products/*", "*://wearthepeace.com/*/products/*"],
+      "js": ["sites/helpfulcrowd-pdp.js"],
+      "css": ["sites/amazon-product.css"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://wearthepeace.com/*"],
+      "js": ["sites/helpfulcrowd-plp.js"],
+      "run_at": "document_end"
+    },
+    {
       "matches": ["*://bjjfanatics.com/search*", "*://bjjfanatics.com/collections/*"],
       "js": ["sites/bjjfanatics-plp.js"],
       "run_at": "document_end"
