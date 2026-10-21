@@ -8,7 +8,7 @@ web
 
 ## Users
 
-Primary user: the author, a data-savvy shopper who distrusts star averages, at the moment of deciding on a host site. About to buy (Amazon, Etsy, AliExpress, Decathlon, Uniqlo, IKEA, dm.de, DocMorris, BJJ Fanatics, Progress Jiu Jitsu), book (Booking.com, Airbnb), visit (Google Maps), watch (IMDb, Letterboxd), read (Goodreads), or read a football table (Transfermarkt). They want the truth behind a rating in seconds without leaving the page, and they notice a number that looks decorative rather than earned.
+Primary user: the author, a data-savvy shopper who distrusts star averages, at the moment of deciding on a host site. About to buy (Amazon, Etsy, AliExpress, Decathlon, Uniqlo, IKEA, dm.de, DocMorris, Rossmann, BJJ Fanatics, Progress Jiu Jitsu), book (Booking.com, Airbnb), visit (Google Maps), watch (IMDb, Letterboxd), read (Goodreads), or read a football table (Transfermarkt). They want the truth behind a rating in seconds without leaving the page, and they notice a number that looks decorative rather than earned.
 
 Secondary: friends and public installers who found the GitHub repo. Same job, less patience for setup. Confirmed 2026-09-21: "me first, public second".
 
@@ -24,7 +24,7 @@ Ratings sit between 4.0 and 4.8 everywhere, so they cannot tell a mass-produced 
 
 - Net conviction: how many people loved it versus hated it, scaled by how many bothered to say so. `score = (5★ − 1★) × ((5★ − 1★) / total)`. Each site adapts this to the data it exposes (star histograms, 1–10 histograms, like/dislike counts).
 - Trust filtering on Google Maps: only reviews from reviewers with 3 or more reviews count. Excluding drive-by and low-history reviewers is the premise, not a feature.
-- Recency: an adjusted score scaled by how positive the newest reviews are (Amazon, dm, DocMorris, Letterboxd, Goodreads).
+- Recency: an adjusted score scaled by how positive the newest reviews are (Amazon, dm, DocMorris, Rossmann, Letterboxd, Goodreads).
 - Ranking, not just labelling: search results and product grids are re-sorted by score, and a result whose hit rate beats everything ranked above it is tinted as a best-ratio pick.
 
 A neighbouring product could show a number; it cannot truthfully claim the number was computed from the reviews the user can read on that page, on every one of these sites, with no account and no server for the math.
@@ -33,7 +33,7 @@ A neighbouring product could show a number; it cannot truthfully claim the numbe
 
 - Chromium extension loaded unpacked (Chrome, Edge, Brave, Arc). Not on the Chrome Web Store. Installers download `truescore.zip` from GitHub Releases; updates are manual (new zip, refresh in `chrome://extensions`).
 - Runs inside third-party pages whose DOM and private APIs TrueScore does not control. Every site script is a scraper that can break when the host changes. One self-contained script per site or page type in `packages/extension/src/sites/`.
-- Host coverage (from `packages/extension/src/manifest.json`): Amazon storefronts .com, .de, .co.uk, .fr, .it, .es, .ca, .com.au, .com.br, .com.mx, .co.jp, .cn, .in, .eg; Decathlon across 25 European and 12 Asia-Pacific country domains; Booking.com; Airbnb rooms and search; Google Maps; Uniqlo; IKEA; dm.de; DocMorris; Etsy; AliExpress .com and .us; BJJ Fanatics; Progress Jiu Jitsu; IMDb titles; Letterboxd films; Goodreads books; Transfermarkt .com and .de; Reddit comment threads (old and new). Number parsing is locale-aware (grouping separators differ per storefront).
+- Host coverage (from `packages/extension/src/manifest.json`): Amazon storefronts .com, .de, .co.uk, .fr, .it, .es, .ca, .com.au, .com.br, .com.mx, .co.jp, .cn, .in, .eg; Decathlon across 25 European and 12 Asia-Pacific country domains; Booking.com; Airbnb rooms and search; Google Maps; Uniqlo; IKEA; dm.de; DocMorris; Rossmann; Etsy; AliExpress .com and .us; BJJ Fanatics; Progress Jiu Jitsu; IMDb titles; Letterboxd films; Goodreads books; Transfermarkt .com and .de; Reddit comment threads (old and new). Number parsing is locale-aware (grouping separators differ per storefront).
 - Scores are pure math and work with no setup. AI summaries and Ask are optional: on Amazon, Goodreads, and Letterboxd they call an LLM from the browser with the user's own key (free Gemini tier recommended; OpenAI and DeepSeek supported), set in the popup and stored in `chrome.storage.sync`, never bundled. Google Maps summaries and Reddit tallies run on the hosted server with no key.
 - Web app at truescore.mohamed3on.com: paste a Google Maps link, get the trusted-review score, topic chips, search within reviews, an AI summary, and Ask. Cloudflare in front of a Hetzner box; the origin accepts CDN traffic only, and its API takes a shared password (the web signs in at /login; the extension carries it from its popup).
 - Read in a decision moment on a busy host page, mostly on desktop. The extension has no mobile surface; the web app is opened on phones from shared links.

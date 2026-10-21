@@ -8,7 +8,7 @@ import { setupSpaInjector } from './spa-injector';
 import { appendStat, createIslandShell } from './score-island';
 import { RECENT_REVIEWS } from './recency';
 
-// The BazaarVoice review API behind dm's and DocMorris's reviews, called the way
+// The BazaarVoice review API behind dm's, DocMorris's and Rossmann's reviews, called the way
 // each site's own review widget calls it. Only the client and its display config
 // differ per site; `key` names the site's caches.
 export interface BvSite {
@@ -33,6 +33,14 @@ export const DOCMORRIS: BvSite = {
   token: '18405_2_0,new_frontend,de_DE',
   displaycode: '18405_2_0-de_de',
   referrer: 'https://www.docmorris.de/',
+};
+
+export const ROSSMANN: BvSite = {
+  key: 'rossmann',
+  client: 'rossmann-de',
+  token: '16671,main_site,de_DE',
+  displaycode: '16671-de_de',
+  referrer: 'https://www.rossmann.de/',
 };
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;

@@ -177,6 +177,17 @@
       "run_at": "document_end"
     },
     {
+      "matches": ["*://*.rossmann.de/*"],
+      "js": ["sites/rossmann-pdp.js"],
+      "css": ["sites/amazon-product.css"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.rossmann.de/*"],
+      "js": ["sites/rossmann-plp.js"],
+      "run_at": "document_end"
+    },
+    {
       "matches": ["*://*.etsy.com/*"],
       "js": ["sites/etsy.js"],
       "run_at": "document_end"
