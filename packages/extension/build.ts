@@ -37,6 +37,8 @@ await esbuild.build({
     'src/sites/docmorris-plp.ts',
     'src/sites/rossmann-pdp.ts',
     'src/sites/rossmann-plp.ts',
+    'src/sites/otto-pdp.ts',
+    'src/sites/otto-plp.ts',
     'src/sites/bjjfanatics-pdp.ts',
     'src/sites/progress-pdp.ts',
     'src/sites/progress-plp.ts',
