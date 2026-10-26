@@ -40,7 +40,9 @@ export const aliasesOf = (items: string[], written: { name: string; aliases: str
 // objects from the raw text instead of failing the whole summary — the verdict
 // is a separate call and is always worth returning. valueForMoney stays unset
 // when the cut came before it: the UI shows no rating rather than an invented one.
-export function salvageStructured(text: string): { highlights: SummaryHighlight[]; items: string[]; alternatives: string[]; valueForMoney?: number } {
+type SalvagedSummary = { highlights: SummaryHighlight[]; items: string[]; alternatives: string[]; valueForMoney?: number };
+
+export function salvageStructured(text: string): SalvagedSummary {
   const highlights = salvageObjects<SummaryHighlight>(text, 'text');
   console.warn(`[summarize] structured JSON truncated; salvaged ${highlights.length} highlights`);
 

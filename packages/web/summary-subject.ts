@@ -27,7 +27,8 @@ export class NoReviews extends Error {
 }
 
 export type SubjectRequest = {
-  entry?: CacheEntry;
+  /** The cached place: only its name and preview meta are read. */
+  entry?: Pick<CacheEntry, 'name' | 'meta'>;
   /** Caller-supplied place name, used when the server has never scraped it. */
   name?: string;
   /** Pre-formatted texts from the body — the extension already ran textReviewsFor. */
@@ -47,8 +48,11 @@ export const resolveSubject = ({ entry, name, reviewTexts, reviews, removedRevie
   // The body's notice is the live tab's read and wins; the cached preview meta
   // covers the web caller, which only ever sends a featureId.
   const removed = removedReviews ?? entry?.meta?.removedReviews;
+  const subject: Subject = { placeName: entry?.name ?? name ?? '', reviewTexts: texts };
 
-  return { placeName: entry?.name ?? name ?? '', reviewTexts: texts, ...(removed ? { removedReviews: removed } : {}) };
+  if (removed) subject.removedReviews = removed;
+
+  return subject;
 };
 
 // The prompt line that tells the model the review set is survivor-only. Google
@@ -63,4 +67,4 @@ export const removalNote = (removed: RemovedReviews | undefined): string => {
 };
 
 /** 404 for a missing subject; everything else stays a 400 as before. */
-export const errStatus = (e: unknown): number => (e instanceof NoReviews ? e.status : 400);
+export const errStatus = (cause: unknown): number => (cause instanceof NoReviews ? cause.status : 400);

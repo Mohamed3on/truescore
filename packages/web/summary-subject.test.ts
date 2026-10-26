@@ -1,9 +1,10 @@
 import { test, expect, describe } from 'bun:test';
+import type { Review } from '@truescore/gmaps-shared';
 import { NoReviews, errStatus, removalNote, resolveSubject } from './summary-subject';
 import type { CacheEntry } from './cache';
 
-const entry = (name: string) => ({ name } as unknown as CacheEntry);
-const review = (text: string) => ({ reviewId: text, stars: 5, reviewerReviewCount: 9, timestamp: null, text }) as any;
+const entry = (name: string): Pick<CacheEntry, 'name' | 'meta'> => ({ name });
+const review = (text: string): Review => ({ reviewId: text, stars: 5, reviewerReviewCount: 9, timestamp: null, text });
 
 describe('resolveSubject', () => {
   test("the body's pre-formatted texts win over the cached reviews", () => {
@@ -46,7 +47,7 @@ describe('resolveSubject', () => {
   test("the body's takedown notice wins; the cached preview meta covers a featureId-only caller", () => {
     const fromTab = { text: '21 to 50 reviews removed due to defamation complaints.', min: 21, max: 50 };
     const fromCache = { text: 'Six to ten reviews removed due to defamation complaints.', min: 6, max: 10 };
-    const cached = { name: 'P', meta: { removedReviews: fromCache } } as unknown as CacheEntry;
+    const cached = { name: 'P', meta: { removedReviews: fromCache } };
     expect(resolveSubject({ entry: cached, reviewTexts: ['r'], removedReviews: fromTab, hint: 'x' }).removedReviews).toEqual(fromTab);
     expect(resolveSubject({ entry: cached, reviewTexts: ['r'], hint: 'x' }).removedReviews).toEqual(fromCache);
     // The extension sends null for "no notice on this place" — that must not

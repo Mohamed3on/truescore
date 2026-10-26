@@ -21,7 +21,11 @@ export function formatHourLabel(h: number): string {
 export const slotsOf = (d: DayHours | undefined): HoursSlot[] =>
   d?.slots ?? (d?.openHour != null && d.closeHour != null ? [[d.openHour, d.closeHour]] : []);
 
-export function localHourInTz(tz: string | undefined, now = new Date()): { day: number; hour: number } {
+// A moment as the place's clock reads it: the weekday (0 = Sunday) and the
+// fractional hour.
+type LocalTime = { day: number; hour: number };
+
+export function localHourInTz(tz: string | undefined, now = new Date()): LocalTime {
   const fallback = { day: now.getDay(), hour: now.getHours() + now.getMinutes() / 60 };
 
   if (!tz) return fallback;
@@ -32,7 +36,7 @@ export function localHourInTz(tz: string | undefined, now = new Date()): { day: 
     });
 
     const parts = Object.fromEntries(fmt.formatToParts(now).map((p) => [p.type, p.value]));
-    const day = WEEKDAYS.indexOf(parts.weekday as typeof WEEKDAYS[number]);
+    const day = WEEKDAYS.findIndex((d) => d === parts.weekday);
 
     return {
       day: day >= 0 ? day : fallback.day,

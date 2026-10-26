@@ -130,7 +130,12 @@ const selectIndexStmt = db.prepare<IndexProjection, []>(`
 const parseJson = <T>(raw: string | null): T | null => {
   if (!raw) return null;
 
-  try { return JSON.parse(raw) as T; } catch { return null; }
+  try {
+    // SAFETY: each caller names the type persist wrote at its json_extract path.
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
 };
 
 // sqlite is the store; `store` is a bounded LRU window over it. Entries carry full
@@ -227,6 +232,7 @@ const read = (featureId: string): CacheEntry | undefined => {
   if (!row) return undefined;
 
   try {
+    // SAFETY: rows are written only by persist and the legacy migration, from CacheEntry.
     const entry = JSON.parse(row.data) as CacheEntry;
     remember(featureId, entry);
 
@@ -245,6 +251,7 @@ if (index.size === 0) {
     const f = Bun.file(LEGACY_JSON_PATH);
 
     if (await f.exists()) {
+      // SAFETY: the legacy file is the old store's dump: each CacheEntry under its featureId.
       const json = await f.json() as Record<string, CacheEntry>;
 
       const tx = db.transaction((entries: [string, CacheEntry][]) => {
@@ -409,7 +416,7 @@ export const cache = {
     const existing = read(featureId);
 
     if (!existing) return;
-    const highlightSummaries = { ...(existing.highlightSummaries ?? {}), [token]: summary };
+    const highlightSummaries = { ...existing.highlightSummaries, [token]: summary };
     persist(featureId, { ...existing, highlightSummaries });
   },
   // Served only while recent and non-empty: `ts` used to be written and never
@@ -427,7 +434,7 @@ export const cache = {
     const existing = read(featureId);
 
     if (!existing || !result.totalReviews) return;
-    const searches = { ...(existing.searches ?? {}), [query.toLowerCase()]: result };
+    const searches = { ...existing.searches, [query.toLowerCase()]: result };
     persist(featureId, { ...existing, searches });
   },
   answerServable(a: CachedAnswer | undefined): a is CachedAnswer {
@@ -441,6 +448,7 @@ export const cache = {
       get(term) {
         const row = selectTermStmt.get(featureId, term.toLowerCase());
 
+        // SAFETY: set() below is the only writer, and it stores a Review[].
         return row && Date.now() - row.ts < SEARCH_TTL_MS ? JSON.parse(row.reviews) as Review[] : undefined;
       },
       set(term, reviews) {

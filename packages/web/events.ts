@@ -17,15 +17,18 @@ const pruneStmt = db.prepare<void, [number]>('DELETE FROM session_events WHERE t
 const RETAIN_MS = 14 * 24 * 60 * 60 * 1000; // two weeks of history is plenty for a one-box app
 let lastPrune = 0;
 
+// An event's fields are scalars: one k=v each on the log line.
+type EventValue = string | number | boolean | null;
+
 // Render a scalar value for the log line: bare when safe, quoted when it has
 // whitespace, quotes, or '='. Keeps lines both human-scannable and splittable.
-const fmtVal = (v: unknown): string => {
+const fmtVal = (v: EventValue): string => {
   const s = String(v);
 
   return /[\s"'=]/.test(s) ? JSON.stringify(s) : s;
 };
 
-export function logEvent(type: string, data: Record<string, unknown> = {}): void {
+export function logEvent(type: string, data: Record<string, EventValue> = {}): void {
   const ts = Date.now();
   const kv = Object.entries(data).map(([k, v]) => `${k}=${fmtVal(v)}`).join(' ');
   console.log(`[ts-event] type=${type}${kv ? ' ' + kv : ''}`);

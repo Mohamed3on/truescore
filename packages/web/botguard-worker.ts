@@ -7,6 +7,9 @@ import { Window } from 'happy-dom';
 
 type Snapshot = (done: (key: string) => void, args: unknown[]) => void;
 
+// The VM the interpreter defines: booted with the program, it hands back its snapshot.
+type BotGuard = { a: (program: string, ready: (fn: Snapshot) => void, ...rest: unknown[]) => void };
+
 let snapshot: Snapshot;
 
 self.onmessage = ({ data }: MessageEvent) => {
@@ -14,7 +17,8 @@ self.onmessage = ({ data }: MessageEvent) => {
     const window = new Window({ url: 'https://www.google.com/maps', settings: { navigator: { userAgent: data.userAgent } } });
     Object.assign(globalThis, { window, document: window.document });
     new Function(data.interpreter)();
-    (globalThis as any)[data.globalName].a(data.program, (fn: Snapshot) => { snapshot = fn; postMessage('ready'); }, true, undefined, () => {}, [[], []]);
+    // SAFETY: the interpreter just run defines its VM on the global, under the page's globalName.
+    (globalThis as typeof globalThis & Record<string, BotGuard>)[data.globalName]!.a(data.program, (fn: Snapshot) => { snapshot = fn; postMessage('ready'); }, true, undefined, () => {}, [[], []]);
 
     return;
   }

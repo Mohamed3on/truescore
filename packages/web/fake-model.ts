@@ -10,7 +10,7 @@ const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0
 // for (none for plain text). A reply that throws fails the call.
 export const fakeModel = (reply: (fields: string[], call: Call) => string | Promise<string>) => {
   const answer = (call: Call) =>
-    reply(call.responseFormat?.type === 'json' ? Object.keys((call.responseFormat.schema as { properties?: object } | undefined)?.properties ?? {}) : [], call);
+    reply(call.responseFormat?.type === 'json' ? Object.keys(call.responseFormat.schema?.properties ?? {}) : [], call);
 
   return new MockLanguageModelV4({
     doGenerate: async (call) => ({ content: [{ type: 'text', text: await answer(call) }], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] }),

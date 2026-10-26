@@ -210,9 +210,11 @@ export function startMintTimer(): void {
   console.log(`[maps-creds] proactive mint every ${min}min (+ boot)`);
 }
 
+type MapsCredsStatus = { hasCreds: boolean; healthy: boolean; stale: boolean; seededAt: string | null; ageMinutes: number | null };
+
 // Liveness + age for the GET probe on /api/maps-creds. Never returns the secrets
 // themselves — just whether we have a session, how old it is, and if it's stale.
-export function mapsCredsStatus(): { hasCreds: boolean; healthy: boolean; stale: boolean; seededAt: string | null; ageMinutes: number | null } {
+export function mapsCredsStatus(): MapsCredsStatus {
   return {
     hasCreds: !!getMapsCreds(),
     healthy: mapsSessionHealthy(),

@@ -48,8 +48,18 @@ export function withCookies(header: string, updates: string[]): string {
   return [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
 }
 
-const setCookiesOf = (r: Response): string[] =>
-  (r.headers as any).getAll ? (r.headers as any).getAll('set-cookie') : ([r.headers.get('set-cookie')].filter(Boolean) as string[]);
+// Bun's Headers hand back each Set-Cookie line (getAll); a DOM one, as under
+// test, has at most the one.
+type CookieHeaders = Headers & { getAll?: (name: 'set-cookie') => string[] };
+
+const setCookiesOf = (r: Response): string[] => {
+  const headers: CookieHeaders = r.headers;
+
+  if (headers.getAll) return headers.getAll('set-cookie');
+  const line = headers.get('set-cookie');
+
+  return line ? [line] : [];
+};
 
 // Eiffel Tower — the canonical "always has reviews" place. verifyReviewsLoad probes
 // it to confirm a freshly-minted session serves reviews.
