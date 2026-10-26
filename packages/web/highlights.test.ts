@@ -4,7 +4,7 @@ import * as realBrowser from './browser';
 // The harvest's whole job is telling "Google says this place has no topic chips"
 // apart from "we never got a usable answer" — a distinction the cache turns into
 // a six-hour blank highlights row. Drive it through a stubbed preview fetch.
-const shots: Array<() => Promise<unknown>> = [];
+const shots: Array<() => Promise<ReturnType<typeof preview>>> = [];
 let calls = 0;
 
 const fetchPlacePreview = mock(() => {

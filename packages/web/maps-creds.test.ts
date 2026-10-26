@@ -5,6 +5,7 @@ import { test, expect, describe, afterEach } from 'bun:test';
 const freshModule = async () => {
   const url = `./maps-creds?${Math.random()}`;
 
+  // SAFETY: the query only makes a fresh instance of ./maps-creds.
   return import(url) as Promise<typeof import('./maps-creds')>;
 };
 

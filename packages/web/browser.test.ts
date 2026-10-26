@@ -15,18 +15,20 @@ describe('fetchPlacePreview', () => {
   test("replays a place's preview URL, reading its page again only when a replay fails", async () => {
     // A fresh instance: highlights.test.ts mocks this export, and bun's module
     // mocks outlive their file.
+    // SAFETY: the query only makes a fresh instance of ./browser.
     const { fetchPlacePreview, setGoogleCookieOverride } = await import(`./browser?${Math.random()}`) as typeof import('./browser');
     setGoogleCookieOverride('SID=test'); // no jar to bake
     const place = 'https://www.google.com/maps?q=&ftid=0x1:0x2';
     let pages = 0;
     const gone = new Set<string>();
     // Each read of the page embeds a new preview URL; a preview answers with its own URL.
+    // SAFETY: browser.ts fetches string URLs only, and never calls fetch.preconnect.
     globalThis.fetch = (async (input: string) => {
       if (input === place) return new Response(`<link href="/maps/preview/place?pb=!1s${++pages}&amp;authuser=0" rel="preload">`);
       const pb = new URL(input).searchParams.get('pb')!;
 
       return gone.has(pb) ? new Response('gone', { status: 400 }) : new Response(`)]}'\n${JSON.stringify([pb, input])}`);
-    }) as unknown as typeof fetch;
+    }) as typeof fetch;
 
     const [pb, url] = await fetchPlacePreview(place);
     expect([pb, pages]).toEqual(['!1s1', 1]);

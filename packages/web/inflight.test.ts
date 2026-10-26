@@ -3,7 +3,7 @@ import { createInflight } from './inflight';
 
 const deferred = <T>() => {
   let resolve!: (v: T) => void;
-  let reject!: (e: unknown) => void;
+  let reject!: (error: Error) => void;
   const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
 
   return { promise, resolve, reject };

@@ -1,10 +1,14 @@
 import { test, expect } from 'bun:test';
+import type { Chip } from '@truescore/gmaps-shared';
 import { answerKey, cache, type CacheEntry } from './cache';
 import type { ScoreResult } from './gmaps';
-import type { Summary } from './llm';
 
-// Only entry.score.totalReviews is read by scoreUsable, so a partial cast is enough.
-const entry = (totalReviews: number) => ({ score: { totalReviews } } as unknown as CacheEntry);
+// scoreUsable reads only the score's review counts.
+const entry = (totalReviews: number): CacheEntry => {
+  const counts = { totalReviews, trustedReviews: 0, scorePct: 0 };
+
+  return { name: 'x', scoreTs: 1, score: { featureId: 'x', ...counts, relevant: counts, newest: counts, reviews: [] } };
+};
 
 test('scoreUsable: a cached 0-review score is usable only when the histogram confirms 0', () => {
   expect(cache.scoreUsable(entry(0), 0)).toBe(true); // histogram confirms genuinely empty
@@ -14,7 +18,7 @@ test('scoreUsable: a cached 0-review score is usable only when the histogram con
 });
 
 test('scoreUsable: a cached non-empty score is always usable, whatever the histogram', () => {
-  for (const t of [null, undefined, 0, 9999] as Array<number | null | undefined>) {
+  for (const t of [null, undefined, 0, 9999]) {
     expect(cache.scoreUsable(entry(42), t)).toBe(true);
   }
 });
@@ -50,19 +54,19 @@ test('all() lists every place, not just the resident window', () => {
 });
 
 test('a patch applied to an evicted entry preserves the data still on disk', async () => {
-  await cache.putSummary(IDS[1]!, { text: 'x' } as unknown as Summary);
+  await cache.putSummary(IDS[1]!, { verdict: 'x', highlights: [] });
   const entry = cache.get(IDS[1]!);
   expect(entry?.name).toBe('Place 1'); // survived the read-modify-write
   expect(entry?.summary).toBeDefined();
 });
 
 // Chips got the "never trust a 0" rule the score path already had.
-const chip = (label: string, count: number, fetched?: number) =>
-  ({ label, token: `t-${label}`, count, fetched, score: { totalReviews: fetched ?? 0, trustedReviews: 0, scorePct: 0 } }) as any;
+const chip = (label: string, count: number, fetched?: number): Chip =>
+  ({ label, token: `t-${label}`, count, fetched, score: { totalReviews: fetched ?? 0, trustedReviews: 0, scorePct: 0 } });
 
 test('putHighlights drops chips a throttle emptied, and marks the set short', async () => {
   const fid = 'thr-1';
-  await cache.putScore(fid, 'Test Place', { featureId: fid, totalReviews: 10, trustedReviews: 5, scorePct: 40, relevant: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, newest: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, reviews: [] } as unknown as ScoreResult, 10);
+  await cache.putScore(fid, 'Test Place', { featureId: fid, totalReviews: 10, trustedReviews: 5, scorePct: 40, relevant: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, newest: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, reviews: [] }, 10);
 
   await cache.putHighlights(fid, [chip('good', 12, 12), chip('throttled', 8, 0)]);
   const entry = cache.get(fid)!;
@@ -76,7 +80,7 @@ test('putHighlights drops chips a throttle emptied, and marks the set short', as
 
 test('a chip Google itself says is empty is kept — count 0 is not a throttle', async () => {
   const fid = 'thr-2';
-  await cache.putScore(fid, 'Test Place', { featureId: fid, totalReviews: 10, trustedReviews: 5, scorePct: 40, relevant: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, newest: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, reviews: [] } as unknown as ScoreResult, 10);
+  await cache.putScore(fid, 'Test Place', { featureId: fid, totalReviews: 10, trustedReviews: 5, scorePct: 40, relevant: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, newest: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, reviews: [] }, 10);
 
   await cache.putHighlights(fid, [chip('good', 12, 12), chip('genuinely-empty', 0, 0)]);
   const entry = cache.get(fid)!;
@@ -88,7 +92,7 @@ test('a chip Google itself says is empty is kept — count 0 is not a throttle',
 
 test('an all-throttled pass persists nothing rather than blanking the panel', async () => {
   const fid = 'thr-3';
-  await cache.putScore(fid, 'Test Place', { featureId: fid, totalReviews: 10, trustedReviews: 5, scorePct: 40, relevant: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, newest: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, reviews: [] } as unknown as ScoreResult, 10);
+  await cache.putScore(fid, 'Test Place', { featureId: fid, totalReviews: 10, trustedReviews: 5, scorePct: 40, relevant: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, newest: { totalReviews: 10, trustedReviews: 5, scorePct: 40 }, reviews: [] }, 10);
 
   await cache.putHighlights(fid, [chip('a', 5, 12)]);
   await cache.putHighlights(fid, [chip('a', 5, 0), chip('b', 9, 0)]);
@@ -104,13 +108,13 @@ const scrape = (fid: string, relevant: number, newest: number): ScoreResult =>
 test('a scrape with one sort empty is a throttle, not a score', async () => {
   expect(await cache.putScore('part-1', 'P', scrape('part-1', 200, 0), 5000)).toBe(false);
   expect(cache.get('part-1')).toBeUndefined();
-  expect(cache.scoreUsable({ score: scrape('x', 200, 0) } as CacheEntry, 5000)).toBe(false);
+  expect(cache.scoreUsable({ name: 'x', scoreTs: 1, score: scrape('x', 200, 0) }, 5000)).toBe(false);
   expect(await cache.putScore('part-1', 'P', scrape('part-1', 200, 150), 5000)).toBe(true);
 });
 
 test('a sort short of a full page on a place with more is a capped session, not a score', async () => {
   expect(await cache.putScore('cap-1', 'C', scrape('cap-1', 5, 5), 4254)).toBe(false);
-  expect(cache.scoreUsable({ score: scrape('x', 5, 5) } as CacheEntry, 4254)).toBe(false);
+  expect(cache.scoreUsable({ name: 'x', scoreTs: 1, score: scrape('x', 5, 5) }, 4254)).toBe(false);
   expect(await cache.putScore('cap-1', 'C', scrape('cap-1', 12, 12), 12)).toBe(true); // a small place, fully read
 });
 
@@ -199,6 +203,6 @@ test('a contribution-only stub lists its contributed score, not a placeholder 0'
   expect(row.scorePct).toBe(87);
   expect(Date.now() - row.lastAccessTs).toBeLessThan(60_000);
   // A stub with no score of any kind has nothing to list.
-  await cache.putContribution('stub-2', 'Summary Only', { summary: { text: 'x' } as unknown as Summary });
+  await cache.putContribution('stub-2', 'Summary Only', { summary: { verdict: 'x', highlights: [] } });
   expect(cache.all().find((p) => p.featureId === 'stub-2')).toBeUndefined();
 });

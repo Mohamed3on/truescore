@@ -15,13 +15,15 @@ afterEach(() => {
 const boot = (cookies: string) => {
   process.env.TRUESCORE_ACCOUNT_COOKIES = cookies;
 
+  // SAFETY: the query only makes a fresh instance of ./account.
   return import(`./account?${Math.random()}`) as Promise<typeof import('./account')>;
 };
 
 // Not a Response: test-setup's happy-dom one drops Set-Cookie, as a browser's would.
 const googleRotatesTo = (psidts: string) => {
-  const headers = { getAll: () => [`__Secure-1PSIDTS=${psidts}; Path=/; Domain=.google.com`] };
-  globalThis.fetch = (async () => ({ ok: true, status: 200, headers })) as unknown as typeof fetch;
+  const headers = { getAll: (_name: 'set-cookie') => [`__Secure-1PSIDTS=${psidts}; Path=/; Domain=.google.com`] };
+  // SAFETY: rotateCookies reads only the reply's ok, status and Set-Cookie lines, and never fetch.preconnect.
+  globalThis.fetch = (async (_input: string) => ({ ok: true, status: 200, headers }) as Response) as typeof fetch;
 };
 
 test('a rotation is saved for the owner only, and outlives a restart', async () => {
@@ -38,7 +40,8 @@ test('a new sign-in in the env supersedes the saved jar', async () => {
 });
 
 test('a refused rotation keeps the cookies it had', async () => {
-  globalThis.fetch = (async () => new Response('', { status: 401 })) as unknown as typeof fetch;
+  // SAFETY: rotateCookies only calls fetch, never fetch.preconnect.
+  globalThis.fetch = (async (_input: string) => new Response('', { status: 401 })) as typeof fetch;
   const account = await boot('SID=s; __Secure-1PSIDTS=old');
   await expect(account.rotateAccount()).rejects.toThrow('RotateCookies 401');
   expect(await account.accountCookies()).toBe('SID=s; __Secure-1PSIDTS=old');
