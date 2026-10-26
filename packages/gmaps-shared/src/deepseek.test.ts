@@ -20,7 +20,7 @@ test('a streamed object reads the strict tool call as it is written', async () =
             { type: 'tool-input-end', id: 'c1' },
             { type: 'tool-call', toolCallId: 'c1', toolName: 'json', input: '{"verdict":"Good"}' },
             { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_calls' }, usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } } },
-          ] as any),
+          ]),
         };
       },
     }),
@@ -45,7 +45,7 @@ test('a whole object reads the strict tool call', async () => {
         finishReason: { unified: 'tool-calls', raw: 'tool_calls' },
         usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } },
         warnings: [],
-      }) as any,
+      }),
     }),
     middleware: strictJsonViaTool,
   });

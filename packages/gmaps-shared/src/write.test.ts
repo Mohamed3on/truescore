@@ -3,10 +3,13 @@ import { jsonSchema } from 'ai';
 import { convertArrayToReadableStream, MockLanguageModelV4 } from 'ai/test';
 import { writeObject, writeText } from './write';
 
+// What a model streams, as the AI SDK types it.
+type StreamPart = Awaited<ReturnType<MockLanguageModelV4['doStream']>>['stream'] extends ReadableStream<infer P> ? P : never;
+
 const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
-const finish = { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage };
-const streaming = (parts: unknown[]) => new MockLanguageModelV4({ doStream: async () => ({ stream: convertArrayToReadableStream([{ type: 'stream-start', warnings: [] }, ...parts] as any) }) });
-const text = (deltas: string[]) => [{ type: 'text-start', id: 't' }, ...deltas.map((delta) => ({ type: 'text-delta', id: 't', delta })), { type: 'text-end', id: 't' }, finish];
+const finish: StreamPart = { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage };
+const streaming = (parts: StreamPart[]) => new MockLanguageModelV4({ doStream: async () => ({ stream: convertArrayToReadableStream([{ type: 'stream-start', warnings: [] }, ...parts]) }) });
+const text = (deltas: string[]): StreamPart[] => [{ type: 'text-start', id: 't' }, ...deltas.map((delta): StreamPart => ({ type: 'text-delta', id: 't', delta })), { type: 'text-end', id: 't' }, finish];
 
 test('a streamed text grows to what the call wrote', async () => {
   const seen: string[] = [];
@@ -29,7 +32,7 @@ test('a streamed object is read as it is written', async () => {
 
 const schema = jsonSchema<{ verdict: string; items: string[] }>({ type: 'object', properties: { verdict: { type: 'string' }, items: { type: 'array', items: { type: 'string' } } }, required: ['verdict', 'items'], additionalProperties: false });
 const keepVerdict = (cut: string) => ({ verdict: cut.match(/"verdict":"([^"]*)"/)?.[1] ?? '', items: [] });
-const whole = (reply: string) => new MockLanguageModelV4({ doGenerate: async () => ({ content: [{ type: 'text', text: reply }], finishReason: { unified: 'length', raw: 'length' }, usage, warnings: [] }) as any });
+const whole = (reply: string) => new MockLanguageModelV4({ doGenerate: async () => ({ content: [{ type: 'text', text: reply }], finishReason: { unified: 'length', raw: 'length' }, usage, warnings: [] }) });
 
 test('an object cut off at the cap keeps what made it, whole or streamed', async () => {
   const cut = '{"verdict":"Good","items":["bra';

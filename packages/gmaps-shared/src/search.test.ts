@@ -112,13 +112,13 @@ describe('collectSearchTerms', () => {
 
   test('fans out one search per term and unions, deduped across terms', async () => {
     // term a: 2 pages (r1,r2 → r3). term b: 1 page (r2,r4). r2 is shared → counted once.
-    const pages: Record<string, string> = {
-      'a|': page([mkWrapper('r1', 5, 9), mkWrapper('r2', 1, 9)], 'a1'),
-      'a|a1': page([mkWrapper('r3', 5, 9)], null),
-      'b|': page([mkWrapper('r2', 1, 9), mkWrapper('r4', 4, 9)], null),
-    };
+    const pages = new Map([
+      ['a|', page([mkWrapper('r1', 5, 9), mkWrapper('r2', 1, 9)], 'a1')],
+      ['a|a1', page([mkWrapper('r3', 5, 9)], null)],
+      ['b|', page([mkWrapper('r2', 1, 9), mkWrapper('r4', 4, 9)], null)],
+    ]);
 
-    const transport = async (url: string) => pages[url] ?? page([], null);
+    const transport = async (url: string) => pages.get(url) ?? page([], null);
 
     const snapshots: number[] = [];
     const merged = await collectSearchTerms(['a', 'b'], urlFor, transport, (m) => snapshots.push(m.length));
