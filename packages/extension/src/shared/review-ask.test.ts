@@ -76,7 +76,7 @@ describe('askReviews', () => {
 
         return new ReadableStream({
           start(c) {
-            for (const chunk of [{ type: 'start' }, { type: 'text-start', id: 'a' }, { type: 'text-delta', id: 'a', delta: 'Half' }] as UIMessageChunk[]) c.enqueue(chunk);
+            for (const chunk of [{ type: 'start' }, { type: 'text-start', id: 'a' }, { type: 'text-delta', id: 'a', delta: 'Half' }] satisfies UIMessageChunk[]) c.enqueue(chunk);
             abortSignal?.addEventListener('abort', () => c.error(new DOMException('Aborted', 'AbortError')));
             setTimeout(() => { if (!abortSignal?.aborted) c.enqueue({ type: 'text-delta', id: 'a', delta: ' and more' }); }, 5);
           },

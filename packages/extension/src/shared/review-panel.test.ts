@@ -40,12 +40,21 @@ const panel = (opts: Partial<Parameters<typeof buildReviewPanel<R>>[1]> & Pick<P
 
 const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
+// The `kind` of element under `selector`; anything else fails the test here.
+const elementAt = <E extends Element>(root: ParentNode, selector: string, kind: new () => E): E => {
+  const found = root.querySelector(selector);
+
+  if (!(found instanceof kind)) throw new Error(`no ${kind.name} at ${selector}`);
+
+  return found;
+};
+
 const ask = async (host: HTMLElement) => {
   asked = undefined;
-  const input = host.querySelector('.ars-question-input') as HTMLInputElement;
+  const input = elementAt(host, '.ars-question-input', HTMLInputElement);
   input.value = 'does it last?';
   input.dispatchEvent(new Event('input'));
-  (host.querySelector('.ars-question-row .ars-summarize-btn') as HTMLButtonElement).click();
+  elementAt(host, '.ars-question-row .ars-summarize-btn', HTMLButtonElement).click();
   await settle();
 
   return asked!;
@@ -85,7 +94,7 @@ describe('an Ask', () => {
 
 describe('the Search box', () => {
   const search = async (host: HTMLElement, query: string) => {
-    const input = host.querySelector('.ars-search-input') as HTMLInputElement;
+    const input = elementAt(host, '.ars-search-input', HTMLInputElement);
     input.value = query;
     input.dispatchEvent(new Event('input'));
     await settle(450);
@@ -96,7 +105,7 @@ describe('the Search box', () => {
   test('searches the reviews in hand, above the Summary', async () => {
     const { host } = panel({ all: [review(5, 'battery lasts'), review(1, 'strap frays'), review(3, 'battery ok'), review(4, 'zip'), review(4, 'fit')] });
     await settle();
-    const input = host.querySelector('.ars-search-input') as HTMLInputElement;
+    const input = elementAt(host, '.ars-search-input', HTMLInputElement);
     expect(input.placeholder).toContain('Search 5 reviews');
     expect(input.compareDocumentPosition(host.querySelector('.ars-question-row')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await search(host, 'battery');
@@ -115,7 +124,7 @@ describe('the Search box', () => {
     // Without waiting for the reviews in hand.
     const { host } = panel({ all: new Promise<R[]>(() => {}), allMax: 1, total: 900, searchTerm });
     await settle();
-    expect((host.querySelector('.ars-search-input') as HTMLInputElement).placeholder).toContain('Search 900 reviews');
+    expect(elementAt(host, '.ars-search-input', HTMLInputElement).placeholder).toContain('Search 900 reviews');
     await search(host, 'battery');
     expect(terms).toEqual(['battery']);
     expect(titles(host)).toEqual(['old battery']);
@@ -164,7 +173,7 @@ test("a Summary point's reviews show as the site's cards", async () => {
   const parsed = { praised: ['Lasts long'], complaints: [], conclusion: 'Good.', betterAlternative: '', receipts: { 'Lasts long': { n: 2, quotes: ['Lasts: a full year'] } } };
   localStorage.setItem(key, JSON.stringify({ parsed, ts: 1 }));
   const { host } = panel({ all, key });
-  (host.querySelector('.ars-receipt') as HTMLButtonElement).click();
+  elementAt(host, '.ars-receipt', HTMLButtonElement).click();
   await settle();
   const quote = host.querySelector('.ars-receipt-quotes .ars-search-review');
   expect(quote?.querySelector('.ars-search-title')?.textContent).toBe('Lasts');

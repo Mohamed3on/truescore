@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test';
-import { createScoreStore, type Storage } from './score-store';
+import { createScoreStore, makeReviewData, type ScoreCacheEntry, type Storage } from './score-store';
 import type { Review } from '@truescore/gmaps-shared';
 
 const NOW = 1_780_000_000_000; // fixed ms clock
@@ -9,12 +9,12 @@ const DAY = 86_400_000;
 const rv = (id: string, daysAgo: number, stars = 5, count = 9): Review =>
   ({ reviewId: id, stars, reviewerReviewCount: count, timestamp: (NOW - daysAgo * DAY) * 1000, text: id });
 
-const memStorage = (init: Record<string, unknown> = {}): Storage => {
-  const m = new Map<string, unknown>(Object.entries(init));
+const memStorage = (init: Record<string, ScoreCacheEntry> = {}): Storage => {
+  const m = new Map(Object.entries(init));
 
   return {
-    get: async <T>(k: string) => (m.has(k) ? (m.get(k) as T) : null),
-    set: async (k: string, v: unknown) => {
+    get: async (k) => m.get(k) ?? null,
+    set: async (k, v) => {
       m.set(k, v);
 
       return true;
@@ -183,7 +183,7 @@ describe('loadCache guards', () => {
   });
 
   test('skips when stillValid() flipped (SPA nav)', async () => {
-    const storage = memStorage({ [KEY]: { ts: NOW, relevant: {}, newest: {}, merged: {} } });
+    const storage = memStorage({ [KEY]: { ts: NOW, relevant: makeReviewData(), newest: makeReviewData(), merged: makeReviewData() } });
     const store = newStore(storage);
     expect(await store.loadCache(KEY, () => false)).toBe(false);
   });

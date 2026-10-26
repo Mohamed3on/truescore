@@ -1,4 +1,5 @@
 import { test, expect, mock } from 'bun:test';
+import type { JSONSchema7 } from 'ai';
 import * as realLlm from './llm';
 import * as realJev from './jev';
 
@@ -12,7 +13,7 @@ let stream: { partials: any[]; whole: any; settle?: number; after?: (i: number) 
 
 mock.module('./llm', () => ({
   ...realLlm,
-  summarize: async (_reviews: string[], _prompt: string, _schema: unknown, onPartial?: (partial: any) => void) => {
+  summarize: async (_reviews: string[], _prompt: string, _schema: JSONSchema7 | null, onPartial?: (partial: any) => void) => {
     if (!stream) return PARSED;
 
     for (const [i, partial] of stream.partials.entries()) {
@@ -28,7 +29,9 @@ mock.module('./llm', () => ({
 }));
 
 // Jev's reads, for the test that sets them; the real ones otherwise.
-const jev: { support?: typeof realJev.readSupport; answers?: typeof realJev.readAnswers } = {};
+type JevReads = { support?: typeof realJev.readSupport; answers?: typeof realJev.readAnswers };
+
+const jev: JevReads = {};
 const { readSupport, readAnswers } = realJev;
 
 mock.module('./jev', () => ({
@@ -37,6 +40,15 @@ mock.module('./jev', () => ({
   readAnswers: (...a: Parameters<typeof readAnswers>) => (jev.answers ?? readAnswers)(...a),
 }));
 
+// The `kind` of element under `selector`; anything else fails the test here.
+const elementAt = <E extends Element>(root: ParentNode, selector: string, kind: new () => E): E => {
+  const found = root.querySelector(selector);
+
+  if (!(found instanceof kind)) throw new Error(`no ${kind.name} at ${selector}`);
+
+  return found;
+};
+
 test('Re-summarize gets its label back once the new summary is on screen', async () => {
   const { buildSummarizeWidget } = await import('./review-summary');
   const cacheKey = 'review-summary-test-kw-durex';
@@ -44,7 +56,7 @@ test('Re-summarize gets its label back once the new summary is on screen', async
   const wrapper = document.createElement('div');
   buildSummarizeWidget({ wrapper, cacheKey, summaryPrompt: 'p', fetchReviews: async () => ['a review long enough to count'], renderQuote: () => null });
 
-  const reBtn = wrapper.querySelector('.ars-resummarize-btn') as HTMLButtonElement;
+  const reBtn = elementAt(wrapper, '.ars-resummarize-btn', HTMLButtonElement);
   expect(reBtn.textContent).toBe('↻ Re-summarize');
   reBtn.click();
   expect(reBtn.disabled).toBe(true);
@@ -59,7 +71,7 @@ test('Re-summarize gets its label back once the new summary is on screen', async
 test('a promised auto-summarize waits for its answer, and a no spends no call', async () => {
   const { buildSummarizeWidget } = await import('./review-summary');
   // A key for getActiveLLM, so only the promise decides.
-  (globalThis as any).chrome = { storage: { sync: { get: async (name: string) => ({ [name]: 'key' }) } } };
+  Object.assign(globalThis, { chrome: { storage: { sync: { get: async (name: string) => ({ [name]: 'key' }) } } } });
 
   try {
     const land = async (go: boolean) => {
@@ -85,7 +97,7 @@ test('a promised auto-summarize waits for its answer, and a no spends no call', 
     expect(await land(false)).not.toContain('Lasts long');
     expect(await land(true)).toContain('Lasts long');
   } finally {
-    delete (globalThis as any).chrome;
+    Reflect.deleteProperty(globalThis, 'chrome');
   }
 });
 
@@ -109,7 +121,7 @@ test("a receipt's reviews show as the site's cards, found by the text the model 
 
   // A summary from the cache fetches its reviews only once a receipt opens.
   expect(fetched).toBe(0);
-  (wrapper.querySelector('.ars-receipt') as HTMLButtonElement).click();
+  elementAt(wrapper, '.ars-receipt', HTMLButtonElement).click();
   await new Promise((r) => setTimeout(r, 0));
   const box = wrapper.querySelector('.ars-receipt-quotes')!;
   expect([...box.children].map((c) => c.className)).toEqual(['ars-search-review', 'ars-receipt-quote']);
@@ -173,7 +185,7 @@ test('a summary shows as it is written, dim until checked, then drops and orders
 
   try {
     buildSummarizeWidget({ wrapper, cacheKey: 'stream-test', summaryPrompt: 'p', fetchReviews: async () => ['r1', 'r2', 'r3'], renderQuote: () => null });
-    (wrapper.querySelector('.ars-summarize-btn') as HTMLButtonElement).click();
+    elementAt(wrapper, '.ars-summarize-btn', HTMLButtonElement).click();
     await new Promise((r) => setTimeout(r, 30));
 
     expect(seen).toEqual([['Lasts (dim)'], ['Lasts long (dim)', 'Qui (dim)'], ['Lasts long (dim)', 'Quiet (dim)', 'Cheap (dim)']]);
@@ -232,7 +244,7 @@ test('a media summary keeps its progress note until the first words, then adds e
   const section = await mediaSummary(null);
 
   try {
-    (section.querySelector('.gr-summary-btn') as HTMLButtonElement).click();
+    elementAt(section, '.gr-summary-btn', HTMLButtonElement).click();
     await new Promise((r) => setTimeout(r, 6 * 200 + 50));
     expect(seen).toEqual(['✦ Summarizing…', 'Read', 'Read it', 'Read it', 'Read it | Loved: Prose sings', 'Read it | Loved: Prose sings | Didn’t enjoy: The ending drags']);
     // The last loved point joins its kind, above the complaint written before it.
@@ -243,8 +255,13 @@ test('a media summary keeps its progress note until the first words, then adds e
   }
 });
 
+// A media summary as the cache holds it: today's, or one from before verdicts and points.
+type CachedMediaSummary =
+  | { verdict: string; points: { text: string; sentiment: string }[] }
+  | { recommendation: string; loved: string; dislikes: string };
+
 test('a cached media summary shows on mount, and one cached in an older shape waits to be written again', async () => {
-  const cache = (key: string, data: object) => localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
+  const cache = (key: string, data: CachedMediaSummary) => localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
   cache('media-summary-test-now', { verdict: 'Read it', points: [{ text: '**Prose** sings', sentiment: 'loved' }] });
   cache('media-summary-test-old', { recommendation: 'Read it', loved: 'Prose', dislikes: '' });
   expect(mediaDraft(await mediaSummary('media-summary-test-now'))).toBe('Read it | Loved: Prose sings');

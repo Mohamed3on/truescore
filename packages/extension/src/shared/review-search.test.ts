@@ -23,6 +23,15 @@ const mount = (opts: Partial<Parameters<typeof buildSearchSection<R>>[0]> & { re
     ...opts,
   });
 
+// The `kind` of element under `selector`; anything else fails the test here.
+const elementAt = <E extends Element>(root: ParentNode, selector: string, kind: new () => E): E => {
+  const found = root.querySelector(selector);
+
+  if (!(found instanceof kind)) throw new Error(`no ${kind.name} at ${selector}`);
+
+  return found;
+};
+
 // The section renders asynchronously (findMatches is awaited even locally), and
 // input is debounced — drive render() by dispatching and letting the timer run.
 // The header's read waits for the query to stand (STANCE_SETTLE_MS), so a test
@@ -30,7 +39,7 @@ const mount = (opts: Partial<Parameters<typeof buildSearchSection<R>>[0]> & { re
 const SETTLED = 1200;
 
 const search = async (section: HTMLElement, query: string, ms = 400) => {
-  const input = section.querySelector('.ars-search-input') as HTMLInputElement;
+  const input = elementAt(section, '.ars-search-input', HTMLInputElement);
   input.value = query;
   input.dispatchEvent(new Event('input'));
   await new Promise((r) => setTimeout(r, ms));
@@ -91,7 +100,7 @@ describe('queryTerms', () => {
 describe('buildSearchSection', () => {
   test('a match count is quoted against the whole corpus, not just the hits', () => {
     const section = mount({ reviews: [review(5, 'great battery'), review(1, 'awful strap')] });
-    const input = section.querySelector('.ars-search-input') as HTMLInputElement;
+    const input = elementAt(section, '.ars-search-input', HTMLInputElement);
     expect(input.placeholder).toContain('2 reviews');
   });
 
@@ -139,7 +148,7 @@ describe('buildSearchSection', () => {
       mountSummarize: (host, query, texts) => { got = { query, texts }; host.textContent = 'widget'; },
     });
 
-    expect((section.querySelector('.ars-search-sum-btn') as HTMLElement).style.display).toBe('none');
+    expect(elementAt(section, '.ars-search-sum-btn', HTMLElement).style.display).toBe('none');
 
     await search(section, 'battery');
     expect(got!.query).toBe('battery');
@@ -211,9 +220,9 @@ describe('buildSearchSection', () => {
   test('clearing the box hides the results', async () => {
     const section = mount({ reviews: [review(5, 'battery lasts')] });
     await search(section, 'battery');
-    expect((section.querySelector('.ars-search-list') as HTMLElement).style.display).toBe('');
+    expect(elementAt(section, '.ars-search-list', HTMLElement).style.display).toBe('');
     await search(section, '');
-    expect((section.querySelector('.ars-search-list') as HTMLElement).style.display).toBe('none');
+    expect(elementAt(section, '.ars-search-list', HTMLElement).style.display).toBe('none');
   });
 });
 
@@ -236,7 +245,7 @@ describe('localSearchAsk', () => {
     const section = mount({ reviews: [review(5, 'battery lasts')] });
     island.appendChild(section);
     localSearchAsk(Promise.resolve([]), fields, (r) => r.title, island).open!('strap OR battery');
-    expect((section.querySelector('.ars-search-input') as HTMLInputElement).value).toBe('strap OR battery');
+    expect(elementAt(section, '.ars-search-input', HTMLInputElement).value).toBe('strap OR battery');
   });
 });
 

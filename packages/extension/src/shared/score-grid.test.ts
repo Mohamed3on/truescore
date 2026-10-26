@@ -175,9 +175,9 @@ describe('applyOrder strategies', () => {
     const { scored } = rankChildren(g);
     orderByCssBand(g, scored);
     // b (rank 0 of 2) → -2, a (rank 1) → -1; pending stays at default.
-    expect((b as HTMLElement).style.order).toBe('-2');
-    expect((a as HTMLElement).style.order).toBe('-1');
-    expect((pending as HTMLElement).style.order).toBe('');
+    expect(b.style.order).toBe('-2');
+    expect(a.style.order).toBe('-1');
+    expect(pending.style.order).toBe('');
     // no node moved
     expect([...g.children]).toEqual([a, pending, b]);
   });
@@ -189,9 +189,9 @@ describe('applyOrder strategies', () => {
     const g = grid(hated, pending, loved);
     const { scored, rest, sunk } = rankChildren(g);
     orderByCssBand(g, scored, rest, sunk);
-    expect((loved as HTMLElement).style.order).toBe('-1');
-    expect((pending as HTMLElement).style.order).toBe('');
-    expect((hated as HTMLElement).style.order).toBe('1');
+    expect(loved.style.order).toBe('-1');
+    expect(pending.style.order).toBe('');
+    expect(hated.style.order).toBe('1');
     orderByAppend(g, scored, rest, sunk);
     expect([...g.children]).toEqual([loved, pending, hated]);
   });
