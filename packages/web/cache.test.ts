@@ -34,6 +34,7 @@ const scoreOf = (featureId: string, reviews: number): ScoreResult => ({
 // More entries than the resident cap (200), so the earliest ones are guaranteed to
 // have been evicted from the in-memory window by the time we read them back.
 const IDS = Array.from({ length: 205 }, (_, i) => `read-through-test-${i}`);
+
 for (const [i, id] of IDS.entries()) await cache.putScore(id, `Place ${i}`, scoreOf(id, 10), 10);
 
 test('get() reads through to sqlite for entries evicted from the resident window', () => {
@@ -96,6 +97,7 @@ test('an all-throttled pass persists nothing rather than blanking the panel', as
 });
 
 const stat = (n: number, pct = 80) => ({ totalReviews: n, trustedReviews: n, scorePct: pct });
+
 const scrape = (fid: string, relevant: number, newest: number): ScoreResult =>
   ({ featureId: fid, ...stat(relevant + newest), relevant: stat(relevant), newest: stat(newest), reviews: [] });
 
@@ -165,6 +167,7 @@ test('a preview with no place data keeps the good meta, and a readable one re-st
   expect(cache.get(fid)!.meta).toEqual(meta);
   const realNow = Date.now;
   Date.now = () => realNow() + 7 * 3600_000; // past the 6h TTL
+
   try {
     await cache.putPreviewBundle(fid, { histogram: [200, 40, 20, 10, 30], meta, chips: [] }); // unchanged
     expect(cache.get(fid)!.histogramTs).toBeGreaterThan(stamped);

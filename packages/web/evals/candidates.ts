@@ -7,6 +7,7 @@ import { PROVIDERS, type Provider } from '../llm';
 
 export const registerCandidates = () => {
   const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+
   const candidates = {
     'luna:low': PROVIDERS.openai,
     'flash-3:min': PROVIDERS.gemini,
@@ -22,8 +23,10 @@ export const registerCandidates = () => {
     // so only low stays.
     'sonnet-5.5:low': PROVIDERS.anthropic,
   };
+
   Object.assign(PROVIDERS, candidates);
   // --only=a,b keeps just those labels.
   const only = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length).split(',');
+
   return Object.keys(candidates).filter((label) => !only || only.includes(label)).map((label) => ({ label, provider: label as Provider }));
 };

@@ -8,9 +8,11 @@
 // the last whole number once the decimals are dropped, whatever its grouping.
 export const parseRatingAndCount = (text: string) => {
   const rating = text.match(/\d+(?:[.,]\d{1,2})?/)?.[0] ?? '0';
+
   const counts = text
     .replace(/\d+[.,]\d{1,2}(?!\d)/g, ' ')
     .match(/\d{1,3}(?:[.,\s'’]\d{3})+(?!\d)|\d+/g);
+
   return {
     rating: Number(rating.replace(',', '.')),
     count: counts ? Number(counts[counts.length - 1].replace(/\D/g, '')) : 0,
@@ -30,5 +32,6 @@ const MAGNITUDES: Record<string, number> = { k: 1e3, th: 1e3, tsd: 1e3, m: 1e6, 
 // there's no number.
 export const parseAbbreviated = (text: string, decimal: '.' | ','): number => {
   const [, num = '', unit = ''] = text.replace(/[\p{Sc}\s]/gu, '').match(/(-?\d[\d.,]*)([a-z]*)/i) ?? [];
+
   return parseLocaleNumber(num, decimal) * (MAGNITUDES[unit.toLowerCase()] ?? 1);
 };

@@ -15,7 +15,9 @@ import type { Subject } from './summary-subject';
 // checking summary points against a keyword shortlist (28% of support missed).
 
 const apiKey = process.env.TYPESAFE_API_KEY;
+
 type Client = Pick<TypeSafeClient, 'systemOne'>;
+
 let client: Client | null = apiKey ? new TypeSafeClient({ apiKey, timeout: 8_000, retry: { maxRetries: 1 } }) : null;
 
 // Questions per request, each holding its own review, with only the topic in the
@@ -24,10 +26,13 @@ let client: Client | null = apiKey ? new TypeSafeClient({ apiKey, timeout: 8_000
 // 85% at 25 (their neighbours distract). Capped by length too.
 const BATCH = 20;
 const BATCH_CHARS = 60_000;
+
 // In flight at once, across the server: the account allows 40 requests a second.
 const MAX_IN_FLIGHT = 8;
+
 // A review longer than any Google allows is clipped, as a guard on the request size.
 const MAX_TEXT = 6_000;
+
 // A failed request backs every caller off for a while, so an outage costs one
 // timeout instead of one per chip, search and summary.
 const DOWN_MS = 5 * 60_000;
@@ -35,26 +40,32 @@ const DOWN_MS = 5 * 60_000;
 let inFlight = 0;
 const waiting: (() => void)[] = [];
 let downUntil = 0;
+
 // Input tokens spent, by kind of judgement, since the process started.
 export const spent: Record<string, number> = {};
 
 export const jevAvailable = (): boolean => !!client && Date.now() >= downUntil;
+
 // Tests swap in a fake client; the server never calls this.
 export const setJevClient = (fake: Client | null) => { client = fake; downUntil = 0; };
 
 // One request's answers by question id, or null when it failed.
 async function evaluate(kind: string, state: Record<string, unknown>, questions: Record<string, Question>): Promise<Record<string, any> | null> {
   if (!client || !jevAvailable()) return null;
+
   if (inFlight >= MAX_IN_FLIGHT) await new Promise<void>((go) => waiting.push(go));
   inFlight++;
+
   try {
     const { answers, usage } = await client.systemOne({ state: state as never, questions });
     spent[kind] = (spent[kind] ?? 0) + usage.input_tokens;
     console.log(`[jev] ${kind} q=${Object.keys(questions).length} in=${usage.input_tokens}`);
+
     return answers as Record<string, any>;
   } catch (e) {
     downUntil = Date.now() + DOWN_MS;
     console.warn(`[jev] ${kind} request failed, pausing ${DOWN_MS / 60_000} min:`, e instanceof Error ? e.message : e);
+
     return null;
   } finally {
     inFlight--;
@@ -69,12 +80,17 @@ const fold = (s: string) => stripAccents(s.toLowerCase());
 const batches = (indices: number[], texts: string[]): number[][] => {
   const out: number[][] = [];
   let run: number[] = [], chars = 0;
+
   for (const i of indices) {
     const n = texts[i]!.length;
+
     if (run.length && (run.length >= BATCH || chars + n > BATCH_CHARS)) { out.push(run); run = []; chars = 0; }
+
     run.push(i); chars += n;
   }
+
   if (run.length) out.push(run);
+
   return out;
 };
 
@@ -82,8 +98,10 @@ const batches = (indices: number[], texts: string[]): number[][] => {
 // repeated search, every client asking about the same reviews and a summary
 // re-checked read only what's new.
 db.run('CREATE TABLE IF NOT EXISTS jev_memo (k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER NOT NULL)');
+
 const getMemo = db.prepare<{ v: string }, [string]>('SELECT v FROM jev_memo WHERE k = ?');
 const putMemo = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO jev_memo (k, v, ts) VALUES (?, ?, ?)');
+
 const memoKey = (kind: string, about: string, text: string) =>
   `${kind}:${Bun.hash(`${about.trim().toLowerCase()}\u0000${text}`).toString(36)}`;
 
@@ -94,6 +112,7 @@ const STANCE_CRITERIA = {
   mixed: 'Speaks of the topic both well and badly, or only states a fact about it without judging it',
   off: "Never discusses the topic, not even in other words (a synonym, a translation, a variant spelling, staff named instead of 'staff')",
 };
+
 const ANSWER_CRITERIA = {
   yes: 'Its answer to the question is yes',
   no: 'Its answer to the question is no',
@@ -121,7 +140,13 @@ async function judge<T extends string>(kind: string, about: string, state: Recor
     if (v != null) return;
     const k = memo[i]!;
     const p = pending.get(k);
-    if (p) { elsewhere.push(p.then((w) => { out[i] = w as T | null; })); return; }
+
+    if (p) {
+      elsewhere.push(p.then((w) => { out[i] = w as T | null; }));
+
+      return;
+    }
+
     pending.set(k, new Promise((resolve) => settle.set(k, resolve)));
     todo.push(i);
   });
@@ -129,18 +154,24 @@ async function judge<T extends string>(kind: string, about: string, state: Recor
   await Promise.all(batches(todo, clipped).map(async (batch) => {
     const answers = await evaluate(kind, state, Object.fromEntries(batch.map((i, j) => [`r${j}`, ask(clipped[i]!, i)])));
     const now = Date.now();
+
     for (const [j, i] of batch.entries()) {
       const v = answers ? read(answers[`r${j}`]) : undefined;
+
       if (v != null) { out[i] = v; putMemo.run(memo[i]!, v, now); }
     }
   }));
+
   for (const i of todo) { settle.get(memo[i]!)?.(out[i] ?? null); pending.delete(memo[i]!); }
+
   await Promise.all(elsewhere);
+
   return out.every((v) => v != null) ? (out as T[]) : null;
 }
 
 const inCriteria = <T extends string>(criteria: Record<T, unknown>) => (a: any): T | undefined =>
   typeof a?.choice === 'string' && a.choice in criteria ? (a.choice as T) : undefined;
+
 const yesNo = (a: any): '1' | '0' | undefined => (typeof a?.noul === 'number' ? (a.noul >= 0.5 ? '1' : '0') : undefined);
 
 // Each text's stance on `topic` (a chip's label, a search's query).
@@ -172,28 +203,37 @@ const OPTION_CRITERIA = {
   mixed: 'Weighs it as an answer both ways without settling (where `thread` asks for recommendations: weighs a drawback that matters for what the asker needs against its good points, or calls it merely okay, nothing to seek out), or mentions it without a verdict (owns it, is considering it)',
   off: 'Never speaks of it: speaks only of one of `others` (even one with a similar name), only of a whole kind of thing, only asks a question, or speaks of something else',
 };
+
 const REPLY_CRITERIA = {
   for: 'Puts it forward as an answer to `thread` or says what makes it one (where `thread` asks for recommendations: recommends it or speaks well of it; where it asks for the worst or most dangerous: calls it bad or dangerous), including by agreeing with `replying_to` where that puts it forward ("this", "+1", "same")',
   against: 'Argues it is a poor answer to `thread` (where `thread` asks for recommendations: advises against it or speaks badly of it; where it asks for the worst or most dangerous: calls it fine or safe), and of it in particular, including by disagreeing with `replying_to` where that puts it forward',
   mixed: OPTION_CRITERIA.mixed,
   off: 'Never speaks of it, neither in its own words nor by agreeing or disagreeing with `replying_to` about it. Thanking `replying_to` or asking it something is not agreeing with it, and speaking only of one of `others` is not speaking of it',
 };
+
 const STANCE_OF = { for: 'praise', against: 'complain', mixed: 'mixed', off: 'off' } as const;
 const OPTION_READ = Bun.hash(JSON.stringify([OPTION_CRITERIA, REPLY_CRITERIA])).toString(36);
+
 export const optionStancesFor = (thread: string, name: string, option: string, others: string, comments: { text: string; parent?: string }[]): Promise<Stance[] | null> =>
   judge('option', `${thread}\u0000${name}\u0000${OPTION_READ}`, { thread, option, others }, comments.map((c) => `${c.parent ?? ''}\u0000${c.text}`),
     (_, i) => {
       const { text, parent } = comments[i]!;
+
       return parent
         ? choice({ question: 'How does this comment, a reply to `replying_to`, speak of `option` as an answer to `thread`?', comment: clip(text), replying_to: clip(parent) }, REPLY_CRITERIA)
         : choice({ question: 'How does this comment speak of `option` as an answer to `thread`?', comment: clip(text) }, OPTION_CRITERIA);
     },
-    (a) => { const k = inCriteria(OPTION_CRITERIA)(a); return k && STANCE_OF[k]; });
+    (a) => {
+      const k = inCriteria(OPTION_CRITERIA)(a);
+
+      return k && STANCE_OF[k];
+    });
 
 // Whether each comment answers the Thread's question about the things its post
 // lists as a group (web/tally.ts): such a comment names none of them, yet is
 // then read for each.
 const GROUP_QUESTION = 'Does this comment give a verdict on the options `thread` lists as a group: all of them, none of them, or all the rest ("all of the above", "none of those", "the others are fine")?';
+
 export const groupAnswersFor = (thread: string, comments: string[]): Promise<boolean[] | null> =>
   judge('group', `${thread}\u0000${Bun.hash(GROUP_QUESTION).toString(36)}`, { thread }, comments,
     (comment) => noul({ question: GROUP_QUESTION, comment }), yesNo)
@@ -204,6 +244,7 @@ export const groupAnswersFor = (thread: string, comments: string[]): Promise<boo
 // "Rewe's are the worst, where else?" names Rewe as what the asker wants away
 // from, so an answer to it isn't one about Rewe.
 const ASKED_QUESTION = 'Does `thread` ask about `option` itself, for verdicts on it or whether to choose it, rather than naming it only as background: one the asker owns, has tried or wants to get away from?';
+
 export const askedAboutFor = (thread: string, options: string[]): Promise<boolean[] | null> =>
   judge('asked', `${thread}\u0000${Bun.hash(ASKED_QUESTION).toString(36)}`, { thread }, options,
     (option) => noul({ question: ASKED_QUESTION, option }), yesNo)
@@ -213,6 +254,7 @@ export const askedAboutFor = (thread: string, options: string[]): Promise<boolea
 // name (web/tally.ts): "make them at home" is, and its answers ("they're so
 // easy to make", a recipe link) are found by asking, not by its name.
 const DESCRIBED_QUESTION = 'Is `option` a way of doing it, or another thing people describe in their own words, rather than a thing with a name of its own, like a product, a place, a store, a person or a technique?';
+
 export const describedFor = (thread: string, options: string[]): Promise<boolean[] | null> =>
   judge('described', `${thread}\u0000${Bun.hash(DESCRIBED_QUESTION).toString(36)}`, { thread }, options,
     (option) => noul({ question: DESCRIBED_QUESTION, option }), yesNo)
@@ -221,6 +263,7 @@ export const describedFor = (thread: string, options: string[]): Promise<boolean
 // Whether each comment speaks, in any words, of an Option the answers
 // describe rather than name (describedFor).
 const FORWARD_QUESTION = 'Does this comment clearly put `option` forward, or argue against it, in any words, as an answer to `thread`?';
+
 export const putsForwardFor = (thread: string, name: string, option: string, comments: string[]): Promise<boolean[] | null> =>
   judge('forward', `${thread}\u0000${name}\u0000${Bun.hash(FORWARD_QUESTION).toString(36)}`, { thread, option }, comments,
     (comment) => noul({ question: FORWARD_QUESTION, comment }), yesNo)
@@ -241,11 +284,14 @@ export const stanceOfReviews = (topic: string, reviews: Review[]): Promise<Stanc
 // keyword shortlist kept the same points but missed 28% of their support.
 export async function supportFor(points: string[], texts: string[]): Promise<number[][] | null> {
   if (!jevAvailable() || !points.length) return null;
+
   const support = await Promise.all(points.map(async (point) => {
     const says = await judge('point', point, { point }, texts,
       (review) => noul({ question: 'Does this review say what `point` says, or a clear part of it?', review }), yesNo);
+
     return says && texts.flatMap((_, i) => (says[i] === '1' ? [i] : []));
   }));
+
   return support.every(Boolean) ? (support as number[][]) : null;
 }
 
@@ -254,7 +300,12 @@ export async function supportFor(points: string[], texts: string[]): Promise<num
 const mentioning = (texts: string[], name: string): string[] => {
   const full = fold(name).replace(/['’]s\b/g, '');
   const word = full.split(/\s+/).filter((w) => w.length >= 4).sort((a, b) => b.length - a.length)[0];
-  return texts.filter((t) => { const f = fold(t); return f.includes(full) || (!!word && f.includes(word)); });
+
+  return texts.filter((t) => {
+    const f = fold(t);
+
+    return f.includes(full) || (!!word && f.includes(word));
+  });
 };
 
 // A summary with its Receipts (receiptsFor): each bullet carries how many
@@ -266,8 +317,10 @@ export async function withReceipts(summary: Summary, { reviewTexts }: Subject): 
   const texts = [...new Set(reviewTexts)];
   const rivals = (summary.alternatives ?? []).map((name) => ({ name, texts: mentioning(texts, name) }));
   const checked = await receiptsFor(summary.highlights.map((h) => h.text), texts, rivals, jevReader);
+
   if (!checked) return summary;
   const { points, alternatives } = checked;
+
   return {
     ...summary,
     highlights: summary.highlights.flatMap((h, k) => (points[k] ? [{ ...h, ...points[k] }] : [])),
@@ -285,5 +338,6 @@ export const hasReceipts = (summary: Summary): boolean => summary.highlights.eve
 export const quotingReviews = (summary: Summary, reviews: Review[] | undefined): Summary => {
   if (!reviews?.length) return summary;
   const byText = new Map(reviews.map((r) => [r.text, r]));
+
   return { ...summary, highlights: summary.highlights.map((h) => (h.quotes ? { ...h, quotes: h.quotes.map((q) => (typeof q === 'string' ? byText.get(q) ?? q : q)) } : h)) };
 };

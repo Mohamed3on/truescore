@@ -20,7 +20,9 @@ export const renderScoreBadge = ({ score, nps, total }: ScoreData): HTMLElement 
   badge.className = 'nps-score-badge';
   badge.style.cssText = `color:${npsColor(nps)};font-weight:600;font-size:12px;margin-left:6px;white-space:nowrap;`;
   badge.textContent = `${addCommas(score)} (${Math.round(nps)}%)`;
+
   if (total != null) badge.title = `${addCommas(total)} item reviews`;
+
   return badge;
 };
 
@@ -33,12 +35,15 @@ export const structuralContainers =
   (cardSelector: string) =>
   (cards: Element[]): Set<Element> => {
     const isBearer = (child: Element) => child.matches(cardSelector) || !!child.querySelector(cardSelector);
+
     const containerOf = (card: Element): Element | null => {
       let el: Element = card;
+
       while (el.parentElement) {
         const parent = el.parentElement;
         const children = [...parent.children];
         const bearers = children.filter(isBearer).length;
+
         if (bearers >= 2) {
           // A page-level ancestor can also reach 2 — via unrelated sections that
           // each hold a card somewhere. A real row's children are mostly bearers;
@@ -48,17 +53,24 @@ export const structuralContainers =
           // ships 48 behind its first 12) — are neither card nor content, so
           // they weigh on neither side.
           const content = children.filter((child) => child.childElementCount || child.textContent!.trim()).length;
+
           return bearers * 2 >= content ? parent : null;
         }
+
         el = parent;
       }
+
       return null;
     };
+
     const containers = new Set<Element>();
+
     for (const card of cards) {
       const container = containerOf(card);
+
       if (container) containers.add(container);
     }
+
     return containers;
   };
 
@@ -78,7 +90,9 @@ export const containersBySelector =
 // childList records to observers.
 export const orderByAppend = (container: Element, scored: Element[], rest: Element[], sunk: Element[] = []): void => {
   const desired = [...scored, ...rest, ...sunk];
+
   if (desired.every((child, i) => container.children[i] === child)) return;
+
   for (const child of desired) container.appendChild(child);
 };
 
@@ -100,6 +114,7 @@ export const orderByCssImportant = (_container: Element, scored: Element[], rest
 // an unscored product) returns to the default — only one this band ordered,
 // never an order the host set itself.
 const banded = new WeakSet<Element>();
+
 export const orderByCssBand = (_container: Element, scored: Element[], rest: Element[] = [], sunk: Element[] = []): void => {
   scored.forEach((child, i) => {
     (child as HTMLElement).style.order = String(i - scored.length);
@@ -109,6 +124,7 @@ export const orderByCssBand = (_container: Element, scored: Element[], rest: Ele
     (child as HTMLElement).style.order = String(i + 1);
     banded.add(child);
   });
+
   for (const child of rest) if (banded.delete(child)) (child as HTMLElement).style.order = '';
 };
 
@@ -125,16 +141,21 @@ const bearer = (child: Element): Element | null =>
 export const rankChildren = (container: Element, rankableChild: (child: Element) => boolean = () => true): { scored: Element[]; rest: Element[]; sunk: Element[] } => {
   const ranked: { child: Element; score: number }[] = [];
   const rest: Element[] = [];
+
   for (const child of [...container.children]) {
     if (!rankableChild(child)) {
       rest.push(child);
       continue;
     }
+
     const nps = bearer(child)?.getAttribute('data-nps');
+
     if (nps != null) ranked.push({ child, score: parseFloat(nps) });
     else rest.push(child);
   }
+
   ranked.sort((a, b) => b.score - a.score);
+
   return {
     scored: ranked.filter((r) => r.score >= 0).map((r) => r.child),
     rest,
@@ -149,19 +170,24 @@ export const rankChildren = (container: Element, rankableChild: (child: Element)
 // Returns the tinted badges.
 const BEST_RATIO_MARGIN = 1;
 const BEST_RATIO_TINT = 'rgba(74, 222, 128, 0.2)';
+
 export const markBestRatios = (badges: (Element | null)[]): HTMLElement[] => {
   const picks: HTMLElement[] = [];
   let best = -Infinity;
+
   for (const badge of badges) {
     if (!(badge instanceof HTMLElement)) continue;
     const ratio = Number(badge.dataset.npsRatio);
     const on = ratio >= best + BEST_RATIO_MARGIN;
+
     if (ratio > best) best = ratio;
+
     if (on) picks.push(badge);
     badge.style.background = on ? BEST_RATIO_TINT : '';
     badge.style.boxShadow = on ? `0 0 0 3px ${BEST_RATIO_TINT}` : '';
     badge.style.borderRadius = on ? '3px' : '';
   }
+
   return picks;
 };
 
@@ -176,11 +202,14 @@ export const cycleBestRatios = (picks: () => (Element | null)[]): void => {
   document.addEventListener('keydown', (e) => {
     if ((e.key !== ']' && e.key !== '[') || e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target as HTMLElement;
+
     if (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
     const at = (el: Element) => el.getBoundingClientRect();
+
     const cards = picks()
       .filter((card): card is HTMLElement => card instanceof HTMLElement && card.isConnected)
       .sort((a, b) => at(a).top - at(b).top || at(a).left - at(b).left);
+
     if (!cards.length) return;
     e.preventDefault();
     const i = current ? cards.indexOf(current) : -1;
@@ -238,12 +267,15 @@ export const setupScoreGrid = ({
   const identity = (card: Element) => idOf?.(card) ?? '';
 
   let picks: (Element | null)[] = [];
+
   const resort = () => {
     const cards = [...document.querySelectorAll(cardSelector)];
     const containers = new Set(discoverContainers(cards));
     picks = [];
+
     for (const container of containers) {
       const { scored, rest, sunk } = rankChildren(container, rankableChild);
+
       if (scored.length + sunk.length < 2) continue; // nothing to rank against
       applyOrder(container, scored, rest, sunk);
       picks.push(...markBestRatios(scored.map(bearer)).map((badge) => badge.closest(cardSelector)));
@@ -253,6 +285,7 @@ export const setupScoreGrid = ({
   // Scores land one request at a time; re-sort as they do, but at most once a
   // frame so a slow batch doesn't reshuffle the grid on every response.
   let sortQueued = false;
+
   const scheduleSort = () => {
     if (sortQueued) return;
     sortQueued = true;
@@ -268,14 +301,17 @@ export const setupScoreGrid = ({
       .then((data) => {
         // Recycled for another product while in flight, or badged meanwhile.
         if (identity(card) !== id || card.querySelector('.nps-score-badge')) return;
+
         if (!data || isNaN(data.nps)) {
           if (attempt < RETRIES) {
             setTimeout(() => {
               if (card.isConnected && identity(card) === id) score(card, id, attempt + 1);
             }, RETRY_BASE_MS * 4 ** attempt);
           }
+
           return;
         }
+
         // The badge, not the card, carries `data-nps`: the badge lives inside
         // the rating node hosts persist across re-renders, so the rank survives
         // the card wrapper being recreated around it.
@@ -294,6 +330,7 @@ export const setupScoreGrid = ({
       // `data-nps-done` names the product the card was scored for, so a card
       // the host recycles for another product comes round again.
       const id = identity(card);
+
       if (card.getAttribute('data-nps-done') === id) continue;
       card.setAttribute('data-nps-done', id);
       // Idempotent guard. Some hosts (e.g. Uniqlo's and IKEA's React grids)
@@ -303,20 +340,24 @@ export const setupScoreGrid = ({
       // `order` it carried. Loop-safe because the default CSS-band resort
       // makes no childList mutations for the observer to re-fire on.
       const badge = card.querySelector<HTMLElement>('.nps-score-badge[data-nps-id]');
+
       if (badge?.dataset.npsId === id) {
         scheduleSort();
         continue;
       }
+
       // A recycled card's badge, and so its rank, belong to its last product.
       if (badge) {
         badge.remove();
         scheduleSort();
       }
+
       score(card, id);
     }
   };
 
   let debounceTimer: ReturnType<typeof setTimeout>;
+
   const debouncedProcess = () => {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(processCards, 200);

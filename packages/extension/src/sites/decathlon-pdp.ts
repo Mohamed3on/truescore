@@ -14,6 +14,7 @@ const CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
 // Hydration happens once per page load: in-app navigations after it wait for nothing.
 const hydrated = afterHydration();
 const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
+
 // Decathlon hands over a page as large as asked, but big ones fail (500) now and
 // then — a 20,000-review page (25 MB) did — so the full set comes in pages this
 // size, each tried up to three times.
@@ -22,39 +23,53 @@ const REVIEWS_PAGE = 5000;
 const fetchStats = async (site: DecathlonSite, sku: string, productId: string) => {
   const cacheKey = `nps_stats_${productId}`;
   const cached = cacheGet(cacheKey, CACHE_TTL);
+
   if (cached) return cached;
 
   const res = await fetch(site.statsUrl(sku));
+
   if (!res.ok) return null;
   const json = await res.json();
   const stats = json?.stats ?? null;
+
   if (stats) cacheSet(cacheKey, stats);
+
   return stats;
 };
 
 const getScoreFromStats = (stats: any) => {
   const dist = stats?.ratingDistribution;
+
   if (!dist?.length) return null;
   let total = 0, five = 0, one = 0;
+
   for (const { code, value } of dist) {
     total += value;
+
     if (code === '5') five = value;
+
     if (code === '1') one = value;
   }
+
   if (total === 0) return null;
+
   return npsStats(five, one, total);
 };
 
 const appendScore = (productInfo: Element, apac: boolean, { score, nps }: { score: number; nps: number }) => {
   const reviewDiv = productInfo.querySelector(apac ? APAC_RATING : '.review');
+
   if (!reviewDiv || reviewDiv.querySelector('.nps-score-badge')) return;
+
   if (apac) {
     // The Asia-Pacific page reuses its listing tiles' rating line, so it gets their chip.
     const badge = renderScoreBadge({ score, nps });
     badge.classList.add('nps-pdp-badge');
     reviewDiv.appendChild(badge);
+
     return;
   }
+
   const separator = document.createElement('div');
   separator.className = 'review__vertical-line';
   const badge = document.createElement('span');
@@ -70,6 +85,7 @@ const appendScore = (productInfo: Element, apac: boolean, { score, nps }: { scor
 const renderInsights = (productInfo: Element, stats: any, before: string) => {
   if (document.querySelector('.nps-insights')) return;
   const { averageAttributeRating, recommendedCount, count } = stats;
+
   if (!averageAttributeRating?.length) return;
 
   const recPct = count ? Math.round((recommendedCount / count) * 100) : null;
@@ -100,18 +116,22 @@ const renderInsights = (productInfo: Element, stats: any, before: string) => {
   panel.style.cssText = 'margin:16px 0;padding:14px;border-radius:8px;background:#f5f5f5;line-height:1.5;color:#333;';
   panel.innerHTML = html;
   const desc = productInfo.querySelector(before);
+
   if (desc) desc.before(panel);
   else productInfo.appendChild(panel);
 };
 
 const replaceSizometer = (stats: any) => {
   const { fitDistribution } = stats;
+
   if (!fitDistribution?.length) return;
   const fitTotal = fitDistribution.reduce((s: number, f: any) => s + f.value, 0);
+
   if (fitTotal === 0) return;
 
   if (document.querySelector('.nps-fit')) return;
   const sizometer = document.querySelector('[data-cs-override-id="product_productinfo_sizometer"]');
+
   if (!sizometer) return;
 
   const labels = ['Too small', 'Slightly small', 'As expected', 'Slightly large', 'Too large'];
@@ -120,6 +140,7 @@ const replaceSizometer = (stats: any) => {
   const asExpectedPct = asExpected ? Math.round((asExpected.value / fitTotal) * 100) : 0;
 
   let rowsHtml = '';
+
   for (let i = 0; i < fitDistribution.length; i++) {
     const f = fitDistribution[i];
     const pct = Math.round((f.value / fitTotal) * 100);
@@ -179,7 +200,9 @@ const reviewFields = (r: DktReview) => ({ rating: r.rating, title: r.title, body
 const fetchJson = async (url: string, tries = 3): Promise<any> => {
   for (let attempt = 1; ; attempt++) {
     const res = await fetch(url).catch(() => null);
+
     if (res?.ok) return res.json();
+
     if (attempt >= tries) throw new Error(`Decathlon reviews ${res?.status ?? 'unreachable'}`);
     await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
   }
@@ -196,11 +219,14 @@ const addReviews = (json: any, into: DktReview[], seen = new Set<string>()) => {
       body: r.comment || '',
       date: String(r.publisherDate || '').slice(0, 10),
     };
+
     const id = String(r.id ?? '') || reviewToText(review);
+
     if (!id || seen.has(id)) continue;
     seen.add(id);
     into.push(review);
   }
+
   return into;
 };
 
@@ -213,23 +239,31 @@ const addReviews = (json: any, into: DktReview[], seen = new Set<string>()) => {
 const fetchReviews = (site: DecathlonSite, sku: string, productId: string, total: Promise<number>) => {
   const cacheKey = `dkt-reviews-v3-${productId}`;
   const cached: Promise<DktReview[] | null> = idbGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
+
   const all = cached.then(async (hit) => {
     if (hit) return hit;
     const first = fetchJson(site.reviewsUrl(sku, REVIEWS_PAGE, 0));
     const pageCount = Math.ceil(Math.min(await total, SEARCH_MAX) / REVIEWS_PAGE);
+
     const pages = await Promise.allSettled([
       first,
       ...Array.from({ length: pageCount - 1 }, (_, i) => fetchJson(site.reviewsUrl(sku, REVIEWS_PAGE, i + 1))),
     ]);
+
     const reviews: DktReview[] = [];
     const seen = new Set<string>();
+
     for (const page of pages) if (page.status === 'fulfilled') addReviews(page.value, reviews, seen);
+
     // Parsed-but-empty tombstones briefly (see the TTL above).
     if (pages.every((page) => page.status === 'fulfilled')) idbSet(cacheKey, reviews);
+
     return reviews;
   });
+
   const recent = cached.then((hit) => hit ?? fetchJson(site.reviewsUrl(sku, RECENT_REVIEWS, 0))
     .then((json) => addReviews(json, []), () => all));
+
   return { recent, all };
 };
 
@@ -238,24 +272,30 @@ setupSpaInjector({
   load: async () => {
     const site = getDecathlonSite();
     const ids = extractDecathlonIds();
+
     if (!site || !ids) return null;
     const statsPromise = fetchStats(site, ids.sku, ids.productId);
     // Reviews start downloading at once, alongside the stats that size them; only
     // touching the page waits for React to hydrate it.
     const reviews = fetchReviews(site, ids.sku, ids.productId, statsPromise.then((stats) => stats?.count ?? 0));
     const [stats] = await Promise.all([statsPromise, hydrated]);
+
     if (!stats) return null;
+
     return { apac: site.apac, ids, stats, scoreData: getScoreFromStats(stats), reviews: stats.count >= 5 ? reviews : null };
   },
   inject: ({ apac, ids, stats, scoreData, reviews }) => {
     const productInfo = document.querySelector(apac ? '#product-summary-container' : '.product-info');
+
     if (!productInfo) return;
     // The panels go before the description. The Asia-Pacific summary column has
     // none: there they go right under the buy box, above the delivery block.
     const before = apac ? `:scope > :has(${APAC_RATING}) + *` : '.product-info__description';
+
     if (scoreData) appendScore(productInfo, apac, scoreData);
     renderInsights(productInfo, stats, before);
     replaceSizometer(stats);
+
     if (reviews && !document.querySelector('.ars-wrapper')) {
       const anchor = document.querySelector('.nps-insights') || productInfo.querySelector(before) || productInfo;
       const island = createIslandShell();
@@ -275,6 +315,7 @@ setupSpaInjector({
     document.querySelectorAll('.nps-insights').forEach(el => el.remove());
     document.querySelectorAll('.nps-pdp-badge').forEach(el => {
       const sep = el.previousElementSibling;
+
       if (sep?.classList.contains('review__vertical-line')) sep.remove();
       el.remove();
     });

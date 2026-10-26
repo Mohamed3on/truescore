@@ -96,16 +96,20 @@ const openCourseAccordions = () => {
 // Used as a fallback for products without the per-volume timestamp tables.
 const getDescriptionContents = (): string => {
   const desc = document.querySelector('.product__description');
+
   if (!desc) return '';
   const blocks: string[] = [];
+
   for (const ul of desc.querySelectorAll('ul')) {
     const items = Array.from(ul.querySelectorAll('li'))
       .map((li) => li.textContent?.trim().replace(/\s+/g, ' '))
       .filter(Boolean);
+
     if (!items.length) continue;
     const label = ul.previousElementSibling?.textContent?.trim().replace(/\s+/g, ' ') || '';
     blocks.push((label ? `${label}\n` : '') + items.map((i) => `- ${i}`).join('\n'));
   }
+
   return blocks.join('\n\n');
 };
 
@@ -116,6 +120,7 @@ const getDescriptionContents = (): string => {
 const getCourseContent = (): string => {
   const root = document.getElementById('contents');
   const blocks: string[] = [];
+
   for (const title of root?.querySelectorAll('.product__course-title') || []) {
     const rows = Array.from(title.nextElementSibling?.querySelectorAll('table tr') || [])
       .map((tr) =>
@@ -124,8 +129,10 @@ const getCourseContent = (): string => {
           .filter(Boolean)
           .join('  —  '))
       .filter(Boolean);
+
     if (rows.length) blocks.push(`${title.textContent?.trim()}\n${rows.join('\n')}`);
   }
+
   return blocks.length ? blocks.join('\n\n') : getDescriptionContents();
 };
 
@@ -134,15 +141,18 @@ openCourseAccordions();
 (async function main() {
   if (document.querySelector('.ars-wrapper')) return;
   const info = getProductInfo();
+
   if (!info) return;
 
   const anchor = findAnchor();
+
   if (!anchor) return;
 
   const courseContent = getCourseContent();
 
   loadReviews(BJJ_FANATICS, info, (bundle, autoSummarize) => {
     const scored = computeScore(bundle);
+
     if (!scored || scored.total < 5) return;
     document.querySelector('.ars-wrapper')?.remove();
     anchor.after(buildPanel(info, bundle, scored, courseContent, autoSummarize));

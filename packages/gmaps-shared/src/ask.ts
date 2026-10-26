@@ -10,6 +10,7 @@ export type AskView = { searches: AskSearch[]; text: string; done: boolean; answ
 // it a different question ("Dogs allowed?" asks what "dogs allowed" does).
 export const normalizeQuestion = (q: string): string =>
   q.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[\s?!.。？！]+$/u, '');
+
 // A client's own way to Search every review — the Maps tab's session, the web's
 // /api/search, a retail or book site's own search. Resolves to the matches as
 // review texts with their stats, or null when it can't search.
@@ -23,10 +24,13 @@ export const questionOf = (messages: AskMessage[]): string =>
 // model wrote before searching gives way to the Answer it writes after.
 export const askViewOf = (message: AskMessage | undefined, progress = new Map<string, number>()): AskView => {
   const parts = message?.parts ?? [];
+
   return {
     searches: parts.filter(isStaticToolUIPart).map((p): AskSearch => {
       const query = p.input?.query ?? '';
+
       if (p.state === 'output-available') return { query, done: true, found: p.output.found, scorePct: p.output.scorePct, trustedReviews: p.output.trustedReviews };
+
       return p.state === 'output-error' ? { query, done: true, found: null } : { query, done: false, found: progress.get(p.toolCallId) ?? 0 };
     }),
     text: parts.slice(parts.map(isStaticToolUIPart).lastIndexOf(true) + 1).map((p) => (p.type === 'text' ? p.text : '')).join(''),
@@ -37,6 +41,7 @@ export const askViewOf = (message: AskMessage | undefined, progress = new Map<st
 
 // Rounds of Searches before the model must answer.
 const SEARCH_ROUNDS_MAX = 2;
+
 // A Search's matches the model reads beyond the Sample, capped so a common word
 // on a big place can't flood the context (texts arrive longest-first).
 const SEARCH_HITS_MAX = 100;
@@ -48,6 +53,7 @@ export const searchesLeft = (messages: ModelMessage[]) => messages.filter((m) =>
 // client runs it (runAsk). The model reads back the matches its `sample` lacks.
 export const searchReviewsTool = (sample: string[], description: string) => {
   const seen = new Set(sample);
+
   return tool({
     description,
     inputSchema: z.object({ query: z.string().describe('Terms joined with " OR "') }),
@@ -71,27 +77,32 @@ export async function runAsk(transport: ChatTransport<AskMessage>, question: str
   const found = new Map<string, SearchMatches | null>();
   let answer: AskMessage | undefined;
   let view = askViewOf(answer);
+
   // The Ask with every settled Search handed back as its call's output.
   const settled = (m: AskMessage): AskMessage => ({
     ...m,
     parts: m.parts.map((p) => {
       if (!isStaticToolUIPart(p) || p.state !== 'input-available' || !found.has(p.toolCallId)) return p;
       const matches = found.get(p.toolCallId);
+
       return matches
         ? { ...p, state: 'output-available' as const, output: { ...matches, found: matches.texts.length } }
         : { ...p, state: 'output-error' as const, errorText: SEARCH_FAILED };
     }),
   });
+
   // Rows only get a new array when one changed, so a painter can skip rebuilding them.
   const paint = () => {
     const next = askViewOf(answer && settled(answer), progress);
     onView((view = JSON.stringify(next.searches) === JSON.stringify(view.searches) ? { ...next, searches: view.searches } : next));
   };
+
   for (;;) {
     // Each Search starts the moment the model has written its query, not once the
     // round's stream closes. Not a replayed Answer's (answeredAt): its calls
     // stream in with their matches.
     const searches = new Map<string, Promise<void>>();
+
     const run = (m: AskMessage) => {
       for (const call of m.parts) {
         if (!isStaticToolUIPart(call) || call.state !== 'input-available' || searches.has(call.toolCallId)) continue;
@@ -101,19 +112,26 @@ export async function runAsk(transport: ChatTransport<AskMessage>, question: str
           .then((matches) => { found.set(id, matches); paint(); }));
       }
     };
+
     const stream = await transport.sendMessages({ trigger: 'submit-message', chatId: 'ask', messageId: undefined, messages: answer ? [asked, answer] : [asked], abortSignal });
+
     for await (const m of readUIMessageStream<AskMessage>({ message: answer, stream, terminateOnError: true })) {
       answer = m;
+
       if (!m.metadata?.answeredAt) run(m);
       paint();
     }
+
     const calls = answer?.parts.filter(isStaticToolUIPart).filter((p) => p.state === 'input-available') ?? [];
+
     if (!calls.length) break;
     run(answer!);
     await Promise.all(calls.map((call) => searches.get(call.toolCallId)));
     answer = settled(answer!);
   }
+
   if (!view.text.trim()) throw new Error('The answer was cut off — try again');
   onView((view = { ...view, done: true }));
+
   return view;
 }

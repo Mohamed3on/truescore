@@ -8,6 +8,7 @@ setupScoreGrid({
   cardSelector: '.product-card__grid-item',
   scoreForCard: (card) => {
     const id = starsOf(card)?.getAttribute('data-id');
+
     return id ? scoreOf(id) : Promise.resolve(null);
   },
   // The card's info is a flex column: keep the badge from stretching across it.

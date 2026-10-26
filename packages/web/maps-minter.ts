@@ -16,8 +16,10 @@ import { logEvent } from './events';
 const WARMUP_MS = 3_000;
 const MINT_TIMEOUT_MS = 30_000;
 const SIGN_TIMEOUT_MS = 5_000;
+
 // The racers share one interpreter download, so one that hangs would sink them all.
 const INTERPRETER_TIMEOUT_MS = 15_000;
+
 // A session can come back capped for life at 5 reviews a request with no next page:
 // about half of fresh ones did before the limited view, every signed-out one since.
 // So a mint races a few sessions and keeps the first uncapped one, starting another
@@ -27,7 +29,9 @@ const MINT_RACE = 3;
 const MINT_ATTEMPTS = 6;
 
 type Minted = { session: MapsSession; stop: () => void };
+
 let inFlight: Promise<MapsSession | null> | null = null;
+
 // The mint signing for the adopted session; stopped when a newer one takes over.
 let live: Minted | null = null;
 
@@ -35,11 +39,18 @@ let live: Minted | null = null;
 export function mintMapsCreds(): Promise<MapsSession | null> {
   return (inFlight ??= (async () => {
     // Without the proxy (local dev, tests) the mint would come from this machine's own IP.
-    if (!PROXY_URL) { console.warn('[maps-minter] no proxy configured — cannot mint'); return null; }
+    if (!PROXY_URL) {
+      console.warn('[maps-minter] no proxy configured — cannot mint');
+
+      return null;
+    }
+
     const won = await firstOf(runMint, MINT_RACE, MINT_ATTEMPTS);
+
     if (!won) return null;
     live?.stop();
     live = won;
+
     return won.session;
   })().finally(() => { inFlight = null; interpreters.clear(); }));
 }
@@ -52,6 +63,7 @@ export function firstOf<T extends { stop: () => void }>(attempt: () => Promise<T
     let started = 0;
     let failed = 0;
     let won = false;
+
     const start = () => {
       started++;
       attempt().then(
@@ -59,6 +71,7 @@ export function firstOf<T extends { stop: () => void }>(attempt: () => Promise<T
         () => { if (++failed === attempts) resolve(null); else if (!won && started < attempts) start(); },
       );
     };
+
     for (let i = 0; i < Math.min(width, attempts); i++) start();
   });
 }
@@ -70,12 +83,15 @@ const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
 // so a mint's racers share one download of it. Dropped when the mint ends, and at
 // once if the download fails or times out, so the next racer fetches it afresh.
 const interpreters = new Map<string, Promise<string>>();
+
 const interpreterAt = (url: string, cookies: string): Promise<string> => {
   const known = interpreters.get(url);
+
   if (known) return known;
   const script = withTimeout(googleFetch(url, undefined, cookies), INTERPRETER_TIMEOUT_MS);
   interpreters.set(url, script);
   script.catch(() => { if (interpreters.get(url) === script) interpreters.delete(url); });
+
   return script;
 };
 
@@ -86,6 +102,7 @@ async function runMint(): Promise<Minted> {
   // Whether Maps took the account's cookies: a signed-out page has no XSRF token. Logged
   // with the result, so an expired account reads as such, not as a capped session.
   let signedIn = false;
+
   try {
     const session = await withTimeout(startSession(vm), MINT_TIMEOUT_MS);
     signedIn = !!session.creds.at;
@@ -93,9 +110,11 @@ async function runMint(): Promise<Minted> {
     // override so a bad mint can't clobber the live session's global jar. The probe
     // place always fills a page, so a short one is a capped session.
     const verify = await verifyReviewsLoad(session.creds, session.cookies, session.sign);
+
     if (verify < PAGE_SIZE) throw new Error(verify ? 'verify-capped' : 'verify-empty');
     console.log(`[maps-minter] minted session in ${Date.now() - t0}ms (verify: ${verify} reviews)`);
     logEvent('mint', { result: 'ok', ms: Date.now() - t0, verify, signedIn });
+
     return { session, stop: vm.stop };
   } catch (e) {
     vm.stop();
@@ -110,12 +129,14 @@ async function startSession(vm: BotguardWorker): Promise<MapsSession> {
   const { html, cookies } = await fetchMapsPage(await accountCookies());
   const sessionId = html.match(/kEI='([^']+)'/)?.[1];
   const challenge = html.match(/"USpUDc":("(?:[^"\\]|\\.)*")/)?.[1];
+
   if (!sessionId || !challenge) throw new Error('no session in the Maps page');
   const at = html.match(/"SNlM0e":"([^"]*)"/)?.[1] ?? '';
   // jspb: "%.@." then the array minus its "[": [id, script, [,,,interpreterUrl], hash, program, globalName, …]
   const [, , [, , , url], , program, globalName] = JSON.parse(`[${JSON.parse(challenge).slice(4)}`);
   await vm.boot({ interpreter: await interpreterAt(`https:${url}`, cookies), program, globalName });
   await Bun.sleep(WARMUP_MS);
+
   return { creds: { bgkey: '', bgbind: '', sessionId, at, hl: 'en' }, cookies, sign: vm.sign };
 }
 
@@ -129,6 +150,7 @@ function botguardWorker() {
   let booted = () => {};
   let ids = 0;
   worker.onmessage = ({ data }) => (data === 'ready' ? booted() : pending.get(data.id)?.(data.key));
+
   const sign: Signer = (request) => new Promise((resolve) => {
     const id = ++ids;
     const done = (key: string | null) => { clearTimeout(timer); pending.delete(id); resolve(key); };
@@ -136,6 +158,7 @@ function botguardWorker() {
     pending.set(id, done);
     worker.postMessage({ id, request });
   });
+
   return {
     boot: (challenge: { interpreter: string; program: string; globalName: string }) => new Promise<void>((resolve, reject) => {
       booted = resolve;

@@ -6,8 +6,10 @@ import { setModel } from './llm';
 import { chatOf, combine, countOf, naming, tallyOption, tallyThread, telling, threadOf } from './tally';
 
 let n = 0;
+
 const comment = (id: string, body: string, more: Partial<ThreadComment> = {}): ThreadComment =>
   ({ id, parentId: null, author: `u-${id}`, score: 1, body, ...more });
+
 const threadWith = (comments: ThreadComment[], title = `Best headphones? #${++n}`): Thread => ({ id: `t${n}`, title, text: '', comments });
 
 describe('naming', () => {
@@ -19,6 +21,7 @@ describe('naming', () => {
       comment('d', 'Sonyx is a different brand'),
       comment('e', 'both my Sonys broke'),
     ]);
+
     expect(naming(thread, ['Sony']).map((c) => c.id)).toEqual(['a', 'b', 'c', 'e']);
   });
 
@@ -31,6 +34,7 @@ describe('naming', () => {
       comment('e', 'this', { parentId: 'd' }),
       comment('f', 'this', { parentId: 'gone' }),
     ]);
+
     // c answers b, a bare "this": too far down to know it's about Bose.
     expect(naming(thread, ['Bose']).map((c) => c.id)).toEqual(['a', 'b']);
     const asked = threadWith([comment('a', 'go for the first')], 'Bose or Sony?');
@@ -50,6 +54,7 @@ describe('naming', () => {
       comment('c', 'Pixels hold value: I sold an 8 Pro and an 8a for good money'),
       comment('d', 'agreed', { parentId: 'c' }),
     ]);
+
     expect(naming(thread, ['Pixel 8 Pro', '8 Pro'], ['Pixel 8a', '8a']).map((c) => c.id)).toEqual(['a', 'b', 'c']);
   });
 
@@ -59,6 +64,7 @@ describe('naming', () => {
       comment('b', 'Pepsi Max Lemon, Pepsi Max Lemon!'),
       comment('c', 'Pepsi Max Lemon beats Pepsi Max'),
     ], 'Tried Pepsi Max and Pepsi Max Lemon, what next?');
+
     expect(naming(thread, ['Pepsi Max'], ['Pepsi Max Lemon']).map((c) => c.id)).toEqual(['a', 'c']);
     const asked = threadWith([comment('a', 'go for it')], 'Is Pepsi Max worth it?');
     expect(naming(asked, ['Pepsi Max'], ['Pepsi Max Lemon']).map((c) => c.id)).toEqual(['a']);
@@ -70,6 +76,7 @@ describe('naming', () => {
       comment('b', 'this', { parentId: 'a', score: 4 }),
       comment('c', 'Bose', { bot: true }),
     ]);
+
     expect(naming(thread, ['Bose']).map((c) => c.id)).toEqual(['b']);
   });
 
@@ -84,6 +91,7 @@ describe('naming', () => {
       comment('b', 'this', { parentId: 'a' }),
       comment('c', 'go to class'),
     ]), text: 'Toe hold, knee bar or calf slicer?' };
+
     expect(naming(thread, ['Knee bar'], ['Toe hold', 'Calf slicer']).map((c) => c.id)).toEqual([]);
     expect(naming(thread, ['Knee bar'], ['Toe hold', 'Calf slicer'], new Set(['a'])).map((c) => c.id)).toEqual(['a']);
     expect(naming(thread, ['Heel hook'], [], new Set(['a'])).map((c) => c.id)).toEqual([]);
@@ -97,6 +105,7 @@ describe('naming', () => {
       comment('d', 'will do', { parentId: 'c' }),
       comment('e', 'cycling is fun'),
     ], 'Best way to the airport?');
+
     // d answers c, which names a rival too.
     expect(naming(thread, ['Take the train'], ['Uber'], new Set(), true, new Set(['a', 'c'])).map((c) => c.id)).toEqual(['a', 'b', 'c']);
   });
@@ -132,6 +141,7 @@ describe('countOf', () => {
       comment('f', '', { author: '[deleted]', score: 5 }),
       comment('g', '', { author: 'z', score: 7 }),
     ]);
+
     expect(countOf(thread, { a: 'praise', b: 'praise', c: 'praise', d: 'complain', e: 'complain', f: 'complain', g: 'mixed' }))
       .toEqual({ for: 1, against: 2, mixed: 2, upFor: 15, upAgainst: 10 });
   });
@@ -160,17 +170,22 @@ describe('chatOf', () => {
 // A fake Jev reading each comment by a rule; a reply reads through its parent.
 // Its yes/no questions (is it asked about, described, a group answer) are all no.
 type Req = { state: any; questions: Record<string, any> };
+
 let requests: Req[] = [];
 const verdict = (text: string) => (/awful|bad/.test(text) ? 'against' : /great|best/.test(text) ? 'for' : /^(this|same)\b/.test(text) ? 'agree' : 'off');
+
 beforeEach(() => {
   requests = [];
   setJevClient({
     systemOne: (req: Req) => {
       requests.push(req);
+
       const answers = Object.fromEntries(Object.entries(req.questions).map(([id, q]) => {
         const own = verdict(q.instructions.comment);
+
         return [id, { choice: own === 'agree' ? verdict(q.instructions.replying_to ?? '') : own, noul: 0 }];
       }));
+
       return Promise.resolve({ answers, usage: { input_tokens: 100, output_tokens: 0 }, model: 'jev-test' }) as any;
     },
   } as any);
@@ -184,6 +199,7 @@ describe('tallyOption', () => {
       comment('c', 'Sony is bad for travel', { author: 'x', score: 1 }),
       comment('d', 'Bose is the best', { author: 'z', score: 2 }),
     ]);
+
     const sony = { name: 'Sony', aliases: [], titles: [{ name: 'WH-1000XM5', aliases: ['XM5'] }] };
     const t = await tallyOption(thread, 'Best headphones?', sony);
     expect(t).toMatchObject({ key: 'sony', name: 'Sony', reads: { a: 'praise', b: 'praise', c: 'complain' } });
@@ -213,6 +229,7 @@ describe('tallyOption', () => {
       comment('c', 'Pixels are great: I sold an 8 Pro and an 8a for good money'),
       comment('d', 'same', { parentId: 'c' }),
     ]);
+
     const google = { name: 'Google', aliases: ['Pixel', 'Pixels'], titles: [{ name: 'Pixel 8 Pro', aliases: ['8 Pro'] }, { name: 'Pixel 8', aliases: [] }, { name: 'Pixel 8a', aliases: ['8a'] }] };
     const t = await tallyOption(thread, 'Best phone?', google);
     // b agrees with a, which names the 8 Pro alone (the Pixel 8 inside its name
@@ -230,6 +247,7 @@ describe('tallyOption', () => {
       comment('d', 'same', { parentId: 'c' }),
       comment('e', 'go for the first'),
     ], 'Bose or Sony?');
+
     const [bose, sony] = [{ name: 'Bose', aliases: [], titles: [] }, { name: 'Sony', aliases: [], titles: [] }];
     const t = await tallyOption(thread, 'Bose or Sony?', bose, [bose, sony]);
     expect(t!.reads).toEqual({ a: 'praise', b: 'praise', c: 'praise' });
@@ -267,12 +285,14 @@ describe('tallyThread', () => {
     setModel(fakeModel((fields) => JSON.stringify(fields.includes('options')
       ? { options: [{ name: 'Sony', aliases: [], titles: [] }, { name: 'Bose', aliases: [], titles: [] }] }
       : Object.fromEntries(fields.map((key) => [key, ` why ${key} `])))));
+
     const thread = threadWith([
       comment('a', 'Sony is great', { author: 'x' }),
       comment('b', 'this', { author: 'y', parentId: 'a' }),
       comment('c', 'Bose is awful', { author: 'z' }),
       comment('d', 'Bose is the best', { author: 'w' }),
     ]);
+
     const events: TallyEvent[] = [];
     await tallyThread(thread, (e) => events.push(e));
     expect(events.filter((e) => e.type === 'listed').map((e) => e.option.name)).toEqual(['Sony', 'Bose']);

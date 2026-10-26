@@ -8,12 +8,16 @@ import { TRUESCORE_API_BASE } from './src/shared/api-base';
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const API_BASE = arg('api-base');
 const OUT = arg('out') ?? 'truescore';
+
 if (API_BASE && resolve(OUT) === resolve('truescore')) throw new Error('--api-base needs --out=<dir>: ./truescore is the loaded unpacked extension');
+
 const define = API_BASE ? { __TRUESCORE_API_BASE__: JSON.stringify(API_BASE) } : {};
 
 // Clean
 rmSync(OUT, { recursive: true, force: true });
+
 mkdirSync(`${OUT}/sites`, { recursive: true });
+
 mkdirSync(`${OUT}/popup`, { recursive: true });
 
 // Bundle site scripts
@@ -95,14 +99,23 @@ if (API_BASE) {
   manifest.host_permissions = manifest.host_permissions.map((p: string) => (p === `${TRUESCORE_API_BASE}/*` ? `${API_BASE}/*` : p));
   writeFileSync(`${OUT}/manifest.json`, JSON.stringify(manifest, null, 2));
 } else cpSync('src/manifest.json', `${OUT}/manifest.json`);
+
 cpSync('src/icons', `${OUT}/icons`, { recursive: true });
+
 cpSync('src/popup/popup.html', `${OUT}/popup/popup.html`);
+
 cpSync('src/popup/popup.css', `${OUT}/popup/popup.css`);
+
 cpSync('src/styles/amazon-product.css', `${OUT}/sites/amazon-product.css`);
+
 cpSync('src/styles/gmaps.css', `${OUT}/sites/gmaps.css`);
+
 cpSync('src/styles/booking-hotel.css', `${OUT}/sites/booking-hotel.css`);
+
 cpSync('src/styles/letterboxd.css', `${OUT}/sites/letterboxd.css`);
+
 cpSync('src/styles/imdb.css', `${OUT}/sites/imdb.css`);
+
 cpSync('src/styles/reddit.css', `${OUT}/sites/reddit.css`);
 
 console.log(`Build complete → ./${OUT}/`);

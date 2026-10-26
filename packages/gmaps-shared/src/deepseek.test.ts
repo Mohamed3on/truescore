@@ -5,10 +5,12 @@ import { strictJsonViaTool } from './deepseek';
 
 test('a streamed object reads the strict tool call as it is written', async () => {
   let sent: any;
+
   const model = wrapLanguageModel({
     model: new MockLanguageModelV4({
       doStream: async (params) => {
         sent = params;
+
         return {
           stream: convertArrayToReadableStream([
             { type: 'stream-start', warnings: [] },
@@ -24,8 +26,10 @@ test('a streamed object reads the strict tool call as it is written', async () =
     }),
     middleware: strictJsonViaTool,
   });
+
   const stream = streamText({ model, output: Output.object({ schema: jsonSchema<{ verdict: string }>({ type: 'object', properties: { verdict: { type: 'string' } }, required: ['verdict'], additionalProperties: false }) }), prompt: 'p' });
   const partials: string[] = [];
+
   for await (const p of stream.partialOutputStream) partials.push(p.verdict ?? '');
   expect(await stream.output).toEqual({ verdict: 'Good' });
   expect(partials).toContain('Go');
@@ -45,6 +49,7 @@ test('a whole object reads the strict tool call', async () => {
     }),
     middleware: strictJsonViaTool,
   });
+
   const { output } = await generateText({ model, output: Output.object({ schema: jsonSchema<{ verdict: string }>({ type: 'object', properties: { verdict: { type: 'string' } }, required: ['verdict'], additionalProperties: false }) }), prompt: 'p' });
   expect(output).toEqual({ verdict: 'Good' });
 });

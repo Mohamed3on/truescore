@@ -14,7 +14,9 @@ setupBazaarvoicePdp(DOCMORRIS, {
   panelAnchor: () => {
     const block = (selector: string) =>
       document.querySelector(`[data-testid="product-data"] ${selector}`)?.closest('[data-testid="product-data"] > *');
+
     const node = block('[data-testid="add-to-cart-cta"]') ?? block('[data-testid="title"]');
+
     return node ? { node, position: 'after' } : null;
   },
   exampleQuery: 'Nebenwirkungen OR Geschmack',

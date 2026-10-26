@@ -4,13 +4,16 @@ import { firstOf } from './maps-minter';
 // Attempts that settle when the test says so, each recording whether it was stopped.
 const attempts = () => {
   const runs: Array<{ settle: (ok: boolean) => void; stopped: boolean }> = [];
+
   const attempt = () => new Promise<{ n: number; stop: () => void }>((resolve, reject) => {
     const n = runs.length;
     const run = { stopped: false, settle: (ok: boolean) => (ok ? resolve({ n, stop: () => { run.stopped = true; } }) : reject(new Error('capped'))) };
     runs.push(run);
   });
+
   return { runs, attempt };
 };
+
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 describe('firstOf', () => {
@@ -40,10 +43,12 @@ describe('firstOf', () => {
   test('gives up with null once every attempt has failed', async () => {
     const { runs, attempt } = attempts();
     const won = firstOf(attempt, 3, 6);
+
     for (let i = 0; i < 6; i++) {
       runs[i]!.settle(false);
       await tick();
     }
+
     expect(await won).toBeNull();
     expect(runs).toHaveLength(6);
   });

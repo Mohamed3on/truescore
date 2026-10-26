@@ -13,40 +13,54 @@ const CLIENT_ID = 'a1047798-0fc4-446e-9616-0afe3256d0d7';
 
 const getLocale = () => {
   const parts = location.pathname.split('/').filter(Boolean);
+
   if (parts.length < 2) return null;
+
   return { country: parts[0], lang: parts[1] };
 };
 
 const extractItemNo = () => {
   const match = location.pathname.match(/(\d{7,})\/?$/);
+
   return match ? match[1] : null;
 };
 
 const fetchRating = async (country: string, lang: string, itemNo: string) => {
   const cacheKey = `nps_ikea_${itemNo}`;
   const cached = cacheGet(cacheKey, CACHE_TTL);
+
   if (cached) return cached;
+
   const res = await fetch(
     `https://web-api.ikea.com/tugc/public/v5/rating/${country}/${lang}/${itemNo}`,
     { headers: { 'x-client-id': CLIENT_ID } }
   );
+
   if (!res.ok) return null;
   const json = await res.json();
   const data = json?.[0] ?? null;
+
   if (data) cacheSet(cacheKey, data);
+
   return data;
 };
 
 const getScore = (data: any) => {
   const dist = data?.ratingDistribution;
+
   if (!dist?.length) return null;
   let total = 0, five = 0, one = 0;
+
   for (const { ratingType, ratingCount } of dist) {
     total += ratingCount;
+
     if (ratingType === 5) five = ratingCount;
+
     if (ratingType === 1) one = ratingCount;
   }
+
   if (total === 0) return null;
+
   return npsStats(five, one, total);
 };
 
@@ -67,6 +81,7 @@ const buildInsightsPanel = (data: any) => {
   let html = '';
 
   const recTotal = totalRecommendedCount + totalNotRecommendedCount;
+
   if (recTotal > 0) {
     const recPct = Math.round((totalRecommendedCount / recTotal) * 100);
     html += `<div style="margin-bottom:12px;display:flex;align-items:center;gap:6px;font-size:13px">
@@ -77,6 +92,7 @@ const buildInsightsPanel = (data: any) => {
 
   if (secondaryRatings?.length) {
     const filtered = secondaryRatings.filter((a: any) => a.ratingValue > 0).sort((a: any, b: any) => b.ratingValue - a.ratingValue);
+
     for (const attr of filtered) {
       const pct = (attr.ratingValue / attr.ratingRange) * 100;
       const hue = Math.min(120, Math.max(0, (pct - 50) * 3));
@@ -96,6 +112,7 @@ const buildInsightsPanel = (data: any) => {
   host.className = 'nps-insights';
   const shadow = host.attachShadow({ mode: 'closed' });
   shadow.innerHTML = `<div style="margin:16px 0;padding:14px;border-radius:8px;background:#f5f5f5;line-height:1.5;color:#333;">${html}</div>`; // safe: browser extension with controlled data
+
   return host;
 };
 
@@ -119,12 +136,15 @@ const fetchPage = async (country: string, lang: string, itemNo: string, size: nu
       page: { size, number: 1 },
     }),
   }).catch(() => null);
+
   if (!res?.ok) return null;
   const json = await res.json();
+
   if (!Array.isArray(json)) return null;
 
   const seen = new Set<string>();
   const reviews: IkeaReview[] = [];
+
   for (const r of json) {
     const review: IkeaReview = {
       rating: Number(r.primaryRating?.ratingValue) || 0,
@@ -132,11 +152,14 @@ const fetchPage = async (country: string, lang: string, itemNo: string, size: nu
       body: r.text || '',
       date: String(r.submissionOn || '').slice(0, 10),
     };
+
     const id = String(r.id ?? '') || reviewToText(review);
+
     if (!id || seen.has(id)) continue;
     seen.add(id);
     reviews.push(review);
   }
+
   return reviews;
 };
 
@@ -147,14 +170,19 @@ const fetchPage = async (country: string, lang: string, itemNo: string, size: nu
 const fetchReviews = (country: string, lang: string, itemNo: string) => {
   const cacheKey = `ikea-reviews-v3-${itemNo}`;
   const cached: Promise<IkeaReview[] | null> = idbGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
+
   const all = cached.then(async (hit) => {
     if (hit) return hit;
     const reviews = await fetchPage(country, lang, itemNo, SEARCH_MAX);
+
     // Empty result sets tombstone briefly too (see the TTL above).
     if (reviews) idbSet(cacheKey, reviews);
+
     return reviews ?? [];
   });
+
   const recent = cached.then(async (hit) => hit ?? (await fetchPage(country, lang, itemNo, RECENT_REVIEWS)) ?? all);
+
   return { recent, all };
 };
 
@@ -169,23 +197,30 @@ setupSpaInjector({
   load: async () => {
     const locale = getLocale();
     const itemNo = extractItemNo();
+
     if (!locale || !itemNo) return null;
     // Reviews start downloading alongside the rating, which only decides whether
     // the island shows — not once the page has an anchor for it.
     const reviews = fetchReviews(locale.country, locale.lang, itemNo);
     const data = await fetchRating(locale.country, locale.lang, itemNo);
+
     if (!data) return null;
     const reviewCount = data.totalReviewCount ?? 0;
+
     return { itemNo, scoreData: getScore(data), panel: buildInsightsPanel(data), reviewCount, reviews: reviewCount >= 5 ? reviews : null };
   },
   inject: ({ itemNo, scoreData, panel, reviewCount, reviews }) => {
     if (scoreData) {
       const ratingBtn = document.querySelector('button.pipf-rating');
+
       if (ratingBtn && !ratingBtn.querySelector('.nps-score-badge')) appendScore(ratingBtn, scoreData);
     }
+
     const ugc = document.querySelector('.js-ugc-container');
+
     if (panel && !document.body.contains(panel) && ugc) ugc.after(panel);
     const anchor = document.querySelector('.nps-insights') || ugc;
+
     if (reviews && anchor && !document.querySelector('.ars-wrapper')) {
       const island = createIslandShell();
       buildReviewPanel(island, {

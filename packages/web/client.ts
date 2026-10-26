@@ -60,15 +60,20 @@ let placesExpanded = false;
 
 let currentMergedPct = 0;
 let currentDisplayPct = 0;
+
 // The chip panel shows one subject at a time — a highlight chip or a free-text
 // search result — so model it as one discriminated union rather than two
 // mutually-exclusive nullable globals with a "set one, null the other" invariant.
 type ActivePanel = { kind: 'highlight'; chip: UiChip } | { kind: 'search'; result: SearchResult };
+
 let activePanel: ActivePanel | null = null;
+
 const panelReviews = (): Review[] | undefined =>
   activePanel?.kind === 'highlight' ? activePanel.chip.reviews : activePanel?.kind === 'search' ? activePanel.result.reviews : undefined;
+
 const panelFilter = (): string | undefined =>
   activePanel?.kind === 'highlight' ? activePanel.chip.label : activePanel?.kind === 'search' ? activePanel.result.query : undefined;
+
 let currentHighlights: UiChip[] = [];
 
 // Standouts (praised items) and Better-alternatives (rival places) are the same
@@ -77,11 +82,14 @@ let currentHighlights: UiChip[] = [];
 // topic chips' row (renderTopics); alternatives keep a row of their own.
 // `names`: what its search looks for (standoutNames).
 type ScoredChip = { item: string; names: string[]; state: ChipState; result?: SearchResult };
+
 const scoredGroups = {
   standouts: { chips: [] as ScoredChip[] },
   alternatives: { chips: [] as ScoredChip[], row: alternativesRow, list: alternativesList, chipClass: 'alternative-chip' },
 };
+
 type ScoredKind = keyof typeof scoredGroups;
+
 // Per better alternative, how many reviews say they'd rather go there (the
 // summary's receipts); unset for a summary Jev didn't check.
 let preferredBy: Record<string, number> | undefined;
@@ -95,11 +103,14 @@ function setStatus(msg: string, isErr = false) {
 // Google Maps session. When it's stale/credless every lookup reads empty, so say so
 // instead of showing silent zeros.
 const sessionBanner = $('sessionBanner') as HTMLElement;
+
 async function refreshSessionHealth() {
   try {
     const r = await fetch('/api/session-health', { cache: 'no-store' });
+
     // Not signed in (or the password changed): sign in, then come back here.
     if (r.status === 401) location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+
     if (!r.ok) return;
     const { healthy } = (await r.json()) as { healthy: boolean };
     sessionBanner.hidden = healthy;
@@ -108,7 +119,9 @@ async function refreshSessionHealth() {
 
 function scoreClass(pct: number) {
   if (pct >= 60) return 'pos';
+
   if (pct <= 30) return 'neg';
+
   return 'mid';
 }
 
@@ -116,8 +129,11 @@ function scoreClass(pct: number) {
 // pervasive createElement / className / textContent triples into one call.
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
+
   if (cls) e.className = cls;
+
   if (text != null) e.textContent = text;
+
   return e;
 }
 
@@ -133,8 +149,10 @@ const opinionsFor = (s: { stance?: StanceCounts; of?: number }): Opinions | null
 function opinionNumbers(o: Opinions, pctCls: string, countCls?: string, word = ''): HTMLElement[] {
   if (o.sparse) return [countCls ? el('span', countCls, `·${o.mentions}`) : el('span', pctCls, '—')];
   const share = el('span', `${pctCls} ${opinionTone(o)}`, `${o.share}%${word && ` ${word}`}`);
+
   return countCls ? [share, el('span', countCls, `·${signedNet(o.net)}`)] : [share];
 }
+
 const opinionsLabel = (label: string, o: Opinions) =>
   `${label}: ${o.sparse ? mentionsText(o.mentions) : `${o.share}% ${o.posWord}, net ${signedNet(o.net)} (${o.title})`}`;
 
@@ -143,6 +161,7 @@ const opinionsLabel = (label: string, o: Opinions) =>
 // read as two, not as a 100% that outshines thirty-eight.
 function opinionCounts(o: Opinions): HTMLElement[] {
   const counts = [o.pos && el('span', 'pct pos', `▲${o.pos}`), o.neg && el('span', 'pct neg', `▼${o.neg}`)].filter((c): c is HTMLSpanElement => !!c);
+
   return counts.length ? counts : [el('span', 'pct mid', `●${o.mentions}`)];
 }
 
@@ -151,22 +170,30 @@ function opinionCounts(o: Opinions): HTMLElement[] {
 // once Jev has read the reviews. `pct` is the middle span's {text, class};
 // `cls` adds button modifiers (loading / errored / alternative-chip).
 type ChipSpec = { label: string; pct: { text: string; cls: string }; count?: number | null; opinions?: Opinions | null; cls?: string; token?: string; title?: string; disabled?: boolean; onClick?: () => void };
+
 function chip(spec: ChipSpec): HTMLButtonElement {
   const btn = el('button', spec.cls ? `chip ${spec.cls}` : 'chip');
   btn.type = 'button';
+
   if (spec.token) btn.dataset.token = spec.token;
+
   if (spec.title) btn.title = spec.title;
   btn.append(el('span', 'label', spec.label));
+
   if (spec.opinions) {
     btn.append(...opinionCounts(spec.opinions));
     btn.title = spec.opinions.title;
     btn.setAttribute('aria-label', `${spec.label}: ${spec.opinions.title}`);
   } else {
     btn.append(el('span', `pct ${spec.pct.cls}`, spec.pct.text));
+
     if (spec.count != null) btn.append(el('span', 'count', `·${spec.count}`));
   }
+
   if (spec.onClick) btn.addEventListener('click', spec.onClick);
+
   if (spec.disabled) btn.disabled = true;
+
   return btn;
 }
 
@@ -179,9 +206,12 @@ const spokenOf = (c: { stance?: StanceCounts }) => !c.stance || !tooFewMentions(
 // joining at the end, so nothing moves under a thumb; once everything is in it
 // sorts once (chipRowOrder).
 type TopicEntry = { key: string; state: ChipState; stance?: StanceCounts; score?: { scorePct: number }; count: number; chip: () => HTMLButtonElement };
+
 let topicOrder: string[] = [];
+
 // What the row says while it has no topic chips ("finding topics…").
 let topicsNote: string | null = null;
+
 // A place whose topic chips and summary are cached still searches its standouts
 // and fetches its pooled topics' reviews, each a quick answer from the server's
 // cache. Its row waits for them — never past this — and paints once, already in
@@ -194,6 +224,7 @@ function topicChip(h: UiChip, state: ChipState): HTMLButtonElement {
   const pct = state === 'done' && h.score
     ? { text: `${h.score.scorePct}%`, cls: chipPolarity(h.score.scorePct, currentMergedPct) }
     : state === 'error' ? { text: '✗', cls: 'neg' } : { text: '…', cls: 'chip-pending' };
+
   const b = chip({
     label: h.label, pct, count: h.count, token: h.token, opinions: state === 'done' ? opinionsFor(h) : null,
     cls: state === 'loading' ? 'loading' : state === 'error' ? 'errored' : undefined,
@@ -201,9 +232,11 @@ function topicChip(h: UiChip, state: ChipState): HTMLButtonElement {
     disabled: state !== 'done',
     onClick: state === 'done' ? () => onHighlightClick(h) : undefined,
   });
+
   // Built open: added once it's on screen, .chip's transition would fade the
   // open look in again on every render.
   b.classList.toggle('active', activePanel?.kind === 'highlight' && activePanel.chip.token === h.token);
+
   return b;
 }
 
@@ -218,20 +251,27 @@ const standoutChip = (item: string, r: SearchResult) => chip({
 // never come stays as it was.
 const poolFetches = new WeakMap<UiChip, 'waiting' | 'done'>();
 const pooledViews = new WeakMap<UiChip, { r: SearchResult; view: UiChip }>();
+
 function pooledView(h: UiChip, r: SearchResult): UiChip | null {
   if (!h.reviews) {
     const fetched = poolFetches.get(h);
+
     if (fetched === 'done') return h;
+
     if (!fetched) {
       poolFetches.set(h, 'waiting');
       void ensureHighlightReviews(h).finally(() => { poolFetches.set(h, 'done'); renderTopics(); });
     }
+
     return null;
   }
+
   const kept = pooledViews.get(h);
+
   if (kept?.r === r) return kept.view;
   const view: UiChip = { ...h, ...pooledReads(h, r), pooled: true };
   pooledViews.set(h, { r, view });
+
   return view;
 }
 
@@ -241,24 +281,31 @@ function renderTopics() {
   const standouts = new Set(scoredGroups.standouts.chips);
   const entries: TopicEntry[] = [];
   let settled = true;
+
   for (const h of currentHighlights) {
     const key = h.label.toLowerCase();
     const s = byName.get(key);
+
     // Another topic going by its names holds it already, and its search took
     // this topic's reviews in too.
     if (s && !standouts.has(s)) continue;
     const state: ChipState = h.state ?? (h.score ? 'done' : 'loading');
     const view = state === 'done' && s?.result ? pooledView(h, s.result) : h;
+
     if (state === 'loading' || s?.state === 'loading' || !view) settled = false;
     const c = view ?? h;
+
     // Dropped, a topic leaves its standout, if any, to show on its own.
     if (state === 'done' && !spokenOf(c)) continue;
+
     if (s) standouts.delete(s);
     entries.push({ key, state, stance: c.stance, score: c.score, count: c.count, chip: () => topicChip(c, state) });
   }
+
   for (const d of standouts) {
     const key = d.item.toLowerCase();
     const r = d.result;
+
     if (d.state === 'loading') {
       settled = false;
       entries.push({ key, state: 'loading', count: 0, chip: () => chip({ label: d.item, pct: { text: '…', cls: 'chip-pending' }, cls: 'loading', disabled: true }) });
@@ -266,11 +313,14 @@ function renderTopics() {
       entries.push({ key, state: 'done', stance: r.stance, score: r, count: r.totalReviews, chip: () => standoutChip(d.item, r) });
     }
   }
+
   if (!settled && Date.now() < topicsHeldUntil) {
     clearTimeout(topicsHold);
     topicsHold = setTimeout(renderTopics, topicsHeldUntil - Date.now());
+
     return;
   }
+
   topicsHeldUntil = 0;
   const order = chipRowOrder(entries, topicOrder, settled, currentMergedPct);
   topicOrder = order.map((e) => e.key);
@@ -302,6 +352,7 @@ function renderScored(kind: ScoredKind) {
       // A better alternative reads as how many say they'd rather go there, once
       // the summary's receipts are in.
       const prefer = preferredBy?.[d.item];
+
       return chip({
         label: d.item, cls: g.chipClass || undefined, count: r.totalReviews,
         pct: prefer != null ? { text: `${prefer} prefer it`, cls: 'prefer' } : { text: r.trustedReviews ? `${r.scorePct}%` : '—', cls: chipPolarity(r.scorePct, currentMergedPct) },
@@ -321,20 +372,26 @@ async function scoreChip(kind: ScoredKind, featureId: string, d: ScoredChip) {
   const names = d.names;
   // A search started since by more names (applyAliases) is the one that counts.
   const current = () => epoch?.featureId === featureId && epoch.alive && d.names === names;
+
   try {
     // The server expands each name to its accent/hyphen/space spellings.
     let result: SearchResult | null = null;
+
     for await (const evt of streamNdjson<SearchEvent>('/api/search', { featureId, query: names.join(' OR ') } satisfies SearchRequest)) {
       if (evt.type === 'search') result = evt.result;
     }
+
     if (!current()) return;
+
     // A search by more names that finds nothing (a throttle) keeps what an earlier one found.
     if (result?.totalReviews || !d.result) d.result = result ?? undefined;
     d.state = d.result ? 'done' : 'error';
   } catch {
     if (!current()) return;
+
     if (!d.result) d.state = 'error';
   }
+
   renderScored(kind);
 }
 
@@ -343,10 +400,12 @@ async function scoreChip(kind: ScoredKind, featureId: string, d: ScoredChip) {
 function applyAliases(aliases: Record<string, string[]>, featureId: string) {
   for (const d of scoredGroups.standouts.chips) {
     const names = standoutNames(d.item, aliases);
+
     if (names.length === d.names.length) continue;
     d.names = names;
     void scoreChip('standouts', featureId, d);
   }
+
   renderTopics();
 }
 
@@ -354,6 +413,7 @@ function showScored(kind: ScoredKind, items: string[] | undefined, featureId: st
   const g = scoredGroups[kind];
   g.chips = (items ?? []).map((item) => ({ item, names: standoutNames(item, aliases), state: 'loading' as ChipState }));
   renderScored(kind);
+
   for (const d of g.chips) scoreChip(kind, featureId, d);
 }
 
@@ -381,6 +441,7 @@ function setActiveChip(token?: string) {
 // its star share; then the trusted reviews they come from (the rest are folded
 // at the end of the list, see renderReviewList).
 type PanelStats = { scorePct: number; trustedReviews: number; stance?: StanceCounts; of?: number };
+
 function setPanelTitle(label: string, s: PanelStats) {
   chipPanelTitle.textContent = label;
   chipPanelFigure.title = s.stance ? opinionsOf(s.stance, s.of).title : '';
@@ -393,6 +454,7 @@ function setPanelTitle(label: string, s: PanelStats) {
 // The review list's filter, by what reviews say: set by a count in the panel
 // title, cleared when the panel shows another subject.
 let stanceFilter: Stance | null = null;
+
 const panelStances = (): Record<string, Stance> | undefined =>
   activePanel?.kind === 'highlight' ? activePanel.chip.stances : activePanel?.kind === 'search' ? activePanel.result.stances : undefined;
 
@@ -404,6 +466,7 @@ const FILTERS: { stance: Stance; cls: string; word: string }[] = [
   { stance: 'mixed', cls: 'mid', word: 'mixed or neutral' },
   { stance: 'off', cls: 'off', word: 'not about it' },
 ];
+
 function opinionFilters(c: StanceCounts): HTMLButtonElement[] {
   return FILTERS.filter((f) => c[f.stance] || f.cls === 'pos' || f.cls === 'neg').map(({ stance, cls, word }) => {
     const n = c[stance];
@@ -415,6 +478,7 @@ function opinionFilters(c: StanceCounts): HTMLButtonElement[] {
     btn.setAttribute('aria-label', `${n} ${word}: show only these reviews`);
     btn.setAttribute('aria-pressed', String(stanceFilter === stance));
     btn.addEventListener('click', () => setStanceFilter(stanceFilter === stance ? null : stance));
+
     return btn;
   });
 }
@@ -426,14 +490,18 @@ function setStanceFilter(stance: Stance | null) {
   chipPanelFigure.querySelectorAll<HTMLButtonElement>('.op-filter').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.stance === stance)));
   renderReviewList(panelReviews() ?? []);
   const top = chipBody.getBoundingClientRect().top;
+
   if (top < 0 || top > window.innerHeight) chipBody.scrollIntoView({ block: 'nearest' });
 }
+
 // Esc clears a filter first, then closes the panel (but not from a half-typed question).
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || chipPanel.hidden) return;
+
   if (stanceFilter) setStanceFilter(null);
   else if (!(e.target instanceof HTMLInputElement)) closeChipPanel();
 });
+
 const scrollBehavior = (): ScrollBehavior => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 
 function showChipPanel(h: UiChip) {
@@ -470,18 +538,28 @@ function closeChipPanel() {
 async function askChipPanel() {
   const q = chipQuestionInput.value.trim();
   const epoch = currentPlace();
+
   if (!q || !epoch) return;
   const reviews = panelReviews();
   const filter = panelFilter();
+
   if (!reviews || !filter) return;
   const reviewTexts = textReviewsFor(reviews);
-  if (!reviewTexts.length) { setStatus('No review text available', true); return; }
+
+  if (!reviewTexts.length) {
+    setStatus('No review text available', true);
+
+    return;
+  }
+
   chipAskBtn.disabled = true;
   setStatus('');
   const answer = el('div', 'answer');
   chipBody.replaceChildren(answer);
+
   try {
     await streamAsk(answer, q, { featureId: epoch.featureId, filter, reviewTexts }, epoch);
+
     if (epoch.alive) chipQuestionInput.value = '';
   } catch (e) {
     if (epoch.alive) setStatus(e instanceof Error ? e.message : String(e), true);
@@ -501,23 +579,30 @@ async function streamAsk(box: HTMLElement, question: string, body: Omit<AskReque
   const note = el('div', 'ask-note');
   box.replaceChildren(rows, text, note);
   const ctrl = new AbortController();
+
   const search: SearchReviews = async (query, onFound) => {
     for await (const e of streamNdjson<SearchEvent>('/api/search', { featureId: epoch.featureId, query, asWritten: true } satisfies SearchRequest, ctrl.signal)) {
       if (e.type === 'search-progress') onFound(e.totalReviews);
       else if (e.type === 'search') {
         const texts = textReviewsFor(e.result.reviews);
         readAnswers(question, query, texts);
+
         return { texts, scorePct: e.result.scorePct, trustedReviews: e.result.trustedReviews };
       }
     }
+
     return null;
   };
+
   let shown: AskView | undefined;
   await runAsk(new DefaultChatTransport<AskMessage>({ api: '/api/ask', body }), question, search, (v) => {
     if (!epoch.alive) return ctrl.abort();
+
     if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map((s) => askSearchRow(s, question)));
+
     if (v.text !== shown?.text) renderMarkdown(text, v.text);
     text.classList.toggle('reading', !v.done && !v.text && v.searches.every((s) => s.done));
+
     if (v.answeredAt && !shown?.answeredAt) {
       const again = el('button', 'ghost-btn', 'ASK AGAIN');
       again.type = 'button';
@@ -528,6 +613,7 @@ async function streamAsk(box: HTMLElement, question: string, body: Omit<AskReque
       });
       note.replaceChildren(el('span', 'micro', `ANSWERED ${timeAgo(v.answeredAt).toUpperCase()}`), again);
     }
+
     shown = v;
   }, ctrl.signal);
 }
@@ -548,13 +634,16 @@ function askSearchRow(s: AskSearch, question: string): HTMLButtonElement {
     el('span', 'ask-search-terms', parseOrQuery(s.query).join(' · ')),
   );
   const read = s.answers ?? askAnswers.get(answersKey(question, s.query));
+
   const counts = (a: AnswerCounts) => {
     const o = answersOf(a);
     row.setAttribute('aria-label', `${parseOrQuery(s.query).join(', ')}: ${opinionsLabel('answers', o)}`);
     row.title = `${row.title} — ${o.title}`;
+
     // The share alone, in the row's own % style: its count is the matches'.
     return opinionNumbers(o, 'ask-search-pct', undefined, 'yes');
   };
+
   if (read instanceof Promise) {
     // Space held at the counts' width, filled once — a crossfade, never a tick-up.
     const slot = el('span', 'op-slot', '…');
@@ -572,18 +661,27 @@ function askSearchRow(s: AskSearch, question: string): HTMLButtonElement {
     searchInput.value = s.query;
     runSearch(s.query);
   });
+
   return row;
 }
+
 const starShare = (s: AskSearch) => el('span', `ask-search-pct ${chipPolarity(s.scorePct ?? 0, currentMergedPct)}`, s.trustedReviews ? `${s.scorePct}%` : '—');
 
 // Jev's read of how an Ask Search's matches answer the question, asked once per
 // question and Search; null when it can't (the row keeps its TrueScore).
 function readAnswers(question: string, query: string, texts: string[]): void {
   const key = answersKey(question, query);
+
   if (askAnswers.has(key) || !texts.length) return;
+
   const read = postJson<StanceResponse>('/api/stance', { question, texts: texts.slice(0, MAX_JUDGED) } satisfies StanceRequest)
     .then((r) => (r.answers ? countAnswers(r.answers) : null), () => null)
-    .then((a) => { askAnswers.set(key, a); return a; });
+    .then((a) => {
+      askAnswers.set(key, a);
+
+      return a;
+    });
+
   askAnswers.set(key, read);
 }
 
@@ -599,6 +697,7 @@ function showSearchPanel(r: SearchResult) {
   resummarizeBtn.style.display = 'none';
   chipSummarizeBtn.disabled = false;
   chipQuestionInput.value = '';
+
   if (r.summary) {
     chipSummarizeBtn.textContent = 'SHOW REVIEWS';
     renderChipSummary(r.summary);
@@ -606,6 +705,7 @@ function showSearchPanel(r: SearchResult) {
     chipSummarizeBtn.textContent = 'SUMMARIZE';
     renderReviewList(r.reviews);
   }
+
   chipPanelTitle.focus({ preventScroll: true });
   chipPanel.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' });
 }
@@ -615,8 +715,15 @@ function showSearchPanel(r: SearchResult) {
 // the nodes directly rather than walking a rendered tree.
 function highlightInto(target: HTMLElement, text: string, terms: string[]) {
   const re = compileMatchRegex(terms);
-  if (!re) { target.textContent = text; return; }
+
+  if (!re) {
+    target.textContent = text;
+
+    return;
+  }
+
   let last = 0;
+
   for (let m = re.exec(text); m; m = re.exec(text)) {
     if (m.index > last) target.appendChild(document.createTextNode(text.slice(last, m.index)));
     const mark = document.createElement('mark');
@@ -625,18 +732,21 @@ function highlightInto(target: HTMLElement, text: string, terms: string[]) {
     target.appendChild(mark);
     last = m.index + m[0].length;
   }
+
   if (last < text.length) target.appendChild(document.createTextNode(text.slice(last)));
 }
 
 // A listed review's mark after its stars (reviewMark); none when it wasn't read.
 function stanceMark(stance: Stance | undefined, authorReviews: number, subject: string): HTMLElement[] {
   const m = reviewMark(stance, authorReviews, subject);
+
   if (!m) return [];
   const { text, label } = m;
   const mark = el('span', `review-stance ${m.cls}`, text);
   mark.title = label;
   mark.setAttribute('role', 'img');
   mark.setAttribute('aria-label', label);
+
   return [mark];
 }
 
@@ -653,6 +763,7 @@ function reviewCard(r: Review, stance: Stance | undefined, subject: string, term
   highlightInto(text, r.text, r.matchTerms?.length ? r.matchTerms : terms);
   const card = el('li', isTrusted(r.reviewerReviewCount) ? 'review-card' : 'review-card untrusted');
   card.append(meta, text);
+
   return card;
 }
 
@@ -664,18 +775,23 @@ function renderReviewList(reviews: Review[]) {
   // with no exact offsets (e.g. a shown translation); else r.matchTerms wins.
   const fallback = (activePanel?.kind === 'highlight' ? [activePanel.chip.label] : activePanel?.kind === 'search' ? parseOrQuery(activePanel.result.query) : [])
     .flatMap((t) => t.split(/\s+/));
+
   const stances = panelStances();
   const subject = panelFilter()?.toLowerCase() ?? 'it';
   const shown = sortedDisplayReviews(stanceFilter && stances ? reviews.filter((r) => stances[r.reviewId] === stanceFilter) : reviews);
+
   const list = (rs: Review[]) => {
     const ul = el('ul', 'review-list');
     ul.append(...rs.map((r) => reviewCard(r, stances?.[r.reviewId], subject, fallback)));
+
     return ul;
   };
+
   const trusted = shown.filter((r) => isTrusted(r.reviewerReviewCount));
   const untrusted = shown.filter((r) => !isTrusted(r.reviewerReviewCount));
   const n = untrusted.length;
   const why = `Their authors have fewer than ${TRUSTED_MIN_REVIEWS} reviews, so the score skips them.`;
+
   if (!shown.length) chipBody.replaceChildren(el('div', 'chip-loading', 'No reviews with text to show'));
   else if (!trusted.length) chipBody.replaceChildren(el('p', 'untrusted-why', `All ${n} untrusted. ${why}`), list(untrusted));
   else if (!n) chipBody.replaceChildren(list(trusted));
@@ -699,10 +815,12 @@ function renderReviewList(reviews: Review[]) {
 // that opens them under the bullet.
 const bulletsIn = (ul: HTMLElement) => {
   ul.replaceChildren();
+
   return mountBullets<SummaryHighlight>(ul, (h) => h.text, () => el('li'), (li, h) => {
     const text = el('span', `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`);
     renderMarkdownInline(text, h.text ?? '');
     li.replaceChildren(text);
+
     if (h.support != null) li.appendChild(receipt(li, h.support, h.quotes ?? []));
   });
 };
@@ -715,15 +833,24 @@ function receipt(li: HTMLElement, support: number, quotes: Quote[]): HTMLButtonE
   btn.addEventListener('click', () => {
     const open = li.querySelector('.receipt-quotes');
     btn.setAttribute('aria-expanded', String(!open));
-    if (open) { open.remove(); return; }
+
+    if (open) {
+      open.remove();
+
+      return;
+    }
+
     // Each as the panel lists it; a text none of the reviews here holds stays text.
     const box = el('ul', 'receipt-quotes review-list');
+
     for (const q of receiptReviews(quotes, panelReviews())) {
       box.appendChild(typeof q === 'string' ? el('li', 'receipt-quote', q) : reviewCard(q, undefined, 'it', []));
     }
+
     if (support > quotes.length) box.appendChild(el('li', 'micro', `+${support - quotes.length} more`));
     li.appendChild(box);
   });
+
   return btn;
 }
 
@@ -734,25 +861,34 @@ function mountChipSummary() {
   const ul = el('ul', 'highlights');
   chipBody.replaceChildren(verdict, ul);
   const bullets = bulletsIn(ul);
+
   return (summary: SummaryDraft, checked = false) => {
     renderMarkdown(verdict, summary.verdict);
+
     if (!checked) return bullets.draft(summary.highlights);
     void bullets.settle(bySupport(summary.highlights));
+
     if (!summary.highlights.length) ul.remove();
   };
 }
+
 const renderChipSummary = (summary: Summary) => mountChipSummary()(summary, true);
 
 async function onHighlightClick(h: UiChip) {
   if (!currentPlace()) return;
+
   if (activePanel?.kind === 'highlight' && activePanel.chip.token === h.token) {
     closeChipPanel();
+
     return;
   }
+
   showChipPanel(h);
+
   if (h.reviews) return;
   chipBody.replaceChildren(el('div', 'chip-loading', 'loading reviews…'));
   await ensureHighlightReviews(h);
+
   if (activePanel?.kind !== 'highlight' || activePanel.chip !== h) return;
   setPanelTitle(h.label.toUpperCase(), { scorePct: h.score?.scorePct ?? 0, trustedReviews: h.score?.trustedReviews ?? 0, stance: h.stance, of: h.of });
   renderReviewList(h.reviews ?? []);
@@ -761,19 +897,24 @@ async function onHighlightClick(h: UiChip) {
 async function summarizeActiveChip() {
   const h = activePanel?.kind === 'highlight' ? activePanel.chip : null;
   const epoch = currentPlace();
+
   if (!h || !epoch) return;
   chipSummarizeBtn.disabled = true;
   chipSummarizeBtn.textContent = 'SUMMARIZING…';
   setStatus(`Summarizing "${h.label}"…`);
   const t0 = Date.now();
+
   try {
     let draw: ReturnType<typeof mountChipSummary> | undefined;
+
     const data = await streamSummary('/api/highlight-summary', {
       featureId: epoch.featureId, token: h.token, stream: true,
       // A pooled chip's summary reads both review sets, as its list shows them.
       ...(h.pooled ? { reviewTexts: textReviewsFor(h.reviews ?? []) } : {}),
     } satisfies HighlightSummaryRequest, (draft) => { if (epoch.alive) (draw ??= mountChipSummary())(draft); });
+
     if (!epoch.alive) return;
+
     if (data.summary) {
       (draw ?? mountChipSummary())(data.summary, true);
       chipSummarizeBtn.disabled = false;
@@ -790,21 +931,25 @@ async function summarizeActiveChip() {
 async function summarizeActiveSearch() {
   const r = activePanel?.kind === 'search' ? activePanel.result : null;
   const epoch = currentPlace();
+
   if (!r || !epoch) return;
   chipSummarizeBtn.disabled = true;
   chipSummarizeBtn.textContent = 'SUMMARIZING…';
   setStatus(`Summarizing "${r.query}"…`);
   const t0 = Date.now();
+
   try {
     let result: SearchResult | null = null;
     let cached = false;
     let draw: ReturnType<typeof mountChipSummary> | undefined;
     const drafts = smoothDrafts((draft) => { if (epoch.alive) (draw ??= mountChipSummary())(draft); });
+
     try {
       for await (const evt of streamNdjson<SearchEvent>('/api/search', {
         featureId: epoch.featureId, query: r.query, summarize: true,
       } satisfies SearchRequest)) {
         if (!epoch.alive) return;
+
         if (evt.type === 'search') {
           result = evt.result;
           cached = evt.cached;
@@ -812,18 +957,22 @@ async function summarizeActiveSearch() {
           drafts.push(evt.summary);
         } else if (evt.type === 'search-summary') {
           drafts.stop();
+
           if (result) {
             result.summary = evt.summary;
             activePanel = { kind: 'search', result };
           }
+
           (draw ?? mountChipSummary())(evt.summary, true);
         }
       }
     } finally {
       drafts.stop();
     }
+
     chipSummarizeBtn.disabled = false;
     chipSummarizeBtn.textContent = result?.summary ? 'SHOW REVIEWS' : 'SUMMARIZE';
+
     if (result?.summary) {
       setStatus(`"${r.query}" summarized${cached ? ' (cached)' : ` in ${((Date.now() - t0) / 1000).toFixed(1)}s`}`);
     }
@@ -836,15 +985,18 @@ async function summarizeActiveSearch() {
 
 async function runSearch(query: string, force = false) {
   const epoch = currentPlace();
+
   if (!epoch || !query.trim()) return;
   searchBtn.disabled = true;
   setStatus(`Searching "${query}"…`);
   const t0 = Date.now();
+
   try {
     for await (const evt of streamNdjson<SearchEvent>('/api/search', {
       featureId: epoch.featureId, query, force,
     } satisfies SearchRequest)) {
       if (!epoch.alive) return;
+
       if (evt.type === 'search-progress') {
         // Per-page progress: same `Searching "x" · N reviews · P%` shape so
         // the user sees the search count climb instead of staring at a fixed
@@ -885,11 +1037,13 @@ const HIGHLIGHTS_REPOLL_MS = 3500;
 
 async function loadHighlights(force = false) {
   const epoch = currentPlace();
+
   if (!epoch) return;
   const featureId = epoch.featureId;
   const superseded = () => !epoch.alive;
   showHighlightsLoading(force ? 'refreshing…' : 'loading highlights…');
   highlightsRefreshBtn.hidden = true;
+
   for (let attempt = 0; ; attempt++) {
     try {
       const resp = await fetchWithRetry('/api/highlights', {
@@ -897,39 +1051,57 @@ async function loadHighlights(force = false) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ featureId, force, wait: true } satisfies HighlightsRequest),
       });
+
       if (superseded()) return;
       const ct = resp.headers.get('content-type') ?? '';
+
       if (resp.ok && ct.includes('ndjson') && resp.body) {
         const found = await consumeHighlightStream(resp.body, superseded);
+
         if (superseded()) return;
+
         if (found) {
           highlightsRefreshBtn.hidden = false;
+
           return;
         }
+
         if (attempt > 0) return giveUpOnHighlights('still looking for topics — refresh to retry');
         force = false;
         continue;
       }
+
       if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
       const data = await resp.json() as HighlightsResponse;
+
       if (data.pending) {
         // Out of patience, but the place isn't topic-less — the harvest just
         // hasn't hit a populated response yet. Leave a retry the user can take.
         if (attempt >= HIGHLIGHTS_MAX_REPOLLS) return giveUpOnHighlights('still looking for topics — refresh to retry');
         showHighlightsLoading('finding topics…');
         await new Promise((r) => setTimeout(r, HIGHLIGHTS_REPOLL_MS));
+
         if (superseded()) return;
         continue;
       }
+
       if (!resp.ok) {
-        if (resp.status === 404) { renderHighlights([]); return; } // no topic chips for this place
+        if (resp.status === 404) {
+          renderHighlights([]);
+
+          return;
+        } // no topic chips for this place
+
         throw new Error(data.error || `request failed (${resp.status})`);
       }
+
       if (data.highlights?.length) showHighlights(data.highlights);
       else renderHighlights([]);
+
       return;
     } catch (e) {
       if (!superseded()) giveUpOnHighlights(`couldn't load highlights — ${e instanceof Error ? e.message : String(e)}`);
+
       return;
     }
   }
@@ -954,7 +1126,9 @@ function showHighlights(highlights: UiChip[]) {
 // chip so the next click is instant.
 async function ensureHighlightReviews(h: UiChip): Promise<void> {
   const epoch = currentPlace();
+
   if (!epoch || h.reviews) return;
+
   // Keyed on the epoch: a click on place B must not await — or adopt — a
   // request that was issued for place A.
   return epoch.once(`highlight-reviews:${h.token}`, async () => {
@@ -963,10 +1137,13 @@ async function ensureHighlightReviews(h: UiChip): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ featureId: epoch.featureId, token: h.token } satisfies HighlightsRequest),
     });
+
     if (!epoch.alive) return;
     const ct = resp.headers.get('content-type') ?? '';
+
     if (!resp.ok || !ct.includes('json')) return;
     const data = await resp.json() as HighlightsResponse;
+
     if (!epoch.alive) return;
     const full = data.highlights?.find((c) => c.token === h.token);
     h.reviews ??= full?.reviews;
@@ -980,14 +1157,17 @@ async function ensureHighlightReviews(h: UiChip): Promise<void> {
 async function consumeHighlightStream(body: ReadableStream<Uint8Array>, superseded: () => boolean): Promise<boolean> {
   const chipMap = new Map<string, UiChip>();
   let lastFailures = 0;
+
   for await (const evt of readNdjson<HighlightEvent>(body)) {
     if (superseded()) return false;
+
     switch (evt.type) {
       case 'pending':
         showHighlightsLoading('finding topics…');
         break;
       case 'chips':
         chipMap.clear();
+
         for (const c of evt.chips) chipMap.set(c.token, { ...c, state: 'loading' });
         renderHighlights([...chipMap.values()]);
         break;
@@ -1001,6 +1181,7 @@ async function consumeHighlightStream(body: ReadableStream<Uint8Array>, supersed
         renderHighlights([...chipMap.values()]);
         break;
       }
+
       case 'done':
         lastFailures = evt.failures;
         renderHighlights([...chipMap.values()]);
@@ -1009,9 +1190,11 @@ async function consumeHighlightStream(body: ReadableStream<Uint8Array>, supersed
         throw new Error(evt.error || 'highlights failed');
     }
   }
+
   if (lastFailures > 0) {
     setStatus(`${lastFailures} highlight${lastFailures === 1 ? '' : 's'} failed — refresh to retry`, true);
   }
+
   return chipMap.size > 0;
 }
 
@@ -1034,9 +1217,11 @@ type PaintData = {
   meta?: PlaceMeta | null;
   resolvedUrl?: string;
 };
+
 function paintScore(data: PaintData) {
   const featureId = data.score?.featureId ?? data.featureId;
   const displayName = data.meta?.canonicalName || data.name || '(unnamed place)';
+
   // Removals are weighed against the place's own review count, so the penalty
   // holds still whatever our scrape depth. The histogram is the same total
   // Google shows; googleReviewCount backs it up until the preview lands.
@@ -1046,8 +1231,10 @@ function paintScore(data: PaintData) {
     googleReviewCount: data.meta?.googleReviewCount,
     removedReviews: data.meta?.removedReviews,
   });
+
   const nameEl = $('name') as HTMLAnchorElement;
   nameEl.textContent = displayName;
+
   if (data.resolvedUrl) nameEl.href = data.resolvedUrl;
   else if (featureId) nameEl.href = `https://www.google.com/maps?q=&ftid=${featureId}`;
   document.title = data.score
@@ -1055,14 +1242,18 @@ function paintScore(data: PaintData) {
     : `${displayName} · TrueScore`;
   renderPlaceMeta(data.meta ?? undefined);
   $('scoreLabel').textContent = adjusted ? 'SCORE · ADJUSTED' : 'SCORE';
+
   if (data.score && 'latestReviewTs' in data.score) renderFreshness(data.score.latestReviewTs);
   const pctEl = $('scorePct');
+
   if (data.score) {
     pctEl.textContent = `${displayPct}`;
     pctEl.className = `score-num ${scoreClass(displayPct)}`;
+
     const trustedPct = data.score.totalReviews
       ? Math.round((data.score.trustedReviews / data.score.totalReviews) * 100)
       : 0;
+
     $('reviewsLabel').textContent =
       `${data.score.totalReviews} · ${data.score.trustedReviews} (${trustedPct}%)`;
     // A sort with no reviews (yet) has no score — '—', never a confident 0%.
@@ -1071,12 +1262,14 @@ function paintScore(data: PaintData) {
     $('newestPct').textContent = sortPct(data.score.newest);
     const delta = data.score.newest.scorePct - data.score.relevant.scorePct;
     const deltaEl = $('newestDelta');
+
     if (data.score.newest.trustedReviews === 0 || data.score.relevant.trustedReviews === 0) {
       deltaEl.textContent = '';
     } else {
       deltaEl.textContent = delta === 0 ? '' : `${delta > 0 ? '+' : ''}${delta}`;
       deltaEl.className = `delta ${delta > 0 ? 'pos' : delta < 0 ? 'neg' : ''}`;
     }
+
     currentMergedPct = data.score.scorePct;
     currentDisplayPct = displayPct;
   } else {
@@ -1087,6 +1280,7 @@ function paintScore(data: PaintData) {
     $('newestPct').textContent = '—';
     $('newestDelta').textContent = '';
   }
+
   renderOverallScore(data.histogram ?? null);
   // No score, no delta — "−70% vs overall" beside a '—' measured nothing.
   renderOverall(data.score ? data.overallPct ?? null : null, displayPct);
@@ -1125,8 +1319,10 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   renderPlaceMeta(undefined);
   renderFreshness(null);
   const shareUrl = resolvedUrl ?? urlInput.value;
+
   if (shareUrl) {
     const next = `?url=${encodeURIComponent(shareUrl)}`;
+
     if (location.search !== next) history.replaceState(null, '', next);
   }
 }
@@ -1163,14 +1359,18 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number,
   try {
     for await (const evt of readNdjson<LookupEvent>(body)) {
       if (!current()) return;
+
       if (evt.type === 'lookup') {
         const scoreMs = Date.now() - t0;
         cachedTotal = evt.score.totalReviews;
         renderScore(evt);
         freshnessLabel.classList.add('rechecking');
         const epoch = currentPlace();
+
         if (epoch && evt.overallPct == null) fetchHistogramFor(epoch, currentDisplayPct);
+
         if (evt.highlights?.length && evt.summary) topicsHeldUntil = Date.now() + TOPICS_HOLD_MS;
+
         if (evt.summary && epoch) {
           renderSummary(evt.summary, epoch);
           setStatus(`Cached · ${scoreMs}ms`);
@@ -1182,6 +1382,7 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number,
             }
           });
         }
+
         if (evt.highlights?.length) showHighlights(evt.highlights);
         else loadHighlights();
       } else if (evt.type === 'refreshed') {
@@ -1194,10 +1395,13 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number,
         flashIfChanged(freshnessLabel, prevFresh);
         flashIfChanged($('scorePct'), prevScore);
         flashIfChanged($('reviewsLabel'), prevReviews);
+
         if (currentHighlights.length) {
           renderHighlights(currentHighlights);
+
           if (activePanel?.kind === 'highlight') setActiveChip(activePanel.chip.token);
         }
+
         const diff = evt.score.totalReviews - cachedTotal;
         const diffMsg = diff > 0 ? ` (+${diff} new)` : '';
         setStatus(`Updated with fresh reviews${diffMsg}`);
@@ -1247,18 +1451,21 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number,
         // Without one, clear the progress numbers and stop: there's nothing to
         // summarize, and the session banner (re-checked after the lookup) says why.
         const throttled = evt.throttled;
+
         if (throttled && !provisional) {
           acc.score = undefined;
           paintScore(acc);
           setStatus("Google didn't return this place's reviews — try again in a moment", true);
           continue;
         }
+
         if (!throttled) {
           acc.score = evt.score;
           const prevScore = $('scorePct').textContent ?? '';
           const prevReviews = $('reviewsLabel').textContent ?? '';
           paintScore(acc);
           renderFreshness(evt.score.latestReviewTs);
+
           // Flash only what the rescrape actually moved, so a provisional score
           // the scrape agreed with settles silently.
           if (provisional) {
@@ -1266,14 +1473,17 @@ async function consumeLookupStream(body: ReadableStream<Uint8Array>, t0: number,
             flashIfChanged($('reviewsLabel'), prevReviews);
           }
         }
+
         if (provisional) freshnessLabel.classList.remove('rechecking');
         const epoch = currentPlace();
+
         // Kick off summary + highlights now that we know the place is real
         // and the score has settled. Idempotent (summaryKicked guards reruns
         // if a future server change ever re-emits `score`).
         if (!summaryKicked && epoch) {
           summaryKicked = true;
           loadHighlights();
+
           if (throttled) setStatus('Recheck came back empty — showing the extension score', true);
           else setStatus(`Score in ${(evt.fetchMs / 1000).toFixed(1)}s · summarizing…`);
           fetchSummaryFor(epoch).then((sum) => {
@@ -1295,7 +1505,13 @@ function renderHoursToday(meta: PlaceMeta | undefined) {
   const hoursStatusEl = $('placeHoursStatus');
   const hoursTodayEl = $('placeHoursToday');
   const week = meta?.hoursWeek;
-  if (!week?.length) { hoursEl.hidden = true; return; }
+
+  if (!week?.length) {
+    hoursEl.hidden = true;
+
+    return;
+  }
+
   const { day, hour } = localHourInTz(meta?.timezone);
   const on = (d: number) => week.find((h) => WEEKDAYS.indexOf(h.day as typeof WEEKDAYS[number]) === d);
   const today = on(day) ?? week[0];
@@ -1304,8 +1520,10 @@ function renderHoursToday(meta: PlaceMeta | undefined) {
   hoursStatusEl.className = `place-hours-status ${status ?? ''}`;
   hoursStatusEl.textContent = status ? status.toUpperCase() : '';
   hoursStatusEl.hidden = status === null;
+
   const hoursLabel = slotsOf(today).map(([o, c]) => `${formatHourLabel(o)}–${formatHourLabel(c)}`).join(', ')
     || (today?.label ?? '');
+
   hoursTodayEl.textContent = hoursLabel && today ? `${today.day.slice(0, 3)} · ${hoursLabel}` : '';
   hoursEl.hidden = false;
 }
@@ -1327,14 +1545,17 @@ function renderPlaceMeta(meta: PlaceMeta | undefined) {
   const showTag = (el: HTMLElement, text: string | undefined) => {
     if (text) { el.textContent = text; el.hidden = false; } else { el.hidden = true; }
   };
+
   showTag($('placeCategory'), meta?.category);
   showTag($('placePrice'), meta?.priceRange);
 
   if (meta?.googleRating != null) {
     googleEl.replaceChildren(el('span', 'star', '★'), el('span', undefined, meta.googleRating.toFixed(1)));
+
     if (meta.googleReviewCount != null) {
       googleEl.appendChild(el('span', 'count', ` · ${meta.googleReviewCount.toLocaleString()} on Google`));
     }
+
     googleEl.hidden = false;
   } else {
     googleEl.hidden = true;
@@ -1353,12 +1574,19 @@ function renderPlaceMeta(meta: PlaceMeta | undefined) {
 function renderRemovedReviews(meta: PlaceMeta | undefined) {
   const banner = $('placeRemoved') as HTMLAnchorElement;
   const removed = meta?.removedReviews;
-  if (!removed) { banner.hidden = true; return; }
+
+  if (!removed) {
+    banner.hidden = true;
+
+    return;
+  }
+
   $('placeRemovedText').textContent = removed.text;
   const est = removedCountEstimate(removed);
   banner.title = est
     ? `${removed.detail ?? removed.text}\nPenalty: ~${est.toLocaleString()} removals — the middle of Google's range — counted as 1★ reviews against this place's own review count.`
     : (removed.detail ?? removed.text);
+
   if (removed.url) banner.href = removed.url;
   else banner.removeAttribute('href');
   banner.hidden = false;
@@ -1366,17 +1594,26 @@ function renderRemovedReviews(meta: PlaceMeta | undefined) {
 
 function renderFreshness(latestReviewTs: number | null) {
   const row = $('freshnessRow');
-  if (!latestReviewTs) { row.hidden = true; return; }
+
+  if (!latestReviewTs) {
+    row.hidden = true;
+
+    return;
+  }
+
   $('freshnessLabel').textContent = timeAgo(latestReviewTs);
   row.hidden = false;
 }
 
 function renderOverall(overallPct: number | null, mergedPct: number) {
   const el = $('overallDelta');
+
   if (overallPct == null) {
     el.textContent = '';
+
     return;
   }
+
   const diff = mergedPct - overallPct;
   const sign = diff > 0 ? '+' : '';
   el.textContent = `${sign}${diff}% vs overall`;
@@ -1385,7 +1622,13 @@ function renderOverall(overallPct: number | null, mergedPct: number) {
 
 function renderOverallScore(histogram: number[] | undefined | null) {
   const el = $('placeOverallScore');
-  if (!histogram || !histogram.length) { el.hidden = true; return; }
+
+  if (!histogram || !histogram.length) {
+    el.hidden = true;
+
+    return;
+  }
+
   const score = overallScoreFromHistogram(histogram);
   el.textContent = `score ${score.toLocaleString()}`;
   el.hidden = false;
@@ -1402,7 +1645,14 @@ function renderOverallScore(histogram: number[] | undefined | null) {
 function renderValue(rating?: number) {
   const word = $('valueForMoney');
   $('valueTrack').hidden = !rating;
-  if (!rating) { word.textContent = '—'; word.className = 'value-word'; return; }
+
+  if (!rating) {
+    word.textContent = '—';
+    word.className = 'value-word';
+
+    return;
+  }
+
   const { label, tone, position } = valueForMoneyScale(rating);
   word.textContent = label;
   word.className = `value-word ${tone}`;
@@ -1436,34 +1686,46 @@ function renderSummaryError(msg: string) {
 async function fetchHistogramFor(epoch: PlaceEpoch, mergedPct: number) {
   try {
     const data = await postJson<HistogramResponse>('/api/histogram', { featureId: epoch.featureId } satisfies HistogramRequest);
+
     if (!epoch.alive) return;
+
     if (data.overallPct != null) renderOverall(data.overallPct, mergedPct);
+
     if (data.histogram) renderOverallScore(data.histogram);
   } catch {}
 }
 
 async function fetchSummaryFor(epoch: PlaceEpoch, force = false): Promise<{ ok: boolean; ms: number }> {
   const t0 = Date.now();
+
   try {
     // It shows as it's written, from a fresh list of bullets.
     let drafting = false;
+
     const data = await streamSummary('/api/summarize', { featureId: epoch.featureId, force, stream: true } satisfies SummarizeRequest, (draft) => {
       if (!epoch.alive) return;
+
       if (!drafting) mainBullets = bulletsIn(highlightsListEl);
       drafting = true;
       renderMarkdown($('verdict'), draft.verdict);
       mainBullets.draft(draft.highlights);
     });
+
     if (!epoch.alive) return { ok: false, ms: Date.now() - t0 };
+
     if (data.error) {
       renderSummaryError(data.error);
+
       return { ok: false, ms: Date.now() - t0 };
     }
+
     if (data.summary) renderSummary(data.summary, epoch);
     void data.later.then((aliases) => { if (aliases && epoch.alive) applyAliases(aliases, epoch.featureId); });
+
     return { ok: true, ms: Date.now() - t0 };
   } catch (e) {
     epoch.run(() => renderSummaryError(e instanceof Error ? e.message : String(e)));
+
     return { ok: false, ms: Date.now() - t0 };
   }
 }
@@ -1478,16 +1740,19 @@ const resetGoBtn = () => { goBtn.disabled = false; goBtn.textContent = 'SCORE'; 
 // the first submit of that same link adopts it rather than asking again. One the
 // network dropped is asked again the usual way.
 let earlyLookup = (window as { earlyLookup?: { url: string; response: Promise<Response> } }).earlyLookup;
+
 const lookupResponse = (url: string): Promise<Response> => {
   const early = earlyLookup?.url === url ? earlyLookup.response : undefined;
   earlyLookup = undefined;
   const ask = () => postNdjson('/api/lookup', { url } satisfies LookupRequest);
+
   return early ? early.then(ndjsonResponse, ask) : ask();
 };
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const url = urlInput.value.trim();
+
   if (!url) return;
   const seq = ++lookupSeq;
   const current = () => seq === lookupSeq;
@@ -1495,11 +1760,13 @@ form.addEventListener('submit', async (e) => {
   // when already at this URL (initial load with ?url=, popstate replay, or
   // a duplicate submit).
   const nextSearch = `?url=${encodeURIComponent(url)}`;
+
   if (location.search !== nextSearch) history.pushState(null, '', nextSearch);
   document.body.dataset.state = 'loading';
   goBtn.disabled = true;
   goBtn.textContent = 'FETCHING';
   setStatus('Resolving link…');
+
   try {
     // A connection that drops mid-stream (Safari's "Load failed": it left the
     // foreground, the network switched, a deploy restarted the server) is past
@@ -1507,12 +1774,14 @@ form.addEventListener('submit', async (e) => {
     // again, once the page is back in view.
     for (let drops = 0; ; drops++) {
       const t0 = Date.now();
+
       try {
         const resp = await lookupResponse(url);
         await consumeLookupStream(resp.body!, t0, current);
         break;
       } catch (e) {
         if (!(e instanceof TypeError) || drops === 2 || !current()) throw e;
+
         if (document.hidden) await new Promise((r) => document.addEventListener('visibilitychange', r, { once: true }));
       }
     }
@@ -1530,6 +1799,7 @@ form.addEventListener('submit', async (e) => {
 
 resummarizeBtn.addEventListener('click', async () => {
   const epoch = currentPlace();
+
   if (!epoch) return;
   resummarizeBtn.disabled = true;
   setStatus('Re-summarizing…');
@@ -1550,8 +1820,10 @@ chipSummarizeBtn.addEventListener('click', () => {
   if (chipSummarizeBtn.textContent === 'SHOW REVIEWS') {
     renderReviewList(panelReviews() ?? []);
     chipSummarizeBtn.textContent = 'SUMMARIZE';
+
     return;
   }
+
   if (activePanel?.kind === 'highlight') summarizeActiveChip();
   else if (activePanel?.kind === 'search') summarizeActiveSearch();
 });
@@ -1559,6 +1831,7 @@ chipSummarizeBtn.addEventListener('click', () => {
 searchForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const q = searchInput.value.trim();
+
   if (!q) return;
   runSearch(q, false);
 });
@@ -1569,6 +1842,7 @@ searchInput.addEventListener('input', () => {
 
 searchRefreshBtn.addEventListener('click', () => {
   const q = searchInput.value.trim();
+
   if (!q) return;
   runSearch(q, true);
 });
@@ -1599,6 +1873,7 @@ document.getElementById('brand')?.addEventListener('click', () => {
 // location.search to avoid pushing a duplicate entry on replay.
 window.addEventListener('popstate', () => {
   const u = new URLSearchParams(location.search).get('url');
+
   if (u) {
     urlInput.value = u;
     form.requestSubmit();
@@ -1609,14 +1884,18 @@ window.addEventListener('popstate', () => {
 
 function renderPlaces() {
   placesList.replaceChildren();
+
   if (placesCache.length === 0) {
     placesSection.hidden = true;
     explainerEl.hidden = false;
+
     return;
   }
+
   placesSection.hidden = false;
   explainerEl.hidden = true;
   const list = placesExpanded ? placesCache : placesCache.slice(0, PLACES_TOP_N);
+
   for (const p of list) {
     const tile = el('button', 'place-tile');
     tile.type = 'button';
@@ -1625,10 +1904,12 @@ function renderPlaces() {
       el('span', `place-score ${scoreClass(p.scorePct)}`, `${p.scorePct}`),
       el('span', 'place-age', timeAgo(p.lastAccessTs)),
     );
+
     if (p.adjusted) tile.title = 'Adjusted for removed reviews';
     tile.addEventListener('click', () => { urlInput.value = p.resolvedUrl; form.requestSubmit(); });
     placesList.appendChild(tile);
   }
+
   if (placesCache.length > PLACES_TOP_N) {
     placesToggle.hidden = false;
     placesToggle.textContent = placesExpanded ? 'SHOW LESS' : `SHOW ALL (${placesCache.length})`;
@@ -1658,11 +1939,14 @@ askForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const q = questionInput.value.trim();
   const epoch = currentPlace();
+
   if (!q || !epoch) return;
   askBtn.disabled = true;
   setStatus('');
+
   try {
     await streamAsk(answerEl, q, { featureId: epoch.featureId }, epoch);
+
     if (epoch.alive) questionInput.value = '';
   } catch (e) {
     if (epoch.alive) setStatus(e instanceof Error ? e.message : String(e), true);
@@ -1672,10 +1956,13 @@ askForm.addEventListener('submit', async (e) => {
 });
 
 refreshSessionHealth();
+
 // Poll so the banner clears (or appears) as the server's self-renewal heals or
 // the session genuinely dies — not only on the next lookup.
 setInterval(refreshSessionHealth, 30_000);
+
 const sharedUrl = new URLSearchParams(location.search).get('url');
+
 if (sharedUrl) {
   urlInput.value = sharedUrl;
   form.requestSubmit();

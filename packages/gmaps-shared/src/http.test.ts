@@ -3,6 +3,7 @@ import { readNdjson, streamNdjson, streamSummary } from './http';
 
 const streamOf = (...chunks: string[]): ReadableStream<Uint8Array> => {
   const enc = new TextEncoder();
+
   return new ReadableStream({
     start(controller) {
       for (const c of chunks) controller.enqueue(enc.encode(c));
@@ -13,7 +14,9 @@ const streamOf = (...chunks: string[]): ReadableStream<Uint8Array> => {
 
 const drain = async <T>(gen: AsyncGenerator<T>): Promise<T[]> => {
   const out: T[] = [];
+
   for await (const e of gen) out.push(e);
+
   return out;
 };
 
@@ -73,6 +76,7 @@ describe('streamSummary', () => {
 
   test('grows the drafts frame by frame up to the newest, then resolves to the checked summary', async () => {
     const line = (l: unknown) => new TextEncoder().encode(JSON.stringify(l) + '\n');
+
     const body = new ReadableStream<Uint8Array>({
       async start(c) {
         c.enqueue(line({ type: 'summary-draft', summary: { verdict: 'Go', highlights: [] } }));
@@ -82,6 +86,7 @@ describe('streamSummary', () => {
         c.close();
       },
     });
+
     globalThis.fetch = (async () => new Response(body, { headers: { 'content-type': 'application/x-ndjson' } })) as unknown as typeof fetch;
     const drafts: string[] = [];
     const done = await streamSummary('/api/summarize', {}, (d) => drafts.push(d.verdict));

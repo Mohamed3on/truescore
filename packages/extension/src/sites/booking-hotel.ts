@@ -27,11 +27,17 @@ type Review = {
     negativeText?: string | null;
   } | null;
 };
+
 type Tier = { cls: string; color: string };
+
 type HotelData = { hotelId: string; destId: string; hotelCountryCode: string };
+
 type TravelerFilter = { name: string; value: string; count: number };
+
 type TopicFilter = { id: number; name: string; isSelected?: boolean };
+
 type ReviewsPayload = { reviews: Review[]; travelerFilters: TravelerFilter[]; topicFilters: TopicFilter[] };
+
 type ReviewFilterState = {
   travelerType: string;
   searchText: string;
@@ -110,6 +116,7 @@ const scoreOf = (reviews: Review[]) => {
     (acc, review) => acc + (review.reviewScore >= 9 ? 1 : review.reviewScore <= 2 ? -1 : 0),
     0,
   );
+
   return reviews.length ? Math.round((net / reviews.length) * 100) : 0;
 };
 
@@ -119,12 +126,16 @@ const groupBy = (
   format: (value: string) => string,
 ) => {
   const map = new Map<string, Review[]>();
+
   for (const review of reviews) {
     const rawKey = key(review);
+
     if (!rawKey) continue;
+
     if (!map.has(rawKey)) map.set(rawKey, []);
     map.get(rawKey)!.push(review);
   }
+
   return [...map.entries()]
     .filter(([, groupedReviews]) => groupedReviews.length >= MIN_REVIEWS_PER_GROUP)
     .map(([label, groupedReviews]) => ({
@@ -139,11 +150,13 @@ const groupBy = (
 const formatLikes = (review: Review) => {
   const positive = review.textDetails?.positiveText?.trim();
   const negative = review.textDetails?.negativeText?.trim();
+
   return [positive ? `Liked: ${positive}` : '', negative ? `Disliked: ${negative}` : ''].filter(Boolean).join('\n');
 };
 
 const formatReviewText = (review: Review) => {
   const title = review.textDetails?.title?.trim();
+
   return [title ? `Title: ${title}` : '', formatLikes(review)].filter(Boolean).join('\n').trim();
 };
 
@@ -159,12 +172,15 @@ const reviewFields = (review: Review) => ({
 const toReviewTexts = (reviews: Review[]) => {
   const seen = new Set<string>();
   const texts: string[] = [];
+
   for (const review of reviews) {
     const text = formatReviewText(review);
+
     if (!text || seen.has(text)) continue;
     seen.add(text);
     texts.push(text);
   }
+
   return texts;
 };
 
@@ -173,26 +189,33 @@ const getTravelerLabel = (value: string, filters: TravelerFilter[]) =>
 
 const parseLegacyCacheSuffix = (suffix: string): ReviewFilterState | null => {
   const parts = suffix.split('-').filter(Boolean);
+
   if (parts.length < 2) return null;
   const limit = parseInt(parts.pop()!, 10);
+
   if (!Number.isFinite(limit)) return null;
   const traveler = parts.shift();
+
   if (!traveler) return null;
   const travelerType = traveler === ALL_TRAVELERS_CACHE_TOKEN ? ALL_TRAVELERS : traveler;
   let searchText = '';
   let selectedTopicIds: number[] = [];
   const textIdx = parts.indexOf('text');
   const topicsIdx = parts.indexOf('topics');
+
   if (textIdx !== -1) {
     const end = topicsIdx > textIdx ? topicsIdx : parts.length;
     const raw = parts.slice(textIdx + 1, end).join('-');
+
     try { searchText = decodeURIComponent(raw); } catch { searchText = raw; }
   }
+
   if (topicsIdx !== -1) {
     selectedTopicIds = parts.slice(topicsIdx + 1)
       .map((n) => parseInt(n, 10))
       .filter(Number.isFinite);
   }
+
   return {
     travelerType,
     searchText,
@@ -207,23 +230,31 @@ const describeFilterState = (
   topicFilters: TopicFilter[],
 ): string => {
   if (!state) return '';
+
   const traveler = state.travelerType
     ? getTravelerLabel(state.travelerType, travelerFilters)
     : 'All travelers';
+
   const parts = [traveler];
+
   if (state.searchText) parts.push(`"${state.searchText}"`);
   const ids = state.selectedTopicIds || [];
+
   if (ids.length === 1) {
     const name = topicFilters.find((t) => t.id === ids[0])?.name;
+
     if (name) parts.push(name);
   } else if (ids.length > 1) {
     parts.push(`${ids.length} topics`);
   }
+
   parts.push(`${state.reviewLimit}`);
+
   return parts.join(' · ');
 };
 
 const normalizeSearchText = (value: string) => value.trim();
+
 const normalizeTopicIds = (ids: number[]) =>
   [...new Set(ids.filter((id) => Number.isFinite(id)))].sort((a, b) => a - b);
 
@@ -232,8 +263,11 @@ const cacheSuffix = ({ travelerType, searchText, selectedTopicIds }: ReviewFilte
   const text = normalizeSearchText(searchText);
   const topics = normalizeTopicIds(selectedTopicIds);
   const parts = [traveler];
+
   if (text) parts.push(`text-${encodeURIComponent(text.toLowerCase()).slice(0, 80)}`);
+
   if (topics.length) parts.push(`topics-${topics.join('-')}`);
+
   return parts.join('-');
 };
 
@@ -308,9 +342,11 @@ const normalizeFilterName = (name: string, fallback: string) =>
 const normalizeTravelerFilters = (filters: TravelerFilter[] | undefined) => {
   const seen = new Set<string>();
   const normalized: TravelerFilter[] = [];
+
   for (const filter of filters || []) {
     if (!filter.value || seen.has(filter.value)) continue;
     const name = normalizeFilterName(filter.name, filter.value);
+
     if (filter.value === 'ALL' || name.toLowerCase() === 'all') continue;
     seen.add(filter.value);
     normalized.push({
@@ -319,14 +355,17 @@ const normalizeTravelerFilters = (filters: TravelerFilter[] | undefined) => {
       count: filter.count || 0,
     });
   }
+
   return normalized.length ? normalized : FALLBACK_TRAVELER_FILTERS;
 };
 
 const normalizeTopicFilters = (filters: any[] | undefined) => {
   const seen = new Set<number>();
   const normalized: TopicFilter[] = [];
+
   for (const filter of filters || []) {
     const id = Number(filter.id);
+
     if (!Number.isFinite(id) || seen.has(id)) continue;
     seen.add(id);
     normalized.push({
@@ -335,6 +374,7 @@ const normalizeTopicFilters = (filters: any[] | undefined) => {
       isSelected: Boolean(filter.isSelected),
     });
   }
+
   return normalized.length ? normalized : FALLBACK_TOPIC_FILTERS;
 };
 
@@ -345,6 +385,7 @@ const fetchRecentReviews = async (
   const reviewLimit = normalizeReviewLimit(filterState.reviewLimit);
   const cacheKey = cacheKeyFor(hotelData.hotelId, { ...filterState, reviewLimit });
   const cached = cacheGet(cacheKey, REVIEWS_CACHE_TTL);
+
   if (cached) {
     return {
       reviews: Array.isArray(cached) ? cached : cached.reviews || [],
@@ -354,28 +395,36 @@ const fetchRecentReviews = async (
   }
 
   const pageCount = Math.ceil(reviewLimit / PAGE_SIZE);
+
   const pages = Array.from({ length: pageCount }, (_, index) =>
     fetchReviewPage(hotelData, index * PAGE_SIZE, filterState),
   );
+
   const results = await Promise.allSettled(pages);
+
   const fulfilled = results.filter(
     (result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled',
   );
+
   const reviews: Review[] = fulfilled
     .flatMap((result) => result.value?.data?.reviewListFrontend?.reviewCard || []);
+
   const travelerFilters = normalizeTravelerFilters(
     fulfilled
       .map((result) => result.value?.data?.reviewListFrontend?.customerTypeFilter)
       .find((filters) => Array.isArray(filters) && filters.length),
   );
+
   const topicFilters = normalizeTopicFilters(
     fulfilled
       .map((result) => result.value?.data?.reviewListFrontend?.topicFilters)
       .find((filters) => Array.isArray(filters) && filters.length),
   );
+
   const payload = { reviews, travelerFilters, topicFilters };
 
   if (reviews.length) cacheSet(cacheKey, payload);
+
   return payload;
 };
 
@@ -413,6 +462,7 @@ const buildReviewFilters = (
   limitWrapper.appendChild(el('span', 'ts-bp-filter-label', 'Reviews'));
   const limitSelect = document.createElement('select');
   limitSelect.className = 'ts-bp-filter-select';
+
   for (const limit of REVIEW_LIMIT_OPTIONS) {
     const option = document.createElement('option');
     option.value = String(limit);
@@ -420,6 +470,7 @@ const buildReviewFilters = (
     option.label = String(limit);
     limitSelect.appendChild(option);
   }
+
   limitSelect.value = String(normalizeReviewLimit(filterState.reviewLimit));
   limitWrapper.appendChild(limitSelect);
   wrapper.appendChild(limitWrapper);
@@ -432,29 +483,35 @@ const buildReviewFilters = (
   input.placeholder = 'breakfast, noise, parking...';
   input.value = filterState.searchText;
   let textTimer: number | null = null;
+
   const nextState = (searchText = normalizeSearchText(input.value)): ReviewFilterState => ({
     travelerType: select.value,
     searchText,
     reviewLimit: normalizeReviewLimit(parseInt(limitSelect.value, 10)),
     selectedTopicIds: normalizeTopicIds(filterState.selectedTopicIds),
   });
+
   select.addEventListener('change', () =>
     onChange(nextState()),
   );
   limitSelect.addEventListener('change', () =>
     onChange(nextState()),
   );
+
   const runTextSearch = () => {
     const nextSearchText = normalizeSearchText(input.value);
+
     if (nextSearchText === filterState.searchText) return;
     onChange(nextState(nextSearchText));
   };
+
   input.addEventListener('input', () => {
     if (textTimer) window.clearTimeout(textTimer);
     textTimer = window.setTimeout(runTextSearch, TEXT_FILTER_DEBOUNCE_MS);
   });
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
+
     if (textTimer) window.clearTimeout(textTimer);
     runTextSearch();
   });
@@ -466,6 +523,7 @@ const buildReviewFilters = (
   topicWrapper.appendChild(topicLabel);
   const topicList = el('div', 'ts-bp-topic-list');
   const selectedTopics = new Set(normalizeTopicIds(filterState.selectedTopicIds));
+
   for (const topic of topicFilters) {
     const chip = document.createElement('button');
     chip.type = 'button';
@@ -474,12 +532,14 @@ const buildReviewFilters = (
     chip.setAttribute('aria-pressed', String(selectedTopics.has(topic.id)));
     chip.addEventListener('click', () => {
       const nextTopics = new Set(selectedTopics);
+
       if (nextTopics.has(topic.id)) nextTopics.delete(topic.id);
       else nextTopics.add(topic.id);
       onChange({ ...nextState(), selectedTopicIds: normalizeTopicIds([...nextTopics]) });
     });
     topicList.appendChild(chip);
   }
+
   topicWrapper.appendChild(topicList);
   wrapper.appendChild(topicWrapper);
 
@@ -489,10 +549,13 @@ const buildReviewFilters = (
 const mountPanel = (panel: HTMLElement) => {
   const galleryMount = document.querySelector('.k2-hp--gallery-header #hotel_main_content')
     || document.querySelector('.k2-hp--gallery-header');
+
   const mount = galleryMount || document.querySelector('#js--hp-gallery-scorecard');
+
   if (!mount) return;
   panel.classList.toggle('ts-bp-wide', Boolean(galleryMount));
   const existing = document.querySelector('.ts-bp');
+
   if (existing?.parentElement === mount) existing.replaceWith(panel);
   else {
     existing?.remove();
@@ -548,16 +611,20 @@ function waitForHotelData(callback: (data: HotelData) => void) {
   const check = () => {
     const hotelIdInput = document.querySelector('input[name="hotel_id"]') as HTMLInputElement;
     const destIdInput = document.querySelector('input[name="dest_id"]') as HTMLInputElement;
+
     if (!hotelIdInput?.value || !destIdInput?.value) return false;
     callback({
       hotelId: hotelIdInput.value,
       destId: destIdInput.value,
       hotelCountryCode: getHotelCountryCode(),
     });
+
     return true;
   };
+
   if (check()) return;
   let attempts = 0;
+
   const checkInterval = setInterval(() => {
     // Some layouts never render the hidden inputs — stop polling after 30s.
     if (check() || ++attempts >= 60) clearInterval(checkInterval);
@@ -567,19 +634,24 @@ function waitForHotelData(callback: (data: HotelData) => void) {
 waitForHotelData((hotelData) => {
   let travelerFilters: TravelerFilter[] = [];
   let topicFilters: TopicFilter[] = FALLBACK_TOPIC_FILTERS;
+
   let currentFilterState: ReviewFilterState = {
     travelerType: ALL_TRAVELERS,
     searchText: '',
     reviewLimit: DEFAULT_REVIEW_LIMIT,
     selectedTopicIds: [],
   };
+
   let renderId = 0;
   const reviewsByFilter = new Map<string, Promise<ReviewsPayload>>();
+
   const getReviews = (filterState = currentFilterState) => {
     const key = requestKeyFor(filterState);
+
     if (!reviewsByFilter.has(key)) {
       reviewsByFilter.set(key, fetchRecentReviews(hotelData, filterState));
     }
+
     return reviewsByFilter.get(key)!;
   };
 
@@ -599,11 +671,16 @@ waitForHotelData((hotelData) => {
         travelerFilters: fetchedTravelerFilters,
         topicFilters: fetchedTopicFilters,
       } = await getReviews(currentFilterState);
+
       if (activeRenderId !== renderId) return;
+
       if (fetchedTravelerFilters.length) travelerFilters = fetchedTravelerFilters;
+
       if (fetchedTopicFilters.length) topicFilters = fetchedTopicFilters;
+
       if (!allReviews.length) {
         renderEmptyPanel(currentFilterState, travelerFilters, topicFilters, render);
+
         return;
       }
 
@@ -611,15 +688,19 @@ waitForHotelData((hotelData) => {
       const guestRows = groupBy(allReviews, (review) => review.bookingDetails.customerType, formatGuest);
       const roomRows = groupBy(allReviews, (review) => review.bookingDetails.roomType?.name, formatRoom);
       const reviewTexts = toReviewTexts(allReviews);
+
       const travelerLabel = currentFilterState.travelerType
         ? getTravelerLabel(currentFilterState.travelerType, travelerFilters).toLowerCase()
         : 'all travelers';
+
       const activeFilterLabel = currentFilterState.searchText
         ? `${travelerLabel} · "${currentFilterState.searchText}"`
         : travelerLabel;
+
       const topicLabel = currentFilterState.selectedTopicIds.length
         ? ` · ${currentFilterState.selectedTopicIds.length} topics`
         : '';
+
       const metaLabel = `${allReviews.length} reviews · ${activeFilterLabel}${topicLabel}`;
 
       const panel = el('div', 'ts-bp');
@@ -669,6 +750,7 @@ waitForHotelData((hotelData) => {
           rowEl.appendChild(el('span', 'ts-bp-count', row.count));
           section.appendChild(rowEl);
         }
+
         panel.appendChild(section);
       };
 
@@ -691,12 +773,16 @@ waitForHotelData((hotelData) => {
             prefix: `bk-summary-${hotelData.hotelId}-`,
             decode: (entry) => {
               const fromMeta = entry.meta?.filterState as ReviewFilterState | undefined;
+
               const filterState = fromMeta || parseLegacyCacheSuffix(
                 entry.key.slice(`bk-summary-${hotelData.hotelId}-`.length),
               );
+
               if (!filterState) return null;
               const label = describeFilterState(filterState, travelerFilters, topicFilters);
+
               if (!label) return null;
+
               return { label, onSelect: () => render(filterState) };
             },
           },

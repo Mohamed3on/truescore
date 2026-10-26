@@ -101,10 +101,13 @@ describe('collectSearchTerms', () => {
   const mkWrapper = (id: string, stars: number, count: number) => {
     const r1: any = []; r1[2] = 1_700_000_000_000; r1[4] = []; r1[4][5] = []; r1[4][5][5] = count;
     const r2: any = []; r2[0] = [stars]; r2[15] = [[`text-${id}`]];
+
     return [[id, r1, r2]];
   };
+
   const page = (wrappers: any[], nextCursor: string | null) =>
     ")]}'\n" + JSON.stringify([null, nextCursor, wrappers]);
+
   const urlFor = (term: string, cursor: string) => ({ url: `${term}|${cursor}` });
 
   test('fans out one search per term and unions, deduped across terms', async () => {
@@ -114,6 +117,7 @@ describe('collectSearchTerms', () => {
       'a|a1': page([mkWrapper('r3', 5, 9)], null),
       'b|': page([mkWrapper('r2', 1, 9), mkWrapper('r4', 4, 9)], null),
     };
+
     const transport = async (url: string) => pages[url] ?? page([], null);
 
     const snapshots: number[] = [];
@@ -133,12 +137,15 @@ describe('collectSearchTerms', () => {
     let inFlight = 0;
     let peak = 0;
     const terms = Array.from({ length: 20 }, (_, i) => `t${i}`);
+
     const transport = async (url: string) => {
       peak = Math.max(peak, ++inFlight);
       await new Promise((r) => setTimeout(r, 1));
       inFlight--;
+
       return page([mkWrapper(url.split('|')[0]!, 5, 9)], null);
     };
+
     const merged = await collectSearchTerms(terms, urlFor, transport);
     expect(merged.map((r) => r.reviewId).sort()).toEqual([...terms].sort());
     expect(peak).toBe(6);
@@ -146,17 +153,26 @@ describe('collectSearchTerms', () => {
 
   test('no terms → [] and never touches the transport', async () => {
     let calls = 0;
-    const transport = async () => { calls++; return page([], null); };
+
+    const transport = async () => {
+      calls++;
+
+      return page([], null);
+    };
+
     expect(await collectSearchTerms([], urlFor, transport)).toEqual([]);
     expect(calls).toBe(0);
   });
 
   test('a cached term is served from the cache; only new terms hit the transport', async () => {
     const searched: string[] = [];
+
     const transport = async (url: string) => {
       searched.push(url);
+
       return page([mkWrapper(`${url.split('|')[0]}-hit`, 5, 9)], null);
     };
+
     const cache = createTermCache(60_000, 10).forPlace('place');
     await collectSearchTerms(['dog'], urlFor, transport, undefined, cache);
     const merged = await collectSearchTerms(['DOG', 'hund'], urlFor, transport, undefined, cache);

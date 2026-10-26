@@ -5,6 +5,7 @@
 
 const readIgnored = async (key: string): Promise<Set<string>> => {
   const stored = (await chrome.storage.local.get(key))[key];
+
   return new Set<string>(Array.isArray(stored) ? stored : []);
 };
 
@@ -15,5 +16,6 @@ export const loadIgnored = (key: string) => readIgnored(key).catch(() => new Set
 export const saveIgnored = (key: string, id: string, ignore: boolean) =>
   readIgnored(key).then((ignored) => {
     if (ignore) ignored.add(id); else ignored.delete(id);
+
     return chrome.storage.local.set({ [key]: [...ignored] });
   }).catch(() => {});

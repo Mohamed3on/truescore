@@ -42,10 +42,12 @@ export type SubjectRequest = {
 
 export const resolveSubject = ({ entry, name, reviewTexts, reviews, removedReviews, hint }: SubjectRequest): Subject => {
   const texts = reviewTexts ?? (reviews ? textReviewsFor(reviews) : null);
+
   if (!texts?.length) throw new NoReviews(hint);
   // The body's notice is the live tab's read and wins; the cached preview meta
   // covers the web caller, which only ever sends a featureId.
   const removed = removedReviews ?? entry?.meta?.removedReviews;
+
   return { placeName: entry?.name ?? name ?? '', reviewTexts: texts, ...(removed ? { removedReviews: removed } : {}) };
 };
 
@@ -56,6 +58,7 @@ export const resolveSubject = ({ entry, name, reviewTexts, reviews, removedRevie
 // append it unconditionally.
 export const removalNote = (removed: RemovedReviews | undefined): string => {
   if (!removed) return '';
+
   return `Google notes "${removed.text}" for this place. Businesses request these takedowns, so the surviving reviews skew positive; weigh them accordingly. Don't mention the removals unless reviewers themselves describe deleted reviews or an owner going after critics — the reader already sees Google's notice.`;
 };
 

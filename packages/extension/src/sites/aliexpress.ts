@@ -25,12 +25,14 @@ setupScoreGrid({
   cardSelector: CARD,
   scoreForCard: (card) => {
     const id = listingId(card);
+
     return id ? fetchItemScore(throttledFetch, id) : Promise.resolve(null);
   },
   idOf: listingId,
   placeBadge: (card, badge) => {
     // Beside the star average so the two numbers can be read against each other.
     const rating = ratingEl(card);
+
     if (rating) rating.after(badge);
     else card.append(badge);
   },

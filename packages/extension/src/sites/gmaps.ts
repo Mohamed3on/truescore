@@ -14,6 +14,7 @@ const TONE_HEX = { pos: '#4ADE80', mid: '#E8B86D', neg: '#F87171' } as const;
 const CHIP_NUMBERS: NumberStyle = { share: (t) => `rc-chip-pct ${t}`, net: 'rc-chip-count' };
 const TITLE_NUMBERS: NumberStyle = { share: () => 'ts-op-share', sparse: 'dash' };
 const HEADER_NUMBERS: NumberStyle = { ...TITLE_NUMBERS, color: (o) => TONE_HEX[opinionTone(o)] };
+
 import { DefaultChatTransport } from 'ai';
 import {
   type SummarizeRequest,
@@ -81,8 +82,11 @@ const MIN_PAGES_BEFORE_STABILIZE = 2;
 const HIGHLIGHT_FETCH_CONCURRENCY = 3;
 
 type FetchState = { isFetching: boolean; done: boolean; cursor: string; pageCount: number };
+
 type SummaryResult = { highlights?: SummaryHighlight[]; verdict?: string; valueForMoney?: number; items?: string[]; aliases?: Record<string, string[]>; alternatives?: string[] };
+
 type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
+
 type CardEls = {
   merged?: MergedEls;
   sumBtn?: HTMLButtonElement;
@@ -109,6 +113,7 @@ type CardEls = {
 };
 
 type HighlightStats = SortStats;
+
 type Highlight = {
   label: string;
   count: number;
@@ -118,8 +123,11 @@ type Highlight = {
   reviews?: Review[];
   summary?: SummaryResult;
 } & Partial<StanceResult>;
+
 type HighlightCandidate = { label: string; count: number; token: string };
+
 type HighlightsCache = { items: Highlight[]; ts: number; newestHeadId?: string };
+
 let activeHighlight: Highlight | null = null;
 let activeLabelSearch: { query: string; reviews: Review[]; summary?: SummaryResult } | null = null;
 let labelSearchSeq = 0;
@@ -133,21 +141,27 @@ let labelSearchSeq = 0;
 // when Jev could read them, as the topic chips do, and — a standout naming a
 // topic — the pooled chip's numbers (pooledView), so a reload paints it as it was.
 type ScoredStats = SortStats & Partial<Pick<StanceResult, 'stance' | 'of'>> & { pooled?: Pick<Highlight, 'token' | 'count' | 'score' | 'stance' | 'of'> };
+
 const standoutScoreCache = new Map<string, ScoredStats>();
 const standoutScoreInflight = new Map<string, Promise<void>>();
+
 // Scores from before the place's newest review: still shown while they're
 // re-scored, never saved as current (refreshStaleScores).
 const standoutScoreStale = new Set<string>();
+
 // Zero-scores minted for failed searches (so the chip drops out instead of
 // pulsing forever) are display-only — a transient blip must not persist as a
 // permanent 0%, so saveScoredCache skips these keys.
 const standoutScoreTransient = new Set<string>();
+
 // The reviews fetched to score each chip, with Jev's reads of them, kept
 // (in-memory) so clicking the chip reuses them instead of re-running the same
 // label search, and a topic it names pools them. Not persisted — reviews are
 // heavy; after a reload the first click refetches.
 type ItemReviews = { reviews: Review[]; stances?: Record<string, Stance> };
+
 const standoutReviewsCache = new Map<string, ItemReviews>();
+
 // Each label-search term's matches (in-memory, per place), so a query sharing
 // terms with an earlier one — an Ask's `dog OR Hund` after a typed `dog`, a
 // standout chip re-scored — only searches its new terms. Dropped with the
@@ -159,11 +173,14 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
 const createLimiter = (limit: number) => {
   let active = 0;
   const queue: (() => void)[] = [];
+
   const pump = () => {
     if (active >= limit) return;
     const next = queue.shift();
+
     if (next) next();
   };
+
   return <T>(fn: () => Promise<T>) => new Promise<T>((resolve, reject) => {
     const run = () => {
       active++;
@@ -174,6 +191,7 @@ const createLimiter = (limit: number) => {
           pump();
         });
     };
+
     if (active < limit) run();
     else queue.push(run);
   });
@@ -188,25 +206,31 @@ let fullPctObserverTarget: Element | null = null;
 let staleHistogramKey: string | null = null;
 let lastHistogramKey: string | null = null;
 let activeRemovedReviews: RemovedReviews | null = null;
+
 // Google's quoted review count, off the same preview as the removal notice. It
 // backs the DOM histogram up on the split search+place layout, where fewer than
 // five rows render and readHistogramCounts returns null.
 let activeGoogleReviewCount: number | null = null;
+
 // Which place's captured preview we've already read the notice out of.
 let removedNoticeCheckedFor: string | null = null;
+
 // Which place we've already spent the one app-state walk on.
 let appStateTriedFor: string | null = null;
 
 const abortControllers: Record<SortKey, AbortController | null> = { relevant: null, newest: null };
+
 // Summaries persist indefinitely — they're invalidated only by an explicit
 // re-summarize, never by review count drift like score/highlights.
 let summaryCache: { all: SummaryResult | null } = { all: null };
 
 const getSummaryCacheKey = (featureId: string | null = lastFeatureId) => `${SUMMARY_CACHE_PREFIX}${featureId || 'default'}`;
+
 const loadSummaryCache = () => {
   try { summaryCache = JSON.parse(localStorage.getItem(getSummaryCacheKey()) as string) || { all: null }; }
   catch { summaryCache = { all: null }; }
 };
+
 const saveSummaryCache = (featureId: string | null = lastFeatureId, cache = summaryCache) => {
   try { localStorage.setItem(getSummaryCacheKey(featureId), JSON.stringify(cache)); } catch {}
 };
@@ -217,18 +241,23 @@ const saveSummaryCache = (featureId: string | null = lastFeatureId, cache = summ
 const SEARCH_SUMMARY_LIMIT = 20;
 let searchSummaryCache: Record<string, SummaryResult> = {};
 const getSearchSummaryCacheKey = (featureId: string | null = lastFeatureId) => `${SEARCH_SUMMARY_CACHE_PREFIX}${featureId || 'default'}`;
+
 const readSearchSummaryCache = (featureId?: string | null): Record<string, SummaryResult> => {
   try { return JSON.parse(localStorage.getItem(getSearchSummaryCacheKey(featureId)) as string) || {}; }
   catch { return {}; }
 };
+
 const loadSearchSummaryCache = () => { searchSummaryCache = readSearchSummaryCache(); };
+
 const saveSearchSummaryCache = (featureId: string | null, cache: Record<string, SummaryResult>) => {
   try {
     const keys = Object.keys(cache);
+
     for (const k of keys.slice(0, Math.max(0, keys.length - SEARCH_SUMMARY_LIMIT))) delete cache[k];
     localStorage.setItem(getSearchSummaryCacheKey(featureId), JSON.stringify(cache));
   } catch {}
 };
+
 // Filed under the place the search ran on: the summary lands seconds later,
 // maybe after an SPA nav, and the in-memory map is only ever the current place's.
 const cacheSearchSummary = (featureId: string | null, query: string, summary: SummaryResult) => {
@@ -241,26 +270,33 @@ const cacheSearchSummary = (featureId: string | null, query: string, summary: Su
 
 // chrome.storage.local proxy via gmaps-bridge.ts (we run in MAIN world).
 const BRIDGE_TIMEOUT_MS = 5000;
+
 const bridgeStorage = (() => {
   let nextId = 0;
+
   // Timeout protects against the bridge dropping the response (e.g., extension
   // reload mid-flight) — without it, the listener + Promise leak forever.
   const call = <T>(eventName: string, payload: any): Promise<T | null> => new Promise((resolve) => {
     const id = String(++nextId);
+
     const cleanup = () => {
       document.removeEventListener(STORAGE_RESULT, handler);
       clearTimeout(timer);
     };
+
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
+
       if (detail?.id !== id) return;
       cleanup();
       resolve(detail.value);
     };
+
     const timer = setTimeout(() => { cleanup(); resolve(null); }, BRIDGE_TIMEOUT_MS);
     document.addEventListener(STORAGE_RESULT, handler);
     document.dispatchEvent(new CustomEvent(eventName, { detail: { id, ...payload } }));
   });
+
   return {
     get: <T>(key: string) => call<T>(STORAGE_GET, { key }),
     set: (key: string, value: any) => call<true>(STORAGE_SET, { key, value }),
@@ -283,15 +319,19 @@ const store = createScoreStore({ storage: bridgeStorage, now: Date.now });
 // the session it carries outlives the page (each replay's key is signed per request
 // in tabTransport), so the newest set is kept in chrome.storage.
 const MAPS_CREDS_KEY = 'rc_maps_creds';
+
 // Seed from a capture that may have fired before this document_end script ran;
 // the MAPS_CREDS_CAPTURED listener owns every update after.
 let mapsCreds: MapsCapturedCreds | null = window.__truescoreMapsCreds ?? null;
+
 const credsLoad = bridgeStorage.get<MapsCapturedCreds>(MAPS_CREDS_KEY).then((saved) => {
   if (saved?.bgkey) mapsCreds ??= saved;
 });
+
 // This place's one nudge for a fresh set, shared by everything waiting on creds;
 // reset in resetScores. Once it has come back empty, the place goes to the server.
 let credsNudge: Promise<MapsCapturedCreds | null> | null = null;
+
 // This browser couldn't fetch the place's reviews, so the server scores it
 // (fetchServerScore). Reset per place.
 let scoringFailed = false;
@@ -299,6 +339,7 @@ let scoringFailed = false;
 const invalidateCreds = (creds: MapsCapturedCreds) => {
   if (mapsCreds?.bgkey !== creds.bgkey) return;
   mapsCreds = null;
+
   // Same MAIN world as gmaps-capture — its copy must go too, or the next nudge
   // would take it as a capture and skip opening the Reviews tab.
   if (window.__truescoreMapsCreds?.bgkey === creds.bgkey) window.__truescoreMapsCreds = undefined;
@@ -308,6 +349,7 @@ const invalidateCreds = (creds: MapsCapturedCreds) => {
 // The saved set, else this place's nudge for Maps to emit a fresh one.
 const ensureCreds = async (): Promise<MapsCapturedCreds | null> => {
   await credsLoad;
+
   return mapsCreds ?? (credsNudge ??= window.__truescoreRequestMapsCreds!());
 };
 
@@ -317,24 +359,30 @@ document.addEventListener(MAPS_CREDS_CAPTURED, (e) => {
 });
 
 let highlightsState: HighlightsCache | null = null;
+
 // Candidate chips harvested from the place preview, shown (in-memory, never
 // persisted) as loading chips while their scores fetch — so highlights appear
 // immediately and fill in, rather than popping in once scored.
 let highlightCandidates: HighlightCandidate[] = [];
+
 // featureId whose highlights are currently being computed — a per-place mutex,
 // so an SPA nav can start the new place's compute while the old run winds down.
 let highlightsComputingFor: string | null = null;
 const getHighlightsCacheKey = () => `${HIGHLIGHTS_CACHE_PREFIX}${lastFeatureId || 'default'}`;
+
 // Google counts reviews under this topic, yet the fetch returned none: a dead
 // session or a throttle, never a real 0% — so it's neither kept nor shown (the
 // load filter also heals entries saved before computeHighlights checked this).
 const chipFetchFailed = (h: Highlight): boolean => h.fetched === 0 && h.count > 0;
+
 const loadHighlightsCache = () => {
   try {
     highlightsState = JSON.parse(localStorage.getItem(getHighlightsCacheKey()) as string) || null;
+
     if (highlightsState) highlightsState.items = highlightsState.items.filter((h) => !chipFetchFailed(h));
   } catch { highlightsState = null; }
 };
+
 // Bounds the cloud-cache GET so a slow/hung server can't delay auto-highlights
 // (which now waits on the cloud hydrate) indefinitely.
 const CLOUD_FETCH_TIMEOUT_MS = 5000;
@@ -350,8 +398,10 @@ const fetchCloudCache = async (featureId: string): Promise<CloudCache | null> =>
     const resp = await fetch(`${TRUESCORE_API_BASE}/api/cached?featureId=${encodeURIComponent(featureId)}`, {
       signal: AbortSignal.timeout(CLOUD_FETCH_TIMEOUT_MS),
     });
+
     if (!resp.ok) return null;
     const data = await resp.json();
+
     return data?.found ? data as CloudCache : null;
   } catch { return null; }
 };
@@ -387,9 +437,12 @@ const pushContribution = (patch: {
 // uploading would publish a 0 for the next visitor to see as "0 reviews".
 const contributeScore = (): void => {
   const featureId = getFeatureId();
+
   if (!featureId || !store.hasLiveData()) return;
   const { totalAll, totalTrusted, mergedPct } = store.mergedStats('total');
+
   if (!totalAll) return;
+
   // The unrounded ratio rides along so the web penalises the same number we do
   // (penalising the rounded % put the two a point apart).
   const statsFor = (sort: SortKey): SortStats => ({
@@ -398,6 +451,7 @@ const contributeScore = (): void => {
     scorePct: toPct(store.scorePct(sort, 'total')),
     ratio: store.scorePct(sort, 'total'),
   });
+
   pushContribution({
     score: {
       featureId,
@@ -418,31 +472,38 @@ let cloudHydratePromise: Promise<void> = Promise.resolve();
 const hydrateFromCloud = (featureId: string) => {
   const needSummary = !summaryCache.all;
   const needHighlights = !highlightsState?.items?.length;
+
   if (!needSummary && !needHighlights) return;
   cloudHydratePromise = fetchCloudCache(featureId).then((cloud) => {
     if (!cloud) return;
+
     if (getFeatureId() !== featureId || lastFeatureId !== featureId) return;
     let touchedSummary = false;
     let touchedHighlights = false;
+
     if (needSummary && cloud.summary) {
       summaryCache.all = cloud.summary;
       saveSummaryCache();
       touchedSummary = true;
     }
+
     if (needHighlights && cloud.highlights?.length) {
       const items: Highlight[] = cloud.highlights.map((h) => ({
         ...h,
         summary: cloud.highlightSummaries?.[h.token],
       }));
+
       highlightsState = { items, ts: Date.now() };
       saveHighlightsCache();
       touchedHighlights = true;
     }
+
     if (touchedSummary && cardEls.sumPanel) {
       cardEls.sumPanel.style.display = 'block';
       renderSummary(cardEls.sumPanel, summaryCache.all!);
       refreshSumBtnState();
     }
+
     if (touchedHighlights) renderHighlights();
   }).catch((e) => console.warn('[gmaps] cloud hydrate failed', e));
 };
@@ -451,6 +512,7 @@ const hydrateFromCloud = (featureId: string) => {
 // empty). The server scrapes on its own session, so ask it for the number rather
 // than leaving the panel dead — the same lookup the web app runs.
 let serverScore: PartialScore | null = null;
+
 // Asked of the background worker, not fetched here: /api/lookup is same-origin
 // only (it triggers a real scrape), so a content-script POST is refused by CORS.
 // The worker holds the host permission and posts back the server's aggregate score
@@ -458,6 +520,7 @@ let serverScore: PartialScore | null = null;
 // so a chip opens without a Google session. A cold place's scrape and chip harvest
 // take minutes, far past the storage bridge's 5s budget.
 let serverScoreId = 0;
+
 const fetchServerScore = (featureId: string): void => {
   // Said up front: the panel shows it at once instead of sitting blank for the
   // length of the server's scrape, and the score replaces it when it lands.
@@ -467,44 +530,61 @@ const fetchServerScore = (featureId: string): void => {
   // Whether the server's chips are filling the panel: not when it already had some
   // (the cloud cache, a run of our own).
   let chipsHere = false;
+
   const cleanup = () => {
     document.removeEventListener(SERVER_SCORE_RESULT, handler);
+
     if (!chipsHere) return;
+
     if (highlightsComputingFor === featureId) highlightsComputingFor = null;
     highlightCandidates = [];
+
     if (getFeatureId() !== featureId) return;
     renderHighlights();
+
     if (!highlightsState?.items.length && cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'No highlights';
   };
+
   const handler = (e: Event) => {
     const detail = (e as CustomEvent).detail;
+
     if (detail?.id !== id) return;
     const msg = detail.msg as ServerScoreMessage;
+
     if (msg.kind === 'end') return cleanup();
+
     if (getFeatureId() !== featureId) return;
+
     if (msg.kind === 'score') {
       serverScore = msg.score;
       updateUI();
+
       return;
     }
+
     if (!chipsHere) {
       if (highlightsState?.items.length || highlightsComputingFor === featureId) return;
       chipsHere = true;
       highlightsComputingFor = featureId;
       highlightsState = { items: [], ts: Date.now() };
+
       if (cardEls.highlightsBtn) {
         cardEls.highlightsBtn.disabled = true;
         cardEls.highlightsBtn.textContent = 'Computing…';
       }
     }
+
     if (msg.kind === 'candidates') highlightCandidates = msg.chips;
+
     if (msg.kind === 'chip' && !chipFetchFailed(msg.chip)) {
       const items = (highlightsState?.items ?? []).filter((h) => h.token !== msg.chip.token);
       highlightsState = { items: [...items, msg.chip], ts: Date.now() };
       saveHighlightsCache();
     }
+
     renderHighlights();
   };
+
   document.addEventListener(SERVER_SCORE_RESULT, handler);
   document.dispatchEvent(new CustomEvent(SERVER_SCORE_GET, { detail: { id } }));
 };
@@ -521,6 +601,7 @@ const saveHighlightsCache = () => {
   try {
     if (highlightsState) {
       const head = store.newestHeadId();
+
       if (head) highlightsState.newestHeadId = head;
       localStorage.setItem(getHighlightsCacheKey(), JSON.stringify(slimHighlightItems(highlightsState)));
     } else {
@@ -537,11 +618,15 @@ const saveHighlightsCache = () => {
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
+
       if (!k?.startsWith(HIGHLIGHTS_CACHE_PREFIX)) continue;
       const raw = localStorage.getItem(k);
+
       if (!raw || !raw.includes('"reviews":[')) continue;
       let parsed: any;
+
       try { parsed = JSON.parse(raw); } catch { continue; }
+
       if (!Array.isArray(parsed?.items)) continue;
       localStorage.setItem(k, JSON.stringify(slimHighlightItems(parsed)));
     }
@@ -566,20 +651,26 @@ const resetScores = () => {
   scoringFailed = false;
   serverScore = null;
   store.reset();
+
   for (const key of SORT_KEYS) {
     fetchState[key] = makeFetchState();
+
     if (abortControllers[key]) { abortControllers[key]!.abort(); abortControllers[key] = null; }
   }
+
   if (fullPctObserver) { fullPctObserver.disconnect(); fullPctObserver = null; }
 };
 
 type ColorStop = { at: number; r: number; g: number; b: number };
+
 const RED = { r: 248, g: 113, b: 113 };
 const AMBER = { r: 251, g: 191, b: 36 };
 const GREEN = { r: 74, g: 222, b: 128 };
 const DEEP_GREEN = { r: 34, g: 197, b: 94 };
+
 // Comparison gradient: 0 → red, 0.5 → amber (parity), 1 → green.
 const COMPARE_STOPS: ColorStop[] = [{ at: 0, ...RED }, { at: 0.5, ...AMBER }, { at: 1, ...GREEN }];
+
 // Absolute net-polarity gradient (raw ∈ −1..1): scores cluster high, so the
 // meaningful band is ~0.6–1.0 — ≤60 red, 70 amber, 80 green, 90+ deepens.
 const ABSOLUTE_STOPS: ColorStop[] = [{ at: 0.6, ...RED }, { at: 0.7, ...AMBER }, { at: 0.8, ...GREEN }, { at: 1, ...DEEP_GREEN }];
@@ -590,6 +681,7 @@ const lerpStops = (stops: ColorStop[], at: number) => {
   const lo = stops[Math.max(0, i - 1)];
   const hi = stops[Math.min(stops.length - 1, i)];
   const t = hi.at === lo.at ? 0 : (p - lo.at) / (hi.at - lo.at);
+
   return `rgb(${Math.round(lo.r + (hi.r - lo.r) * t)},${Math.round(lo.g + (hi.g - lo.g) * t)},${Math.round(lo.b + (hi.b - lo.b) * t)})`;
 };
 
@@ -600,7 +692,9 @@ const getAbsoluteScoreColor = (raw: number) => lerpStops(ABSOLUTE_STOPS, raw);
 
 const readHistogramCounts = () => {
   const reviewRows = document.querySelectorAll('tr[role="img"]');
+
   if (reviewRows.length < 5) return null;
+
   // Every row reads "<stars> stars, <count> reviews" in the UI language, so take
   // the last number rather than anchoring on the English word: German
   // "5 Sterne,365 Rezensionen" matched neither `reviews?` nor `$` and parsed as
@@ -609,14 +703,18 @@ const readHistogramCounts = () => {
   // count, so it stays 0.
   const extractNumber = (str: string) => {
     const nums = str.match(/\d+(?:[.,\s\u00a0\u202f]\d{3})*/g);
+
     if (!nums || nums.length < 2) return 0;
+
     return parseInt(nums[nums.length - 1].replace(/[.,\s\u00a0\u202f]/g, ''), 10);
   };
+
   return Array.from(reviewRows).map((r) => extractNumber(r.getAttribute('aria-label') || ''));
 };
 
 const updateHighlightsStaleBadge = () => {
   const badge = cardEls.highlightsStale;
+
   if (!badge) return;
   const cached = highlightsState?.newestHeadId;
   const live = store.newestHeadId();
@@ -637,6 +735,7 @@ const reconcileWithLiveHead = (liveHeadId: string) => {
       abortControllers[k] = null;
     }
   }
+
   updateHighlightsStaleBadge();
   refreshStaleScores();
 };
@@ -647,12 +746,16 @@ const calculateFullPercentage = () => {
   // place's, hiding this place's header score for the whole visit.
   if (getFeatureId() !== lastFeatureId) return null;
   const counts = readHistogramCounts();
+
   if (!counts) return null;
   const key = counts.join(',');
+
   if (key === staleHistogramKey) return null;
   const allReviews = histogramTotal(counts);
+
   if (!allReviews) return null;
   lastHistogramKey = key;
+
   return toPct((counts[0] - counts[4]) / allReviews);
 };
 
@@ -668,17 +771,22 @@ const placeNameFromTitle = (): string => document.title.replace(/\s[-–—]\s[^
 const getPlaceInfo = () => {
   const featureId = getFeatureId();
   const preview = featureId ? window.__truescorePreviews?.[featureId]?.json : null;
+
   const name = (preview ? metaFromPreview(preview).canonicalName : undefined)
     || document.querySelector('h1.DUwDvf')?.textContent?.trim()
     || placeNameFromTitle()
     || '';
+
   const category = (document.querySelector('button.DkEaL') as HTMLElement)?.textContent?.trim() || '';
+
   return { name, category };
 };
 
 const injectSimpleScore = (placeDetailsElement: HTMLElement) => {
   const counts = readHistogramCounts();
+
   if (!counts || !histogramTotal(counts)) return;
+
   // The histogram DOM lags an SPA nav; resetScores marks the old place's counts
   // stale so they're never stamped onto the new place.
   if (counts.join(',') === staleHistogramKey) return;
@@ -703,6 +811,7 @@ const tabTransport: Transport = async (url, init) =>
   fetch(url, await signReq(init, window.__truescoreSignMaps)).then((r) => r.text());
 
 const PREVIEW_WAIT_MS = 3000;
+
 // The place on screen, and when it opened. An in-page navigation has Maps fetch the
 // preview as the place opens, so PREVIEW_WAIT_MS on it has landed or isn't coming. The
 // place the page itself loaded counts as opened long ago: a cold load never fetches its
@@ -714,30 +823,47 @@ let placeOpened = { featureId: getFeatureId(), at: -Infinity };
 // caller if we return null.
 const waitForCapturedPreview = (featureId: string): Promise<any | null> => new Promise((resolve) => {
   const existing = window.__truescorePreviews?.[featureId]?.json;
-  if (existing) { resolve(existing); return; }
+
+  if (existing) {
+    resolve(existing);
+
+    return;
+  }
+
   const left = placeOpened.featureId === featureId ? placeOpened.at + PREVIEW_WAIT_MS - Date.now() : PREVIEW_WAIT_MS;
-  if (left <= 0) { resolve(null); return; }
+
+  if (left <= 0) {
+    resolve(null);
+
+    return;
+  }
+
   const cleanup = () => {
     document.removeEventListener(PREVIEW_CAPTURED, handler);
     clearTimeout(timer);
   };
+
   const handler = (e: Event) => {
     if ((e as CustomEvent).detail?.featureId !== featureId) return;
     cleanup();
     resolve(window.__truescorePreviews?.[featureId]?.json ?? null);
   };
+
   const timer = setTimeout(() => { cleanup(); resolve(null); }, left);
   document.addEventListener(PREVIEW_CAPTURED, handler);
 });
 
 const harvestHighlightsFromPreview = async (): Promise<HighlightCandidate[]> => {
   const featureId = getFeatureId();
+
   if (!featureId) return [];
   const data = (await waitForCapturedPreview(featureId)) ?? (await fetchPlacePreviewActive(location.href));
+
   if (!data) return [];
   // Same payload carries the review-removal notice — take it while it's here
   // rather than making the banner's own request.
   applyRemovedNotice(featureId, data);
+
   return chipsFromPreview(data);
 };
 
@@ -755,6 +881,7 @@ const applyRemovedNotice = (featureId: string, data: any): void => {
   const changed = activeRemovedReviews?.text !== removed?.text;
   activeRemovedReviews = removed ?? null;
   renderRemovedNotice();
+
   // A notice arriving before any review has landed is exactly the case the
   // panel gate below now opens for, so nudge updateUI to build the panel.
   if (changed) updateUI();
@@ -763,14 +890,23 @@ const applyRemovedNotice = (featureId: string, data: any): void => {
 const renderRemovedNotice = (): void => {
   const banner = cardEls.removedNotice;
   const removed = activeRemovedReviews;
+
   if (!banner) return;
-  if (!removed) { banner.style.display = 'none'; return; }
+
+  if (!removed) {
+    banner.style.display = 'none';
+
+    return;
+  }
+
   banner.textContent = '';
+
   const range = removed.min
     ? (removed.max && removed.max !== removed.min
       ? `${addCommas(removed.min)}–${addCommas(removed.max)}`
       : addCommas(removed.min))
     : '';
+
   banner.appendChild(el('span', 'rc-removed-flag', range ? `${range} REMOVED` : 'REVIEWS REMOVED'));
   const est = removedCountEstimate(removed);
   banner.appendChild(el('span', 'rc-removed-text', est
@@ -779,6 +915,7 @@ const renderRemovedNotice = (): void => {
   banner.title = est
     ? `${removed.detail ?? removed.text}\nPenalty: ~${addCommas(est)} removals — the middle of Google's range — counted as 1★ reviews against this place's own review count.`
     : (removed.detail ?? removed.text);
+
   if (removed.url) {
     (banner as HTMLAnchorElement).href = removed.url;
     banner.setAttribute('target', '_blank');
@@ -802,20 +939,33 @@ const renderRemovedNotice = (): void => {
 // the place the user has since clicked through to.
 const previewFromAppState = (featureId: string): any | null => {
   let found: any = null;
+
   const walk = (v: any, depth: number): void => {
     if (found || depth > 6) return;
+
     if (typeof v === 'string') {
       if (v.length < 5000 || !v.startsWith(")]}'")) return;
+
       try {
         const d = JSON.parse(v.replace(/^\)\]\}'\s*/, ''));
+
         if (d?.[6]?.[10] === featureId) found = d;
       } catch {}
+
       return;
     }
-    if (Array.isArray(v)) { for (const c of v) walk(c, depth + 1); return; }
+
+    if (Array.isArray(v)) {
+      for (const c of v) walk(c, depth + 1);
+
+      return;
+    }
+
     if (v && typeof v === 'object') { for (const k in v) walk(v[k], depth + 1); }
   };
+
   walk((window as any).APP_INITIALIZATION_STATE, 0);
+
   return found;
 };
 
@@ -825,9 +975,16 @@ const previewFromAppState = (featureId: string): any | null => {
 // capture landed later; re-reading each tick self-heals whenever it does.
 const tryRemovedNoticeFromCapture = (): void => {
   const featureId = getFeatureId();
+
   if (!featureId || removedNoticeCheckedFor === featureId) return;
   const captured = window.__truescorePreviews?.[featureId]?.json;
-  if (captured) { applyRemovedNotice(featureId, captured); return; }
+
+  if (captured) {
+    applyRemovedNotice(featureId, captured);
+
+    return;
+  }
+
   // The app-state walk parses a ~200KB blob, far too costly to repeat every
   // tick — and since that state only ever describes the first-loaded place, one
   // attempt per place is all it could ever be worth. Wait for it to exist
@@ -835,6 +992,7 @@ const tryRemovedNoticeFromCapture = (): void => {
   if (!(window as any).APP_INITIALIZATION_STATE || appStateTriedFor === featureId) return;
   appStateTriedFor = featureId;
   const inlined = previewFromAppState(featureId);
+
   if (inlined) applyRemovedNotice(featureId, inlined);
 };
 
@@ -842,13 +1000,16 @@ const fetchPlacePreviewActive = async (placeUrl: string): Promise<any | null> =>
   try {
     const html = await (await fetch(placeUrl, { cache: 'reload' })).text();
     const m = html.match(/\/maps\/preview\/place\?[^"\s<>]+/);
+
     if (!m) return null;
     const u = new URL(`https://www.google.com${m[0].replace(/&amp;/g, '&')}`);
     u.searchParams.set('hl', document.documentElement.lang || 'en');
     const body = await (await fetch(u.toString())).text();
+
     return JSON.parse(body.replace(/^\)\]\}'\s*/, ''));
   } catch (e) {
     console.warn('[highlights] fetchPlacePreviewActive failed', e);
+
     return null;
   }
 };
@@ -863,16 +1024,22 @@ const serverSearch = (featureId: string, query: string, onFound?: (found: number
   if (getFeatureId() !== featureId) return resolve(null);
   const id = `q${++serverScoreId}`;
   let reviews: Review[] | null = null;
+
   const handler = (e: Event) => {
     const detail = (e as CustomEvent).detail;
+
     if (detail?.id !== id) return;
     const msg = detail.msg as ServerScoreMessage;
+
     if (msg.kind === 'found') onFound?.(msg.found);
+
     if (msg.kind === 'search') reviews = msg.reviews;
+
     if (msg.kind !== 'end') return;
     document.removeEventListener(SERVER_SCORE_RESULT, handler);
     resolve(reviews);
   };
+
   document.addEventListener(SERVER_SCORE_RESULT, handler);
   document.dispatchEvent(new CustomEvent(SERVER_SCORE_GET, { detail: { id, query, asWritten } }));
 });
@@ -886,7 +1053,9 @@ const serverSearch = (featureId: string, query: string, onFound?: (found: number
 // `asWritten`: an Ask's search, not accent-folded.
 const fetchAllForSearch = async (featureId: string, query: string, onFound?: (found: number) => void, asWritten = false): Promise<Review[] | null> => {
   const creds = await ensureCreds();
+
   if (!creds) return serverSearch(featureId, query, onFound, asWritten);
+
   return collectSearchTerms(
     expandSearchTerms(query, !asWritten), (term, c) => buildSearchReq(featureId, term, creds, c), tabTransport,
     onFound && ((merged) => onFound(merged.length)), searchTermCache.forPlace(featureId),
@@ -895,23 +1064,30 @@ const fetchAllForSearch = async (featureId: string, query: string, onFound?: (fo
 
 const computeHighlights = async (force = false) => {
   const featureId = getFeatureId();
+
   if (!featureId || highlightsComputingFor === featureId) return;
+
   if (!force && highlightsState && highlightsState.items.length) {
     renderHighlights();
+
     return;
   }
+
   highlightsComputingFor = featureId;
   // True only while the user is still on the place this run started for — an
   // SPA navigation mid-fetch must not write this place's highlights into the
   // next place's cache, cloud entry, or panel.
   const stillCurrent = () => getFeatureId() === featureId;
+
   if (cardEls.highlightsBtn) {
     cardEls.highlightsBtn.disabled = true;
     cardEls.highlightsBtn.textContent = 'Computing…';
   }
+
   // Pause parent's main-score fetches so highlight RPCs are not competing with
   // the regular score requests on the same google.com connection.
   const pausedSorts: SortKey[] = [];
+
   for (const k of SORT_KEYS) {
     if (fetchState[k].isFetching) {
       abortControllers[k]?.abort();
@@ -919,17 +1095,28 @@ const computeHighlights = async (force = false) => {
       pausedSorts.push(k);
     }
   }
+
   try {
     const chips = await harvestHighlightsFromPreview();
+
     if (!stillCurrent()) return;
+
     if (!chips.length) {
       if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'No highlights';
+
       return;
     }
+
     const creds = await ensureCreds();
+
     if (!stillCurrent()) return;
+
     // This tab can't fetch reviews; the server scores the chips instead.
-    if (!creds) { fetchServerScore(featureId); return; }
+    if (!creds) {
+      fetchServerScore(featureId);
+
+      return;
+    }
 
     const items: Highlight[] = [];
     highlightsState = { items, ts: Date.now() };
@@ -942,12 +1129,15 @@ const computeHighlights = async (force = false) => {
     await Promise.all(chips.map((chip) => limit(async () => {
       try {
         const reviews = await fetchAllForToken(featureId, chip.token, creds);
+
         if (!stillCurrent()) return;
         const item: Highlight = { ...chip, fetched: reviews.length, score: statsForReviews(reviews), reviews };
+
         if (chipFetchFailed(item)) return;
         // What its reviews say about the topic, read before the chip shows, so a
         // star share never paints only to be replaced.
         Object.assign(item, await readStanceOf(chip.label, reviews));
+
         if (!stillCurrent()) return;
         items.push(item);
         highlightsState = { items: [...items], ts: Date.now() };
@@ -957,6 +1147,7 @@ const computeHighlights = async (force = false) => {
         console.error('[highlights] fetch failed for', chip.label, e);
       } finally {
         completed++;
+
         if (stillCurrent() && cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = `Computing ${completed}/${chips.length}`;
       }
     })));
@@ -968,16 +1159,21 @@ const computeHighlights = async (force = false) => {
     highlightCandidates = [];
     highlightsComputingFor = null;
     renderHighlights();
+
     if (!items.length) {
       if (cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'No highlights';
+
       return;
     }
+
     pushContribution({ highlights: items });
   } catch (e) {
     console.error('[highlights] error:', e);
+
     if (stillCurrent() && cardEls.highlightsBtn) cardEls.highlightsBtn.textContent = 'Failed — retry';
   } finally {
     if (highlightsComputingFor === featureId) highlightsComputingFor = null;
+
     // Resume parent's main-score fetches that we paused (creds are cached by now).
     if (mapsCreds) for (const k of pausedSorts) {
       if (!fetchState[k].done) fetchAllReviews(k, mapsCreds);
@@ -991,6 +1187,7 @@ const computeHighlights = async (force = false) => {
 // the server runs the same summarize()/ask() the web SPA does.
 const llmContext = async () => {
   const featureId = getFeatureId();
+
   if (!featureId) throw new Error('No Google Maps place detected');
   // Server-side summaries run on the server's key, but honor the popup's model
   // + reasoning-effort knobs, read through the bridge (this world has no
@@ -999,6 +1196,7 @@ const llmContext = async () => {
   // (the server ignores it on Gemini/DeepSeek). No bridge answer leaves both to
   // the server's defaults.
   const settings = (await bridgeStorage.llmSettings()) ?? {};
+
   // removedReviews: Google's takedown notice for this place, so the model knows
   // it's reading the survivors and couches its words (see summary-subject.removalNote).
   return { featureId, name: getPlaceInfo().name, removedReviews: activeRemovedReviews, ...settings };
@@ -1017,10 +1215,14 @@ const summarizeReviews = async (reviewTexts: string[], filterQuery: string | nul
     force: true,
     stream: true,
   } satisfies SummarizeRequest;
+
   const { summary, error, later } = await streamSummary(`${TRUESCORE_API_BASE}/api/summarize`, body, onDraft);
+
   if (!summary) throw new Error(error || '/api/summarize failed');
+
   // A turn later, so the caller has filed the summary itself first.
   if (onAliases) void later.then((aliases) => aliases && setTimeout(() => onAliases({ ...summary, aliases })));
+
   return summary;
 };
 
@@ -1043,10 +1245,13 @@ const mountAsk = (panel: HTMLElement, job: AskJob, reads: Map<string, Read>) => 
   const note = el('div', 'rc-ask-note');
   panel.append(rows, text, note);
   let shown: AskView | undefined;
+
   return (v: AskView) => {
     if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map((s) => askSearchRow(s, reads.get(s.query))));
+
     if (v.text !== shown?.text) renderMarkdown(text, v.text);
     text.classList.toggle('rc-reading', !v.done && !v.text && v.searches.every((s) => s.done));
+
     if (v.answeredAt && !shown?.answeredAt) {
       const again = el('button', 'rc-ask-again', 'Ask again') as HTMLButtonElement;
       again.type = 'button';
@@ -1057,6 +1262,7 @@ const mountAsk = (panel: HTMLElement, job: AskJob, reads: Map<string, Read>) => 
       });
       note.replaceChildren(document.createTextNode(`Answered ${timeAgo(v.answeredAt)} · `), again);
     }
+
     shown = v;
   };
 };
@@ -1073,11 +1279,14 @@ const askPlace = async (panel: HTMLElement, job: AskJob, force = false) => {
     transport: async () => new DefaultChatTransport<AskMessage>({ api: `${TRUESCORE_API_BASE}/api/ask`, body: { ...await ctx(), reviewTexts: job.reviewTexts, filter: job.filter ?? undefined, force } }),
     search: async (query, onFound) => {
       const reviews = await fetchAllForSearch((await ctx()).featureId, query, onFound, true);
+
       if (!reviews) return null;
       const { scorePct, trustedReviews } = statsForReviews(reviews);
+
       return { texts: textReviewsFor(reviews), scorePct, trustedReviews };
     },
   });
+
   if (job.qaKey && job.live()) renderRecentQuestions();
 };
 
@@ -1086,13 +1295,16 @@ const askPlace = async (panel: HTMLElement, job: AskJob, force = false) => {
 // each Answer, so a replay paints them too.
 const renderRecentQuestions = () => {
   const row = cardEls.qaHistory;
+
   if (!row) return;
   const key = getSummaryCacheKey();
   const items = loadQAs(key);
   row.replaceChildren();
   row.style.display = items.length ? '' : 'none';
+
   if (!items.length) return;
   row.append(el('span', 'rc-qa-label', 'Recent questions'));
+
   for (const qa of items) {
     const chip = el('button', 'rc-qa-chip') as HTMLButtonElement;
     chip.type = 'button';
@@ -1100,11 +1312,13 @@ const renderRecentQuestions = () => {
     const forget = el('span', 'rc-qa-remove', '×');
     forget.title = 'Forget';
     forget.onclick = (e) => { e.stopPropagation(); removeQA(key, qa.q); renderRecentQuestions(); };
+
     chip.append(el('span', 'rc-qa-text', qa.q), forget);
     chip.onclick = () => {
       if (cardEls.questionInput) cardEls.questionInput.value = qa.q;
       triggerSummarize(); // finds it in the Recent questions and replays it
     };
+
     row.append(chip);
   }
 };
@@ -1118,31 +1332,44 @@ const askSearchRow = (s: AskSearch, read?: Read) => {
     el('span', 'rc-ask-search-label', s.done ? 'Searched all reviews' : 'Searching all reviews'),
     el('span', 'rc-ask-search-terms', parseOrQuery(s.query).join(' · ')),
   );
+
   // The matches' TrueScore, graded against the place's like the topic chips —
   // or, once Jev has read them, what they say to the question.
   const starShare = () => {
     if (s.scorePct == null) return null;
     const overall = toPct(store.mergedStats(currentOption).mergedPct);
+
     return el('span', `rc-ask-search-pct ${chipPolarity(s.scorePct, overall)}`, s.trustedReviews ? `${s.scorePct}%` : '—');
   };
+
   // The share alone, in the row's own % style: its count is the matches'.
   const counts = (a: AnswerCounts) => {
     const o = answersOf(a);
     row.setAttribute('aria-label', `${parseOrQuery(s.query).join(', ')}: ${opinionsLabel(o)}`);
     row.title = `${row.title} — ${o.title}`;
+
     return opinionNumbers(o, { share: (t) => `rc-ask-search-pct ${t}` }, 'yes');
   };
+
   const answered = s.answers ?? read;
+
   if (answered instanceof Promise) row.append(opinionsSlot(answered.then((a) => a && counts(a)), starShare));
   else if (answered) row.append(...counts(answered));
-  else { const pct = starShare(); if (pct) row.append(pct); }
+  else {
+    const pct = starShare();
+
+    if (pct) row.append(pct);
+  }
+
   row.append(el('span', 'rc-ask-search-count', s.found == null ? '—' : `·${addCommas(s.found)}`));
   row.onclick = () => triggerLabelSearchFor(s.query);
+
   return row;
 };
 
 const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
   const featureId = getFeatureId();
+
   if (!featureId || fetchState[sortKey].isFetching) return;
 
   const state = fetchState[sortKey];
@@ -1152,6 +1379,7 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
   abortControllers[sortKey] = controller;
 
   let lastPct: number | null = null;
+
   try {
     // Shared cursor loop; the extension keeps its own stop policy (period-aware
     // stabilization on store.scorePct, page-1 live-head reconcile) and per-review
@@ -1167,20 +1395,24 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
         // seed the next place's store with this place's reviews.
         if (getFeatureId() !== featureId) return 'stop';
         store.ingest(sortKey, pageReviews);
+
         // Last page: this visit has now seen all Google lists, so the store can
         // drop cached reviews that have since been removed.
         if (!nextCursor) store.dropUnseen(sortKey);
         state.pageCount = index + 1;
+
         if (nextCursor) state.cursor = nextCursor;
         scheduleUpdateUI();
 
         if (sortKey === 'newest' && index === 0 && pageReviews[0]?.reviewId) {
           reconcileWithLiveHead(pageReviews[0].reviewId);
+
           if (store.servedFresh()) return 'stop';
         }
 
         if (state.pageCount >= MIN_PAGES_BEFORE_STABILIZE) {
           const pct = toPct(store.scorePct(sortKey, currentOption));
+
           if (lastPct !== null && Math.abs(pct - lastPct) <= 1) return 'stop';
           lastPct = pct;
         }
@@ -1189,18 +1421,23 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
   } catch (e: any) {
     if (e.name !== 'AbortError') console.error(`[Reviews] ${sortKey} error:`, e);
   }
+
   state.isFetching = false;
+
   // Null only our own slot — after a place nav the next fetch may own it.
   if (abortControllers[sortKey] === controller) abortControllers[sortKey] = null;
+
   // After an SPA nav the live fetchState, cache key, and UI belong to the next
   // place — nothing below may touch them.
   if (getFeatureId() !== featureId) return;
+
   // done only on real completion: a pause-abort (computeHighlights) must leave
   // it false so the resume in its finally relaunches this sort, and an aborted
   // partial merge must never persist as fresh. The reconcile-fresh path sets
   // done itself, so its stop still reaches the finished block below.
   if (!controller.signal.aborted) state.done = true;
   updateUI();
+
   // Highlights compute automatically once both score sorts finish — after, not
   // during, so chip RPCs don't pause the hero metric. Wait for the in-flight
   // cloud hydrate first so a cloud hit (with summaries) isn't clobbered by a
@@ -1211,14 +1448,24 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
     // a place whose nudge already ran goes to the server. Only this visit's fetches
     // count: reviews restored from the score cache say nothing about the creds.
     const counts = readHistogramCounts();
+
     if (!SORT_KEYS.some((k) => fetchState[k].pageCount) && counts && histogramTotal(counts) > 0) {
       invalidateCreds(creds);
-      if (credsNudge) { fetchServerScore(featureId); return; }
+
+      if (credsNudge) {
+        fetchServerScore(featureId);
+
+        return;
+      }
+
       for (const k of SORT_KEYS) fetchState[k] = makeFetchState();
       startFetching();
+
       return;
     }
+
     const fid = getFeatureId();
+
     if (fid) store.persistIfReady(`${SCORE_CACHE_PREFIX}${fid}`).catch((e) => console.warn('[gmaps] persist score cache failed', e));
     contributeScore();
     cloudHydratePromise.then(() => computeHighlights());
@@ -1229,6 +1476,7 @@ const fetchAllReviews = async (sortKey: SortKey, creds: MapsCapturedCreds) => {
 // resolve creds once up front. ensureCreds nudges Maps' Reviews tab on a cold
 // cache; if nothing arrives, the server scores the place.
 let kickoffPending = false;
+
 // The single "should a scoring kickoff start?" predicate — shared by the
 // observer and the guard below: on a place the server isn't scoring, with no
 // fetch pending/in-flight/finished for it yet. (kickoffPending covers the async
@@ -1236,6 +1484,7 @@ let kickoffPending = false;
 // has isFetching and done both false but must wait for that run's resume.)
 const shouldStartScoring = (): boolean => {
   const featureId = getFeatureId();
+
   return !!featureId && !scoringFailed && featureId !== highlightsComputingFor && !kickoffPending &&
     !fetchState.relevant.isFetching && !fetchState.newest.isFetching &&
     !fetchState.relevant.done && !fetchState.newest.done;
@@ -1245,10 +1494,18 @@ const startFetching = async () => {
   if (!shouldStartScoring()) return;
   kickoffPending = true;
   const featureId = getFeatureId()!;
+
   try {
     const creds = await ensureCreds();
+
     if (getFeatureId() !== featureId) return;
-    if (!creds) { fetchServerScore(featureId); return; }
+
+    if (!creds) {
+      fetchServerScore(featureId);
+
+      return;
+    }
+
     for (const key of SORT_KEYS) fetchAllReviews(key, creds);
   } finally {
     kickoffPending = false;
@@ -1262,10 +1519,12 @@ const clearCardEls = () => { for (const k of Object.keys(cardEls) as (keyof Card
 // reviews say once Jev has read them, else its star share graded against the
 // place's own score, then how many reviews it has.
 type ChipStats = { stance?: StanceCounts; of?: number; score?: { scorePct: number }; count: number };
+
 const chipEl = (label: string, c: ChipStats, overall: number, onClick: () => void, cls?: string) => {
   const chip = el('button', cls ? `rc-chip ${cls}` : 'rc-chip') as HTMLButtonElement;
   chip.type = 'button';
   chip.appendChild(el('span', 'rc-chip-label', label));
+
   if (c.stance) {
     const o = opinionsOf(c.stance, c.of);
     chip.append(...opinionNumbers(o, CHIP_NUMBERS));
@@ -1275,9 +1534,12 @@ const chipEl = (label: string, c: ChipStats, overall: number, onClick: () => voi
     if (c.score) chip.appendChild(el('span', `rc-chip-pct ${chipPolarity(c.score.scorePct, overall)}`, `${c.score.scorePct}%`));
     chip.appendChild(el('span', 'rc-chip-count', `·${c.count}`));
   }
+
   chip.onclick = onClick;
+
   return chip;
 };
+
 // One still scoring, its "…" pulsing until the score lands. A label search's
 // can be run before then; a topic's waits.
 const pendingChip = (label: string, count?: number, onClick?: () => void, cls?: string) => {
@@ -1285,11 +1547,15 @@ const pendingChip = (label: string, count?: number, onClick?: () => void, cls?: 
   chip.type = 'button';
   chip.appendChild(el('span', 'rc-chip-label', label));
   chip.appendChild(el('span', 'rc-chip-pct rc-chip-scoring', '…'));
+
   if (count != null) chip.appendChild(el('span', 'rc-chip-count', `·${count}`));
+
   if (onClick) chip.onclick = onClick;
   else chip.disabled = true;
+
   return chip;
 };
+
 const itemStats = (s: ScoredStats): ChipStats => ({ stance: s.stance, of: s.of, score: s, count: s.totalReviews });
 
 // Topic chips and standouts share one row, ranked together: Jev reads both the
@@ -1297,9 +1563,11 @@ const itemStats = (s: ScoredStats): ChipStats => ({ stance: s.stance, of: s.of, 
 // (pooledView). While anything is still loading the row keeps its order,
 // newcomers joining at the end; once everything is in it sorts once (chipRowOrder).
 let topicOrder: string[] = [];
+
 const renderHighlights = () => {
   const list = cardEls.highlightsList;
   const btn = cardEls.highlightsBtn;
+
   if (!list) return;
   const items = highlightsState?.items ?? [];
   const scoredTokens = new Set(items.map((i) => i.token));
@@ -1309,10 +1577,13 @@ const renderHighlights = () => {
   // computeHighlights owns the button while it runs. After, it's a click away
   // from a retry, keeping its word for an empty run ('No highlights').
   const computing = highlightsComputingFor === getFeatureId();
+
   if (btn && !computing) {
     btn.disabled = false;
+
     if (items.length || loading.length) btn.textContent = 'Refresh';
   }
+
   // Graded against the card's headline, which is the server's when it scored the place.
   const merged = store.mergedStats(currentOption);
   const overall = toPct(!merged.totalCount && serverScore && currentOption === 'total' ? serverScore.ratio ?? serverScore.scorePct / 100 : merged.mergedPct);
@@ -1323,37 +1594,49 @@ const renderHighlights = () => {
   const at = (item: string) => `${ctx?.featureId}|${item.toLowerCase()}`;
   const rows: (ChipStats & { key: string; state: ChipState; el: HTMLButtonElement })[] = [];
   let settled = !computing;
+
   for (const h of items) {
     const key = h.label.toLowerCase();
     const item = byName.get(key);
+
     // Another topic going by its names holds it already, and its search took
     // this topic's reviews in too.
     if (item && !standouts.has(item)) continue;
     const view = ctx && item && standoutScoreCache.has(at(item)) ? pooledView(h, ctx.featureId, item) : h;
+
     if (!view || (item && standoutScoreInflight.has(at(item)))) settled = false;
     const c = view ?? h;
+
     // A topic fewer than two reviews actually speak to is dropped, as a scored
     // chip is; its standout, if any, still shows on its own.
     if (c.stance && tooFewMentions(opinionsOf(c.stance))) continue;
+
     if (item) standouts.delete(item);
     const chip = chipEl(c.label, c, overall, () => onChipClick(c));
+
     if (activeHighlight?.token === c.token) chip.classList.add('rc-chip-active');
     rows.push({ ...c, key, state: 'done', el: chip });
   }
+
   for (const c of loading) {
     const key = c.label.toLowerCase();
     const item = byName.get(key);
+
     if (item && !standouts.has(item)) continue;
+
     if (item) standouts.delete(item);
     rows.push({ key, state: 'loading', count: c.count, el: pendingChip(c.label, c.count) });
   }
+
   for (const item of standouts) {
     const key = item.toLowerCase();
     const stats = standoutScoreCache.get(at(item));
     // Scoring, or re-scoring with its old score showing: the row holds its order.
     const scoring = standoutScoreInflight.has(at(item));
+
     if (scoring) settled = false;
     const search = () => triggerLabelSearchFor(item);
+
     if (!stats) {
       // One whose search couldn't run at all is left out.
       if (scoring) rows.push({ key, state: 'loading', count: 0, el: pendingChip(item, undefined, search) });
@@ -1362,6 +1645,7 @@ const renderHighlights = () => {
       rows.push({ ...c, key, state: 'done', el: chipEl(item, c, overall, search) });
     }
   }
+
   const order = chipRowOrder(rows, topicOrder, settled, overall);
   topicOrder = order.map((r) => r.key);
   replaceChips(list, order);
@@ -1375,41 +1659,54 @@ const renderHighlights = () => {
 // showing as it was until then — and staying so if it never comes.
 const poolFetches = new WeakMap<Highlight, 'waiting' | 'done'>();
 const pooledViews = new WeakMap<Highlight, { s: ItemReviews; view: Highlight }>();
+
 // A pooled chip painted from its kept numbers, and the sides it pools on opening.
 const poolSides = new WeakMap<Highlight, { h: Highlight; featureId: string; item: string }>();
+
 const pooledView = (h: Highlight, featureId: string, item: string): Highlight | null => {
   const key = `${featureId}|${item.toLowerCase()}`;
   const s = standoutReviewsCache.get(key);
   const stats = standoutScoreCache.get(key)!;
+
   if (h.reviews && s) {
     const kept = pooledViews.get(h);
+
     if (kept?.s === s) return kept.view;
     const view = { ...h, ...pooledReads(h, s) };
     stats.pooled = { token: h.token, count: view.count, score: view.score, stance: view.stance, of: view.of };
     saveScoredCache();
     pooledViews.set(h, { s, view });
+
     return view;
   }
+
   if (!h.reviews && stats.pooled?.token === h.token) {
     const view = { ...h, stance: undefined, of: undefined, stances: undefined, ...stats.pooled };
     poolSides.set(view, { h, featureId, item });
+
     return view;
   }
+
   const fetched = poolFetches.get(h);
+
   if (fetched === 'done') return h;
+
   if (!fetched) {
     poolFetches.set(h, 'waiting');
     void Promise.all([ensureChipReviews(h), ensureScored(featureId, [item], 'standouts', true)])
       .finally(() => { poolFetches.set(h, 'done'); renderHighlights(); });
   }
+
   return null;
 };
 
 const onChipClick = (h: Highlight) => {
   if (activeHighlight?.token === h.token) {
     closeChipPanel();
+
     return;
   }
+
   showChipPanel(h);
 };
 
@@ -1418,20 +1715,26 @@ const onChipClick = (h: Highlight) => {
 // re-parses the review as HTML. Only nodes that actually match are rebuilt.
 const highlightTerms = (root: HTMLElement, terms: string[]) => {
   const re = compileMatchRegex(terms);
+
   if (!re) return;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
+
   for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n as Text);
+
   for (const node of nodes) {
     const s = node.nodeValue ?? '';
     let last = 0;
     let frag: DocumentFragment | null = null;
+
     for (let m = re.exec(s); m; m = re.exec(s)) {
       frag ??= document.createDocumentFragment();
+
       if (m.index > last) frag.appendChild(document.createTextNode(s.slice(last, m.index)));
       frag.appendChild(el('mark', 'rc-mark', m[0]));
       last = m.index + m[0].length;
     }
+
     if (frag) {
       if (last < s.length) frag.appendChild(document.createTextNode(s.slice(last)));
       node.parentNode?.replaceChild(frag, node);
@@ -1454,6 +1757,7 @@ const reviewCardEl = (r: Review, fallbackTerms: string[] = [], stance?: Stance):
   // fall back to the query/label words when the shown text is a translation.
   highlightTerms(text, r.matchTerms?.length ? r.matchTerms : fallbackTerms);
   card.appendChild(text);
+
   return card;
 };
 
@@ -1465,6 +1769,7 @@ const receiptOf = (h: SummaryHighlight) => () =>
 
 const renderReviewsInto = (container: HTMLElement, reviews: Review[], terms: string[] = [], stances?: Record<string, Stance>) => {
   const fallback = terms.flatMap((t) => t.split(/\s+/)).map((t) => t.trim()).filter(Boolean);
+
   for (const r of sortedDisplayReviews(reviews)) {
     container.appendChild(reviewCardEl(r, fallback, stances?.[r.reviewId]));
   }
@@ -1473,19 +1778,23 @@ const renderReviewsInto = (container: HTMLElement, reviews: Review[], terms: str
 // The open chip's list, filtered to the stance its title's ▲/▼ picked (Esc or a
 // second press clears it).
 let chipFilter: Stance | null = null;
+
 // Esc clears whichever review filter is pressed — the chip panel's or a search's.
 let clearFilter: (() => void) | null = null;
+
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || !clearFilter) return;
   const clear = clearFilter;
   clearFilter = null;
   clear();
 });
+
 const byStance = (reviews: Review[], stances: Record<string, Stance> | undefined, filter: Stance | null) =>
   filter && stances ? reviews.filter((r) => stances[r.reviewId] === filter) : reviews;
 
 const renderChipReviews = (h: Highlight) => {
   const body = cardEls.chipPanelBody;
+
   if (!body) return;
   body.textContent = '';
   renderReviewsInto(body, byStance(h.reviews ?? [], h.stances, chipFilter), [h.label], h.stances);
@@ -1493,22 +1802,29 @@ const renderChipReviews = (h: Highlight) => {
 
 const renderChipTitle = (title: HTMLElement, h: Highlight) => {
   const tail = ` · ${h.score?.trustedReviews ?? 0}/${h.reviews?.length ?? h.count}`;
+
   if (!h.stance) {
     title.textContent = `${h.label.toUpperCase()} · ${h.score?.scorePct ?? 0}%${tail}`;
+
     return;
   }
+
   const o = opinionsOf(h.stance, h.of);
   const said = opinionsEl(o, TITLE_NUMBERS);
   said.setAttribute('aria-label', opinionsLabel(o));
+
   if (!o.sparse && h.stances) {
     const set = (stance: Stance | null) => {
       chipFilter = stance;
       clearFilter = stance ? () => set(null) : null;
       markPressed(title, stance);
+
       if (chipViewMode === 'reviews') renderChipReviews(h);
     };
+
     said.append(...opinionFilters(o, () => chipFilter, set));
   }
+
   title.replaceChildren(`${h.label.toUpperCase()} · `, said, tail);
 };
 
@@ -1517,25 +1833,36 @@ const renderChipTitle = (title: HTMLElement, h: Highlight) => {
 // painted from its kept numbers gets both sides, pooled. One fetch per chip at a
 // time: the panel and a forming pool can ask for the same one.
 const chipFetches = new WeakMap<Highlight, Promise<void>>();
+
 const ensureChipReviews = (h: Highlight): Promise<void> => {
   if (h.reviews) return Promise.resolve();
   let run = chipFetches.get(h);
+
   if (!run) chipFetches.set(h, (run = fetchChipReviews(h).finally(() => chipFetches.delete(h))));
+
   return run;
 };
+
 const fetchChipReviews = async (h: Highlight): Promise<void> => {
   const pool = poolSides.get(h);
+
   if (pool) {
     await Promise.all([ensureChipReviews(pool.h), ensureScored(pool.featureId, [pool.item], 'standouts', true)]);
     // Without the standout's side, the topic's own.
     const s = standoutReviewsCache.get(`${pool.featureId}|${pool.item.toLowerCase()}`);
+
     if (pool.h.reviews) Object.assign(h, pooledReads(pool.h, s ?? { stances: {} }));
+
     return;
   }
+
   const featureId = getFeatureId();
+
   if (!featureId) return;
   const creds = await ensureCreds();
+
   if (!creds) return;
+
   try { h.reviews = await fetchAllForToken(featureId, h.token, creds); }
   catch (e) { console.error('[highlights] refetch reviews failed for', h.label, e); }
 };
@@ -1547,12 +1874,15 @@ const showChipPanel = (h: Highlight) => {
   const title = cardEls.chipPanelTitle;
   const sumBtn = cardEls.chipSummarizeBtn;
   const body = cardEls.chipPanelBody;
+
   if (!panel || !title || !sumBtn || !body) return;
   renderChipTitle(title, h);
   panel.style.display = 'block';
   chipViewMode = h.summary ? 'summary' : 'reviews';
   sumBtn.textContent = h.summary ? 'Show Reviews' : 'Summarize';
+
   if (cardEls.chipQuestionInput) cardEls.chipQuestionInput.value = '';
+
   if (h.summary) renderSummary(body, h.summary);
   else renderChipReviews(h);
 
@@ -1561,11 +1891,13 @@ const showChipPanel = (h: Highlight) => {
       body.textContent = 'Loading reviews…';
       body.className = 'rc-chip-body loading';
     }
+
     sumBtn.disabled = true;
     ensureChipReviews(h).then(() => {
       if (activeHighlight !== h) return;
       sumBtn.disabled = false;
       renderChipTitle(title, h);
+
       if (chipViewMode === 'reviews') renderChipReviews(h);
     });
   } else {
@@ -1578,47 +1910,60 @@ const showChipPanel = (h: Highlight) => {
 
 const closeChipPanel = () => {
   activeHighlight = null;
+
   if (cardEls.chipPanel) cardEls.chipPanel.style.display = 'none';
   renderHighlights();
 };
 
 const summarizeActiveChip = async () => {
   const h = activeHighlight;
+
   if (!h) return;
   const body = cardEls.chipPanelBody;
   const sumBtn = cardEls.chipSummarizeBtn;
+
   if (!body || !sumBtn) return;
+
   if (h.summary && chipViewMode === 'summary') {
     renderChipReviews(h);
     sumBtn.textContent = 'Summarize';
     chipViewMode = 'reviews';
+
     return;
   }
+
   if (h.summary) {
     renderSummary(body, h.summary);
     sumBtn.textContent = 'Show Reviews';
     chipViewMode = 'summary';
+
     return;
   }
+
   sumBtn.disabled = true;
   sumBtn.textContent = 'Summarizing…';
   body.textContent = 'Summarizing…';
   body.className = 'rc-chip-body loading';
   const texts = textReviewsFor(h.reviews ?? []);
+
   if (!texts.length) {
     body.textContent = 'No review text available';
     body.className = 'rc-chip-body';
     sumBtn.disabled = false;
     sumBtn.textContent = 'Summarize';
+
     return;
   }
+
   const place = currentPlace();
   let draw: ReturnType<typeof mountSummary> | undefined;
+
   try {
     const result = await summarizeReviews(texts, h.label, (draft) => (draw ??= mountSummary(body))(draft, false));
     h.summary = result;
     // A pooled chip's summary is its topic's (pooledView copies the topic chip).
     const topic = highlightsState?.items.find((x) => x.token === h.token);
+
     if (topic) topic.summary = result;
     saveHighlightsCache();
     (draw ?? mountSummary(body))(result);
@@ -1640,9 +1985,16 @@ const askActiveChip = async () => {
   const body = cardEls.chipPanelBody;
   const input = cardEls.chipQuestionInput;
   const q = input?.value?.trim();
+
   if (!h || !body || !q || !input) return;
   const texts = textReviewsFor(h.reviews ?? []);
-  if (!texts.length) { body.textContent = 'No review text available'; return; }
+
+  if (!texts.length) {
+    body.textContent = 'No review text available';
+
+    return;
+  }
+
   try {
     await askPlace(body, { reviewTexts: texts, filter: h.label, question: q, live: () => activeHighlight === h });
     input.value = '';
@@ -1657,7 +2009,9 @@ const askActiveChip = async () => {
 const renderLabelSearchResult = () => {
   const res = cardEls.searchResults;
   const panel = cardEls.filteredSumPanel;
+
   if (!res || !activeLabelSearch) return;
+
   if (panel) panel.style.display = 'none';
 
   const { query, reviews } = activeLabelSearch;
@@ -1671,14 +2025,17 @@ const renderLabelSearchResult = () => {
   res.style.display = 'block';
   res.textContent = '';
   const header = el('div', 'rc-search-header');
+
   // What the matches say about the query, once Jev has read them — their
   // share/net and ▲/▼ filters in the score's place, its space held until then;
   // the star share when it can't.
   const starShare = () => {
     const pct = el('span', undefined, score.trustedReviews ? `${score.scorePct}%` : '—');
     pct.style.color = score.trustedReviews ? color : '#888';
+
     return pct;
   };
+
   let filter: Stance | null = null;
   const stance = readStanceOf(query, reviews).then((read) => (read && activeLabelSearch?.query === query ? read : null));
   // The share takes the old %'s place; the counts behind it are its tooltip, and
@@ -1689,25 +2046,31 @@ const renderLabelSearchResult = () => {
     const o = opinionsOf(read.stance, read.of);
     scoreEl.title = o.title;
     scoreEl.setAttribute('aria-label', opinionsLabel(o));
+
     return opinionNumbers(o, HEADER_NUMBERS);
   }), starShare));
   const filters = el('span', 'ts-op-filters');
   void stance.then((read) => {
     if (!read) return;
+
     const draw = (pick: Stance | null) => {
       list.textContent = '';
       renderReviewsInto(list, byStance(reviews, read.stances, pick), parseOrQuery(query), read.stances);
     };
+
     // Each listed review marked with what it says, once read.
     draw(null);
     const o = opinionsOf(read.stance, read.of);
+
     if (o.sparse) return;
+
     const set = (pick: Stance | null) => {
       filter = pick;
       clearFilter = pick ? () => set(null) : null;
       markPressed(header, pick);
       draw(pick);
     };
+
     filters.append(...opinionFilters(o, () => filter, set));
     filters.classList.add('ts-op-in');
   });
@@ -1736,6 +2099,7 @@ const renderLabelSearchResult = () => {
   // summarizeLabelSearch/askLabelSearch fills it.
   if (panel) {
     res.appendChild(panel);
+
     if (activeLabelSearch.summary) renderSummary(panel, activeLabelSearch.summary);
     else panel.style.display = 'none';
   }
@@ -1748,34 +2112,47 @@ const renderLabelSearchResult = () => {
 const runLabelSearch = async () => {
   const input = cardEls.searchInput;
   const res = cardEls.searchResults;
+
   if (!input || !res) return;
   const query = input.value.trim();
+
   if (!query) {
     res.style.display = 'none';
+
     if (cardEls.filteredSumPanel) cardEls.filteredSumPanel.style.display = 'none';
     activeLabelSearch = null;
+
     return;
   }
 
   const featureId = getFeatureId();
+
   if (!featureId) return;
   const seq = ++labelSearchSeq;
   res.style.display = 'block';
   res.textContent = `Searching "${query}"…`;
+
   if (cardEls.filteredSumPanel) cardEls.filteredSumPanel.style.display = 'none';
 
   try {
     const reviews = await fetchAllForSearch(featureId, query);
+
     if (seq !== labelSearchSeq) return;
+
     if (!reviews) {
       res.textContent = "Couldn't search right now";
+
       return;
     }
+
     activeLabelSearch = { query, reviews, summary: searchSummaryCache[query.toLowerCase()] };
+
     if (!reviews.length) {
       res.textContent = `No label-search reviews for "${query}"`;
+
       return;
     }
+
     renderLabelSearchResult();
   } catch (e) {
     if (seq !== labelSearchSeq) return;
@@ -1787,26 +2164,33 @@ const runLabelSearch = async () => {
 const summarizeLabelSearch = async (btn?: HTMLButtonElement) => {
   const search = activeLabelSearch;
   const panel = cardEls.filteredSumPanel;
+
   if (!search || !panel) return;
   const texts = textReviewsFor(search.reviews);
   panel.style.display = 'block';
   panel.textContent = 'Summarizing…';
   panel.className = 'rc-summary-panel loading';
+
   if (!texts.length) {
     panel.textContent = 'No review text available';
     panel.className = 'rc-summary-panel';
+
     return;
   }
 
   if (btn) { btn.disabled = true; btn.textContent = 'Summarizing…'; }
+
   const featureId = getFeatureId();
   let draw: ReturnType<typeof mountSummary> | undefined;
+
   try {
     const result = await summarizeReviews(texts, search.query, (draft) => {
       if (activeLabelSearch === search) (draw ??= mountSummary(panel))(draft, false);
     });
+
     search.summary = result;
     cacheSearchSummary(featureId, search.query, result);
+
     // Paint only while this search is still the one showing (a nav or a newer
     // search resets activeLabelSearch).
     if (activeLabelSearch === search) (draw ?? mountSummary(panel))(result);
@@ -1823,12 +2207,21 @@ const askLabelSearch = async () => {
   const search = activeLabelSearch;
   const panel = cardEls.filteredSumPanel;
   const q = cardEls.searchQuestionInput?.value?.trim();
+
   if (!search || !panel || !q) return;
   const texts = textReviewsFor(search.reviews);
   panel.style.display = 'block';
-  if (!texts.length) { panel.textContent = 'No review text available'; panel.className = 'rc-summary-panel'; return; }
+
+  if (!texts.length) {
+    panel.textContent = 'No review text available';
+    panel.className = 'rc-summary-panel';
+
+    return;
+  }
+
   try {
     await askPlace(panel, { reviewTexts: texts, filter: search.query, question: q, live: () => activeLabelSearch === search });
+
     if (cardEls.searchQuestionInput) cardEls.searchQuestionInput.value = '';
   } catch (e) {
     if (activeLabelSearch !== search) return;
@@ -1852,6 +2245,7 @@ const createUIElements = () => {
     const opt = document.createElement('option'); opt.value = v; opt.textContent = t; select.appendChild(opt);
   });
   select.onchange = (e) => { currentOption = (e.target as HTMLSelectElement).value as Period; updateUI(); };
+
   headerRight.appendChild(select);
   const collapseBtn = el('button', 'rc-collapse');
   collapseBtn.textContent = '▾';
@@ -1859,6 +2253,7 @@ const createUIElements = () => {
     const collapsed = c.classList.toggle('collapsed');
     collapseBtn.textContent = collapsed ? '▸' : '▾';
   };
+
   headerRight.appendChild(collapseBtn);
   header.appendChild(headerRight);
   c.appendChild(header);
@@ -1932,7 +2327,9 @@ const createUIElements = () => {
   searchInput.addEventListener('input', () => {
     if (!searchInput.value.trim()) {
       activeLabelSearch = null;
+
       if (cardEls.searchResults) cardEls.searchResults.style.display = 'none';
+
       if (cardEls.filteredSumPanel) cardEls.filteredSumPanel.style.display = 'none';
     }
   });
@@ -1952,7 +2349,9 @@ const createUIElements = () => {
   sumPanel.style.display = summaryCache.all ? 'block' : 'none';
   c.appendChild(sumPanel);
   cardEls.sumPanel = sumPanel;
+
   if (summaryCache.all) renderSummary(sumPanel, summaryCache.all);
+
   // After the summary, whose standouts join the row: cached, it paints once,
   // already in its final order.
   if (highlightsState && highlightsState.items.length) renderHighlights();
@@ -2029,6 +2428,7 @@ const createUIElements = () => {
 // O(n)). Collapsing co-temporal pages into one animation frame keeps that off the
 // scrape's hot path; the stabilize check and head-reconcile don't need the paint.
 let updateUIScheduled = false;
+
 const scheduleUpdateUI = () => {
   if (updateUIScheduled) return;
   updateUIScheduled = true;
@@ -2041,32 +2441,41 @@ const updateUI = () => {
   // so the period tabs keep their own (empty) view rather than relabelling an
   // all-time score as this month's.
   const usingServer = !totalCount && !!serverScore && currentOption === 'total';
+
   if (usingServer) {
     totalCount = totalAll = serverScore!.totalReviews;
     totalTrusted = serverScore!.trustedReviews;
     mergedPct = serverScore!.ratio ?? serverScore!.scorePct / 100;
   }
+
   let anyFetching = false, allDone = true;
+
   for (const k of SORT_KEYS) {
     if (fetchState[k].isFetching) anyFetching = true;
+
     if (!fetchState[k].done) allDone = false;
   }
+
   // The removal notice rides on the preview Maps fetches for itself, so it is
   // known at page load — long before creds are captured and the first review
   // page lands. Gating the whole panel on a score therefore sat on the one
   // warning that never needed one. Build the panel for a notice alone; the
   // score below renders as '—' until it settles, the same as any other page.
   if (!document.querySelector('.jANrlb')) return;
+
   if (!totalCount && !activeRemovedReviews && !scoringFailed) return;
+
   if (!document.querySelector('#reviews-container')) createUIElements();
 
   const els = cardEls.merged;
+
   if (!els) return;
 
   const fullPct = calculateFullPercentage();
   // totalAll can now be 0 on 'total' too — a notice-only panel opens before any
   // review lands, and 0/0 would otherwise render as a confident 0%.
   const noData = totalAll === 0;
+
   // Removals are weighed against the place's own review count (Google's own
   // histogram), not our trusted sample, so the penalty can't drift with how far
   // pagination got. No readable histogram → no penalty rather than a guessed one.
@@ -2087,6 +2496,7 @@ const updateUI = () => {
       ? "This browser couldn't fetch Google's reviews — reload the page to retry"
       : totalCount === 0 ? 'Scoring…' : 'No reviews in this period';
     els.barFill.style.width = '0%';
+
     if (scoringFailed) {
       els.diffEl.textContent = 'review fetch blocked';
       els.diffEl.style.color = '#f87171';
@@ -2118,28 +2528,34 @@ const updateUI = () => {
       els.pctEl.style.color = color;
       els.pctEl.style.textShadow = `0 0 24px ${color}40`;
       els.diffEl.style.display = 'none';
+
       // Maps recreates the rating subtree on tab switches; an observer left on a
       // detached node never fires again, so re-arm on the live one.
       if (fullPctObserver && fullPctObserverTarget && !fullPctObserverTarget.isConnected) {
         fullPctObserver.disconnect();
         fullPctObserver = null;
       }
+
       if (!fullPctObserver) {
         // Throttle to one histogram read per frame: .jANrlb mutates rapidly while
         // the rating panel renders, and each readHistogramCounts is a
         // querySelectorAll + parse. Self-disconnects once the counts are readable.
         let pending = false;
+
         const obs = new MutationObserver(() => {
           if (pending) return;
           pending = true;
           requestAnimationFrame(() => {
             pending = false;
+
             if (calculateFullPercentage() === null) return;
             obs.disconnect();
+
             if (fullPctObserver === obs) fullPctObserver = null;
             updateUI();
           });
         });
+
         fullPctObserver = obs;
         const target = document.querySelector('.jANrlb') || document.body;
         fullPctObserverTarget = target;
@@ -2152,6 +2568,7 @@ const updateUI = () => {
 
   els.countEl.textContent = String(totalCount);
   const headReview = store.newestHeadReview();
+
   const parts = [
     totalAll > 0 ? `${totalTrusted} trusted of ${totalAll}` : '',
     // What the removal penalty actually did, next to the number it did it to —
@@ -2162,7 +2579,9 @@ const updateUI = () => {
     // server's session as a local result.
     usingServer ? 'via truescore' : '',
   ].filter(Boolean);
+
   const detailText = parts.join(' · ');
+
   if (detailText !== els.detailEl.textContent) els.detailEl.textContent = detailText;
   els.card.classList.toggle('loading', anyFetching);
   els.card.classList.toggle('done', allDone);
@@ -2174,11 +2593,13 @@ const updateUI = () => {
 // the topic chips' row (renderHighlights); alternatives keep a labelled row of
 // their own, most-mentioned first.
 type ScoredKind = 'standouts' | 'alternatives';
+
 // `aliases`: a standout's other names (standoutNames), searched with it.
 const scoredCtx: Record<ScoredKind, { items: string[]; featureId: string; aliases?: Record<string, string[]> } | null> = { standouts: null, alternatives: null };
 
 const triggerLabelSearchFor = (item: string) => {
   const input = cardEls.searchInput;
+
   if (!input) return;
   // The chip's own search in the box; fetchAllForSearch expands each name to
   // its spelling variants.
@@ -2187,6 +2608,7 @@ const triggerLabelSearchFor = (item: string) => {
   input.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   const featureId = getFeatureId();
   const cached = featureId ? standoutReviewsCache.get(`${featureId}|${item.toLowerCase()}`)?.reviews : undefined;
+
   if (cached?.length) {
     // Reuse the reviews already fetched to score this chip — no second search.
     labelSearchSeq++;
@@ -2200,8 +2622,10 @@ const triggerLabelSearchFor = (item: string) => {
 // Drop a group — no summary, or none of its items cleared the ≥2 gate.
 const clearScored = (kind: ScoredKind) => {
   scoredCtx[kind] = null;
+
   if (kind === 'standouts') return renderHighlights();
   const section = cardEls.alternativesSection;
+
   if (section) { section.textContent = ''; section.style.display = 'none'; }
 };
 
@@ -2214,6 +2638,7 @@ const redrawScored = (kind: ScoredKind) => {
   if (kind === 'standouts') return renderHighlights();
   const section = cardEls.alternativesSection;
   const ctx = scoredCtx[kind];
+
   if (!section || !ctx) return;
   const { items, featureId } = ctx;
   section.textContent = '';
@@ -2222,14 +2647,22 @@ const redrawScored = (kind: ScoredKind) => {
   // Read, an item counts the reviews that actually speak to it.
   const scored = selectScoredChips(rows, (x) => x.stats && (x.stats.stance ? { totalReviews: opinionsOf(x.stats.stance).mentions } : x.stats));
   const pending = rows.filter((x) => !x.stats);
-  if (!scored.length && !pending.length) { section.style.display = 'none'; return; }
+
+  if (!scored.length && !pending.length) {
+    section.style.display = 'none';
+
+    return;
+  }
+
   section.style.display = '';
   section.appendChild(el('span', 'rc-alternatives-label', 'Better alternatives'));
   const list = el('div', 'rc-alternatives-list');
+
   for (const { item, stats } of [...scored, ...pending]) {
     const search = () => triggerLabelSearchFor(item);
     list.appendChild(stats ? chipEl(item, itemStats(stats), overall, search, 'rc-alternative-chip') : pendingChip(item, undefined, search, 'rc-alternative-chip'));
   }
+
   section.appendChild(list);
 };
 
@@ -2240,24 +2673,31 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
   const limit = createLimiter(HIGHLIGHT_FETCH_CONCURRENCY);
   const ctx = scoredCtx[kind]?.featureId === featureId ? scoredCtx[kind] : null;
   const runs: Promise<void>[] = [];
+
   for (const item of items) {
     const key = `${featureId}|${item.toLowerCase()}`;
     const running = standoutScoreInflight.get(key);
+
     if (running) { runs.push(running); continue; }
+
     if ((withReviews ? standoutReviewsCache : standoutScoreCache).has(key) && !standoutScoreStale.has(key)) continue;
+
     const run = limit(async () => {
       try {
         const query = standoutNames(item, ctx?.aliases).join(' OR ');
         const reviews = await fetchAllForSearch(featureId, query);
+
         // null = neither this tab nor the server could search: leave the chip
         // pending — nothing may cache or persist a fake zero; the next render or
         // stale-refresh retries.
         if (!reviews) return;
+
         // An empty result is display-only too: a dead session or a throttle
         // comes back empty just like an unmentioned item, and a persisted 0 would
         // hide the chip until new reviews land. Where an earlier search found
         // reviews, its score stays.
         if (!reviews.length && standoutScoreCache.has(key) && !standoutScoreTransient.has(key)) return;
+
         if (reviews.length) standoutScoreTransient.delete(key);
         else standoutScoreTransient.add(key);
         // Read before the chip shows, so a star share never paints only to be replaced.
@@ -2268,6 +2708,7 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
         saveScoredCache();
       } catch (e) {
         console.error(`[${kind}] score failed for`, item, e);
+
         // Resolve to zero so the chip drops out (like a no-mention item) instead
         // of pulsing "…" forever — this session only, never persisted. A score
         // already showing stays.
@@ -2279,12 +2720,15 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
         // Drawn once it's no longer in flight, so the last run to land lets the
         // topic row settle and sort.
         standoutScoreInflight.delete(key);
+
         if (getFeatureId() === featureId) redrawScored(kind);
       }
     });
+
     standoutScoreInflight.set(key, run);
     runs.push(run);
   }
+
   return Promise.all(runs);
 };
 
@@ -2293,13 +2737,16 @@ const ensureScored = (featureId: string, items: string[], kind: ScoredKind, with
 // still running.
 const applyStandoutAliases = (aliases: Record<string, string[]>) => {
   const ctx = scoredCtx.standouts;
+
   if (!ctx) return;
   ctx.aliases = aliases;
   renderHighlights();
+
   for (const item of ctx.items.filter((i) => aliases[i]?.length)) {
     const key = `${ctx.featureId}|${item.toLowerCase()}`;
     void (standoutScoreInflight.get(key) ?? Promise.resolve()).then(() => {
       standoutScoreStale.add(key);
+
       return ensureScored(ctx.featureId, [item], 'standouts');
     });
   }
@@ -2308,6 +2755,7 @@ const applyStandoutAliases = (aliases: Record<string, string[]>) => {
 const renderScoredGroup = (kind: ScoredKind, items: string[], aliases?: Record<string, string[]>) => {
   const featureId = getFeatureId();
   scoredCtx[kind] = featureId ? { items, featureId, aliases } : null;
+
   // Scoring starts first, so the redraw tells an item still scoring from one
   // whose search couldn't run.
   if (featureId) ensureScored(featureId, items, kind);
@@ -2321,41 +2769,56 @@ const renderScoredGroup = (kind: ScoredKind, items: string[], aliases?: Record<s
 // highlights. Scores are stored without the featureId prefix and rekeyed on load.
 let scoredCacheHeadId: string | undefined;
 const getScoredCacheKey = () => `${SCORE_GROUP_CACHE_PREFIX}${lastFeatureId || 'default'}`;
+
 const loadScoredCache = () => {
   scoredCacheHeadId = undefined;
+
   if (!lastFeatureId) return;
+
   try {
     const raw = JSON.parse(localStorage.getItem(getScoredCacheKey()) as string);
+
     if (!raw?.scores) return;
+
     for (const [item, stats] of Object.entries(raw.scores)) standoutScoreCache.set(`${lastFeatureId}|${item}`, stats as SortStats);
     scoredCacheHeadId = raw.newestHeadId;
   } catch {}
 };
+
 const saveScoredCache = () => {
   if (!lastFeatureId) return;
+
   try {
     const prefix = `${lastFeatureId}|`;
     const scores: Record<string, SortStats> = {};
+
     for (const [k, v] of standoutScoreCache) if (k.startsWith(prefix) && !standoutScoreTransient.has(k) && !standoutScoreStale.has(k)) scores[k.slice(prefix.length)] = v;
+
     if (!Object.keys(scores).length) return;
     scoredCacheHeadId = store.newestHeadId() ?? scoredCacheHeadId;
     localStorage.setItem(getScoredCacheKey(), JSON.stringify({ scores, newestHeadId: scoredCacheHeadId }));
   } catch {}
 };
+
 // New reviews since these scores were computed → re-score whatever groups are
 // showing, their old scores on screen until the new ones land, so the row stays
 // put.
 const refreshStaleScores = () => {
   const live = store.newestHeadId();
   const featureId = getFeatureId();
+
   if (live == null || scoredCacheHeadId == null || scoredCacheHeadId === live || !featureId) return;
   const prefix = `${featureId}|`;
+
   for (const k of standoutScoreCache.keys()) if (k.startsWith(prefix)) standoutScoreStale.add(k);
+
   for (const k of [...standoutReviewsCache.keys()]) if (k.startsWith(prefix)) standoutReviewsCache.delete(k);
   searchTermCache.dropPlace(featureId);
   scoredCacheHeadId = live;
+
   for (const kind of Object.keys(scoredCtx) as ScoredKind[]) {
     const ctx = scoredCtx[kind];
+
     if (ctx && ctx.featureId === featureId) ensureScored(featureId, ctx.items, kind);
   }
 };
@@ -2374,6 +2837,7 @@ const valueMeter = (rating: number) => {
   const track = el('div', 'rc-value-track');
   track.append(el('span', 'rc-value-end', 'Overpriced'), rail, el('span', 'rc-value-end', 'Bargain'));
   box.append(head, track);
+
   return box;
 };
 
@@ -2386,40 +2850,49 @@ const mountSummary = (panel: HTMLElement) => {
   const verdict = el('div', 'rc-verdict');
   const rows = el('div', 'rc-summary-bullets');
   panel.append(verdict, rows);
+
   const bullets = mountBullets<SummaryHighlight>(rows, (h) => h.text, () => el('div'), (row, h) => {
     row.className = `rc-highlight ${h.sentiment}`;
     const text = el('span', 'rc-h-text');
     renderMarkdownInline(text, h.text ?? '');
     row.replaceChildren(text);
+
     // How many reviews make the point (checked on the server), opened below.
     if (h.support != null) row.appendChild(receiptButton(row, h.support, receiptOf(h), (q) => (typeof q === 'string' ? null : reviewCardEl(q))));
   });
+
   return (result: SummaryResult, checked = true) => {
     panel.className = 'rc-summary-panel';
     panel.style.display = 'block';
     verdict.hidden = !result.verdict;
+
     if (result.verdict) renderMarkdown(verdict, result.verdict);
+
     if (!checked) return bullets.draft(result.highlights ?? []);
     // Most-backed first once checked.
     void bullets.settle(bySupport(result.highlights ?? []));
     finishSummary(panel, result);
   };
 };
+
 const renderSummary = (panel: HTMLElement, result: SummaryResult) => mountSummary(panel)(result);
 
 // What only a whole summary carries: value for money, and for the place's own
 // summary its standouts and alternatives.
 const finishSummary = (panel: HTMLElement, result: SummaryResult) => {
   if (result.valueForMoney) panel.appendChild(valueMeter(result.valueForMoney));
+
   // Standouts and alternatives are scored chip groups about the place as a whole
   // — only the main summary, never a label-search/chip sub-summary whose items
   // would spawn nested searches off a filtered set.
   if (panel === cardEls.sumPanel) {
     if (result.items?.length) renderScoredGroup('standouts', result.items, result.aliases);
     else clearScored('standouts');
+
     if (result.alternatives?.length) renderScoredGroup('alternatives', result.alternatives);
     else clearScored('alternatives');
   }
+
   if (!result.highlights?.length && !result.verdict) {
     panel.textContent = 'No highlights found';
   }
@@ -2432,18 +2905,22 @@ const collectReviewTexts = (): string[] => textReviewsFor(Object.values(store.me
 // or hides the panel if none was computed yet.
 const restoreMainSummary = () => {
   const panel = cardEls.sumPanel;
+
   if (!panel) return;
+
   if (summaryCache.all) renderSummary(panel, summaryCache.all);
   else { panel.style.display = 'none'; panel.textContent = ''; }
 };
 
 const refreshSumBtnState = () => {
   const btn = cardEls.sumBtn;
+
   if (!btn) return;
   const hasQuestion = !!cardEls.questionInput?.value?.trim();
   const cached = !!summaryCache.all;
   btn.textContent = hasQuestion ? 'Ask' : 'Summarize';
   btn.disabled = !hasQuestion && cached;
+
   if (cardEls.resumBtn) {
     cardEls.resumBtn.hidden = hasQuestion || !cached;
     cardEls.resumBtn.disabled = false;
@@ -2452,18 +2929,27 @@ const refreshSumBtnState = () => {
 
 const triggerSummarize = async () => {
   const panel = cardEls.sumPanel;
+
   if (!panel) return;
   panel.style.display = 'block';
   panel.textContent = 'Summarizing…';
   panel.className = 'rc-summary-panel loading';
 
   const texts = collectReviewTexts();
-  if (!texts.length) { panel.textContent = 'No review text available'; panel.className = 'rc-summary-panel'; return; }
+
+  if (!texts.length) {
+    panel.textContent = 'No review text available';
+    panel.className = 'rc-summary-panel';
+
+    return;
+  }
 
   if (cardEls.sumBtn) cardEls.sumBtn.disabled = true;
+
   if (cardEls.resumBtn) cardEls.resumBtn.disabled = true;
   const customQuestion = cardEls.questionInput?.value?.trim() || null;
   const place = currentPlace();
+
   try {
     if (customQuestion) {
       // A Recent question replays from here; anything else asks, and is kept.
@@ -2472,9 +2958,12 @@ const triggerSummarize = async () => {
         live: () => place.featureId === lastFeatureId,
         qaKey: getSummaryCacheKey(place.featureId),
       });
+
       return;
     }
+
     let draw: ReturnType<typeof mountSummary> | undefined;
+
     const result = await summarizeReviews(texts, null, (draft) => {
       if (place.featureId === lastFeatureId) (draw ??= mountSummary(panel))(draft, false);
     }, (withAliases) => {
@@ -2482,15 +2971,19 @@ const triggerSummarize = async () => {
         summaryCache.all = withAliases;
         applyStandoutAliases(withAliases.aliases ?? {});
       }
+
       saveSummaryCache(place.featureId, { all: withAliases });
       pushContribution({ summary: withAliases }, place);
     });
+
     // Filed and uploaded under the place it was asked about; the in-memory cache
     // and panel only if that's still the place open (see currentPlace).
     const current = place.featureId === lastFeatureId;
+
     if (current) summaryCache.all = result;
     saveSummaryCache(place.featureId, { all: result });
     pushContribution({ summary: result }, place);
+
     if (current && cardEls.sumPanel) (draw ?? mountSummary(cardEls.sumPanel))(result);
   } catch (e) {
     if (place.featureId !== lastFeatureId) return;
@@ -2510,9 +3003,11 @@ const handleDomMutation = () => {
   const url = location.href;
 
   const placeDetails = document.querySelector<HTMLElement>('.dmRWX');
+
   if (placeDetails) {
     const existing = placeDetails.querySelector<HTMLElement>('.truescore-simple-score');
     const fid = getFeatureId() ?? '';
+
     // A recycled details panel keeps the previous place's node — drop it on
     // stamp mismatch. Inject only once the nav handling below has caught up
     // (lastFeatureId current), so a nav tick can't stamp the old histogram with
@@ -2528,17 +3023,20 @@ const handleDomMutation = () => {
   // This retries the build until the panel exists; updateUI is a cheap no-op
   // until the DOM is ready for it.
   tryRemovedNoticeFromCapture();
+
   if (activeRemovedReviews && !document.querySelector('#reviews-container')) updateUI();
 
   if (url === lastUrl) return;
   lastUrl = url;
 
   const featureId = getFeatureId();
+
   if (!featureId) {
     document.querySelector('#reviews-container')?.remove();
     clearCardEls();
     activeLabelSearch = null;
     labelSearchSeq++;
+
     return;
   }
 
@@ -2565,15 +3063,23 @@ const handleDomMutation = () => {
       .then((hydrated) => { if (hydrated) updateUI(); })
       .catch((e) => console.warn('[gmaps] load score cache failed', e));
   }
+
   if (!document.querySelector('#reviews-container')) {
     updateUI();
+
     if (shouldStartScoring()) startFetching();
   }
 };
 
 let domMutationTimer: ReturnType<typeof setTimeout> | null = null;
+
 const observer = new MutationObserver(() => {
-  if (location.href !== lastUrl) { handleDomMutation(); return; }
+  if (location.href !== lastUrl) {
+    handleDomMutation();
+
+    return;
+  }
+
   if (domMutationTimer) return;
   domMutationTimer = setTimeout(() => { domMutationTimer = null; handleDomMutation(); }, 200);
 });

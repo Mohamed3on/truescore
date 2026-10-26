@@ -6,10 +6,12 @@
 import { parseRatingAndCount } from '../shared/locale-number';
 
 const RESULT = '[role="article"]';
+
 // Material Symbols' "sort": the chip is this icon alone, since Maps' header
 // row wraps when full and its own "Sort by" (on some searches) leaves ~120px.
 const SORT_ICON =
   '<svg viewBox="0 -960 960 960" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M120-240v-80h240v80H120Zm0-200v-80h480v80H120Zm0-200v-80h720v80H120Z"/></svg>';
+
 let loading = false;
 
 const findFeed = () => document.querySelector<HTMLElement>('[role="feed"]');
@@ -36,11 +38,13 @@ const applySort = (feed: HTMLElement) => {
   const ranked = slots.map((i) => ({ kid: kids[i], n: reviewCount(kids[i]) })).sort((a, b) => b.n - a.n);
   const slot = new Map(kids.map((kid, i) => [kid, i]));
   ranked.forEach(({ kid }, r) => slot.set(kid, slots[r]));
+
   for (const [kid, i] of slot) setOrder(kid, String(i - kids.length));
 };
 
 const clearSort = (feed: HTMLElement) => {
   sortedQuery = null;
+
   for (const kid of feed.children) setOrder(kid as HTMLElement, '');
 };
 
@@ -59,16 +63,20 @@ const loadAllAndSort = async (feed: HTMLElement) => {
   const query = queryOf(feed);
   let count = 0;
   let idleSince = Date.now();
+
   while (feed.isConnected && queryOf(feed) === query && !feed.querySelector('.HlvSq') && Date.now() - idleSince < 6000) {
     feed.scrollTop = feed.scrollHeight;
     await new Promise((r) => setTimeout(r, 300));
     const n = feed.querySelectorAll(RESULT).length;
+
     if (n > count) {
       count = n;
       idleSince = Date.now();
     }
   }
+
   loading = false;
+
   if (queryOf(feed) === query) sortedQuery = query;
   feed.scrollTop = 0;
   sync();
@@ -76,8 +84,10 @@ const loadAllAndSort = async (feed: HTMLElement) => {
 
 const mountChip = (feed: HTMLElement) => {
   const row = feed.querySelector('h1')?.parentElement; // Maps' "Results" heading
+
   if (!row) return;
   let chip = row.querySelector<HTMLButtonElement>('.ts-review-sort');
+
   if (!chip) {
     chip = row.appendChild(document.createElement('button'));
     chip.className = 'ts-review-sort';
@@ -85,20 +95,27 @@ const mountChip = (feed: HTMLElement) => {
     chip.title = 'Most reviewed first (⌥Z)\nShift-click: load every result first (⌥⇧Z)';
     chip.addEventListener('click', (e) => (e.shiftKey ? loadAllAndSort(feed) : toggle(feed)));
   }
+
   // While ⌥⇧Z loads, the count so far stands in for the icon.
   const label = loading ? `${feed.querySelectorAll(RESULT).length}…` : '';
+
   if (chip.dataset.label !== label) {
     chip.dataset.label = label;
+
     if (label) chip.textContent = label;
     else chip.innerHTML = SORT_ICON;
   }
+
   const pressed = String(sortedQuery === queryOf(feed));
+
   if (chip.getAttribute('aria-pressed') !== pressed) chip.setAttribute('aria-pressed', pressed);
 };
 
 const sync = () => {
   const feed = findFeed();
+
   if (!feed) return;
+
   if (sortedQuery === queryOf(feed)) applySort(feed);
   else if (sortedQuery != null) clearSort(feed);
   mountChip(feed);
@@ -111,8 +128,10 @@ document.addEventListener(
   (e) => {
     if (e.code !== 'KeyZ' || !e.altKey || e.metaKey || e.ctrlKey) return;
     const feed = findFeed();
+
     if (!feed) return;
     e.preventDefault();
+
     if (e.shiftKey) loadAllAndSort(feed);
     else toggle(feed);
   },

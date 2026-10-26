@@ -4,15 +4,21 @@ import type { Review } from '@truescore/gmaps-shared';
 
 const NOW = 1_780_000_000_000; // fixed ms clock
 const DAY = 86_400_000;
+
 // timestamp is microseconds (Google's shape); store divides by 1000 to get ms.
 const rv = (id: string, daysAgo: number, stars = 5, count = 9): Review =>
   ({ reviewId: id, stars, reviewerReviewCount: count, timestamp: (NOW - daysAgo * DAY) * 1000, text: id });
 
 const memStorage = (init: Record<string, unknown> = {}): Storage => {
   const m = new Map<string, unknown>(Object.entries(init));
+
   return {
     get: async <T>(k: string) => (m.has(k) ? (m.get(k) as T) : null),
-    set: async (k: string, v: unknown) => { m.set(k, v); return true; },
+    set: async (k: string, v: unknown) => {
+      m.set(k, v);
+
+      return true;
+    },
   };
 };
 
@@ -68,6 +74,7 @@ describe('reconcile', () => {
     await b.persistIfReady(KEY);
     const store = newStore(storage);
     await store.loadCache(KEY);
+
     return store;
   };
 

@@ -27,6 +27,7 @@ const deepseek = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY });
 const lite = google('gemini-3.5-flash-lite');
 const flash38 = google('gemini-3.8-flash');
 const ds = deepseek('deepseek-flash');
+
 // DeepSeek's JSON mode only promises valid JSON; strict tool calls on its beta
 // endpoint hold the arguments to the schema.
 const dsBeta = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: 'https://api.deepseek.com/beta' })('deepseek-flash');
@@ -43,6 +44,7 @@ const ONLY = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.
 // Optional path to a JSON array of review strings (e.g. a real place's
 // reviewTexts); falls back to the built-in sample set.
 const reviewsFile = args[1];
+
 const SAMPLE_REVIEWS = [
   'Best brunch in the neighborhood. The shakshuka is incredible and the flat white is properly pulled. Gets packed by 10am on weekends.',
   'Overrated and overpriced. €18 for avocado toast that was cold in the middle. Service was friendly but slow — waited 25 minutes for food.',
@@ -73,6 +75,7 @@ const SAMPLE_REVIEWS = [
   'Outdoor seating is lovely in summer, heaters in winter. Year-round winner. The seasonal specials board is always worth checking.',
   'Came for the hype, left unimpressed. Long wait, average coffee, tiny portions for the price. La Cabra does everything better and cheaper.',
 ];
+
 const REVIEWS: string[] = reviewsFile ? await Bun.file(reviewsFile).json() : SAMPLE_REVIEWS;
 const REQUEST = structuredRequest({ placeName: '', reviewTexts: REVIEWS });
 const extract = (model: LanguageModel, providerOptions: SharedV4ProviderOptions) => () => writeObject({ model, providerOptions, ...REQUEST });
@@ -80,16 +83,20 @@ const extract = (model: LanguageModel, providerOptions: SharedV4ProviderOptions)
 const median = (xs: number[]): number => {
   const s = [...xs].sort((a, b) => a - b);
   const m = Math.floor(s.length / 2);
+
   return s.length % 2 ? (s[m] ?? 0) : ((s[m - 1] ?? 0) + (s[m] ?? 0)) / 2;
 };
+
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
 // --judge: a blind gpt-6-sol scorer for each structured output (same rubric as
 // evals/compare.ts). Absolute 1-5 per dimension; a call's clock stops before
 // its output is judged, so judge time never counts toward latency.
 type Q = { grounded: number; coverage: number; concise: number };
+
 const judge = openai('gpt-6-sol');
 const QUALITY_SCHEMA = z.object({ grounded: z.number().int(), coverage: z.number().int(), concise: z.number().int() });
+
 const scoreQuality = async (summary: unknown): Promise<Q> => {
   const { object } = await writeObject({
     model: judge,
@@ -97,12 +104,15 @@ const scoreQuality = async (summary: unknown): Promise<Q> => {
     schema: QUALITY_SCHEMA,
     prompt: `${REVIEWS.join('\n\n')}\n\n---\n\nA model extracted the structured summary below from the reviews above. Score it 1-5 on grounded (every claim traceable to the reviews and given the weight the reviews give it — inventing detail, overstating how many reviewers said something, or presenting a one-off as a pattern are grounding errors), coverage (conveys what matters most for deciding: the points many reviewers raise and any major caveat — leaving out minor or one-off points is not a flaw), and concise (no padding or repetition; length is not a virtue).\n\n${JSON.stringify(summary, null, 1)}`,
   });
+
   return object;
 };
 
 type Variant = { label: string; run: () => Promise<any> };
+
 const LUNA_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
 const DS_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
 const variants: Variant[] = [
   // Luna as shipped, with the effort swapped the way llm.ts providerFor does.
   ...LUNA_EFFORTS.map((e) => ({ label: `luna:${e}`, run: extract(PROVIDERS.openai.model, { openai: { ...PROVIDERS.openai.providerOptions.openai, reasoningEffort: e } }) })),
@@ -124,13 +134,16 @@ const variants: Variant[] = [
         tools: { extract: tool({ inputSchema: REQUEST.schema, strict: true }) },
         toolChoice: 'auto',
       });
+
       if (r.finishReason === 'length') throw new Error('hit the output token cap');
+
       return { object: REQUEST.schema.parse(r.toolCalls[0]?.input), usage: r.usage };
     },
   },
 ].filter((v) => !ONLY || ONLY.includes(v.label));
 
 type Row = { label: string; med: number; mean: number; lats: number[]; reason: number; out: number; q?: Q };
+
 type Sample = { label: string; ms: number; reason: number; out: number; q?: Q };
 
 console.log(`\nstructured-summary latency · ${RUNS} runs/variant · ${REVIEWS.length} reviews · parallel\n`);
@@ -141,41 +154,53 @@ const settled = await Promise.all(
   variants.flatMap((v) =>
     Array.from({ length: RUNS }, async (): Promise<Sample | null> => {
       const t0 = performance.now();
+
       try {
         const r = await v.run();
         // Stop the clock before judging so the judge's own call never counts.
         const s: Sample = { label: v.label, ms: performance.now() - t0, reason: r.usage?.outputTokenDetails.reasoningTokens ?? 0, out: r.usage?.outputTokens ?? 0 };
+
         if (JUDGE) s.q = await scoreQuality(r.object).catch((e: any) => (console.log(`  judge ${v.label}: ERROR ${e.message?.slice(0, 70)}`), undefined));
+
         return s;
       } catch (e: any) {
         console.log(`  ${v.label}: ERROR ${e.message?.slice(0, 90)}`);
+
         return null;
       }
     }),
   ),
 );
+
 const samples = settled.filter((s): s is Sample => s !== null);
 
 const rows: Row[] = variants.flatMap((v) => {
   const mine = samples.filter((s) => s.label === v.label);
+
   if (!mine.length) return [];
   const lats = mine.map((s) => s.ms);
   const qs = mine.map((s) => s.q).filter((q): q is Q => !!q);
   const q = qs.length ? { grounded: avg(qs.map((x) => x.grounded)), coverage: avg(qs.map((x) => x.coverage)), concise: avg(qs.map((x) => x.concise)) } : undefined;
+
   return [{ label: v.label, med: median(lats), mean: avg(lats), lats, reason: avg(mine.map((s) => s.reason)), out: avg(mine.map((s) => s.out)), q }];
 });
 
 const fastest = Math.min(...rows.map((r) => r.med));
+
 console.log(`variant      median    mean   ×fast   reasoning  output${JUDGE ? '   qual (g/cov/con)' : ''}   runs (s)`);
+
 console.log('-'.repeat(JUDGE ? 96 : 74));
+
 for (const r of rows) {
   const qcol = JUDGE
     ? (r.q ? `  ${((r.q.grounded + r.q.coverage + r.q.concise) / 3).toFixed(1)} (${r.q.grounded.toFixed(1)}/${r.q.coverage.toFixed(1)}/${r.q.concise.toFixed(1)})` : '  —').padEnd(18)
     : '';
+
   console.log(
     `${r.label.padEnd(11)} ${(r.med / 1000).toFixed(1).padStart(5)}s  ${(r.mean / 1000).toFixed(1).padStart(5)}s  ` +
       `${(r.med / fastest).toFixed(1).padStart(4)}×  ${Math.round(r.reason).toString().padStart(7)}    ${Math.round(r.out).toString().padStart(5)}${qcol}   ` +
       `[${r.lats.map((x) => (x / 1000).toFixed(1)).join(', ')}]`,
   );
 }
+
 console.log();

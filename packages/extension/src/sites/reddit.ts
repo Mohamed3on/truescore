@@ -14,20 +14,25 @@ import { el } from '../shared/utils';
 const button = (className: string, text?: string) => {
   const b = el('button', className, text) as HTMLButtonElement;
   b.type = 'button';
+
   return b;
 };
 
 // `why`: a line on why people rate it as they do, once the server has written it;
 // `maker`: the Option a title stands in for, among products.
 type Row = { listed: ListedOption; tally?: OptionTally; why?: string; maker?: string };
+
 // The shortcut, as the keyboard labels it.
 const KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌥T' : 'Alt+T';
+
 type View = 'people' | 'upvotes';
+
 // Makers ranks the Options as listed; products ranks their titles on their own.
 type Level = 'makers' | 'products';
 
 const THREAD_PATH = /^\/r\/[^/]+\/comments\/([a-z0-9]+)/i;
 const onThread = () => THREAD_PATH.test(location.pathname);
+
 // Where the questions asked of this thread are kept (qa-history).
 const qaKey = () => `ts-tally-${location.pathname.match(THREAD_PATH)?.[1]}`;
 const isOld = () => !!document.querySelector('.commentarea');
@@ -37,6 +42,7 @@ const threadUrl = () => {
   const u = new URL(location.href);
   u.pathname = `${u.pathname.replace(/\/?$/, '/')}.json`;
   u.searchParams.set('raw_json', '1');
+
   return u.toString();
 };
 
@@ -49,16 +55,24 @@ let level: Level = 'makers';
 let openKey: string | null = null;
 let openTitle: string | null = null;
 let stop: (() => void) | null = null;
+
 // A question asked of the thread, with its answer as far as it's written, or
 // why it couldn't be.
 type Turn = { q: string; a: string; done: boolean; error?: string };
+
 let turns: Turn[] = [];
 let stopAsk: (() => void) | null = null;
 
 // ---- figures ----
 
 const sides = (c: TallyCount): [number, number] => (view === 'people' ? [c.for, c.against] : [c.upFor, c.upAgainst]);
-const net = (c: TallyCount) => { const [a, b] = sides(c); return a - b; };
+
+const net = (c: TallyCount) => {
+  const [a, b] = sides(c);
+
+  return a - b;
+};
+
 // Equal nets rank the less contested first (6–0 above 10–4): the one with fewer
 // against, which is the one with the higher share for.
 const byStanding = (a: TallyCount, b: TallyCount) => net(b) - net(a) || sides(a)[1] - sides(b)[1] || b.upFor - a.upFor;
@@ -68,6 +82,7 @@ const figures = (c: TallyCount) => {
   const box = el('span', 'ts-tally-fig');
   box.append(el('span', 'ts-up', `▲${a}`), el('span', 'ts-down', `▼${b}`), el('span', 'ts-net', signedNet(a - b)));
   box.title = `${c.for} for · ${c.against} against${c.mixed ? ` · ${c.mixed} mixed` : ''} (people) · ${c.upFor} upvotes for · ${c.upAgainst} against`;
+
   return box;
 };
 
@@ -80,9 +95,12 @@ const commentEl = (id: string) =>
 // beside the author, as the drawer's receipts do.
 const markThread = (reads: Record<string, Stance> | null, subject = '') => {
   for (const m of document.querySelectorAll('.ts-tally-mark')) m.remove();
+
   if (!reads || !isOld()) return;
+
   for (const [id, s] of Object.entries(reads)) {
     const tagline = commentEl(id)?.querySelector('.tagline');
+
     if (!tagline) continue;
     const m = el('span', `ts-tally-mark ts-${s}`, STANCE_MARKS[s].text);
     m.title = STANCE_MARKS[s].label(subject);
@@ -94,13 +112,16 @@ const markThread = (reads: Record<string, Stance> | null, subject = '') => {
 // else its permalink (it sits behind "load more", or under a collapsed one).
 const goTo = (id: string) => {
   const target = commentEl(id);
+
   if (target?.offsetParent) {
     target.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     target.classList.remove('ts-tally-flash');
     void target.offsetWidth;
     target.classList.add('ts-tally-flash');
+
     return;
   }
+
   const [, , sub, , post] = location.pathname.split('/');
   window.open(`${location.origin}/r/${sub}/comments/${post}/_/${id}/`, '_blank', 'noopener');
 };
@@ -111,9 +132,12 @@ const QUOTE_CHARS = 220;
 const receipts = (reads: Record<string, Stance>, subject: string) => {
   const byId = new Map(thread!.comments.map((c) => [c.id, c]));
   const rank = (s: Stance) => (s === 'mixed' ? 1 : 0);
+
   const ids = Object.keys(reads).filter((id) => byId.has(id))
     .sort((a, b) => rank(reads[a]!) - rank(reads[b]!) || byId.get(b)!.score - byId.get(a)!.score);
+
   const list = el('ul', 'ts-tally-receipts');
+
   for (const id of ids) {
     const c = byId.get(id)!, s = reads[id]!;
     const b = button('ts-tally-receipt');
@@ -126,6 +150,7 @@ const receipts = (reads: Record<string, Stance>, subject: string) => {
     li.append(b);
     list.append(li);
   }
+
   return list;
 };
 
@@ -329,40 +354,58 @@ const DRAWER_CSS = `:host { all: initial !important; }
 const host = el('div', 'ts-tally-host');
 const shadow = host.attachShadow({ mode: 'open' });
 const drawer = el('aside', 'ts-tally');
+
 drawer.setAttribute('aria-label', 'Tally');
+
 drawer.hidden = true;
+
 const status = el('div', 'ts-tally-status');
+
 status.setAttribute('aria-live', 'polite');
+
 // A segmented switch over `values`; render() presses the one in force.
 const segments = <T extends string>(values: T[], pick: (v: T) => void) => {
   const box = el('div', 'ts-tally-view');
+
   for (const v of values) {
     const b = button('ts-tally-seg', v);
     b.dataset.value = v;
     b.addEventListener('click', () => { pick(v); render(); });
     box.append(b);
   }
+
   return box;
 };
+
 const press = (box: HTMLElement, value: string) => {
   for (const b of box.querySelectorAll<HTMLElement>('button')) b.setAttribute('aria-pressed', String(b.dataset.value === value));
 };
+
 const viewSwitch = segments<View>(['people', 'upvotes'], (v) => { view = v; });
 const levelSwitch = segments<Level>(['makers', 'products'], (v) => { level = v; });
+
 levelSwitch.classList.add('ts-tally-level');
+
 const list = el('ol', 'ts-tally-list');
 const once = el('details', 'ts-tally-once') as HTMLDetailsElement;
 const onceLabel = el('summary', 'ts-tally-label');
 const onceList = el('ol', 'ts-tally-list');
+
 once.append(onceLabel, onceList);
+
 const failBox = el('div', 'ts-tally-error');
 const chatLog = el('div', 'ts-chat');
 const askForm = el('form', 'ts-ask') as HTMLFormElement;
 const askInput = el('input', 'ts-ask-input') as HTMLInputElement;
+
 askInput.placeholder = 'Ask the thread…';
+
 askInput.setAttribute('aria-label', 'Ask a question about this thread');
+
 const askButton = button('ts-ask-send', 'Ask');
+
 askButton.type = 'submit';
+
 askForm.append(askInput, askButton);
 
 {
@@ -388,6 +431,7 @@ const titleRow = (t: TitleTally) => {
   b.addEventListener('click', () => { openTitle = openTitle === t.key ? null : t.key; render(); });
   const li = el('li');
   li.append(b);
+
   return li;
 };
 
@@ -399,8 +443,10 @@ const rowEl = (row: Row) => {
   const head = button('ts-tally-opt');
   head.setAttribute('aria-expanded', String(isOpen));
   const name = el('span', 'ts-tally-name', listed.name);
+
   if (row.maker && !listed.name.toLowerCase().includes(row.maker.toLowerCase())) name.append(el('span', 'ts-tally-maker', row.maker));
   head.append(name, tally ? figures(tally.count) : el('span', 'ts-tally-pending', 'reading…'));
+
   if (row.why) head.append(el('span', 'ts-tally-why', row.why));
   head.disabled = !tally;
   head.addEventListener('click', () => {
@@ -409,27 +455,33 @@ const rowEl = (row: Row) => {
     render();
   });
   li.replaceChildren(head);
+
   if (isOpen) {
     const detail = el('div', 'ts-tally-detail');
     const counted = tally.titles.filter((t) => speakersOf(t.count) > 0).sort((a, b) => byStanding(a.count, b.count));
+
     if (counted.length) {
       const titles = el('ul', 'ts-tally-titles');
       titles.append(...counted.map(titleRow));
       detail.append(titles);
     }
+
     const title = tally.titles.find((t) => t.key === openTitle);
     detail.append(receipts(title?.reads ?? tally.reads, title?.name ?? listed.name));
     li.append(detail);
   }
+
   return li;
 };
 
 // An Option the model listed but no counted comment turns out to speak of isn't shown.
 const shown = () => rows.filter((r) => !r.tally || speakersOf(r.tally.count) > 0);
+
 // Products: each Option's titles in its place, ranked on their own; an Option
 // with none spoken of stands as it is.
 const products = (r: Row): Row[] => {
   const titles = r.tally?.titles.filter((t) => speakersOf(t.count) > 0) ?? [];
+
   return titles.length ? titles.map((t) => ({ listed: { key: t.key, name: t.name, titles: [] }, tally: { ...t, titles: [] }, maker: r.listed.name })) : [r];
 };
 
@@ -437,9 +489,13 @@ const statusText = () => {
   const read = thread?.comments.filter(countsInTally).length ?? 0;
   const counted = rows.filter((r) => r.tally).length;
   const options = shown().length;
+
   if (phase === 'listing') return thread ? `Listing the options in ${read} comments…` : 'Loading the comments…';
+
   if (phase === 'reading') return counted < rows.length || !rows.length ? `Reading ${read} comments · ${counted} of ${rows.length} options counted…` : 'Summing up why each is rated as it is…';
+
   if (phase === 'done') return options ? `${options} options · ${read} comments` : `No options to tally in ${read} comments`;
+
   return '';
 };
 
@@ -449,11 +505,13 @@ function render() {
   levelSwitch.hidden = !rows.some((r) => r.listed.titles.length);
   status.textContent = statusText();
   failBox.replaceChildren();
+
   if (phase === 'error') {
     const retry = button('ts-tally-retry', 'Try again');
     retry.addEventListener('click', () => void start());
     failBox.append(el('span', '', failure), retry);
   }
+
   const visible = level === 'products' && !levelSwitch.hidden ? shown().flatMap(products) : shown();
   const counted = visible.filter((r) => r.tally && speakersOf(r.tally.count) >= MIN_TALLY_PEOPLE).sort((a, b) => byStanding(a.tally!.count, b.tally!.count));
   const pending = visible.filter((r) => !r.tally);
@@ -473,9 +531,11 @@ const onEvent = (e: TallyEvent) => {
     phase = 'reading';
   } else if (e.type === 'option') {
     const row = rows.find((r) => r.listed.key === e.option.key);
+
     if (row) row.tally = e.option;
   } else if (e.type === 'why') {
     const row = rows.find((r) => r.listed.key === e.key);
+
     if (row) row.why = e.text;
   } else if (e.type === 'done') {
     phase = 'done';
@@ -483,6 +543,7 @@ const onEvent = (e: TallyEvent) => {
     phase = 'error';
     failure = e.error;
   }
+
   render();
 };
 
@@ -492,14 +553,17 @@ const onEvent = (e: TallyEvent) => {
 // become buttons onto them, numbered in the order it first cites them. An id
 // the page didn't load stays as written.
 const CITATION = /\[([a-z0-9]+(?:,\s*[a-z0-9]+)*)\]/gi;
+
 const paintAnswer = (box: HTMLElement, text: string) => {
   const byId = new Map(thread?.comments.map((c) => [c.id, c]));
   const cited: string[] = [];
   const number = (id: string) => (cited.includes(id) ? cited.indexOf(id) : cited.push(id) - 1) + 1;
   box.innerHTML = mdToHtml(text).replace(CITATION, (written, ids: string) => {
     const known = ids.split(/,\s*/).filter((id) => byId.has(id));
+
     return known.length ? known.map((id) => `<button type="button" class="ts-cite" data-id="${id}">${number(id)}</button>`).join('') : written;
   });
+
   for (const b of box.querySelectorAll<HTMLButtonElement>('.ts-cite')) {
     const c = byId.get(b.dataset.id!)!;
     const quote = plain(c.body);
@@ -512,9 +576,11 @@ const turnEl = (t: Turn) => {
   const box = el('div', 'ts-chat-turn');
   const answer = el('div', 'ts-chat-a');
   box.append(el('div', 'ts-chat-q', t.q), answer);
+
   if (t.error) answer.append(el('span', 'ts-chat-error', t.error));
   else if (t.a) paintAnswer(answer, t.a);
   else answer.append(el('span', 'ts-chat-reading', 'Reading the thread…'));
+
   return box;
 };
 
@@ -534,16 +600,20 @@ const ask = (q: string) => {
   turns.push(turn);
   stopAsk = askThread(thread!, chat, (e) => {
     const follow = atFoot();
+
     if (e.type === 'text') {
       turn.a += e.text;
       chatLog.lastElementChild?.replaceWith(turnEl(turn));
     } else {
       stopAsk = null;
+
       if (e.type === 'error') turn.error = e.error;
       else if (!turn.a.trim()) turn.error = 'The answer was cut off — try again';
       else { turn.done = true; saveQA(qaKey(), { q, a: turn.a, ts: Date.now() }); }
+
       renderChat();
     }
+
     if (follow) drawer.scrollTop = drawer.scrollHeight;
   });
   renderChat();
@@ -553,6 +623,7 @@ const ask = (q: string) => {
 askForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const q = askInput.value.trim();
+
   if (!q || !thread || stopAsk) return;
   askInput.value = '';
   ask(q);
@@ -576,17 +647,22 @@ async function start() {
   thread = null;
   render();
   renderChat();
+
   try {
     const res = await fetch(threadUrl(), { credentials: 'include' });
+
     if (!res.ok) throw new Error(`Reddit answered ${res.status}`);
     thread = threadFromListing(await res.json());
   } catch {
     phase = 'error';
     failure = "Couldn't load this thread's comments";
     render();
+
     return;
   }
+
   render();
+
   // The questions asked of it on earlier visits, oldest first.
   if (!turns.length) turns = loadQAs(qaKey()).reverse().map((e) => ({ q: e.q, a: e.a, done: true }));
   renderChat();
@@ -598,7 +674,9 @@ function toggleDrawer(show = drawer.hidden || !host.isConnected) {
     host.style.setProperty('--ts-font', getComputedStyle(document.body).fontFamily);
     document.body.append(host);
   }
+
   drawer.hidden = !show;
+
   if (show && phase === 'idle') void start();
   else render();
 }
@@ -606,10 +684,12 @@ function toggleDrawer(show = drawer.hidden || !host.isConnected) {
 // ---- the way in ----
 
 const LINK_CLASS = 'ts-tally-link';
+
 const placeEntry = () => {
   if (!onThread() || document.querySelector(`.${LINK_CLASS}`)) return;
   const open = (e: Event) => { e.preventDefault(); toggleDrawer(); };
   const buttons = document.querySelector('#siteTable .thing.link .flat-list.buttons');
+
   if (buttons) {
     const a = el('a', LINK_CLASS, 'tally') as HTMLAnchorElement;
     a.href = '#';
@@ -618,9 +698,12 @@ const placeEntry = () => {
     const li = el('li');
     li.append(a);
     buttons.append(li);
+
     return;
   }
+
   const post = document.querySelector('shreddit-post');
+
   if (!post) return;
   const pill = button(`${LINK_CLASS} ts-tally-pill`, 'Tally the options');
   pill.title = KEY;
@@ -630,6 +713,7 @@ const placeEntry = () => {
 
 // A new thread in new Reddit's single-page app starts afresh.
 let shownFor = location.pathname;
+
 const sync = () => {
   if (location.pathname !== shownFor) {
     shownFor = location.pathname;
@@ -644,6 +728,7 @@ const sync = () => {
     drawer.hidden = true;
     markThread(null);
   }
+
   placeEntry();
 };
 
@@ -657,7 +742,9 @@ void tallyReady().then((ready) => {
   }).observe(document.body, { childList: true, subtree: true });
   document.addEventListener('keydown', (e) => {
     const target = e.target as HTMLElement;
+
     if (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+
     if (e.code === 'KeyT' && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && onThread()) {
       e.preventDefault();
       toggleDrawer();

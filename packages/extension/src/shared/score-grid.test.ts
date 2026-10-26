@@ -13,7 +13,9 @@ import {
 const card = (nps?: number): HTMLElement => {
   const el = document.createElement('div');
   el.className = 'card';
+
   if (nps != null) el.setAttribute('data-nps', String(nps));
+
   return el;
 };
 
@@ -22,12 +24,14 @@ const card = (nps?: number): HTMLElement => {
 const wrap = (child: Element): HTMLElement => {
   const li = document.createElement('div');
   li.appendChild(child);
+
   return li;
 };
 
 const grid = (...children: Element[]): HTMLElement => {
   const g = document.createElement('div');
   children.forEach((c) => g.appendChild(c));
+
   return g;
 };
 
@@ -126,11 +130,14 @@ describe('structuralContainers', () => {
     const el = document.createElement('div');
     el.className = 'lazy-load';
     el.style.cssText = 'width:220px;height:220px';
+
     return el;
   };
+
   const section = (text: string): HTMLElement => {
     const el = document.createElement('section');
     el.textContent = text;
+
     return el;
   };
 
@@ -193,10 +200,12 @@ describe('applyOrder strategies', () => {
     // A recycled card loses its badge; until its new product scores it's unscored.
     const [a, b, c] = [card(50), card(10), card(-5)];
     const g = grid(a, b, c);
+
     const band = () => {
       const { scored, rest, sunk } = rankChildren(g);
       orderByCssBand(g, scored, rest, sunk);
     };
+
     band();
     b.removeAttribute('data-nps');
     c.removeAttribute('data-nps');
@@ -220,7 +229,9 @@ describe('markBestRatios', () => {
   const badge = (score: number, ratio?: number): HTMLElement => {
     const el = document.createElement('span');
     el.setAttribute('data-nps', String(score));
+
     if (ratio != null) el.setAttribute('data-nps-ratio', String(ratio));
+
     return el;
   };
 

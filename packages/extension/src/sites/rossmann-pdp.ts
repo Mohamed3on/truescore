@@ -17,8 +17,10 @@ setupBazaarvoicePdp(ROSSMANN, {
     let node = document.querySelector(
       '[data-testid="product-amountAndAddToCart"]:not([data-testid="product-card"] *, [data-testid="product-sticky-buy-box"] *)',
     );
+
     // Up to its block in the buy column, the one beside the title's.
     while (node?.parentElement && !node.parentElement.querySelector('h1')) node = node.parentElement;
+
     return node ? { node, position: 'after' } : null;
   },
   exampleQuery: 'Geschmack OR Konsistenz',

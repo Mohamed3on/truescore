@@ -7,6 +7,7 @@ export const addCommas = (x: number | string): string =>
 // pass a lighter one for a dark host.
 export const npsColor = (nps: number, lightness = 35): string => {
   const hue = Math.min(120, Math.max(0, (nps - 50) * 3));
+
   return `hsl(${hue}, 70%, ${lightness}%)`;
 };
 
@@ -25,8 +26,11 @@ export const npsStats = (five: number, one: number, total: number) => ({
 
 export const el = (tag: string, className?: string, text?: string | number) => {
   const e = document.createElement(tag);
+
   if (className) e.className = className;
+
   if (text !== undefined) e.textContent = String(text);
+
   return e;
 };
 
@@ -36,6 +40,7 @@ export const el = (tag: string, className?: string, text?: string | number) => {
 // the page's HTML away and renders it again from scratch.
 export const afterHydration = () => new Promise<void>((resolve) => {
   const idle = () => requestIdleCallback(() => resolve(), { timeout: 3000 });
+
   if (document.readyState === 'complete') idle();
   else window.addEventListener('load', idle, { once: true });
 });

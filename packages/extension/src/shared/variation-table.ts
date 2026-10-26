@@ -44,6 +44,7 @@ export const tallyVariationDims = <T>(
     for (const [dim, value] of variationsOf(item, i)) {
       if (!value) continue;
       let values = dims.get(dim);
+
       if (!values) dims.set(dim, (values = new Map()));
       const tally = values.get(value) ?? { score: 0, count: 0 };
       tally.score += starScore(ratingOf(item));
@@ -67,6 +68,7 @@ export const tallyVariationDims = <T>(
 };
 
 const STYLE_ID = 'ts-var-styles';
+
 const ensureStyles = () => {
   if (document.getElementById(STYLE_ID)) return;
   const s = document.createElement('style');
@@ -148,6 +150,7 @@ export const renderVariationCard = (dims: VarDim[], opts: VariationCardOpts = {}
       const sign = r.score > 0 ? 'is-pos' : r.score < 0 ? 'is-neg' : '';
       const row = document.createElement('div');
       row.className = 'ts-var-row' + (i === 0 && r.score > 0 ? ' ts-var-best' : '');
+
       if (animate) row.style.animationDelay = `${Math.min(i, 12) * 30}ms`;
 
       const name = document.createElement('span');
@@ -156,6 +159,7 @@ export const renderVariationCard = (dims: VarDim[], opts: VariationCardOpts = {}
       val.className = 'ts-var-val';
       val.textContent = r.label;
       name.appendChild(val);
+
       if (r.meta) {
         const meta = document.createElement('span');
         meta.className = 'ts-var-fit';
@@ -201,5 +205,6 @@ export const renderVariationCard = (dims: VarDim[], opts: VariationCardOpts = {}
 
   box.appendChild(panel);
   renderPanel(dims[0].rows);
+
   return box;
 };

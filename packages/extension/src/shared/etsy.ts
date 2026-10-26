@@ -66,13 +66,16 @@ const csrfToken = () =>
 // never a reason to give up on the score or the reviews themselves.
 export const listingMeta = (): ListingMeta | null => {
   const listingId = location.pathname.match(/\/listing\/(\d+)/)?.[1];
+
   if (!listingId) return null;
 
   const html = document.documentElement.innerHTML;
   const shopId = html.match(/"shop_id":(\d+)/)?.[1];
+
   if (!shopId) return null;
 
   const categoryPath = html.match(/"category_path":\[([\d,]+)\]/)?.[1];
+
   return { listingId, shopId, categoryPath: categoryPath ? categoryPath.split(',') : [] };
 };
 
@@ -85,6 +88,7 @@ const deepDive = async (
   tagFilters: string[] = []
 ) => {
   const csrf = csrfToken();
+
   if (!csrf) return null;
 
   const res = await fetcher(DEEP_DIVE, {
@@ -112,7 +116,9 @@ const deepDive = async (
       },
     }),
   });
+
   if (!res.ok) return null;
+
   return (await res.json())?.jsData ?? null;
 };
 
@@ -125,13 +131,20 @@ export const fetchItemScore = async (
 ): Promise<ItemScore | null> => {
   const key = `nps_etsy_v3_${listingId}`; // v2: entries now also carry topic tags; v3: scores keep their sign
   const cached = cacheGetMaybe(key, SCORE_TTL);
+
   if (cached) return cached.value;
 
   const js = await deepDive(fetcher, listingId, shopId, HISTOGRAM_ONLY_PAGE, 'Suggested');
+
   if (!js) return null; // transport/CSRF failure — retry on a later pass
   const counts = js.ratingCounts;
   const total = counts?.All;
-  if (!total) { cacheSetMaybe(key, null); return null; } // genuinely reviewless
+
+  if (!total) {
+    cacheSetMaybe(key, null);
+
+    return null;
+  } // genuinely reviewless
 
   const topics: Topic[] = (js?.tagFilters ?? [])
     .map((t: any): Topic => ({
@@ -145,6 +158,7 @@ export const fetchItemScore = async (
 
   const result = { ...npsStats(counts['5'] || 0, counts['1'] || 0, total), total, topics };
   cacheSet(key, result);
+
   return result;
 };
 
@@ -154,8 +168,10 @@ export const fetchRecentReviews = async (
   page: number
 ): Promise<EtsyReview[]> => {
   const js = await deepDive(fetcher, listingId, shopId, page, 'Recent');
+
   // A failed page (429, no CSRF) isn't an empty one — past the last page is.
   if (!js) throw new Error(`Etsy review page ${page} failed`);
+
   return (js.reviews ?? []).map((r: any) => ({
     transactionId: r.transactionId,
     rating: r.reviewInfo?.rating ?? 0,
@@ -175,6 +191,7 @@ export const fetchTopicReviews = async (
   page = 1
 ): Promise<EtsyReview[]> => {
   const js = await deepDive(fetcher, listingId, shopId, page, 'Recent', [tag]);
+
   return (js?.reviews ?? []).map((r: any) => ({
     transactionId: r.transactionId,
     rating: r.reviewInfo?.rating ?? 0,
@@ -193,34 +210,44 @@ export const fetchVariations = async (
   transactionIds: number[]
 ): Promise<Map<number, [string, string][]>> => {
   const found = new Map<number, [string, string][]>();
+
   if (!categoryPath.length) return found;
 
   const qs = new URLSearchParams();
   qs.set('log_performance_metrics', 'false');
   qs.append(`specs[${VARIATIONS}][]`, VARIATIONS_SPEC);
+
   for (const id of transactionIds) qs.append(`specs[${VARIATIONS}][1][transaction_ids][]`, String(id));
   qs.set(`specs[${VARIATIONS}][1][shop_id]`, shopId);
   qs.set(`specs[${VARIATIONS}][1][listing_id]`, listingId);
+
   for (const c of categoryPath) qs.append(`specs[${VARIATIONS}][1][category_path][]`, c);
 
   const res = await fetcher(`/api/v3/ajax/bespoke/public/neu/specs/${VARIATIONS}?${qs}`, {
     credentials: 'include',
     headers: { 'x-requested-with': 'XMLHttpRequest', 'x-etsy-protection': '1' },
   });
+
   if (!res.ok) return found;
 
   const html = (await res.json())?.output?.[VARIATIONS];
+
   if (!html) return found;
 
   const doc = new DOMParser().parseFromString(html, 'text/html');
+
   for (const block of doc.querySelectorAll('[data-variation]')) {
     const id = Number(block.getAttribute('data-variation'));
     const pairs: [string, string][] = [];
+
     for (const item of block.querySelectorAll('.variation-info')) {
       const [dim, value] = [...item.querySelectorAll('p')].map((p) => (p.textContent ?? '').trim());
+
       if (dim && value) pairs.push([dim.replace(/:$/, ''), value]);
     }
+
     if (pairs.length) found.set(id, pairs);
   }
+
   return found;
 };

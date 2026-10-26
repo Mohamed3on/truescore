@@ -28,6 +28,7 @@ describe('sortChipsByImpact', () => {
       chip(60, 1, 'above-small'),
       chip(90, 10, 'above-big'),
     ];
+
     expect(sortChipsByImpact(chips, 50).map((c) => c.label)).toEqual(['above-big', 'above-small', 'below-big']);
   });
 
@@ -54,6 +55,7 @@ describe('chipPolarity', () => {
 
 describe('selectScoredChips', () => {
   const item = (label: string, totalReviews?: number) => ({ label, totalReviews });
+
   const statsOf = (i: { totalReviews?: number }) =>
     i.totalReviews == null ? null : { totalReviews: i.totalReviews };
 

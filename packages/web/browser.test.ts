@@ -24,6 +24,7 @@ describe('fetchPlacePreview', () => {
     globalThis.fetch = (async (input: string) => {
       if (input === place) return new Response(`<link href="/maps/preview/place?pb=!1s${++pages}&amp;authuser=0" rel="preload">`);
       const pb = new URL(input).searchParams.get('pb')!;
+
       return gone.has(pb) ? new Response('gone', { status: 400 }) : new Response(`)]}'\n${JSON.stringify([pb, input])}`);
     }) as unknown as typeof fetch;
 

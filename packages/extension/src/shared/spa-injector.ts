@@ -19,12 +19,15 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
 
   const stopRetry = () => {
     if (retryObs) { retryObs.disconnect(); retryObs = null; }
+
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   };
 
   const fullCleanup = () => {
     stopRetry();
+
     if (activeObs) { activeObs.disconnect(); activeObs = null; }
+
     cleanup();
   };
 
@@ -34,10 +37,12 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
   // from injecting into the next page.
   const startInjecting = (gen: number, data: T) => {
     stopRetry();
+
     const run = () => {
       if (gen !== generation) return;
       inject(data);
     };
+
     run();
     let timer: ReturnType<typeof setTimeout> | null = null;
     activeObs = new MutationObserver(() => {
@@ -51,11 +56,13 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
     if (loadingGen === gen) return; // a load for this generation is already in flight
     loadingGen = gen;
     let data: T | null = null;
+
     try {
       data = await load();
     } finally {
       if (loadingGen === gen) loadingGen = -1;
     }
+
     if (gen !== generation || data == null) return;
     startInjecting(gen, data);
   };
@@ -67,6 +74,7 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
 
     if (!retryUntilLoaded) {
       attempt(gen);
+
       return;
     }
 
@@ -78,15 +86,18 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
         if (gen === generation && !activeObs) attempt(gen);
       }, 200);
     };
+
     retryObs = new MutationObserver(schedule);
     retryObs.observe(document.body, { childList: true, subtree: true });
     schedule();
   };
 
   let lastUrl = location.href;
+
   const onUrlChange = () => {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
+
     if (match()) init();
     else {
       // Invalidate any in-flight load() too, or it resolves after this cleanup
@@ -96,10 +107,12 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
       fullCleanup();
     }
   };
+
   // Navigation API covers pushState/replaceState/popstate/hash; falls back to
   // popstate+hashchange on browsers without it. Replaces a body-subtree
   // MutationObserver that ran JS on every DOM mutation just to compare hrefs.
   const nav = (window as any).navigation;
+
   if (nav?.addEventListener) {
     nav.addEventListener('navigatesuccess', onUrlChange);
   } else {

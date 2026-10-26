@@ -16,6 +16,7 @@ setupScoreGrid({
     // other. A shop page rates itself in the header and leaves its own cards
     // starless, so there the badge goes under the info block instead.
     const stars = card.querySelector('clg-static-review-stars');
+
     if (stars) stars.after(badge);
     else card.querySelector('.v2-listing-card__info')?.append(badge);
   },

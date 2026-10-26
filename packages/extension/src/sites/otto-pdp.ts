@@ -15,6 +15,7 @@ if (productId && scored) {
   const badge = renderScoreBadge(scored);
 
   const panel = createIslandShell();
+
   const { stats } = buildReviewPanel(panel, {
     key: `otto-summary-${productId}`,
     // Searches reach only the reviews in hand.
@@ -27,6 +28,7 @@ if (productId && scored) {
     date: (r) => r.date,
     exampleQuery: 'Qualität OR Lieferung',
   });
+
   appendStat(stats!, addCommas(score), 'score', npsColor(nps));
   appendStat(stats!, addCommas(total), 'reviews');
 
@@ -35,12 +37,16 @@ if (productId && scored) {
   // block of their own. Both go back if Otto redraws them.
   const buyCard = () => {
     const block = document.querySelector('.js_pdp_ordering')?.closest('.pl_block');
+
     return block?.parentElement?.querySelector(':scope > .pdp_platform-advantages') ?? block;
   };
+
   const place = () => {
     if (!badge.isConnected) document.querySelector('.js_pdp_quick-access .pdp_cr-rating__wrapper')?.append(badge);
+
     if (!panel.isConnected) buyCard()?.after(panel);
   };
+
   place();
   new MutationObserver(place).observe(document.body, { childList: true, subtree: true });
 }

@@ -11,36 +11,47 @@ import { setModel } from './llm';
 // and "penguin" as that item's alias, once `aliasesDue` lets it.
 let aliasesDue: Promise<void> = Promise.resolve();
 let modelCalls = 0;
+
 const model = fakeModel(async (fields) => {
   modelCalls++;
+
   if (!fields.length) return 'Worth it for the **penguins**.';
+
   if (fields.includes('highlights')) return JSON.stringify({ highlights: [{ text: 'The penguins are a favourite', sentiment: 'positive' }], items: ['penguins'], alternatives: [], valueForMoney: null });
   await aliasesDue;
+
   return JSON.stringify({ items: [{ name: 'penguins', aliases: ['penguin'] }] });
 });
+
 // Jev: a review makes the point when it mentions penguins.
 let jevCalls = 0;
+
 const jev = {
   systemOne: (req: { questions: Record<string, any> }) => {
     jevCalls++;
     const answers = Object.fromEntries(Object.entries(req.questions).map(([id, q]) => [id, { noul: /penguin/.test(q.instructions.review) ? 0.9 : 0.1 }]));
+
     return Promise.resolve({ answers, usage: { input_tokens: 1, output_tokens: 0 }, model: 'jev-test' }) as any;
   },
 } as any;
 
 beforeEach(() => { aliasesDue = Promise.resolve(); modelCalls = jevCalls = 0; setModel(model); setJevClient(jev); });
+
 afterEach(() => { setModel(null); setJevClient(null); });
 
 let n = 0;
 const review = (text: string): Review => ({ reviewId: `r${++n}`, stars: 5, reviewerReviewCount: 10, timestamp: null, text });
+
 // A Place this server looked up, its reviews fresh to Jev's memo.
 const place = async () => {
   const featureId = `0x${++n}:0x1`;
   const reviews = [review(`loved the penguins ${n}`), review(`penguins! ${n}`), review(`parking was hard ${n}`)];
   const score = { featureId, totalReviews: 3, trustedReviews: 3, scorePct: 90, relevant: { totalReviews: 3, trustedReviews: 3, scorePct: 90 }, newest: { totalReviews: 3, trustedReviews: 3, scorePct: 90 }, reviews } as ScoreResult;
   await cache.putScore(featureId, 'Aquarium', score, 3);
+
   return { featureId, reviews };
 };
+
 const unchecked: Summary = { verdict: 'Kept from before Jev.', highlights: [{ text: 'The penguins are a favourite', sentiment: 'positive' }] };
 
 test("a Chip's or a Search's Summary never overwrites the Place's", async () => {

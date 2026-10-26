@@ -18,6 +18,7 @@ export const bgkeyRequestOf = (body: string): string | null => {
 export const signReq = async <T extends { body?: string; headers?: Record<string, string> }>(init: T | undefined, sign: Signer | undefined): Promise<T | undefined> => {
   const request = init?.body ? bgkeyRequestOf(init.body) : null;
   const key = request && sign ? await sign(request) : null;
+
   return key ? { ...init!, headers: { ...init!.headers, 'x-maps-bgkey': key } } : init;
 };
 
@@ -30,11 +31,18 @@ export const signReq = async <T extends { body?: string; headers?: Record<string
 // a VM, which it does the first time it needs a key.
 export function installMapsSigner(): void {
   type Snapshot = (done: (key: string) => void, args: unknown[]) => void;
+
   let snapshot: Snapshot | null = null;
   const wrappedA = new WeakMap<Function, Function>();
+
   const wrapA = (a: Function) => function (this: unknown, program: unknown, ready: (...fns: any[]) => unknown, ...rest: unknown[]) {
-    return a.call(this, program, (...fns: any[]) => { snapshot = fns[0]; return ready(...fns); }, ...rest);
+    return a.call(this, program, (...fns: any[]) => {
+      snapshot = fns[0];
+
+      return ready(...fns);
+    }, ...rest);
   };
+
   let botguard: unknown;
   Object.defineProperty(window, 'botguard', {
     configurable: true,
@@ -44,8 +52,11 @@ export function installMapsSigner(): void {
       botguard = v && typeof v === 'object' ? new Proxy(v, {
         get: (t: any, k) => {
           const val = t[k];
+
           if (k !== 'a' || typeof val !== 'function') return val;
+
           if (!wrappedA.has(val)) wrappedA.set(val, wrapA(val));
+
           return wrappedA.get(val);
         },
       }) : v;
@@ -53,6 +64,7 @@ export function installMapsSigner(): void {
   });
   (window as any).__truescoreSignMaps = (request: string): Promise<string | null> => new Promise((resolve) => {
     const sign = snapshot;
+
     if (!sign) return resolve(null);
     const timer = setTimeout(() => resolve(null), 5000);
     sign((key) => { clearTimeout(timer); resolve(key); }, [{ request }, undefined, undefined, undefined]);

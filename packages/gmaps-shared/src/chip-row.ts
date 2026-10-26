@@ -16,10 +16,12 @@ export const standoutNames = (item: string, aliases?: Record<string, string[]>):
 // review once, with Jev's reads of both (asked the same question, so nothing is
 // read again) — unread unless both were read.
 type Reads = { reviews?: Review[]; stances?: Record<string, Stance> };
+
 export const pooledReads = (a: Reads, b: Reads) => {
   const reviews = mergeByReviewId(a.reviews ?? [], b.reviews ?? []);
   const stances = a.stances && b.stances ? { ...b.stances, ...a.stances } : undefined;
   const readable = reviews.filter((r) => isTrusted(r.reviewerReviewCount) && r.text.trim().length > 1).length;
+
   return {
     reviews,
     stances,
@@ -37,16 +39,25 @@ export const pooledReads = (a: Reads, b: Reads) => {
 // side, weighted by how many do), else by star share against the place's own
 // score; then any that failed, then any still loading.
 export type RowChip = ChipLike & { key: string; state: ChipState; stance?: StanceCounts };
+
 export const chipRowOrder = <T extends RowChip>(chips: T[], prev: string[], settled: boolean, overallPct: number): T[] => {
   const rank = (cs: T[]) => {
     const done = cs.filter((c) => c.state === 'done');
+
     const sorted = done.every((c) => c.stance)
-      ? sortChipsByImpact(done.map((c) => { const o = opinionsOf(c.stance!); return { c, score: { scorePct: opinionPct(o) }, count: o.pos + o.neg }; }), 0).map((r) => r.c)
+      ? sortChipsByImpact(done.map((c) => {
+        const o = opinionsOf(c.stance!);
+
+        return { c, score: { scorePct: opinionPct(o) }, count: o.pos + o.neg };
+      }), 0).map((r) => r.c)
       : sortChipsByImpact(done, overallPct);
+
     return [...sorted, ...cs.filter((c) => c.state === 'error'), ...cs.filter((c) => c.state === 'loading')];
   };
+
   if (settled) return rank(chips);
   const byKey = new Map(chips.map((c) => [c.key, c]));
+
   return [...prev.flatMap((k) => byKey.get(k) ?? []), ...rank(chips.filter((c) => !prev.includes(c.key)))];
 };
 
@@ -56,26 +67,34 @@ export const chipRowOrder = <T extends RowChip>(chips: T[], prev: string[], sett
 // animates on the row's first paint; with reduced motion nothing moves and
 // newcomers only fade. `tail` follows the chips (a note) and never animates.
 type ChipPlace = { rect: DOMRect; opacity: number };
+
 const placeOf = (c: HTMLElement): ChipPlace => ({ rect: c.getBoundingClientRect(), opacity: Number(getComputedStyle(c).opacity) });
+
 // The design system's one ease-out (DESIGN.md), as both clients' CSS spells it.
 const EASE = 'cubic-bezier(0.16, 1, 0.3, 1)';
+
 export const replaceChips = (list: HTMLElement, chips: { key: string; el: HTMLElement }[], tail: Node[] = []) => {
   const before = new Map([...list.querySelectorAll<HTMLElement>('[data-key]')].map((c) => [c.dataset.key!, placeOf(c)]));
+
   for (const c of chips) c.el.dataset.key = c.key;
   list.replaceChildren(...chips.map((c) => c.el), ...tail);
+
   if (!before.size) return;
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   // Each lands on its own opacity: a disabled chip re-rendered disabled doesn't flash.
   const placed = chips.map((c) => ({ el: c.el, was: before.get(c.key), is: placeOf(c.el) }));
   let arriving = 0;
+
   for (const { el, was, is } of placed) {
     if (!was) {
       el.animate(still ? [{ opacity: 0 }, { opacity: is.opacity }] : [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: is.opacity, transform: 'none' }],
         { duration: 300, delay: 50 * arriving++, easing: EASE, fill: 'backwards' });
       continue;
     }
+
     const dx = still ? 0 : was.rect.left - is.rect.left;
     const dy = still ? 0 : was.rect.top - is.rect.top;
+
     if (dx || dy || was.opacity !== is.opacity) {
       el.animate([{ transform: `translate(${dx}px, ${dy}px)`, opacity: was.opacity }, { transform: 'none', opacity: is.opacity }], { duration: 250, easing: EASE });
     }

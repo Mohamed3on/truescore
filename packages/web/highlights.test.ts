@@ -6,14 +6,17 @@ import * as realBrowser from './browser';
 // a six-hour blank highlights row. Drive it through a stubbed preview fetch.
 const shots: Array<() => Promise<unknown>> = [];
 let calls = 0;
+
 const fetchPlacePreview = mock(() => {
   const next = shots[Math.min(calls++, shots.length - 1)];
+
   return next ? next() : Promise.resolve(preview([]));
 });
 
 // Keep the rest of the module intact — gmaps/maps-creds import googleFetch and
 // friends off it, and a bare factory would blank those out.
 await mock.module('./browser', () => ({ ...realBrowser, fetchPlacePreview }));
+
 // Skip the 2.5s inter-round spacing; the timing is politeness, not behaviour.
 const sleepSpy = spyOn(Bun, 'sleep').mockImplementation(() => Promise.resolve());
 
@@ -23,6 +26,7 @@ const { harvestQuick, harvestTokens } = await import('./highlights');
 const preview = (chips: Array<[string, string]>) => {
   const six: any[] = [];
   six[153] = [chips.map(([token, label]) => [[token], label, null, [null, null, null, null, 7]])];
+
   return [null, null, null, null, null, null, six];
 };
 
@@ -34,6 +38,7 @@ beforeEach(() => {
   calls = 0;
   fetchPlacePreview.mockClear();
 });
+
 afterAll(() => sleepSpy.mockRestore());
 
 describe('harvestQuick', () => {

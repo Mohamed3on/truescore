@@ -35,13 +35,16 @@ const reviewText = (r: EtsyReview) => r.text;
 
 const chunk = <T,>(items: T[], size: number): T[][] => {
   const out: T[][] = [];
+
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+
   return out;
 };
 
 const recentReviews = async (meta: ListingMeta): Promise<EtsyReview[]> => {
   const key = `etsy_reviews_${meta.listingId}`;
   const cached = cacheGet(key, REVIEWS_TTL);
+
   if (cached) return cached;
 
   const pages = await Promise.all(
@@ -49,20 +52,25 @@ const recentReviews = async (meta: ListingMeta): Promise<EtsyReview[]> => {
       fetchRecentReviews(throttledFetch, meta, i + 1).catch(() => null)
     )
   );
+
   const reviews = pages.flatMap((page) => page ?? []);
+
   // A failed page leaves a hole in the sample: show what came back, but pin
   // only a whole one for the week.
   if (reviews.length && !pages.includes(null)) cacheSet(key, reviews);
+
   return reviews;
 };
 
 const variationsFor = async (meta: ListingMeta, reviews: EtsyReview[]) => {
   const batches = chunk(reviews.map((r) => r.transactionId), VARIATION_BATCH);
+
   const maps = await Promise.all(
     batches.map((ids) =>
       fetchVariations(throttledFetch, meta, ids).catch(() => new Map<number, [string, string][]>())
     )
   );
+
   return new Map(maps.flatMap((m) => [...m]));
 };
 
@@ -79,9 +87,11 @@ const productLd = (): any => {
   for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
     try {
       const parsed = JSON.parse(script.textContent ?? '');
+
       if (parsed?.['@type'] === 'Product') return parsed;
     } catch {}
   }
+
   return null;
 };
 
@@ -90,9 +100,12 @@ const productLd = (): any => {
 const parseAmount = (raw: string) => {
   const digits = raw.replace(/[^\d.,]/g, '');
   const cut = Math.max(digits.lastIndexOf(','), digits.lastIndexOf('.'));
+
   if (cut === -1) return Number(digits);
   const fraction = digits.slice(cut + 1);
+
   if (fraction.length !== 2) return Number(digits.replace(/[.,]/g, ''));
+
   return Number(`${digits.slice(0, cut).replace(/[.,]/g, '')}.${fraction}`);
 };
 
@@ -101,14 +114,17 @@ const parseAmount = (raw: string) => {
 // charged amount exists only as rendered text, down in the delivery section.
 const readPostage = (): { amount: number; text: string } | null => {
   const rate = productLd()?.offers?.shippingDetails?.shippingRate;
+
   if (rate && Number(rate.value) === 0) return { amount: 0, text: 'Free' };
 
   const strong = [...document.querySelectorAll('#shipping-and-returns-div strong')].find((s) =>
     s.querySelector('.currency-value')
   );
+
   if (!strong) return null;
 
   const amount = parseAmount(strong.querySelector('.currency-value')!.textContent ?? '');
+
   return Number.isFinite(amount) ? { amount, text: strong.textContent!.replace(/\s+/g, '') } : null;
 };
 
@@ -121,18 +137,23 @@ const attachPostage = (stats: HTMLElement) => {
 
   const add = () => {
     const postage = readPostage();
+
     if (!postage) return false;
 
     const stat = el('div', 'ars-stat');
     const value = el('span', 'ars-stat-val', postage.text);
+
     if (price > 0) {
       const ratio = postage.amount / price;
       value.style.color = postageTone(ratio);
       stat.title = `${postage.text} postage — ${Math.round(ratio * 100)}% of the item price`;
     }
+
     stat.append(value, el('span', 'ars-stat-lbl', 'postage'));
+
     if (stats.children.length) stats.append(el('div', 'ars-stat-div'));
     stats.append(stat);
+
     return true;
   };
 
@@ -148,8 +169,10 @@ const attachPostage = (stats: HTMLElement) => {
 // the fallback for layouts that ship no buy box (sold-out, digital downloads).
 const panelAnchor = (): [Element, InsertPosition] | null => {
   const buyBox = document.querySelector('[data-buy-box]');
+
   if (buyBox) return [buyBox, 'beforebegin'];
   const header = document.querySelector('.reviews-header');
+
   return header ? [header, 'afterend'] : null;
 };
 
@@ -170,19 +193,23 @@ const topicSummaryPrompt = (topic: string) =>
 // One fetch per topic page for the visit: the topic's row loads pages 1–2 and its
 // summary pages 1–TOPIC_SUMMARY_PAGES, so a summary reuses what the row has.
 const topicPages = new Map<string, Promise<EtsyReview[]>>();
+
 const topicPage = (meta: ListingMeta, tag: string, page: number) => {
   const key = `${tag}\n${page}`;
   let reviews = topicPages.get(key);
+
   if (!reviews) {
     // A failed page isn't kept, so a later summary retries it.
     reviews = fetchTopicReviews(throttledFetch, meta, tag, page).catch((): EtsyReview[] => (topicPages.delete(key), []));
     topicPages.set(key, reviews);
   }
+
   return reviews;
 };
 
 const topicReviews = async (meta: ListingMeta, tag: string): Promise<EtsyReview[]> =>
   (await Promise.all(Array.from({ length: TOPIC_SUMMARY_PAGES }, (_, i) => topicPage(meta, tag, i + 1)))).flat();
+
 const topicReviewTexts = async (meta: ListingMeta, tag: string): Promise<string[]> =>
   [...new Set((await topicReviews(meta, tag)).map(reviewText).filter(Boolean))];
 
@@ -210,7 +237,9 @@ const fillTopicDetail = (detail: HTMLElement, meta: ListingMeta, t: Topic) => {
     .then((pages) => {
       const reviews = pages.flat().filter((r) => r.text);
       list.replaceChildren();
+
       if (!reviews.length) return list.appendChild(el('div', 'ars-search-empty', 'No reviews to show'));
+
       for (const r of reviews) list.appendChild(buildReviewCard(reviewFields(r), []));
     })
     .catch(() => list.replaceChildren(el('div', 'ars-search-empty', 'Could not load reviews')));
@@ -222,12 +251,14 @@ const renderTopics = (topics: Topic[], meta: ListingMeta): HTMLElement | null =>
     .sort((a, b) => b.total - a.total)
     .slice(0, TOPIC_MAX_ROWS)
     .sort((a, b) => topicNps(b) - topicNps(a));
+
   if (shown.length < 2) return null; // a single aspect isn't a breakdown
 
   const box = el('div', 'ars-topics');
   box.appendChild(el('div', 'ars-topics-title', 'What people mention'));
 
   let open: HTMLElement | null = null; // one expanded row at a time
+
   for (const t of shown) {
     const nps = topicNps(t);
     const tone = npsColor(nps);
@@ -239,9 +270,11 @@ const renderTopics = (topics: Topic[], meta: ListingMeta): HTMLElement | null =>
     const name = el('span', 'ars-topic-name');
     name.appendChild(el('span', 'ars-topic-label', t.name));
     const sub = el('span', 'ars-topic-sub', `${addCommas(t.total)} mentions`);
+
     if (t.neg >= 5 && t.neg / t.total >= 0.1) {
       sub.appendChild(el('span', 'ars-topic-warn', ` · ${addCommas(t.neg)} complaints`));
     }
+
     name.append(sub);
 
     const track = el('span', 'ars-topic-track');
@@ -262,13 +295,16 @@ const renderTopics = (topics: Topic[], meta: ListingMeta): HTMLElement | null =>
     let loaded = false;
     btn.addEventListener('click', () => {
       const isOpen = detail.style.display !== 'none';
+
       if (open && open !== detail) {
         open.style.display = 'none';
         (open.previousElementSibling as HTMLElement)?.classList.remove('is-open');
       }
+
       open = isOpen ? null : detail;
       detail.style.display = isOpen ? 'none' : '';
       btn.classList.toggle('is-open', !isOpen);
+
       if (!isOpen && !loaded) {
         loaded = true;
         fillTopicDetail(detail, meta, t);
@@ -277,6 +313,7 @@ const renderTopics = (topics: Topic[], meta: ListingMeta): HTMLElement | null =>
 
     box.appendChild(row);
   }
+
   return box;
 };
 
@@ -288,6 +325,7 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
   const reviewsPromise = recentReviews(meta);
   const score = await fetchItemScore(throttledFetch, meta.listingId, meta.shopId).catch(() => null);
   const early = score ? null : await reviewsPromise;
+
   if (!score && !early?.length) return null;
 
   const wrapper = createIslandShell();
@@ -295,10 +333,12 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
   // One gauge: the overall percent, carrying the recent trend once the reviews —
   // the newest ~104, whose ratings are the trend the histogram can't show — land.
   const [gauge, stats] = score ? buildGauge(score) : [null, el('div', 'ars-stats') as HTMLElement];
+
   if (gauge) wrapper.append(gauge);
   wrapper.append(stats);
   // Held in its place, ahead of postage, until the reviews give the recent ratio.
   let adjusted: HTMLElement | null = null;
+
   if (score) {
     appendStat(stats, '…', 'adjusted');
     adjusted = stats.lastElementChild as HTMLElement;
@@ -312,6 +352,7 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
   // people actually say about it, then which variant, then the AI summary.
   if (score?.topics?.length) {
     const topics = renderTopics(score.topics, meta);
+
     if (topics) wrapper.appendChild(topics);
   }
 
@@ -322,12 +363,14 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
 
   const fillReviews = (reviews: EtsyReview[]) => {
     const ratio = recentRatio(reviews.map((r) => r.rating));
+
     if (score && ratio != null) {
       gauge!.replaceWith(buildGauge(score, ratio)[0]);
       adjusted!.querySelector('.ars-stat-val')!.textContent = addCommas(adjust(score.score, ratio));
     } else {
       adjusted?.previousElementSibling?.remove(); // its divider
       adjusted?.remove();
+
       if (ratio != null) stats.before(buildRecentGauge(ratio));
     }
 
@@ -342,11 +385,13 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
       card: reviewFields,
       exampleQuery: 'size OR gift',
     });
+
     // Variations resolve a beat after the reviews; fill the slot once they land.
     if (reviews.length) {
       variationsFor(meta, reviews)
         .then((variations) => {
           const dims = buildDims(reviews, variations);
+
           if (!dims.length) return;
           const card = renderVariationCard(dims, { animate: true });
           card.style.maxWidth = '100%';
@@ -356,6 +401,7 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
         .catch(() => {});
     }
   };
+
   if (early) fillReviews(early);
   else reviewsPromise.then(fillReviews, () => fillReviews([]));
 
@@ -368,10 +414,12 @@ setupSpaInjector<HTMLElement>({
   match: () => listingMeta(),
   load: async () => {
     const meta = listingMeta();
+
     return meta ? buildIsland(meta) : null;
   },
   inject: (wrapper) => {
     const anchor = panelAnchor();
+
     if (anchor && !document.body.contains(wrapper)) anchor[0].insertAdjacentElement(anchor[1], wrapper);
   },
   cleanup: () => document.querySelectorAll('.ars-wrapper').forEach((node) => node.remove()),

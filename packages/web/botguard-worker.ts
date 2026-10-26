@@ -6,6 +6,7 @@
 import { Window } from 'happy-dom';
 
 type Snapshot = (done: (key: string) => void, args: unknown[]) => void;
+
 let snapshot: Snapshot;
 
 self.onmessage = ({ data }: MessageEvent) => {
@@ -14,8 +15,10 @@ self.onmessage = ({ data }: MessageEvent) => {
     Object.assign(globalThis, { window, document: window.document });
     new Function(data.interpreter)();
     (globalThis as any)[data.globalName].a(data.program, (fn: Snapshot) => { snapshot = fn; postMessage('ready'); }, true, undefined, () => {}, [[], []]);
+
     return;
   }
+
   // A VM failure comes back as the key ("E:" + the error), which no header can carry.
   snapshot((key) => postMessage({ id: data.id, key: key.startsWith('E:') ? null : key }), [{ request: data.request }, undefined, undefined, undefined]);
 };

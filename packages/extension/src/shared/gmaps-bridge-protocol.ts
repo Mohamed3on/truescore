@@ -7,15 +7,18 @@ export const STORAGE_GET = 'truescore-storage-get';
 export const STORAGE_SET = 'truescore-storage-set';
 export const STORAGE_RESULT = 'truescore-storage-result';
 export const PREVIEW_CAPTURED = 'truescore-preview-captured';
+
 // The popup's model choices for Maps summaries and Asks, which MAIN-world gmaps.ts
 // can't read from chrome.storage.sync itself. Answered with just the provider and
 // reasoning effort, never a raw sync read: sync storage also holds the API keys,
 // and any script on the page can dispatch this event.
 export const LLM_SETTINGS_GET = 'truescore-llm-settings-get';
+
 // Botguard creds lifted off Google's own ListUgcPosts batchexecute request. The session
 // they carry is kept and replayed, each request signed by the page;
 // legacy GET /maps/rpc/listugcposts is retired.
 export const MAPS_CREDS_CAPTURED = 'truescore-maps-creds-captured';
+
 // Ask the background worker to score a place server-side — or, given a `query`,
 // search its reviews there. /api/lookup and /api/search are same-origin only (a
 // lookup triggers a real scrape), so a content-script fetch is refused by CORS;
@@ -25,6 +28,7 @@ export const MAPS_CREDS_CAPTURED = 'truescore-maps-creds-captured';
 export const SERVER_SCORE_GET = 'truescore-server-score-get';
 export const SERVER_SCORE_RESULT = 'truescore-server-score-result';
 export const SERVER_SCORE_PORT = 'truescore-server-score';
+
 // Posted as the server's streams land: each usable score, then the place's topic
 // chips — `pending` while the server harvests them, `candidates` once it's scoring
 // them, each `chip` with its reviews. A search posts its running match count

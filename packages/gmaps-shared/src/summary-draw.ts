@@ -26,20 +26,26 @@ export const foldAway = async (node: HTMLElement) => {
     await node.animate([{ height: `${node.offsetHeight}px` }, { height: '0px', opacity: 0, marginTop: '0px', marginBottom: '0px' }], { duration: 200, easing: EASE })
       .finished.catch(() => {});
   }
+
   node.remove();
 };
+
 const fadeOut = (node: HTMLElement) =>
   animates(node) ? node.animate([{ opacity: 0 }], { duration: 120, easing: EASE, fill: 'forwards' }).finished.catch(() => {}) : undefined;
+
 export const fadeIn = (node: HTMLElement) => {
   if (!animates(node)) return;
+
   for (const a of node.getAnimations()) a.cancel();
   node.animate([{ opacity: 0 }, {}], { duration: 220, easing: EASE });
 };
+
 // A drafted row rises into place as it's added, instead of popping in: to the
 // dimmed draft's opacity, unless the row is never dimmed.
 export const enter = (node: HTMLElement, opacity = DIM) => {
   if (animates(node)) node.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity, transform: 'none' }], { duration: 180, easing: EASE });
 };
+
 const brighten = (node: HTMLElement) => {
   if (animates(node)) node.animate([{ opacity: DIM }, {}], { duration: 200, easing: EASE });
 };
@@ -54,13 +60,16 @@ type Row = { el: HTMLElement; key: string; drawn: string };
 export const mountBullets = <T>(list: HTMLElement, key: (item: T) => string, make: () => HTMLElement, fill: (row: HTMLElement, item: T) => void) => {
   let rows: Row[] = [];
   const fresh = (): Row => ({ el: make(), key: '', drawn: '' });
+
   const draw = (row: Row, item: T) => {
     const drawn = JSON.stringify(item);
+
     if (row.drawn === drawn) return;
     row.drawn = drawn;
     row.key = key(item);
     fill(row.el, item);
   };
+
   return {
     draft(items: T[]) {
       for (const [i, item] of items.entries()) {
@@ -70,8 +79,10 @@ export const mountBullets = <T>(list: HTMLElement, key: (item: T) => string, mak
           list.appendChild(rows[i]!.el);
           enter(rows[i]!.el);
         }
+
         draw(rows[i]!, item);
       }
+
       for (const gone of rows.splice(items.length)) gone.el.remove();
     },
     async settle(items: T[]) {
@@ -80,13 +91,16 @@ export const mountBullets = <T>(list: HTMLElement, key: (item: T) => string, mak
       const kept = rows.filter((r) => next.includes(r));
       const sorted = kept.some((r, i) => r !== next[i]);
       const leaving = [...rows.filter((r) => !next.includes(r)).map((r) => foldAway(r.el)), ...(sorted ? kept.map((r) => fadeOut(r.el)) : [])];
+
       if (leaving.length) await Promise.all(leaving);
       rows = next;
       list.append(...next.map((r) => r.el));
+
       for (const [i, row] of next.entries()) {
         draw(row, items[i]!);
         const dim = !!row.el.style.opacity;
         row.el.style.removeProperty('opacity');
+
         if (sorted) fadeIn(row.el);
         else if (dim) brighten(row.el);
       }

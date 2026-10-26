@@ -20,21 +20,26 @@ const listingId = (listing: SearchListing): string | null => {
 
 const mainGrid = (): Element | null => {
   const nativeCards = [...document.querySelectorAll(CARD)].filter((card) => !card.closest('.ts-air-extra'));
+
   return [...structuralContainers(CARD)(nativeCards)]
     .sort((a, b) => b.querySelectorAll(CARD).length - a.querySelectorAll(CARD).length)[0] || null;
 };
 
 const deferredVariables = async (url: string, initialUrl: string): Promise<Record<string, any> | null> => {
   let state = document.getElementById('data-deferred-state-0')?.textContent;
+
   if (url !== initialUrl) {
     const response = await fetch(url, { credentials: 'same-origin' });
+
     if (!response.ok) return null;
     const page = new DOMParser().parseFromString(await response.text(), 'text/html');
     state = page.getElementById('data-deferred-state-0')?.textContent;
   }
+
   if (!state) return null;
   const entries = JSON.parse(state).niobeClientData as [string, unknown][];
   const key = entries.find(([name]) => name.startsWith('StaysSearch:'))?.[0];
+
   return key ? JSON.parse(key.slice('StaysSearch:'.length)) : null;
 };
 
@@ -42,6 +47,7 @@ const loadResults = async (url: string, initialUrl: string): Promise<{ listings:
   const bootstrap = JSON.parse(document.getElementById('data-initializer-bootstrap')?.textContent || '{}');
   const apiKey = bootstrap['layout-init']?.api_config?.key;
   const variables = await deferredVariables(url, initialUrl);
+
   if (!apiKey || !variables?.staysSearchRequest?.rawParams) return null;
   // Airbnb adds its default 18-item filter before URL filters. Replace every
   // copy so the server returns two pages of native search data in one request.
@@ -50,6 +56,7 @@ const loadResults = async (url: string, initialUrl: string): Promise<{ listings:
     ...params.filter((param) => param.filterName !== 'itemsPerGrid'),
     { filterName: 'itemsPerGrid', filterValues: [String(PAGE_SIZE)] },
   ];
+
   const response = await fetch(`/api/v3/StaysSearch/${SEARCH_HASH}?operationName=StaysSearch`, {
     method: 'POST',
     credentials: 'same-origin',
@@ -60,9 +67,12 @@ const loadResults = async (url: string, initialUrl: string): Promise<{ listings:
       extensions: { persistedQuery: { version: 1, sha256Hash: SEARCH_HASH } },
     }),
   });
+
   if (!response.ok) return null;
   const results = (await response.json())?.data?.presentation?.staysSearch?.results;
+
   if (!Array.isArray(results?.searchResults) || results.searchResults.length <= PAGE_SIZE / 2) return null;
+
   return {
     listings: results.searchResults.slice(PAGE_SIZE / 2),
     nextCursor: results.paginationInfo?.pageCursors?.[1],
@@ -72,11 +82,15 @@ const loadResults = async (url: string, initialUrl: string): Promise<{ listings:
 const listingUrl = (id: string, photoId?: string): string => {
   const url = new URL(`/rooms/${id}`, location.origin);
   const search = new URL(location.href).searchParams;
+
   for (const [from, to] of [['adults', 'adults'], ['children', 'children'], ['infants', 'infants'], ['pets', 'pets'], ['checkin', 'check_in'], ['checkout', 'check_out']]) {
     const value = search.get(from);
+
     if (value) url.searchParams.set(to, value);
   }
+
   if (photoId) url.searchParams.set('photo_id', photoId);
+
   return url.pathname + url.search;
 };
 
@@ -105,6 +119,7 @@ const ensureStyles = (): void => {
 const renderListing = (listing: SearchListing): HTMLElement | null => {
   const id = listingId(listing);
   const photo = listing.contextualPictures?.[0];
+
   if (!id || !photo?.picture) return null;
   const href = listingUrl(id, photo.id);
   const wrapper = document.createElement('div');
@@ -152,6 +167,7 @@ const renderListing = (listing: SearchListing): HTMLElement | null => {
   info.append(titleRow, subtitle, price);
   card.append(frame, info);
   wrapper.append(card);
+
   return wrapper;
 };
 
@@ -168,6 +184,7 @@ export const extendFirstSearchPage = (): void => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const target = event.target;
     const link = target instanceof Element ? target.closest<HTMLAnchorElement>('a[data-ts-air-original-href]') : null;
+
     if (!link) return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -176,6 +193,7 @@ export const extendFirstSearchPage = (): void => {
 
   const removeExtras = () => {
     document.querySelectorAll('.ts-air-extra').forEach((card) => card.remove());
+
     for (const link of document.querySelectorAll<HTMLAnchorElement>('a[data-ts-air-original-href]')) {
       if (!link.dataset.tsAirOriginalHref) continue;
       link.href = link.dataset.tsAirOriginalHref;
@@ -186,10 +204,13 @@ export const extendFirstSearchPage = (): void => {
   const useCombinedPageAsPrevious = (url: string) => {
     const cursor = new URL(url).searchParams.get('cursor');
     let offset = 0;
+
     try { offset = JSON.parse(atob(cursor || '')).items_offset; }
     catch { return; }
+
     if (offset !== PAGE_SIZE) return;
     const previous = document.querySelector<HTMLAnchorElement>('a[aria-label="Previous page"]');
+
     if (!previous) return;
     previous.dataset.tsAirOriginalHref ||= previous.href;
     const firstPage = new URL(previous.dataset.tsAirOriginalHref);
@@ -201,8 +222,10 @@ export const extendFirstSearchPage = (): void => {
   const mount = (grid: Element) => {
     ensureStyles();
     const existing = new Set([...grid.querySelectorAll<HTMLElement>('.ts-air-extra')].map((card) => card.dataset.tsAirId));
+
     for (const card of cards) if (!existing.has(card.dataset.tsAirId)) grid.append(card);
     const next = document.querySelector<HTMLAnchorElement>('a[aria-label="Next page"]');
+
     if (next && nextCursor) {
       next.dataset.tsAirOriginalHref ||= next.href;
       const url = new URL(next.dataset.tsAirOriginalHref);
@@ -213,6 +236,7 @@ export const extendFirstSearchPage = (): void => {
 
   const refresh = async () => {
     const url = location.href;
+
     if (new URL(url).searchParams.has('cursor')) {
       generation++;
       loadedUrl = url;
@@ -220,30 +244,39 @@ export const extendFirstSearchPage = (): void => {
       nextCursor = undefined;
       removeExtras();
       useCombinedPageAsPrevious(url);
+
       return;
     }
+
     const grid = mainGrid();
+
     if (!grid) return;
+
     if (url === loadedUrl) {
       if (cards.length) mount(grid);
+
       return;
     }
+
     loadedUrl = url;
     cards = [];
     nextCursor = undefined;
     removeExtras();
     const run = ++generation;
     const data = await loadResults(url, initialUrl).catch(() => null);
+
     if (run !== generation || url !== location.href || !data) return;
     const existingIds = new Set([...document.querySelectorAll(CARD)].map((card) => card.querySelector('a[href*="/rooms/"]')?.getAttribute('href')?.match(/\/rooms\/(\d+)/)?.[1]));
     cards = data.listings.filter((listing) => !existingIds.has(listingId(listing) || '')).map(renderListing).filter((card): card is HTMLElement => !!card);
     nextCursor = data.nextCursor;
     const currentGrid = mainGrid();
+
     if (currentGrid) mount(currentGrid);
   };
 
   let timer: ReturnType<typeof setTimeout>;
   const schedule = () => { clearTimeout(timer); timer = setTimeout(() => { void refresh(); }, 250); };
+
   schedule();
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
   window.addEventListener('popstate', schedule);

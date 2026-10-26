@@ -9,10 +9,13 @@ const db = new Database(process.argv[2] ?? '/var/lib/truescore/cache.sqlite', { 
 
 const corpora: Record<string, unknown[]> = {};
 const rows = db.prepare<{ data: string }, string[]>(`SELECT data FROM entries WHERE json_extract(data, '$.name') IN (${PLACES.map(() => '?').join()})`).all(...PLACES);
+
 for (const { data } of rows) {
   const e = JSON.parse(data);
   const byId = new Map<string, any>();
+
   for (const chip of e.highlights ?? []) for (const { reviewId, stars, reviewerReviewCount, timestamp, text } of chip.reviews ?? []) byId.set(reviewId, { reviewId, stars, reviewerReviewCount, timestamp, text });
   corpora[e.name] = [...byId.values()].filter((r) => r.text.length > 1);
 }
+
 console.log(JSON.stringify(corpora));

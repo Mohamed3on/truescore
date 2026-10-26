@@ -10,6 +10,7 @@ import { salvageNumber, salvageObjects, salvageStringArray, type Summary, type S
 // prompt's job, not ours.
 export const MAX_SCORED_ITEMS = 10;
 export const capItems = (items: string[]): string[] => items.slice(0, MAX_SCORED_ITEMS);
+
 // A standout searches each of its aliases too (llm.aliasesFor), so they're
 // capped as well.
 export const MAX_ALIASES = 3;
@@ -19,11 +20,18 @@ export const MAX_ALIASES = 3;
 export const aliasesOf = (items: string[], written: { name: string; aliases: string[] }[]): Summary['aliases'] => {
   const aliases = Object.fromEntries(items.flatMap((item) => {
     const seen = new Set([item.toLowerCase()]);
+
     const kept = (written.find((w) => w.name === item)?.aliases ?? [])
-      .filter((a) => { const k = a.trim().toLowerCase(); return !!k && !seen.has(k) && !!seen.add(k); })
+      .filter((a) => {
+        const k = a.trim().toLowerCase();
+
+        return !!k && !seen.has(k) && !!seen.add(k);
+      })
       .slice(0, MAX_ALIASES);
+
     return kept.length ? [[item, kept]] : [];
   }));
+
   return Object.keys(aliases).length ? aliases : undefined;
 };
 
@@ -35,6 +43,7 @@ export const aliasesOf = (items: string[], written: { name: string; aliases: str
 export function salvageStructured(text: string): { highlights: SummaryHighlight[]; items: string[]; alternatives: string[]; valueForMoney?: number } {
   const highlights = salvageObjects<SummaryHighlight>(text, 'text');
   console.warn(`[summarize] structured JSON truncated; salvaged ${highlights.length} highlights`);
+
   return {
     highlights,
     items: capItems(salvageStringArray(text, 'items')),

@@ -9,7 +9,9 @@ import { join } from 'path';
 // Keep Bun's own streams: happy-dom's don't pipe into native ones, which breaks
 // AI SDK's stream readers (gmaps-shared runAsk).
 const { ReadableStream, WritableStream, TransformStream } = globalThis;
+
 GlobalRegistrator.register();
+
 Object.assign(globalThis, { ReadableStream, WritableStream, TransformStream });
 
 // db.ts resolves the sqlite path at import time, so it has to be redirected before
@@ -18,9 +20,11 @@ Object.assign(globalThis, { ReadableStream, WritableStream, TransformStream });
 // cache tests see a known-empty store.
 if (!process.env.TRUESCORE_CACHE_DB_PATH) {
   const dbPath = join(tmpdir(), `truescore-test-${process.pid}.sqlite`);
+
   for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) rmSync(f, { force: true });
   process.env.TRUESCORE_CACHE_DB_PATH = dbPath;
   process.env.TRUESCORE_CACHE_PATH ??= join(tmpdir(), `truescore-test-${process.pid}-legacy.json`);
 }
+
 // Likewise the cookie jars browser.ts and account.ts save.
 process.env.TRUESCORE_COOKIES_PATH ??= join(tmpdir(), `truescore-test-${process.pid}-cookies.json`);

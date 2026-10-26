@@ -60,7 +60,9 @@ const STAR_NUMS = ['fiveStarNum', 'fourStarNum', 'threeStarNum', 'twoStarNum', '
 // prints beside the stars.
 const itemScore = (stat: any): ItemScore | null => {
   const total = STAR_NUMS.reduce((sum, field) => sum + (stat?.[field] || 0), 0);
+
   if (!total) return null;
+
   return { ...npsStats(stat.fiveStarNum || 0, stat.oneStarNum || 0, total), total };
 };
 
@@ -74,11 +76,14 @@ const evaluate = async (fetcher: Fetcher, id: string, pageSize: number): Promise
     page: '1',
     pageSize: String(pageSize),
   });
+
   const res = await fetcher(`${ENDPOINT}?${qs}`);
+
   if (!res.ok) return { score: null, reviews: [] };
 
   const data = (await res.json())?.data;
   const score = itemScore(data?.productEvaluationStatistic);
+
   if (score) cacheSet(scoreKey(id), score);
   else if (data) cacheSetMaybe(scoreKey(id), null); // parsed, genuinely reviewless
 
@@ -87,6 +92,7 @@ const evaluate = async (fetcher: Fetcher, id: string, pageSize: number): Promise
     text: (r.buyerTranslationFeedback || r.buyerFeedback || '').trim(),
     skuInfo: (r.skuInfo ?? '').trim(),
   }));
+
   return { score, reviews };
 };
 
@@ -97,7 +103,9 @@ export const cachedItemScore = (id: string): ItemScore | null | undefined =>
 
 export const fetchItemScore = async (fetcher: Fetcher, id: string): Promise<ItemScore | null> => {
   const cached = cachedItemScore(id);
+
   if (cached !== undefined) return cached;
+
   return (await evaluate(fetcher, id, SCORE_ONLY_PAGE_SIZE)).score;
 };
 
@@ -110,7 +118,9 @@ const commonTail = (chunks: string[]): string | null => {
   const rows = chunks.map((c) => c.split(/\s+/));
   const wordAt = (row: string[], n: number) => row[row.length - 1 - n];
   let n = 0;
+
   while (rows.every((row) => row.length - 1 - n > 0 && wordAt(row, n) === wordAt(rows[0], n))) n++;
+
   return n ? rows[0].slice(rows[0].length - n).join(' ') : null;
 };
 
@@ -122,6 +132,7 @@ const commonTail = (chunks: string[]): string | null => {
 const nameWithin = (tail: string) => {
   const words = tail.split(' ');
   const start = words.findIndex((word) => /^[A-Z]/.test(word));
+
   return start > 0 ? words.slice(start).join(' ') : tail;
 };
 
@@ -142,11 +153,14 @@ export const parseVariations = (skuInfos: string[]): [string, string][][] => {
   const rows = skuInfos.map((s) => s.split(':').map((chunk) => chunk.trim()));
   const width = rows.find((row) => row.length > 1)?.length ?? 0;
   const agreeing = rows.filter((row) => row.length === width);
+
   if (width < 2 || agreeing.length < 2) return none();
 
   const names = [agreeing[0][0]];
+
   for (let i = 1; i < width - 1; i++) {
     const tail = commonTail(agreeing.map((row) => row[i]));
+
     if (!tail) return none();
     names.push(nameWithin(tail));
   }
@@ -157,6 +171,7 @@ export const parseVariations = (skuInfos: string[]): [string, string][][] => {
       : names.map((name, i) => {
           const chunk = row[i + 1];
           const next = names[i + 1];
+
           return [name, next ? chunk.slice(0, chunk.length - next.length).trim() : chunk];
         })
   );

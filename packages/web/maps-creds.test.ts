@@ -4,14 +4,17 @@ import { test, expect, describe, afterEach } from 'bun:test';
 // each case needs a fresh module instance.
 const freshModule = async () => {
   const url = `./maps-creds?${Math.random()}`;
+
   return import(url) as Promise<typeof import('./maps-creds')>;
 };
 
 const ENV_KEYS = ['TRUESCORE_MAPS_BGKEY', 'TRUESCORE_MAPS_BGBIND', 'TRUESCORE_MAPS_SESSION', 'TRUESCORE_MAPS_AT', 'TRUESCORE_MAPS_COOKIES'] as const;
+
 const setEnv = (vals: Partial<Record<(typeof ENV_KEYS)[number], string>>) => {
   for (const k of ENV_KEYS) delete process.env[k];
   Object.assign(process.env, vals);
 };
+
 afterEach(() => setEnv({}));
 
 const FULL = {

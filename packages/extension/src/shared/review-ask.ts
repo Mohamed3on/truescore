@@ -25,25 +25,39 @@ const searchRow = (s: AskSearch, open?: (query: string) => void, read?: Read) =>
     el('span', 'ars-ask-search-label', s.done ? 'Searched all reviews' : 'Searching all reviews'),
     el('span', 'ars-ask-search-terms', parseOrQuery(s.query).join(' · ')),
   );
+
   const starShare = () => {
     if (s.scorePct == null) return null;
     const pct = el('span', 'ars-ask-search-pct', s.trustedReviews ? `${s.scorePct}%` : '—');
+
     if (s.trustedReviews) pct.style.color = npsColor(s.scorePct);
+
     return pct;
   };
+
   // The share alone, in the row's own % style: its count is the matches'.
   const counts = (a: AnswerCounts) => {
     const o = answersOf(a);
     row.setAttribute('aria-label', `${parseOrQuery(s.query).join(', ')}: ${opinionsLabel(o)}`);
     row.title = `${row.title} — ${o.title}`;
+
     return opinionNumbers(o, { share: () => 'ars-ask-search-pct', color: (x) => toneColor(opinionTone(x)) }, 'yes');
   };
+
   const answered = s.answers ?? read;
+
   if (answered instanceof Promise) row.append(opinionsSlot(answered.then((a) => a && counts(a)), starShare));
   else if (answered) row.append(...counts(answered));
-  else { const pct = starShare(); if (pct) row.append(pct); }
+  else {
+    const pct = starShare();
+
+    if (pct) row.append(pct);
+  }
+
   row.append(el('span', 'ars-ask-search-count', s.found == null ? '—' : `·${addCommas(s.found)}`));
+
   if (open) row.onclick = () => open(s.query);
+
   return row;
 };
 
@@ -55,8 +69,10 @@ export const mountAskView = (panel: HTMLElement, answerClass: string, open?: (qu
   const text = el('div', answerClass);
   panel.replaceChildren(rows, text);
   let shown: AskView | undefined;
+
   return (v: AskView) => {
     if (v.searches !== shown?.searches) rows.replaceChildren(...v.searches.map((s) => searchRow(s, open, reads?.get(s.query))));
+
     if (v.text !== shown?.text) renderMarkdown(text, v.text);
     text.classList.toggle('ars-ask-reading', !v.done && !v.text && v.searches.every((s) => s.done));
     shown = v;
@@ -87,30 +103,41 @@ export interface AskRun {
 // carries those reads, so a kept Answer replays them.
 export const askReviews = async (run: AskRun): Promise<AskView> => {
   const kept = run.qaKey && !run.fresh ? findQA(run.qaKey, run.question) : undefined;
+
   if (kept) {
     const view = { searches: kept.searches ?? [], text: kept.a, done: true, answeredAt: kept.ts };
     run.mount(new Map())(view);
+
     return view;
   }
+
   const reads = new Map<string, Read>();
+
   const search: SearchReviews = async (query, onFound) => {
     const matches = (await run.search?.(query, onFound)) ?? null;
+
     if (matches && !reads.has(query)) {
       reads.set(query, readAnswers(run.question, matches.texts).then((a) => {
         const counts = a && countAnswers(a);
         reads.set(query, counts);
+
         return counts;
       }));
     }
+
     return matches;
   };
+
   const transport = await run.transport(!!run.search);
   const draw = run.mount(reads);
   draw(askViewOf(undefined));
   const ctrl = new AbortController();
   const view = await runAsk(transport, run.question, search, (v) => (run.live() ? draw(v) : ctrl.abort()), ctrl.signal);
   const searches = await Promise.all(view.searches.map(async (s) => ({ ...s, answers: s.answers ?? (await reads.get(s.query)) ?? undefined })));
+
   if (run.limited) bumpRateLimit();
+
   if (run.qaKey) saveQA(run.qaKey, { q: run.question, a: view.text, ts: view.answeredAt ?? Date.now(), searches });
+
   return { ...view, searches };
 };

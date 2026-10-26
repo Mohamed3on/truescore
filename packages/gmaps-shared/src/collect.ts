@@ -17,6 +17,7 @@ import {
 export type Transport = (url: string, init?: { signal?: AbortSignal; method?: string; body?: string; headers?: Record<string, string> }) => Promise<string>;
 
 export type CollectPage = { index: number; nextCursor: string | null; pageReviews: Review[] };
+
 // Returning 'stop' ends the loop after this page — lets a caller layer its own
 // stop policy (e.g. the extension's page-1 live-head reconcile) on top.
 export type OnPage = (running: Review[], page: CollectPage) => void | 'stop';
@@ -45,21 +46,29 @@ export async function collectPaged(
   const collected = new Map<string, Review>();
   let cursor = startCursor;
   let lastPct: number | null = null;
+
   for (let index = 0; index < maxPages; index++) {
     const { url, init } = reqFor(cursor);
     const { reviews, nextCursor } = parseReviewsResponse(await transport(url, { signal, ...init }));
+
     if (!reviews.length) break;
+
     for (const r of reviews) collected.set(r.reviewId, r);
     const running = [...collected.values()];
+
     if (onPage?.(running, { index, nextCursor, pageReviews: reviews }) === 'stop') return { reviews: running, nextCursor };
+
     if (stabilize && index + 1 >= MIN_PAGES_BEFORE_STABILIZE) {
       const pct = scorePct(running);
+
       if (lastPct !== null && Math.abs(pct - lastPct) <= 1) return { reviews: running, nextCursor };
       lastPct = pct;
     }
+
     if (!nextCursor) return { reviews: running, nextCursor: null };
     cursor = nextCursor;
   }
+
   return { reviews: [...collected.values()], nextCursor: cursor || null };
 }
 
@@ -74,6 +83,7 @@ const withHl = (creds: MapsCreds, locale?: Locale): MapsCreds => ({ ...creds, hl
 export function collectSort(featureId: string, sort: SortKey, transport: Transport, opts: ShareOptions) {
   const { locale, creds, ...rest } = opts;
   const c2 = withHl(creds, locale);
+
   return collectPaged((c) => buildListReq(featureId, sort, c2, c), transport, { stabilize: true, ...rest });
 }
 
@@ -81,6 +91,7 @@ export async function collectToken(featureId: string, token: string, transport: 
   const { locale, creds, ...rest } = opts;
   const c2 = withHl(creds, locale);
   const { reviews } = await collectPaged((c) => buildTokenReq(featureId, token, c2, c), transport, { maxPages: 30, stabilize: true, ...rest });
+
   return reviews;
 }
 
@@ -105,19 +116,23 @@ export type TermCache = { get(term: string): Review[] | undefined; set(term: str
 // as a genuine miss.
 export function createTermCache(ttlMs: number, max: number) {
   const entries = new Map<string, { reviews: Review[]; ts: number }>();
+
   return {
     forPlace: (featureId: string): TermCache => ({
       get(term) {
         const key = `${featureId}|${term.toLowerCase()}`;
         const hit = entries.get(key);
         entries.delete(key);
+
         if (!hit || Date.now() - hit.ts > ttlMs) return undefined;
         entries.set(key, hit); // re-insert: most recently used last
+
         return hit.reviews;
       },
       set(term, reviews) {
         if (!reviews.length) return;
         entries.set(`${featureId}|${term.toLowerCase()}`, { reviews, ts: Date.now() });
+
         for (const oldest of entries.keys()) {
           if (entries.size <= max) break;
           entries.delete(oldest);
@@ -141,15 +156,18 @@ export async function collectSearchTerms(
   // Every term is searched — none is dropped — but only a few paging chains run
   // against Maps at once, however many terms and spellings a query expands to.
   const queue = [...terms];
+
   const worker = async () => {
     for (let term = queue.shift(); term !== undefined; term = queue.shift()) {
       const t = term;
       const cached = cache?.get(t);
+
       if (cached) {
         for (const r of cached) union.set(r.reviewId, r);
         onMerged?.([...union.values()]);
         continue;
       }
+
       const { reviews } = await collectPaged((c) => reqFor(t, c), transport, {
         maxPages: 30,
         stabilize: true,
@@ -158,9 +176,12 @@ export async function collectSearchTerms(
           onMerged?.([...union.values()]);
         },
       });
+
       cache?.set(t, reviews);
     }
   };
+
   await Promise.all(Array.from({ length: Math.min(SEARCH_CONCURRENCY, terms.length) }, worker));
+
   return [...union.values()];
 }

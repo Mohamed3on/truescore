@@ -68,7 +68,9 @@ const reviewsUrl = (site: BvSite, productId: string, limit: number, offset: numb
   params.set('Offset', String(offset));
   params.set('apiversion', '5.5');
   params.set('displaycode', site.displaycode);
+
   if (search) params.set('search', search);
+
   return `https://apps.bazaarvoice.com/bfd/v1/clients/${site.client}/api-products/cv2/resources/data/reviews.json?${params.toString()}`;
 };
 
@@ -84,22 +86,27 @@ const requestInit = (site: BvSite): RequestInit => ({
 const extractStats = (payload: any, requestedProductId: string) => {
   const response = payload?.response;
   const products = response?.Includes?.Products;
+
   if (!products) return null;
 
   // With the product's family: its pack sizes share one, and one set of reviews.
   const requested = products[requestedProductId];
+
   if (requested?.ReviewStatistics) {
     return { ...requested.ReviewStatistics, FamilyIds: requested.FamilyIds };
   }
 
   const productsOrder = response?.Includes?.ProductsOrder || [];
+
   for (const id of productsOrder) {
     const stats = products[id]?.ReviewStatistics;
+
     if (stats) return stats;
   }
 
   for (const id of Object.keys(products)) {
     const stats = products[id]?.ReviewStatistics;
+
     if (stats) return stats;
   }
 
@@ -111,17 +118,21 @@ type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 const fetchStats = async (site: BvSite, productId: string, fetcher: Fetcher = fetch) => {
   const cacheKey = `nps_${site.key}_stats_v2_${productId}`;
   const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
+
   if (cached) return cached.value;
 
   try {
     const res = await fetcher(reviewsUrl(site, productId, 1, 0), requestInit(site));
+
     if (!res.ok) return null;
     const stats = extractStats(await res.json(), productId);
+
     // An answer with no stats: this id genuinely has no reviews. Tombstoned so
     // recreated cards stop re-firing the same doomed request; transport failures
     // stay uncached and retry.
     if (stats) cacheSet(cacheKey, stats);
     else cacheSetMaybe(cacheKey, null);
+
     return stats;
   } catch {
     return null;
@@ -136,8 +147,10 @@ interface RatingLabel {
 // The JSON object starting at `start` in `text`.
 const objectAt = (text: string, start: number) => {
   let depth = 0;
+
   for (let i = start, inString = false; i < text.length; i++) {
     const c = text[i];
+
     if (inString) {
       if (c === '\\') i++;
       else if (c === '"') inString = false;
@@ -145,6 +158,7 @@ const objectAt = (text: string, start: number) => {
     else if (c === '{') depth++;
     else if (c === '}' && --depth === 0) return text.slice(start, i + 1);
   }
+
   return '';
 };
 
@@ -154,20 +168,26 @@ const objectAt = (text: string, start: number) => {
 const fetchRatingLabels = async (site: BvSite): Promise<Record<string, RatingLabel> | null> => {
   const cacheKey = `${site.key}_rating_labels`;
   const cached = cacheGet(cacheKey, CACHE_TTL);
+
   if (cached) return cached;
 
   const [, zone, locale] = site.token.split(',');
+
   try {
     const res = await fetch(`https://apps.bazaarvoice.com/deployments/${site.client}/${zone}/production/${locale}/swat_reviews-config.js`);
+
     if (!res.ok) return null;
     const js = await res.text();
     const ratings: any[] = Object.values(JSON.parse(objectAt(js, js.indexOf('"ratings":{') + '"ratings":'.length)));
+
     const labels = Object.fromEntries(ratings.filter((r) => !r.hideDisplay).map((r) => [r.id, {
       // DocMorris marks its retired dimensions "x - …".
       label: String(r.displayLabel).replace(/^x - /, ''),
       ends: r.type === 'SLIDER' ? [r.sliderDimension1Label, r.sliderDimension2Label] : undefined,
     }]));
+
     cacheSet(cacheKey, labels);
+
     return labels;
   } catch {
     return null;
@@ -176,16 +196,20 @@ const fetchRatingLabels = async (site: BvSite): Promise<Record<string, RatingLab
 
 const getScoreFromStats = (stats: any) => {
   const dist = stats?.RatingDistribution;
+
   if (!dist?.length) return null;
 
   let five = 0;
   let one = 0;
   let total = Number(stats.TotalReviewCount) || 0;
+
   if (!total) total = dist.reduce((sum: number, entry: any) => sum + (entry?.Count || 0), 0);
+
   if (!total) return null;
 
   for (const entry of dist) {
     if (entry?.RatingValue === 5) five = entry?.Count || 0;
+
     if (entry?.RatingValue === 1) one = entry?.Count || 0;
   }
 
@@ -196,6 +220,7 @@ const getScoreFromStats = (stats: any) => {
 // page already visited has its stats cached.
 export const cardScores = (site: BvSite) => {
   const throttledFetch = createThrottledFetcher(8);
+
   return async (productId: string) => getScoreFromStats(await fetchStats(site, productId, throttledFetch));
 };
 
@@ -213,24 +238,30 @@ const reviewFields = (r: BvReview) => ({ rating: r.rating, title: r.title, body:
 // One page of reviews, newest first, with the count of every review it's a page of.
 const fetchPage = async (site: BvSite, productId: string, offset: number, search?: string) => {
   const res = await fetch(reviewsUrl(site, productId, REVIEWS_PAGE, offset, search), requestInit(site));
+
   if (!res.ok) throw new Error(`${site.key} reviews ${res.status}`);
   const response = (await res.json())?.response;
+
   const reviews: BvReview[] = (response?.Results ?? []).map((r: any) => ({
     rating: Number(r.Rating) || 0,
     title: r.Title || '',
     body: r.ReviewText || '',
     date: String(r.SubmissionTime || '').slice(0, 10),
   }));
+
   return { reviews, total: Number(response?.TotalResults) || 0 };
 };
 
 // First of each review text: syndicated copies repeat it verbatim.
 const dedupe = (reviews: BvReview[]) => {
   const seen = new Set<string>();
+
   return reviews.filter((r) => {
     const text = reviewToText(r);
+
     if (!text || seen.has(text)) return false;
     seen.add(text);
+
     return true;
   });
 };
@@ -243,25 +274,34 @@ const dedupe = (reviews: BvReview[]) => {
 const fetchReviews = (site: BvSite, productId: string, total: Promise<number>) => {
   const cacheKey = `${site.key}_reviews_v4_${productId}`;
   const cached: Promise<BvReview[] | null> = idbGet(cacheKey, REVIEWS_TTL);
+
   const pages = cached.then((hit) => {
     if (hit) return [];
     const first = fetchPage(site, productId, 0);
+
     return total.then((count) => [
       first,
       ...Array.from({ length: Math.ceil(Math.min(count, SAMPLE_MAX) / REVIEWS_PAGE) - 1 }, (_, i) => fetchPage(site, productId, (i + 1) * REVIEWS_PAGE)),
     ]);
   });
+
   const settle = async (of: Promise<Awaited<ReturnType<typeof fetchPage>>>[]) => {
     const settled = await Promise.allSettled(of);
+
     return { reviews: dedupe(settled.flatMap((p) => (p.status === 'fulfilled' ? p.value.reviews : []))), whole: settled.every((p) => p.status === 'fulfilled') };
   };
+
   const recent = cached.then(async (hit) => hit ?? (await settle((await pages).slice(0, RECENT_REVIEWS / REVIEWS_PAGE))).reviews);
+
   const all = cached.then(async (hit) => {
     if (hit) return hit;
     const { reviews, whole } = await settle(await pages);
+
     if (reviews.length && whole) idbSet(cacheKey, reviews);
+
     return reviews;
   });
+
   return { recent, all };
 };
 
@@ -271,10 +311,12 @@ const fetchReviews = (site: BvSite, productId: string, total: Promise<number>) =
 // whole; one word takes BazaarVoice's own count and its newest hundred hits.
 const searchTerm = async (site: BvSite, productId: string, term: string) => {
   const first = await fetchPage(site, productId, 0, term);
+
   if (!/\s/.test(term)) return first;
   const offsets = Array.from({ length: Math.ceil(Math.min(first.total, SAMPLE_MAX) / REVIEWS_PAGE) - 1 }, (_, i) => (i + 1) * REVIEWS_PAGE);
   const rest = await Promise.all(offsets.map((offset) => fetchPage(site, productId, offset, term)));
   const reviews = [first, ...rest].flatMap((p) => p.reviews).filter((r) => reviewToText(r).toLowerCase().includes(term));
+
   return { reviews, total: reviews.length };
 };
 
@@ -286,8 +328,11 @@ const insights = (row: HTMLElement, stats: any, scoreData: { score: number; nps:
   const total = Number(stats.TotalReviewCount) || 0;
   const recommended = Number(stats.RecommendedCount) || 0;
   const recommendTotal = recommended + (Number(stats.NotRecommendedCount) || 0);
+
   if (scoreData) appendStat(row, addCommas(scoreData.score), 'score', npsColor(scoreData.nps));
+
   if (total) appendStat(row, addCommas(total), 'reviews');
+
   if (recommendTotal > 0) {
     appendStat(row, `${Math.round((recommended / recommendTotal) * 100)}%`, 'recommend');
     (row.lastElementChild as HTMLElement).title = `${addCommas(recommended)} of ${addCommas(recommendTotal)} recommend it`;
@@ -302,10 +347,12 @@ const insights = (row: HTMLElement, stats: any, scoreData: { score: number; nps:
   // it, and a slider's scale. A slider runs from its bad end to its good end
   // like a rating, except Passform (fit), best in the middle: a dot, never lagging.
   const overall = Number(stats.AverageOverallRating) || 0;
+
   const rows = (stats.SecondaryRatingsAveragesOrder || []).flatMap((id: string) => {
     const metric = stats.SecondaryRatingsAverages?.[id];
     const named = labels?.[id];
     const range = Number(metric?.ValueRange);
+
     if (!named || typeof metric?.AverageRating !== 'number' || !(range > 1)) return [];
     const centered = /passform/i.test(named.label);
     const lag = overall && !centered ? overall - metric.AverageRating : 0;
@@ -324,13 +371,17 @@ const insights = (row: HTMLElement, stats: any, scoreData: { score: number; nps:
     const value = el('span', undefined, metric.AverageRating.toFixed(1));
     value.style.cssText = 'font-weight:700;font-variant-numeric:tabular-nums;color:#1C1917';
     const hover = named.ends ? `${named.label}: 1 = ${named.ends[0]}, ${range} = ${named.ends[1]}` : named.label;
+
     for (const part of [label, track, value]) part.title = hover;
+
     return [[label, track, value]];
   });
+
   if (!rows.length) return null;
   const half = Math.ceil(rows.length / 2);
   const tables = el('div');
   tables.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px 24px;font-size:12px;line-height:1.4;color:#57534E';
+
   for (const column of [rows.slice(0, half), rows.slice(half)]) {
     if (!column.length) continue;
     const table = el('div');
@@ -338,6 +389,7 @@ const insights = (row: HTMLElement, stats: any, scoreData: { score: number; nps:
     table.append(...column.flat());
     tables.append(table);
   }
+
   return tables;
 };
 
@@ -359,9 +411,11 @@ const buildCard = (
 ): HTMLElement | null => {
   const total = Number(stats?.TotalReviewCount) || 0;
   const hasRecommend = (Number(stats?.RecommendedCount) || 0) + (Number(stats?.NotRecommendedCount) || 0) > 0;
+
   if (!scoreData && !hasRecommend && total < 5) return null;
 
   const wrapper = createIslandShell();
+
   const { stats: row } = buildReviewPanel(wrapper, {
     // One summary per family, so another pack size of the product keeps it.
     key: `${site.key}-summary-${stats.FamilyIds?.[0] ?? productId}`,
@@ -375,8 +429,11 @@ const buildCard = (
     date: (r) => r.date,
     exampleQuery,
   });
+
   const tables = insights(row!, stats, scoreData, labels);
+
   if (tables) row!.after(tables);
+
   return wrapper;
 };
 
@@ -398,6 +455,7 @@ export interface BvPdp {
 export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl, ratingLine, panelAnchor, exampleQuery, ready }: BvPdp) => {
   const injectScoreBadge = (scoreData: { score: number; nps: number }) => {
     const line = ratingLine();
+
     if (!line || line.querySelector('.nps-pdp-badge')) return;
 
     const badge = document.createElement('span');
@@ -411,6 +469,7 @@ export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl,
     match: () => !!productIdFromUrl(),
     load: async () => {
       const productId = productIdFromUrl();
+
       if (!productId) return null;
       const statsPromise = fetchStats(site, productId);
       // Reviews start downloading alongside the stats that size them, not once the
@@ -419,7 +478,9 @@ export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl,
       // Only a product rated on secondary dimensions needs their labels.
       const labelsPromise = statsPromise.then((stats) => (stats?.SecondaryRatingsAveragesOrder?.length ? fetchRatingLabels(site) : null));
       const [stats, labels] = await Promise.all([statsPromise, labelsPromise, ready]);
+
       if (!stats) return null;
+
       return { stats, labels, scoreData: getScoreFromStats(stats), productId, reviews };
     },
     inject: (data) => {
@@ -429,9 +490,11 @@ export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl,
       if (document.querySelector('.ars-wrapper')) return;
 
       const anchor = panelAnchor();
+
       if (!anchor) return;
 
       const card = buildCard(site, exampleQuery, data);
+
       if (card) {
         if (anchor.position === 'before') anchor.node.before(card);
         else anchor.node.after(card);

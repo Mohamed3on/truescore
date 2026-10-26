@@ -10,7 +10,9 @@ const respond = (id: string, value: unknown) => {
 
 document.addEventListener(STORAGE_GET, (e) => {
   const { id, key } = (e as CustomEvent).detail || {};
+
   if (!id || !key) return;
+
   try {
     chrome.storage.local.get(key, (items) => respond(id, items?.[key] ?? null));
   } catch {
@@ -20,7 +22,9 @@ document.addEventListener(STORAGE_GET, (e) => {
 
 document.addEventListener(STORAGE_SET, (e) => {
   const { id, key, value } = (e as CustomEvent).detail || {};
+
   if (!id || !key) return;
+
   try {
     chrome.storage.local.set({ [key]: value }, () => respond(id, true));
   } catch {
@@ -31,6 +35,7 @@ document.addEventListener(STORAGE_SET, (e) => {
 // Only the two choices themselves (see LLM_SETTINGS_GET).
 document.addEventListener(LLM_SETTINGS_GET, async (e) => {
   const { id } = (e as CustomEvent).detail || {};
+
   if (!id) return;
   const [reasoningEffort, provider] = await Promise.all([getReasoningEffort(), getProviderChoice()]);
   respond(id, { reasoningEffort, provider });
@@ -43,10 +48,14 @@ document.addEventListener(LLM_SETTINGS_GET, async (e) => {
 // text comes from the event.
 document.addEventListener(SERVER_SCORE_GET, (e) => {
   const { id, query, asWritten } = (e as CustomEvent).detail || {};
+
   if (!id) return;
+
   const relay = (msg: ServerScoreMessage) => document.dispatchEvent(
     new CustomEvent(SERVER_SCORE_RESULT, { detail: { id, msg } }));
+
   if (location.hostname !== 'www.google.com' || !location.pathname.startsWith('/maps/place/')) return relay({ kind: 'end' });
+
   try {
     const port = chrome.runtime.connect({ name: SERVER_SCORE_PORT });
     port.onMessage.addListener(relay);

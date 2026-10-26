@@ -11,12 +11,15 @@ export type Inflight<V> = {
 
 export function createInflight<V>(): Inflight<V> {
   const map = new Map<string, Promise<V>>();
+
   return {
     run(key, fn) {
       const existing = map.get(key);
+
       if (existing) return existing;
       const p = fn().finally(() => map.delete(key));
       map.set(key, p);
+
       return p;
     },
     peek(key) {

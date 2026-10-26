@@ -17,6 +17,7 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
     e.preventDefault();
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+
   return item;
 };
 
@@ -24,10 +25,12 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
   const code = storeCode();
   const tabs = document.querySelector('[data-hc="product-tabs"][data-hc-id]');
   const id = tabs?.getAttribute('data-hc-id');
+
   if (!code || !id) return;
 
   const bundle = await fetchReviews(code, id);
   const scored = computeScore(bundle);
+
   if (!scored || scored.total < 5) return;
 
   // Just above HelpfulCrowd's reviews tabs, which its script fills from inside.
@@ -42,12 +45,15 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
     exampleQuery: 'size OR quality',
   });
   const lineScore = buildLineScore(scored, panel);
+
   // Themes re-render the sections these sit in (Wear The Peace redraws its
   // recommendations around the tabs), so the same nodes go back in when wiped.
   const place = () => {
     if (!panel.isConnected) document.querySelector(`[data-hc="product-tabs"][data-hc-id="${id}"]`)?.before(panel);
+
     if (!lineScore.isConnected) document.querySelector(`[data-hc="product-summary"][data-hc-id="${id}"]`)?.after(lineScore);
   };
+
   place();
   new MutationObserver(place).observe(document.body, { childList: true, subtree: true });
 })();

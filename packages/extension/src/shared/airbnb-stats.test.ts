@@ -8,6 +8,7 @@ test('scores Airbnb listing-specific reviews from deferred page data', () => {
       listingRatingStats: { overallRatingStats: { ratingCount: '100' } },
     } },
   });
+
   expect(airbnbStats(data)).toEqual({ count: 100, five: 70, one: 10, score: 36, nps: 60 });
 });
 

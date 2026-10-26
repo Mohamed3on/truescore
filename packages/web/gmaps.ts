@@ -25,15 +25,20 @@ export type { Review, SortKey, SortStats };
 // pages logs one line, not dozens.
 const throttle = (ms: number) => {
   let last = 0;
+
   return (): boolean => {
     const now = Date.now();
+
     if (now - last <= ms) return false;
     last = now;
+
     return true;
   };
 };
+
 const staleLog = throttle(30_000);
 const noCredsLog = throttle(30_000);
+
 const warnNoCreds = (where: string): void => {
   if (noCredsLog()) console.warn(`[maps-creds] no session yet — ${where} serving empty until a mint lands one`);
 };
@@ -55,23 +60,35 @@ const STALE_RETRY_ATTEMPTS = 2;
 const transport: Transport = async (url, init) => {
   if (init?.method === 'POST') init = await signReq(init, mapsSession()?.sign);
   let body = await googleFetch(url, init);
+
   if (init?.method !== 'POST') return body;
-  if (!isStaleReviewsResponse(body)) { onFreshRpc(); return body; }
+
+  if (!isStaleReviewsResponse(body)) {
+    onFreshRpc();
+
+    return body;
+  }
+
   // stale shape — could be a transient throttle; retry before believing it
   for (let attempt = 1; attempt <= STALE_RETRY_ATTEMPTS; attempt++) {
     logEvent('rpc-stale', { attempt });
     await Bun.sleep(300 * attempt); // brief backoff; the retry lands on a fresh exit IP
     body = await googleFetch(url, init);
+
     if (!isStaleReviewsResponse(body)) {
       onFreshRpc();
       logEvent('rpc-recovered', { attempt }); // throttle, not expiry — no renewal needed
+
       return body;
     }
   }
+
   // still stale after retries → treat as a genuinely expired session
   onStaleRpc();
   logEvent('rpc-stale-final', { attempts: STALE_RETRY_ATTEMPTS + 1 });
+
   if (staleLog()) console.warn('[maps-creds] session looks expired after retries — Google returned empty payloads; renewing…');
+
   return body;
 };
 
@@ -114,8 +131,15 @@ export async function fetchAllForSearch(
   asWritten = false,
 ): Promise<Review[]> {
   const creds = await mapsCredsReady();
-  if (!creds) { warnNoCreds('search'); return []; }
+
+  if (!creds) {
+    warnNoCreds('search');
+
+    return [];
+  }
+
   const terms = cache.terms(featureId);
+
   return collectSearchTerms(
     expandSearchTerms(query, !asWritten),
     (term, c) => buildSearchReq(featureId, term, creds, c),
@@ -127,7 +151,13 @@ export async function fetchAllForSearch(
 
 export async function fetchAllForToken(featureId: string, token: string): Promise<Review[]> {
   const creds = await mapsCredsReady();
-  if (!creds) { warnNoCreds('token'); return []; }
+
+  if (!creds) {
+    warnNoCreds('token');
+
+    return [];
+  }
+
   // A token fetch coming back empty while the list path works is the recurring
   // highlights failure. A stale session is already flagged by the transport, so
   // a *non-stale* empty — a token Google accepted but returned nothing for — is
@@ -136,9 +166,11 @@ export async function fetchAllForToken(featureId: string, token: string): Promis
   let lastRaw = '';
   const tap: Transport = async (url, init) => (lastRaw = await transport(url, init));
   const reviews = await collectToken(featureId, token, tap, { creds });
+
   if (!reviews.length && !isStaleReviewsResponse(lastRaw)) {
     console.warn(`[token] 0 reviews (non-stale) featureId=${featureId} token=${token} rawLen=${lastRaw.length}`);
   }
+
   return reviews;
 }
 
@@ -150,6 +182,7 @@ export async function scorePlace(
   let latestNewest: Review[] = [];
 
   let lastEmit = 0;
+
   const emit = () => {
     if (!onProgress) return;
     // Coalesce: each page from either sort would otherwise re-merge + re-stat the
@@ -157,6 +190,7 @@ export async function scorePlace(
     // progress — the authoritative final score is returned below — so cap the
     // recompute at ~once / 250ms; the trailing pages settle into the `score` event.
     const now = Date.now();
+
     if (now - lastEmit < 250) return;
     lastEmit = now;
     const all = mergeByReviewId(latestRelevant, latestNewest);
@@ -173,17 +207,22 @@ export async function scorePlace(
   };
 
   const creds = await mapsCredsReady();
+
   if (!creds) {
     warnNoCreds('scorePlace');
     const z = statsForReviews([]);
+
     return { featureId, ...z, relevant: z, newest: z, reviews: [] };
   }
+
   const [relevant, newest] = await Promise.all([
     collectSort(featureId, 'relevant', transport, { creds, onPage: (rs) => { latestRelevant = rs; emit(); } }).then((r) => r.reviews),
     collectSort(featureId, 'newest', transport, { creds, onPage: (rs) => { latestNewest = rs; emit(); } }).then((r) => r.reviews),
   ]);
+
   const all = mergeByReviewId(relevant, newest);
   const m = statsForReviews(all);
+
   return {
     featureId,
     totalReviews: m.totalReviews,

@@ -4,13 +4,16 @@ import type { Summary } from './llm';
 import { displayScore, normalizeQuestion, PAGE_SIZE, type AskSearch, type Chip, type ChipMeta, type Histogram, type PartialScore, type PlaceMeta, type RemovedReviews, type Review, type SortStats, type StanceResult, type TermCache } from '@truescore/gmaps-shared';
 
 const HISTOGRAM_TTL_MS = 6 * 60 * 60 * 1000;
+
 // How long a cached review search — a whole query, or a single term — is served
 // before it's re-run. Its matches only change as new reviews mention it, a
 // trickle a day even on busy places, so a week holds.
 const SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 // A replayed Ask Answer is the model's reading of the reviews: a day.
 const ANSWER_TTL_MS = 24 * 60 * 60 * 1000;
 const ANSWERS_MAX = 30;
+
 // How long a background chip-warm that came back empty is trusted as "this place
 // genuinely has no topic chips" before we bother harvesting again.
 const CHIP_WARM_TTL_MS = 6 * 60 * 60 * 1000;
@@ -57,6 +60,7 @@ export type CacheEntry = {
 };
 
 export type CachedAnswer = { answer: string; searches: AskSearch[]; ts: number };
+
 // An Answer's key: its scope (a chip/search filter, or '' for the whole place)
 // and the question, normalized so "Dogs allowed?" finds "dogs allowed".
 export const answerKey = (filter: string | undefined, question: string) =>
@@ -81,10 +85,12 @@ const selectOneStmt = db.prepare<{ data: string }, [string]>('SELECT data FROM e
 // than the entry row: terms overlap in the reviews they hold, and a row per term
 // reads and writes without rewriting the place.
 db.run('CREATE TABLE IF NOT EXISTS search_terms (featureId TEXT NOT NULL, term TEXT NOT NULL, reviews TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (featureId, term))');
+
 const selectTermStmt = db.prepare<{ reviews: string; ts: number }, [string, string]>('SELECT reviews, ts FROM search_terms WHERE featureId = ? AND term = ?');
 const upsertTermStmt = db.prepare<void, [string, string, string, number]>('INSERT OR REPLACE INTO search_terms (featureId, term, reviews, ts) VALUES (?, ?, ?, ?)');
 const pruneTermsStmt = db.prepare<void, [number]>('DELETE FROM search_terms WHERE ts < ?');
 let termsPrunedAt = 0;
+
 // Only the /api/places listing fields, projected in sqlite — so building the
 // listing never materialises the full entries (see IndexRow below).
 type IndexProjection = {
@@ -102,6 +108,7 @@ type IndexProjection = {
   googleReviewCount: number | null;
   removedJson: string | null;
 };
+
 const selectIndexStmt = db.prepare<IndexProjection, []>(`
   SELECT featureId,
          json_extract(data, '$.name') AS name,
@@ -122,6 +129,7 @@ const selectIndexStmt = db.prepare<IndexProjection, []>(`
 // just drops out of the penalty rather than failing the whole listing.
 const parseJson = <T>(raw: string | null): T | null => {
   if (!raw) return null;
+
   try { return JSON.parse(raw) as T; } catch { return null; }
 };
 
@@ -136,11 +144,13 @@ const store = new Map<string, CacheEntry>();
 // stays an in-memory read rather than a full-table json scan on every request.
 // null: the place exists but has no score to list.
 type IndexRow = { name: string; scorePct: number; adjusted: boolean; resolvedUrl: string | null; lastAccessTs: number };
+
 const index = new Map<string, IndexRow | null>();
 
 // What the listing reads off an entry: the full CacheEntry, or the projection
 // above rebuilt into its shape — so both paths go through one toIndexRow.
 type ListedScore = Pick<SortStats, 'scorePct' | 'ratio'>;
+
 type Listable = {
   name: string;
   resolvedUrl?: string | null;
@@ -157,13 +167,16 @@ const toIndexRow = (e: Listable): IndexRow | null => {
   // A contribution-only stub (scoreTs 0) holds a placeholder 0 we never computed:
   // list the extension's contributed score instead, or nothing at all.
   const score = e.scoreTs === 0 ? e.contributedScore : e.score;
+
   if (!score) return null;
+
   const { pct, adjusted } = displayScore({
     score,
     histogram: e.histogram,
     googleReviewCount: e.meta?.googleReviewCount,
     removedReviews: e.meta?.removedReviews,
   });
+
   return {
     // A name blanked by a bare ?q=&ftid= link reads back from the preview.
     name: e.name || e.meta?.canonicalName || '',
@@ -190,6 +203,7 @@ const remember = (featureId: string, entry: CacheEntry): void => {
   if (MAX_RESIDENT <= 0) return;
   store.delete(featureId);
   store.set(featureId, entry);
+
   if (store.size > MAX_RESIDENT) store.delete(store.keys().next().value!);
 };
 
@@ -201,15 +215,25 @@ const indexEntry = (featureId: string, entry: CacheEntry): void => {
 // thrown, so one bad entry can't fail every lookup (as the old boot loop guarded).
 const read = (featureId: string): CacheEntry | undefined => {
   const hit = store.get(featureId);
-  if (hit) { remember(featureId, hit); return hit; }
+
+  if (hit) {
+    remember(featureId, hit);
+
+    return hit;
+  }
+
   const row = selectOneStmt.get(featureId);
+
   if (!row) return undefined;
+
   try {
     const entry = JSON.parse(row.data) as CacheEntry;
     remember(featureId, entry);
+
     return entry;
   } catch (e) {
     console.error(`[cache] skip corrupt row ${featureId}:`, e);
+
     return undefined;
   }
 };
@@ -219,13 +243,17 @@ const read = (featureId: string): CacheEntry | undefined => {
 if (index.size === 0) {
   try {
     const f = Bun.file(LEGACY_JSON_PATH);
+
     if (await f.exists()) {
       const json = await f.json() as Record<string, CacheEntry>;
+
       const tx = db.transaction((entries: [string, CacheEntry][]) => {
         for (const [id, entry] of entries) upsertStmt.run(id, JSON.stringify(entry));
       });
+
       const list = Object.entries(json);
       tx(list);
+
       for (const [id, entry] of list) indexEntry(id, entry);
       console.log(`[cache] migrated ${list.length} entries from ${LEGACY_JSON_PATH} → ${DB_PATH}`);
     }
@@ -241,6 +269,7 @@ const persist = (featureId: string, entry: CacheEntry) => {
 };
 
 const emptyStat = { totalReviews: 0, trustedReviews: 0, scorePct: 0 };
+
 const emptyScore = (featureId: string): ScoreResult => ({
   featureId, totalReviews: 0, trustedReviews: 0, scorePct: 0,
   relevant: emptyStat, newest: emptyStat, reviews: [],
@@ -291,7 +320,9 @@ export const cache = {
   // failed), trust the cache. If we have no baseline (legacy entry), refetch.
   scoreFresh(entry: CacheEntry, currentTotal?: number | null): boolean {
     if (currentTotal == null) return true;
+
     if (entry.totalReviewsAtCache == null) return false;
+
     return entry.totalReviewsAtCache === currentTotal;
   },
   // A cached 0-review score is only usable when the live histogram confirms zero; if
@@ -309,6 +340,7 @@ export const cache = {
   // nothing is persisted, so the prior entry stands and the next lookup retries.
   async putScore(featureId: string, name: string, score: ScoreResult, totalReviewsAtCache: number | null, resolvedUrl?: string): Promise<boolean> {
     const existing = read(featureId);
+
     if (isThrottledScrape(score, totalReviewsAtCache)) return false;
     persist(featureId, {
       ...existing,
@@ -322,10 +354,12 @@ export const cache = {
       lastAccessTs: existing?.lastAccessTs ?? Date.now(),
       accessCount: existing?.accessCount ?? 1,
     });
+
     return true;
   },
   async touch(featureId: string) {
     const existing = read(featureId);
+
     if (!existing) return;
     persist(featureId, {
       ...existing,
@@ -339,6 +373,7 @@ export const cache = {
   },
   async putSummary(featureId: string, summary: Summary) {
     const existing = read(featureId);
+
     if (!existing) return;
     persist(featureId, { ...existing, summary, summaryTs: Date.now() });
   },
@@ -350,13 +385,16 @@ export const cache = {
   },
   async putHighlights(featureId: string, highlights: Chip[]) {
     const existing = read(featureId);
+
     if (!existing) return;
     const usable = highlights.filter((h) => !chipThrottled(h));
+
     if (!usable.length) return;
     // Short = missing any chip we know the place has: emptied by a throttle here,
     // or never scored at all — a chip that threw, or one an extension
     // contribution left out (it posts only the chips that succeeded).
     const partial = usable.length < Math.max(highlights.length, existing.chipMeta?.length ?? 0);
+
     // A short set never replaces a complete one: it wouldn't be served, so
     // writing it would only throw the good set away.
     if (partial && this.highlightsServable(existing)) return;
@@ -369,6 +407,7 @@ export const cache = {
   },
   async putHighlightSummary(featureId: string, token: string, summary: Summary) {
     const existing = read(featureId);
+
     if (!existing) return;
     const highlightSummaries = { ...(existing.highlightSummaries ?? {}), [token]: summary };
     persist(featureId, { ...existing, highlightSummaries });
@@ -386,6 +425,7 @@ export const cache = {
   // RPC to re-ask.
   async putSearch(featureId: string, query: string, result: SearchResult) {
     const existing = read(featureId);
+
     if (!existing || !result.totalReviews) return;
     const searches = { ...(existing.searches ?? {}), [query.toLowerCase()]: result };
     persist(featureId, { ...existing, searches });
@@ -400,12 +440,14 @@ export const cache = {
     return {
       get(term) {
         const row = selectTermStmt.get(featureId, term.toLowerCase());
+
         return row && Date.now() - row.ts < SEARCH_TTL_MS ? JSON.parse(row.reviews) as Review[] : undefined;
       },
       set(term, reviews) {
         if (!reviews.length) return;
         const now = Date.now();
         upsertTermStmt.run(featureId, term.toLowerCase(), JSON.stringify(reviews), now);
+
         if (now - termsPrunedAt > 24 * 60 * 60 * 1000) {
           termsPrunedAt = now;
           pruneTermsStmt.run(now - SEARCH_TTL_MS);
@@ -417,6 +459,7 @@ export const cache = {
   // drop off — a place asked a lot can't grow its row without bound.
   async putAnswer(featureId: string, key: string, answer: CachedAnswer) {
     const existing = read(featureId);
+
     if (!existing) return;
     const { [key]: _prior, ...rest } = existing.answers ?? {};
     const answers = Object.fromEntries([...Object.entries(rest), [key, answer]].slice(-ANSWERS_MAX));
@@ -429,19 +472,24 @@ export const cache = {
     score?: PartialScore;
   }) {
     ensureEntry(featureId, name);
+
     if (patch.summary) await this.putSummary(featureId, patch.summary);
+
     if (patch.highlights) await this.putHighlights(featureId, patch.highlights);
+
     if (patch.highlightSummaries) {
       for (const [token, summary] of Object.entries(patch.highlightSummaries)) {
         await this.putHighlightSummary(featureId, token, summary);
       }
     }
+
     if (patch.score) await this.putContributedScore(featureId, patch.score);
   },
   // A 0-review contribution is the extension's own throttle/empty state, never
   // worth painting — drop it rather than flashing "0 reviews" at the next visitor.
   async putContributedScore(featureId: string, score: PartialScore) {
     const existing = read(featureId);
+
     if (!existing || score.totalReviews <= 0) return;
     persist(featureId, { ...existing, contributedScore: score, contributedScoreTs: Date.now() });
   },
@@ -450,8 +498,10 @@ export const cache = {
   // so chipWarmedEmpty can suppress re-harvesting a topic-less place for a while.
   async recordChipWarm(featureId: string, chips: ChipMeta[]) {
     const existing = read(featureId);
+
     if (!existing) return;
     const next: CacheEntry = { ...existing, chipWarmTs: Date.now() };
+
     if (chips.length) next.chipMeta = chips;
     persist(featureId, next);
   },
@@ -463,19 +513,24 @@ export const cache = {
   },
   async putPreviewBundle(featureId: string, bundle: { histogram: number[] | null; meta: PlaceMeta; chips?: ChipMeta[] }) {
     const existing = read(featureId);
+
     if (!existing) return;
     const next: CacheEntry = { ...existing };
+
     // Keep the last non-empty meta and chip set: a later shot with no place data
     // (an A-B bucket, a throttle) mustn't wipe them — nor, with the removal
     // notice, the penalty.
     if (Object.values(bundle.meta).some((v) => v != null)) next.meta = bundle.meta;
+
     if (bundle.chips?.length) next.chipMeta = bundle.chips;
+
     // A readable histogram is a successful preview: stamp it even when unchanged,
     // or every lookup past the TTL refetches.
     if (bundle.histogram) {
       next.histogram = bundle.histogram;
       next.histogramTs = Date.now();
     }
+
     persist(featureId, next);
   },
 };

@@ -24,10 +24,12 @@ export const TEN_POINT: Polarity = { positive: 9, negative: 2 };
 export const recentRatio = (ratings: number[], p: Polarity = FIVE_STAR): number | null => {
   if (!ratings.length) return null;
   let net = 0;
+
   for (const rating of ratings) {
     if (rating >= p.positive) net++;
     else if (rating <= p.negative) net--;
   }
+
   return net / ratings.length;
 };
 
@@ -47,6 +49,7 @@ export const RECENT_REVIEWS = 500;
 /** How the recent share sits against the all-time one, compared as the whole percents on screen. */
 export const trendClass = (allTime: number, recent: number): string => {
   const [a, r] = [Math.round(allTime * 100), Math.round(recent * 100)];
+
   return r < a ? '-trails' : r > a ? '-ahead' : '';
 };
 

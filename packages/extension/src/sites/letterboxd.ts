@@ -36,29 +36,35 @@ const debug = (...args: any[]) => CONFIG.DEBUG && console.log('[LBX]', ...args);
 /** Extracts runtime in minutes from a document */
 function extractRuntime(doc: Document) {
   const footer = doc.querySelector('p.text-footer');
+
   if (!footer) return null;
   const match = footer.textContent!.match(/(\d+)\s*mins?/);
+
   return match ? parseInt(match[1], 10) : null;
 }
 
 /** Extracts release year from a document */
 function extractYear(doc: Document) {
   const yearLink = doc.querySelector('.releasedate a');
+
   return yearLink ? yearLink.textContent!.trim() : null;
 }
 
 /** Extracts film slug from URL */
 function extractSlugFromUrl(url: string) {
   const match = url.match(/\/film\/([^/]+)/);
+
   return match ? match[1] : null;
 }
 
 /** Parses 10 rating-bucket counts from .barcolumn bars (title= before tooltip init, data-original-title= after) */
 function parseRatings(root: Document | Element): number[] {
   const barcolumns = root.querySelectorAll('.barcolumn[title], .barcolumn[data-original-title]');
+
   return Array.from(barcolumns).map((el) => {
     const attr = el.getAttribute('title') || el.getAttribute('data-original-title') || '';
     const match = attr.match(/([\d,]+)/);
+
     return match ? parseInt(match[1].replace(/,/g, ''), 10) : 0;
   });
 }
@@ -69,6 +75,7 @@ function parseRatings(root: Document | Element): number[] {
  * evidence, which is not the same as "hated" and must never become a 0.
  */
 type RecentTally = { total: number; net: number; ratio: number | null };
+
 const emptyTally = (): RecentTally => ({ total: 0, net: 0, ratio: null });
 const pctText = (ratio: number) => `${Math.round(ratio * 100)}%`;
 
@@ -93,6 +100,7 @@ function debugDetails(stats: any) {
   const content = el('div', 'lbx-debug-content');
   content.style.display = 'none';
   const selectorMismatch = stats.totalInList === 0 && stats.lastPageItemCount > 0;
+
   const lines = [
     `Found on page: ${stats.foundOnPage || 'not found'} (searched ${stats.pagesSearched || '?'} of max ${CONFIG.MAX_SIMILAR_PAGES})`,
     `Candidates from list: ${stats.totalInList}${stats.totalInList === 0 && stats.lastPageItemCount != null ? ` (last page had ${stats.lastPageItemCount} posteritems)` : ''}`,
@@ -100,20 +108,27 @@ function debugDetails(stats: any) {
     `Scored: ${stats.scored}`,
     `Current film score: ${addCommas(stats.currentScore)}`,
   ];
+
   if (selectorMismatch) lines.push('⚠ Selector mismatch — Letterboxd markup may have changed');
+
   if (stats.parseEmptyCount > 0) lines.push(`⚠ Histogram parse empty: ${stats.parseEmptyCount}/${stats.freshlyFetched} freshly fetched (CSI markup likely changed)`);
+
   if (stats.currentAdjusted != null) lines.push(`Adjusted threshold: ${addCommas(stats.currentAdjusted)}`);
+
   if (stats.allScored?.length) {
     lines.push('');
     lines.push('All runtime-matched films (✓ = score reaches the threshold, so recent reviews were checked):');
+
     for (const f of stats.allScored) {
       let status: string;
+
       if (f.fetchFailed) status = '(fetch failed)';
       else if (f.parseEmpty) status = '⚠ parse empty';
       else status = stats.currentAdjusted != null && couldReach(stats.currentAdjusted, f.score) ? '✓' : '✗';
       lines.push(`  ${status} ${f.name} — ${f.runtime}m — ${f.fetchFailed ? '?' : addCommas(f.score)}`);
     }
   }
+
   lines.forEach(line => {
     content.append(document.createTextNode(line), document.createElement('br'));
   });
@@ -124,6 +139,7 @@ function debugDetails(stats: any) {
   });
   const wrap = el('div');
   wrap.append(toggle, content);
+
   return wrap;
 }
 
@@ -132,11 +148,13 @@ const winnerMsg = (since = '') => `★ Nothing similar${since} scores higher.`;
 function winnerBanner(message: string, listName?: string | null, listLink?: string | null) {
   const winner = el('div', 'lbx-winner');
   winner.append(el('span', 'lbx-winner-text', message));
+
   if (listName && listLink) {
     const src = el('a', 'lbx-winner-source', listName) as HTMLAnchorElement;
     src.href = listLink;
     winner.append(' ', src);
   }
+
   return winner;
 }
 
@@ -152,13 +170,16 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
 // v5: v4 cached a Letterboxd-only score whenever the IMDb fetch failed (see fetchImdbRatings).
 const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v5_${slug}`, CONFIG.CACHE_EXPIRY_MS);
 const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v5_${slug}`, data);
+
 // v3: v2 tallies counted the review pages' icon sprite as ratings (see tallyRatings).
 const getCachedRecentRatings = (slug: string): Promise<RecentTally | null> => idbGet(`lbx_recent_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
 const setCachedRecentRatings = (slug: string, data: RecentTally) => idbSet(`lbx_recent_v3_${slug}`, data);
+
 // A tally abandoned early by getCandidateRecentRatings — kept apart from the full
 // one so the film's own page never mistakes a ceiling for its real recent %.
 const getCachedRecentPartial = (slug: string): Promise<(RecentTally & { room: number }) | null> => idbGet(`lbx_recent_part_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
 const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number }) => idbSet(`lbx_recent_part_v3_${slug}`, data);
+
 // v3: holds every scored runtime match; the comparison against the current film
 // happens at display time, so the cache no longer bakes in a threshold.
 // v4: candidate scores keep their sign. v5: drops candidates v4 scored as 0 from placeholders.
@@ -189,10 +210,13 @@ const saveMinYear = (year: number | null) =>
  */
 async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries = 5, retryDelay = 500): Promise<Response> {
   const retryable = new Set([429, 502, 503, 504]);
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await fetch(url, options);
+
       if (response.ok) return response;
+
       if (retryable.has(response.status) && attempt < maxRetries) {
         const retryAfter = response.headers.get('Retry-After');
         const wait = retryAfter ? parseInt(retryAfter, 10) * 1000 : retryDelay * 2 ** (attempt - 1);
@@ -200,6 +224,7 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries
         await new Promise((r) => setTimeout(r, wait));
         continue;
       }
+
       throw new Error(`HTTP ${response.status}`);
     } catch (error: any) {
       if (attempt < maxRetries && (error.message?.startsWith('HTTP') === false)) {
@@ -207,9 +232,11 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries
         await new Promise((r) => setTimeout(r, retryDelay * 2 ** (attempt - 1)));
         continue;
       }
+
       throw error;
     }
   }
+
   throw new Error(`Failed after ${maxRetries} retries`);
 }
 
@@ -226,14 +253,17 @@ const pageSlug = extractSlugFromUrl(location.href);
 /** Fetches one recent-reviews page (reviews/by/added) as HTML */
 const fetchReviewPage = (slug: string, page: number, priority?: number) => {
   const url = `/film/${slug}/reviews/by/added/page/${page}/`;
+
   if (slug !== pageSlug) return throttledFetch(url, { credentials: 'include' }, priority).then((r) => r.text());
   let pending = reviewPages.get(url);
+
   if (!pending) {
     pending = throttledFetch(url, { credentials: 'include' }).then((r) => r.text());
     reviewPages.set(url, pending);
     // A failed fetch shouldn't pin its failure for the rest of the visit.
     pending.catch(() => reviewPages.delete(url));
   }
+
   return pending;
 };
 
@@ -245,6 +275,7 @@ const fetchReviewPage = (slug: string, page: number, priority?: number) => {
 async function fetchImdbRatings(imdbLinks: (string | null)[]): Promise<({ imdbScore: number; imdbTotal: number } | null)[]> {
   const ids = imdbLinks.map((link) => link?.match(/\/title\/(tt\d+)/)?.[1]);
   const asked = [...new Set(ids.filter((id): id is string => !!id))];
+
   // Fetched by the background (see imdbHistograms there): IMDb walls off pages
   // fetched through a proxy, and this is a cross-origin call a content script can't
   // make. One query answers a whole list of titles, so a list's films go a hundred
@@ -254,14 +285,19 @@ async function fetchImdbRatings(imdbLinks: (string | null)[]): Promise<({ imdbSc
       chrome.runtime.sendMessage({ type: 'imdbHistograms', ids: asked.slice(i * CONFIG.IMDB_BATCH, (i + 1) * CONFIG.IMDB_BATCH) })
         .catch(() => null)),
   );
+
   const histograms: Record<string, number[]> = Object.assign({}, ...answers);
+
   return ids.map((id) => {
     if (!id) return { imdbScore: 0, imdbTotal: 0 };
     const counts = histograms[id];
+
     if (!counts) {
       debug(`IMDb histogram unavailable for ${id}`);
+
       return null;
     }
+
     return {
       imdbScore: counts[8] + counts[9] - counts[0] - counts[1],
       imdbTotal: counts.reduce((a, b) => a + b, 0),
@@ -295,6 +331,7 @@ async function getFilmBasicData(slug: string) {
   const parseEmpty = ratings.length === 0 && statsHtml.length > 500;
 
   debug(`${slug}: runtime=${runtime}, year=${year}, ratings=${ratings.join(',') || 'none'}`);
+
   return { runtime, year, filmName, imdbLink, ratings, parseEmpty };
 }
 
@@ -330,11 +367,14 @@ const ratingValue = (label: string) => (label.match(/★/g) || []).length * 2 + 
 function tallyRatings(doc: Document, tally: RecentTally) {
   doc.querySelectorAll('.production-viewing svg.-rating[aria-label]').forEach((svg) => {
     const value = ratingValue(svg.getAttribute('aria-label')!);
+
     if (value <= 0) return;
     tally.total += 1;
+
     if (value >= TEN_POINT.positive) tally.net += 1;
     else if (value <= TEN_POINT.negative) tally.net -= 1;
   });
+
   return tally;
 }
 
@@ -343,9 +383,11 @@ function tallyRatings(doc: Document, tally: RecentTally) {
  */
 async function getRecentRatingsSummary(slug: string | null = null): Promise<RecentTally | null> {
   const effectiveSlug = slug || extractSlugFromUrl(window.location.href);
+
   if (!effectiveSlug) return null;
 
   const cached = await getCachedRecentRatings(effectiveSlug);
+
   if (cached) return cached;
 
   const tally = emptyTally();
@@ -355,7 +397,11 @@ async function getRecentRatingsSummary(slug: string | null = null): Promise<Rece
   // A failed page costs only its own ratings, not the whole recent %.
   const pages = await Promise.all(
     Array.from({ length: CONFIG.RECENT_RATING_PAGES }, (_, i) =>
-      fetchReviewPage(effectiveSlug, i + 1).catch(() => { failed++; return ''; }))
+      fetchReviewPage(effectiveSlug, i + 1).catch(() => {
+        failed++;
+
+        return '';
+      }))
   );
 
   pages.forEach((html) => tallyRatings(parser.parseFromString(html, 'text/html'), tally));
@@ -366,6 +412,7 @@ async function getRecentRatingsSummary(slug: string | null = null): Promise<Rece
   // "Recent: n/a" — and with it a null threshold that can't judge any pick —
   // for the whole TTL after one bad fetch. Goodreads already guarded this.
   if (tally.ratio !== null && !failed) setCachedRecentRatings(effectiveSlug, tally);
+
   return tally;
 }
 
@@ -383,6 +430,7 @@ async function getRecentRatingsSummary(slug: string | null = null): Promise<Rece
  */
 async function getCandidateRecentRatings(slug: string, score: number, threshold: number | null, bar: number, priority: number): Promise<CandidateRecent> {
   const [full, partial] = await Promise.all([getCachedRecentRatings(slug), getCachedRecentPartial(slug)]);
+
   if (full) return { ratio: full.ratio, tally: full };
 
   // Far enough from the bar that the pages left can only move the tally within the
@@ -397,34 +445,46 @@ async function getCandidateRecentRatings(slug: string, score: number, threshold:
     if (threshold == null) return null;
     const ceiling = ratioFromTally(tally.net + room, tally.total + room);
     const best = adjust(score, ceiling);
+
     // A film that can't reach the threshold shows no recent % at all, so it needs no sample.
     if (best != null && best < threshold) return { ratio: ceiling, tally };
     const floor = ratioFromTally(tally.net - room, tally.total + room);
     const worst = adjust(score, floor);
+
     return worst != null && worst >= threshold && clearOfBar(tally) ? { ratio: floor, tally } : null;
   };
+
   const known = partial && settle(partial, partial.room);
+
   if (known) return known;
 
   const parser = new DOMParser();
   const tally = emptyTally();
   let perPage = 0;
+
   for (let page = 1; page <= CONFIG.RECENT_RATING_PAGES; page++) {
     const doc = parser.parseFromString(await fetchReviewPage(slug, page, priority), 'text/html');
     tallyRatings(doc, tally);
     tally.ratio = ratioFromTally(tally.net, tally.total); // kept current: the bar check and the row both read it
     const entries = doc.querySelectorAll('.js-review-body').length;
+
     if (page === 1) perPage = entries;
+
     if (!perPage) continue; // unrecognised markup: no bound, fetch every page as before
+
     if (entries < perPage) break; // a short page is the last one, so the tally is already exact
     const room = perPage * (CONFIG.RECENT_RATING_PAGES - page);
     const verdict = room && settle(tally, room);
+
     if (verdict) {
       setCachedRecentPartial(slug, { ...tally, room });
+
       return verdict;
     }
   }
+
   if (tally.ratio !== null) setCachedRecentRatings(slug, tally);
+
   return { ratio: tally.ratio, tally };
 }
 
@@ -449,15 +509,19 @@ type LbxReview = { text: string; rating: number; date: string };
 /** Fetches recent reviews with prose (skipping rating-only entries), each with its own rating, for the summary and the review search */
 async function fetchRecentReviews(slug: string): Promise<LbxReview[]> {
   const parser = new DOMParser();
+
   const pages = await Promise.all(
     Array.from({ length: CONFIG.RECENT_REVIEW_PAGES }, (_, i) => fetchReviewPage(slug, i + 1).catch(() => ''))
   );
+
   const reviews: LbxReview[] = [];
   const seen = new Set<string>();
+
   for (const html of pages) {
     const doc = parser.parseFromString(html, 'text/html');
     doc.querySelectorAll('.production-viewing').forEach((entry) => {
       const text = entry.querySelector('.js-review-body')?.textContent?.trim().replace(/\s+/g, ' ') ?? '';
+
       if (text.length < 20 || seen.has(text)) return;
       seen.add(text);
       reviews.push({
@@ -467,6 +531,7 @@ async function fetchRecentReviews(slug: string): Promise<LbxReview[]> {
       });
     });
   }
+
   return reviews;
 }
 
@@ -508,13 +573,17 @@ async function fetchWatched(uids: (string | null | undefined)[]) {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(ids.slice(i, i + 100).map((uid) => ['productions', uid])),
       });
+
       const meta = await res.json();
+
       for (const uid of meta.watched ?? []) watched.add(uid);
+
       for (const { uid, rating } of meta.ratings ?? []) ratings.set(uid, rating);
     } catch (e: any) {
       debug('Failed to fetch metadata:', e.message);
     }
   }));
+
   return { watched, ratings };
 }
 
@@ -532,15 +601,19 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
   // too, when only those they rated below it do — asked per film rather than
   // through that cookie, the user's own setting.
   const productionUid = document.querySelector('#backdrop[data-production-uid]')?.getAttribute('data-production-uid');
+
   const unseen = async <T extends { uid?: string }>(films: T[]) => {
     const { watched, ratings } = await fetchWatched([productionUid, ...films.map((f) => f.uid)]);
+
     if (!productionUid || !watched.has(productionUid)) return films.filter((f) => !watched.has(f.uid ?? ''));
     const bar = ratings.get(productionUid) ?? 0; // unrated: nothing to fall below
+
     return films.filter((f) => (ratings.get(f.uid ?? '') ?? bar) >= bar);
   };
 
   try {
     const cached = await getCachedSimilarPicks(currentSlug);
+
     // Checked by uid, so a film watched since drops out whichever list page it came from.
     if (cached) return { ...cached, films: await unseen(cached.films) };
 
@@ -550,9 +623,11 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     const listsDoc = new DOMParser().parseFromString(await listsResponse.text(), 'text/html');
 
     const firstList = listsDoc.querySelector('article.list-summary');
+
     if (!firstList) return { films: [], listName: null, listLink: null };
 
     const listLink = firstList.querySelector('h2.name a')?.getAttribute('href');
+
     if (!listLink) return { films: [], listName: null, listLink: null };
 
     const listName = firstList.querySelector('h2.name a')?.textContent?.trim() || 'Unknown List';
@@ -566,6 +641,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     let pagesSearched = 0;
     let lastPageItemCount = 0;
     const listPages: Promise<string>[] = [];
+
     const listPage = (page: number) => (listPages[page] ??=
       throttledFetch(page === 1 ? listBaseUrl : `${listBaseUrl}page/${page}/`, { credentials: 'include' }).then((r) => r.text()));
 
@@ -579,22 +655,29 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
       pagesSearched = page;
       const pageItems = Array.from(listDoc.querySelectorAll('li.posteritem'));
       lastPageItemCount = pageItems.length;
+
       if (!pageItems.length) break;
 
       const pageSlugs: { slug: string; link: string; uid?: string }[] = [];
+
       for (const item of pageItems) {
         const div = item.querySelector('[data-item-slug], [data-item-link], a[href^="/film/"]');
+
         if (!div) continue;
         const link = div.getAttribute('data-item-link') || div.getAttribute('href') || '';
         const slug = div.getAttribute('data-item-slug') || extractSlugFromUrl(link) || '';
+
         if (!slug) continue;
+
         if (slug === currentSlug) { foundCurrentFilm = true; foundOnPage = page; continue; }
+
         const uid = div.getAttribute('data-postered-identifier')?.match(/"uid":"([^"]+)"/)?.[1];
         pageSlugs.push({ slug, link, uid });
       }
 
       listed.push(...pageSlugs);
       debug(`Page ${page}: ${pageSlugs.length} films (${pageItems.length} posteritems)${foundCurrentFilm ? ' (current film found)' : ''}`);
+
       if (pageItems.length > 0 && pageSlugs.length === 0 && !foundCurrentFilm) {
         console.warn(`[LBX] Selector mismatch: ${pageItems.length} posteritems on page ${page} but 0 slugs extracted — Letterboxd markup may have changed`);
       }
@@ -603,6 +686,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     }
 
     const allFilmSlugs = await unseen(listed);
+
     if (!allFilmSlugs.length) return { films: [], listName, listLink, stats: { totalInList: 0, runtimeMatched: 0, scored: 0, currentRuntime, foundOnPage, pagesSearched, lastPageItemCount, allScored: [] } };
 
     debug(`Total films across pages: ${allFilmSlugs.length}`);
@@ -612,11 +696,14 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
       allFilmSlugs.map(async ({ slug, link, uid }) => {
         try {
           const cached = await getCachedFilmData(slug);
+
           if (cached) return { slug, link, uid, ...cached, fromCache: true };
           const basic = await getFilmBasicData(slug);
+
           return { slug, link, uid, ...basic, fromCache: false };
         } catch (e: any) {
           debug(`Failed to fetch ${slug}: ${e.message}, keeping as fetchFailed`);
+
           return { slug, link, uid, runtime: currentRuntime, year: null, filmName: slug, imdbLink: null, ratings: [], fromCache: false, fetchFailed: true };
         }
       })
@@ -635,6 +722,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     );
 
     debug(`Runtime matches (≤${currentRuntime + CONFIG.RUNTIME_TOLERANCE}m): ${runtimeMatches.length}`);
+
     if (!runtimeMatches.length) return { films: [], listName, listLink, stats: { totalInList: allFilmSlugs.length, runtimeMatched: 0, scored: 0, currentRuntime, foundOnPage, pagesSearched, allScored: [] } };
 
     const uncached = runtimeMatches.filter((f: any) => !f.fromCache).length;
@@ -643,17 +731,21 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     // The IMDb half of every match still unscored, all asked at once (see fetchImdbRatings).
     const imdbRatings = await fetchImdbRatings(runtimeMatches.map((film: any) =>
       (film.fromCache && film.scored !== false) || film.fetchFailed ? null : film.imdbLink));
+
     const scoredFilms = runtimeMatches.map((film: any, i) => {
       if (film.fromCache && film.scored !== false) return film;
+
       if (film.fetchFailed) return { ...film, score: 0, ratio: 0 };
 
       const imdb = imdbRatings[i];
+
       // Without its IMDb half the score is on another scale: the film goes unscored,
       // and its placeholder stays for the next visit to retry.
       if (!imdb) return { ...film, score: 0, ratio: 0, fetchFailed: true };
       const { score, ratio } = calculateCombinedScore(film.ratings, imdb.imdbScore, imdb.imdbTotal);
 
       setCachedFilmData(film.slug, { score, ratio, scored: true, runtime: film.runtime, year: film.year, filmName: film.filmName });
+
       return { ...film, score, ratio };
     });
 
@@ -662,29 +754,37 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     const allScored: any[] = [];
     let freshlyFetched = 0;
     let parseEmptyCount = 0;
+
     for (const f of scoredFilms) {
       allScored.push({ name: f.filmName, score: f.score, runtime: f.runtime, fetchFailed: f.fetchFailed, parseEmpty: f.parseEmpty });
       candidates.push({ slug: f.slug, uid: f.uid, name: f.filmName, link: f.link, score: f.score, runtime: f.runtime, year: f.year, fetchFailed: f.fetchFailed });
+
       if (!f.fromCache && !f.fetchFailed) {
         freshlyFetched++;
+
         if (f.parseEmpty) parseEmptyCount++;
       }
     }
+
     if (freshlyFetched >= 5 && parseEmptyCount / freshlyFetched >= 0.5) {
       console.warn(`[LBX] Histogram parser returned empty for ${parseEmptyCount}/${freshlyFetched} freshly-fetched films — Letterboxd CSI markup may have changed. Inspect /csi/film/<slug>/rating-histogram/ and update parseRatings().`);
     }
+
     const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentRuntime, foundOnPage, pagesSearched, allScored, parseEmptyCount, freshlyFetched };
 
     debug(`Candidate films: ${candidates.length}`);
     const result = { films: candidates, stats, listName, listLink };
+
     // Only a fully resolved crawl is worth a week: caching the survivors of a
     // partial one would drop every film that failed from the picks until expiry.
     if (candidates.length && !candidates.some((f: any) => f.fetchFailed)) {
       setCachedSimilarPicks(currentSlug, { films: candidates, listName, listLink, stats });
     }
+
     return result;
   } catch (error) {
     console.error('findSimilarPicks error:', error);
+
     return { films: [], listName: null, listLink: null, error: true };
   }
 }
@@ -707,9 +807,11 @@ function moveTo(element: HTMLElement, target: HTMLElement, after: Element | null
   // re-sorts under a landing check. Without preventScroll, focus() scrolls the
   // row's new list into view, jumping the page.
   const focused = element.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
+
   if (after) after.after(element);
   else target.prepend(element);
   focused?.focus({ preventScroll: true });
+
   // A script animation, unlike a CSS one, survives the row being placed again mid-way.
   if (moved && animates(element)) element.animate([{ opacity: 0, transform: 'translateY(-3px)' }, {}], { duration: 280, easing: EASE });
 }
@@ -721,6 +823,7 @@ function moveTo(element: HTMLElement, target: HTMLElement, after: Element | null
 function startSimilarPicks(currentSlug: string, currentRuntime: number) {
   const section = el('section', 'lbx-similar');
   section.append(el('span', 'lbx-progress', 'Finding similar picks...'));
+
   return { section, found: findSimilarPicks(currentSlug, currentRuntime, section), ignored: loadIgnored(IGNORED_KEY), minYear: loadMinYear() };
 }
 
@@ -743,8 +846,10 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
   let minYear = await picks.minYear;
 
   similarSection.textContent = '';
+
   if (result.error) {
     similarSection.remove();
+
     return;
   }
 
@@ -764,7 +869,9 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     similarSection.append(films.length
       ? el('span', 'lbx-progress', 'Not enough data on this film to compare similar picks.')
       : winnerBanner(winnerMsg(), result.listName, result.listLink));
+
     if (stats) similarSection.append(debugDetails(stats));
+
     return;
   }
 
@@ -792,6 +899,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
   similarSection.append(banner, header, sourceRow, list, belowToggle, below, drawerToggle, drawer);
 
   type Entry = { element: HTMLElement; meta: HTMLElement; button: HTMLButtonElement; film: any; passes: boolean; adjusted: number | null; settled: boolean; checking?: Promise<void> };
+
   const items = new Map<string, Entry>();
   let belowOpen = false;
   let drawerOpen = false;
@@ -813,10 +921,13 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     const top = (row: Element) => row.getBoundingClientRect().top - list.getBoundingClientRect().top;
     const was = new Map([...list.children].map((row) => [row, top(row)]));
     const last = new Map<HTMLElement, Element>();
+
     for (const entry of ordered) {
       // Too old: off every list and out of every count but its own.
       if (!shown(entry.film)) { hiddenCount++; entry.element.remove(); continue; }
+
       const isIgnored = ignored.has(entry.film.slug);
+
       if (isIgnored) ignoredCount++;
       else if (entry.passes) passCount++;
       else if (!entry.settled) pendingCount++;
@@ -830,17 +941,21 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
       moveTo(entry.element, target, last.get(target) ?? null);
       last.set(target, entry.element);
     }
+
     for (const row of list.children as HTMLCollectionOf<HTMLElement>) {
       if (!was.has(row)) continue;
+
       // From where it shows now, a glide already under way included.
       for (const a of row.getAnimations()) if (a.id === 'glide') a.cancel();
       const dy = was.get(row)! - top(row);
+
       if (Math.abs(dy) > 0.5 && animates(row)) row.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { id: 'glide', duration: 220, easing: EASE });
     }
 
     // The films that lost are receipts, not results: one folded line each way.
     const belowCount = items.size - hiddenCount - ignoredCount - passCount - pendingCount;
     belowToggle.hidden = belowCount === 0;
+
     if (!belowToggle.hidden) belowToggle.textContent = `${belowOpen ? '▼' : '▶'} ${belowCount} didn’t reach ${addCommas(threshold!)}`;
     below.hidden = belowToggle.hidden || !belowOpen;
 
@@ -856,6 +971,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     sourceLink.hidden = isWinner;
     // The banner names the list; the year stays while it hides films to bring back.
     sourceRow.hidden = isWinner && !hiddenCount;
+
     if (isWinner) {
       const since = hiddenCount ? ` since ${minYear}` : '';
       bannerText.textContent = ignoredCount && ignoredCount === items.size - hiddenCount
@@ -881,9 +997,11 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
       ignored.delete(slug);
     } else {
       ignored.add(slug);
+
       // First ignore of the visit springs the drawer open once, so undo is discoverable.
       if (!drawerRevealed) { drawerRevealed = true; drawerOpen = true; }
     }
+
     saveIgnored(IGNORED_KEY, slug, ignored.has(slug));
     paint();
   };
@@ -913,6 +1031,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
       // Ranked by score: a higher film's next page goes ahead of a lower one's first,
       // so the rows settle top-down rather than all at once near the end.
       : await getCandidateRecentRatings(film.slug, film.score, threshold, bar, films.indexOf(film) + 1).catch(() => null);
+
     // One verdict, shared with Goodreads (shared/better-picks.ts). A film with no
     // tally at all — unscored, or its fetch out of retries — was never measured, so
     // it keeps the benefit of the doubt instead of counting as one that didn't reach.
@@ -920,6 +1039,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
       { score: current.score, ratio: current.ratio },
       [{ key: film.slug, item: film, score: film.score, ratio: recent?.ratio ?? null, unresolved: !recent }],
     ).ranked;
+
     const entry = items.get(film.slug)!;
     // Shown and sorted on what the reviews fetched actually ran at. The bound the
     // verdict rests on assumes every unfetched page hates the film, so it ordered the
@@ -930,6 +1050,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     entry.passes = pick.passes;
     entry.settled = true;
     entry.meta.textContent = filmMeta(film, entry.adjusted == null || pick.unresolved ? '?' : addCommas(entry.adjusted));
+
     // Only a pick carries a recent %: a film that didn't reach the threshold is a
     // receipt, and what its check saw before giving up says little about how it runs now.
     // Amber marks the one thing worth a second look — a pick this film still beats
@@ -939,9 +1060,11 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
       entry.meta.append(el('span', trails ? 'lbx-recent lbx-trails' : 'lbx-recent', ` · recent ${pctText(observed)}`));
       entry.element.title = `${filmTooltip(film)} · ${recent!.tally.total} recent ratings${trails ? `, short of this film’s ${refPct}%` : ''}`;
     }
+
     if (!entry.passes) entry.element.classList.add('lbx-excluded');
     paint();
   };
+
   // A hidden film's check — a run of review-page fetches — waits until it's shown.
   const checkShown = () => Promise.all([...items.values()].filter((e) => shown(e.film)).map((e) => (e.checking ??= check(e.film))));
   await checkShown();
@@ -982,6 +1105,7 @@ async function run(histogram: Promise<number[]>) {
   // Anchor on the histogram container, not Letterboxd's average — films below
   // the site's own-average threshold render the histogram without one.
   const scoreAnchor = document.querySelector('.ratings-histogram-chart .rating-histogram');
+
   if (!scoreAnchor || !reviewSection) return;
 
   // One line under Letterboxd's own ratings chart: the adjusted score, as the similar picks
@@ -1012,6 +1136,7 @@ async function run(histogram: Promise<number[]>) {
   };
 
   let scorePromise: Promise<{ score: number; ratio: number; imdbFailed?: boolean }>;
+
   if (cachedFilm) {
     showAllTime(cachedFilm.score, cachedFilm.ratio);
     scorePromise = Promise.resolve({ score: cachedFilm.score, ratio: cachedFilm.ratio });
@@ -1019,11 +1144,13 @@ async function run(histogram: Promise<number[]>) {
     scorePromise = imdbPromise.then((imdb) => {
       const { score, ratio } = calculateCombinedScore(ratings, imdb?.imdbScore, imdb?.imdbTotal);
       showAllTime(score, ratio, !imdb);
+
       // A failed IMDb fetch leaves a Letterboxd-only score: shown, but never cached,
       // so the next visit retries.
       if (imdb && currentSlug && currentRuntime) {
         setCachedFilmData(currentSlug, { score, ratio, scored: true, runtime: currentRuntime, year: currentYear, filmName: currentFilmName });
       }
+
       return { score, ratio, imdbFailed: !imdb };
     });
   }
@@ -1033,10 +1160,13 @@ async function run(histogram: Promise<number[]>) {
     const adjusted = adjust(score, ratio);
     figure.textContent = cardFigure.textContent = adjusted == null ? '—' : addCommas(adjusted);
     working.append(adjusted == null ? ' · recent unknown' : ` × ${pctText(ratio!)} in the newest ${recentRatings!.total} reviews`);
+
     if (ratio != null) {
       lovedTail.before(' → ', el('strong', trendClass(allTime, ratio), pctText(ratio)));
+
       if (recentRatings!.total < THIN_SAMPLE) loved.append(` (${recentRatings!.total} reviews)`);
     }
+
     // Nor is a Letterboxd-only score a reference for picks scored with IMDb votes.
     return imdbFailed ? { score, ratio: null, adjusted: null } : { score, ratio, adjusted };
   });
@@ -1097,14 +1227,17 @@ function initObserver() {
   const histogram = new Promise<number[]>((resolve) => {
     const tryResolve = () => {
       const ratings = parseRatings(document);
+
       if (!ratings.length) return;
       observer?.disconnect();
       resolve(ratings);
     };
+
     observer = new MutationObserver(tryResolve);
     observer.observe(document.body, { childList: true, subtree: true });
     tryResolve();
   });
+
   // A film with ratings says so in the page's own HTML (its average, in a meta tag):
   // only then do the fetches start before the ratings chart renders. An unreleased
   // film's never does, and its picks crawl would be for nothing.

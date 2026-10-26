@@ -12,6 +12,7 @@ const flashSaved = (msg: string) => {
 // falls back to.
 const seg = document.getElementById('provider-seg')!;
 const segBtns = [...seg.querySelectorAll<HTMLButtonElement>('button')];
+
 const markActive = (provider: string) =>
   segBtns.forEach((b) => b.classList.toggle('active', b.dataset.provider === provider));
 
@@ -39,6 +40,7 @@ for (const btn of segBtns) {
 // Reasoning effort for gpt-6-luna (OpenAI path only); defaults to low.
 const reasoningSeg = document.getElementById('reasoning-seg')!;
 const reasoningBtns = [...reasoningSeg.querySelectorAll<HTMLButtonElement>('button')];
+
 const markEffort = (effort: string) =>
   reasoningBtns.forEach((b) => b.classList.toggle('active', b.dataset.effort === effort));
 
@@ -70,6 +72,7 @@ for (const { id, storageKey } of FIELDS) {
   // Load saved key
   chrome.storage.sync.get(storageKey, (items) => {
     const v = (items as Record<string, string>)[storageKey];
+
     if (v) input.value = v;
   });
 

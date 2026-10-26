@@ -3,27 +3,34 @@ import * as realLlm from './llm';
 import * as realJev from './jev';
 
 const PARSED = { praised: ['Lasts long'], complaints: [], conclusion: 'Good.', betterAlternative: '' };
+
 // Keep the rest of the module intact: module mocks are process-wide, and a bare
 // factory blanked salvageObject for llm.test.ts whenever it ran after this file.
 // A streamed summary, for the test that sets one: its partials, then the whole.
 // `settle`: ms to wait after each, for a panel that draws them frame by frame.
 let stream: { partials: any[]; whole: any; settle?: number; after?: (i: number) => void } | undefined;
+
 mock.module('./llm', () => ({
   ...realLlm,
   summarize: async (_reviews: string[], _prompt: string, _schema: unknown, onPartial?: (partial: any) => void) => {
     if (!stream) return PARSED;
+
     for (const [i, partial] of stream.partials.entries()) {
       onPartial?.(partial);
+
       if (stream.settle) await new Promise((r) => setTimeout(r, stream!.settle));
       stream.after?.(i);
     }
+
     return stream.whole;
   },
   askTransport: async () => { throw new Error('unused'); },
 }));
+
 // Jev's reads, for the test that sets them; the real ones otherwise.
 const jev: { support?: typeof realJev.readSupport; answers?: typeof realJev.readAnswers } = {};
 const { readSupport, readAnswers } = realJev;
+
 mock.module('./jev', () => ({
   ...realJev,
   readSupport: (...a: Parameters<typeof readSupport>) => (jev.support ?? readSupport)(...a),
@@ -53,6 +60,7 @@ test('a promised auto-summarize waits for its answer, and a no spends no call', 
   const { buildSummarizeWidget } = await import('./review-summary');
   // A key for getActiveLLM, so only the promise decides.
   (globalThis as any).chrome = { storage: { sync: { get: async (name: string) => ({ [name]: 'key' }) } } };
+
   try {
     const land = async (go: boolean) => {
       const wrapper = document.createElement('div');
@@ -70,8 +78,10 @@ test('a promised auto-summarize waits for its answer, and a no spends no call', 
       expect(panel()).not.toContain('Lasts long');
       decide(go);
       await new Promise((r) => setTimeout(r, 20));
+
       return panel();
     };
+
     expect(await land(false)).not.toContain('Lasts long');
     expect(await land(true)).toContain('Lasts long');
   } finally {
@@ -114,6 +124,7 @@ test('the better alternative is the rival every review naming it prefers, not th
   const parsed = { ...PARSED, rivals: [{ name: 'More Zerup', aliases: ['More'], why: 'tastes less artificial' }] };
   const sample = ['a sample review that never names it'];
   jev.support = async (points) => points.map(() => [0, 0]);
+
   try {
     jev.answers = async (_q, texts) => texts.map((t) => (t.includes('cheaper') ? 'no' : 'yes'));
     const found = await withReceipts(parsed, sample, search);
@@ -148,6 +159,7 @@ test('a summary shows as it is written, dim until checked, then drops and orders
     whole: { praised: ['Lasts long', 'Quiet', 'Cheap'], complaints: ['Leaks'], conclusion: 'Good.', betterAlternative: '', rivals: [] },
     after: (i) => {
       seen.push(bullets('praised').map((b) => `${b.textContent}${b.style.opacity === '0.5' ? ' (dim)' : ''}`));
+
       if (i === 0) {
         lasts = bullets('praised')[0];
         // The verdict leads the panel but is written last: its place is held.
@@ -158,6 +170,7 @@ test('a summary shows as it is written, dim until checked, then drops and orders
   };
   // One review makes "Quiet", too few to show; "Cheap" is the best backed.
   jev.support = async (points) => points.map((p) => (p === 'Quiet' ? [0] : p === 'Cheap' ? [0, 1, 2] : [0, 1]));
+
   try {
     buildSummarizeWidget({ wrapper, cacheKey: 'stream-test', summaryPrompt: 'p', fetchReviews: async () => ['r1', 'r2', 'r3'], renderQuote: () => null });
     (wrapper.querySelector('.ars-summarize-btn') as HTMLButtonElement).click();
@@ -181,12 +194,15 @@ const mediaSummary = async (summaryCacheKey: string | null) => (await import('./
   anchor: document.createElement('div').appendChild(document.createElement('div')), classPrefix: 'gr-summary', heading: 'Reader Reviews',
   summaryPrompt: 'p', summaryCacheKey, summaryTtl: 60_000, initialButtonLabel: '✦ Summarize', fetchReviews: async () => ['a review'],
 });
+
 // The verdict, then each point as "its mark's label: its text".
 const mediaDraft = (section: HTMLElement) => {
   const body = section.querySelector('.gr-summary-body')!;
   const verdict = body.querySelector('.gr-summary-verdict');
+
   if (!verdict) return body.textContent;
   const points = [...body.querySelectorAll('.gr-summary-point')].map((li) => `${li.querySelector('.gr-summary-mark')!.getAttribute('aria-label')}: ${li.textContent}`);
+
   return [verdict.textContent, ...points].join(' | ');
 };
 
@@ -209,10 +225,12 @@ test('a media summary keeps its progress note until the first words, then adds e
     settle: 200,
     after: (i) => {
       seen.push(mediaDraft(section));
+
       if (i === 4) first = section.querySelector('.gr-summary-point')!;
     },
   };
   const section = await mediaSummary(null);
+
   try {
     (section.querySelector('.gr-summary-btn') as HTMLButtonElement).click();
     await new Promise((r) => setTimeout(r, 6 * 200 + 50));

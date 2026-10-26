@@ -15,7 +15,9 @@ export const RL_MAX = 20;
 
 export const checkRateLimit = () => {
   let rl = JSON.parse(localStorage.getItem(RL_KEY) || '{"count":0,"resetAt":0}');
+
   if (Date.now() > rl.resetAt) rl = { count: 0, resetAt: Date.now() + 86400000 };
+
   return rl;
 };
 
@@ -28,7 +30,9 @@ export const bumpRateLimit = () => {
 // The popup's provider and key, on that provider's settings (gmaps-shared/models.ts).
 const activeModel = async () => {
   const { provider, key: apiKey, reasoningEffort } = await getActiveLLM();
+
   if (!apiKey) throw new Error(`No ${PROVIDER_LABEL[provider]} API key — set one in the TrueScore popup`);
+
   return modelCall(provider, { apiKey, reasoningEffort, browser: true });
 };
 
@@ -55,13 +59,18 @@ export const setOnUsage = (fn: typeof onUsage) => { onUsage = fn; };
 // text or object as far as it's written, each time it grows.
 export const summarize = async (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null, onPartial?: (partial: any) => void) => {
   const call = { ...await activeModel(), prompt: withReviews(prompt, reviewTexts) };
+
   if (!schema) {
     const { text, usage } = await writeText(call, onPartial);
     onUsage?.(usage);
+
     return text;
   }
+
   const { object, usage } = await writeObject({ ...call, schema: jsonSchema(schema) }, onPartial, (text) => salvageObject(text, schema));
+
   if (usage) onUsage?.(usage);
+
   return object;
 };
 

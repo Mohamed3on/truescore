@@ -7,8 +7,11 @@ import { setupScoreGrid, containersBySelector } from '../shared/score-grid';
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const throttledFetch = createThrottledFetcher(8);
 const site = getDecathlonSite();
+
 if (!site) throw new Error('unsupported locale');
+
 const CONTAINERS = 'ul.product-grid, ul.carousel-slides-wrapper';
+
 // The Asia-Pacific shops' tiles that show a rating. Their grid places each one
 // absolutely, where CSS `order` can't rank it, so there they keep the host's order.
 const CARD = site.apac ? `[data-testid="producthit-tile-box"]:has(${APAC_RATING})` : `:is(${CONTAINERS}) .product-card`;
@@ -17,20 +20,27 @@ const LINK = 'a[href*="/p/"]';
 const fetchScore = async (sku: string, productId: string) => {
   const key = `nps_score_v2_${productId}`; // v2: scores keep their sign (netScore)
   const cached = cacheGetMaybe(key, CACHE_TTL);
+
   if (cached) return cached.value;
 
   const res = await throttledFetch(site.statsUrl(sku));
+
   if (!res.ok) return null;
   const dist = (await res.json())?.stats?.ratingDistribution ?? [];
 
   let total = 0, five = 0, one = 0;
+
   for (const { code, value } of dist) {
     total += value;
+
     if (code === '5') five = value;
+
     if (code === '1') one = value;
   }
+
   const result = total ? npsStats(five, one, total) : null;
   cacheSetMaybe(key, result);
+
   return result;
 };
 
@@ -39,10 +49,13 @@ const fetchScore = async (sku: string, productId: string) => {
 // so it stays here with its own observer rather than in the shared ranker.
 const dedupGrid = () => {
   const seen = new Set<string>();
+
   for (const li of document.querySelectorAll(`:is(${CONTAINERS}) > li`)) {
     const link = li.querySelector(LINK);
+
     if (!link) continue;
     const ids = extractDecathlonIds(link.getAttribute('href')!);
+
     if (!ids) continue;
     (li as HTMLElement).style.display = seen.has(ids.productId) ? 'none' : '';
     seen.add(ids.productId);
@@ -51,11 +64,15 @@ const dedupGrid = () => {
 
 // One fetch per product, shared by the early prefetch below and the grid.
 const scores = new Map<string, Promise<any>>();
+
 const scoreFor = (link: Element | null) => {
   const ids = link && extractDecathlonIds(link.getAttribute('href')!);
+
   if (!ids) return Promise.resolve(null);
   let score = scores.get(ids.productId);
+
   if (!score) scores.set(ids.productId, (score = fetchScore(ids.sku, ids.productId)));
+
   return score;
 };
 
@@ -63,8 +80,11 @@ const scoreFor = (link: Element | null) => {
 // start fetching at once; only the badges wait until React has hydrated the
 // server-rendered grid (see afterHydration).
 const prefetch = () => { for (const link of document.querySelectorAll(`${CARD} ${LINK}`)) scoreFor(link); };
+
 prefetch();
+
 const prefetchObs = new MutationObserver(prefetch);
+
 prefetchObs.observe(document.body, { childList: true, subtree: true });
 
 const startGrid = () => setupScoreGrid({
@@ -79,15 +99,19 @@ const startGrid = () => setupScoreGrid({
   // it also can't corrupt the carousel tracks the way node moves could.
   discover: site.apac ? undefined : containersBySelector(CONTAINERS),
 });
+
 afterHydration().then(() => {
   prefetchObs.disconnect();
   startGrid();
 });
 
 let dedupFrame: number;
+
 const scheduleDedup = () => {
   cancelAnimationFrame(dedupFrame);
   dedupFrame = requestAnimationFrame(dedupGrid);
 };
+
 scheduleDedup();
+
 new MutationObserver(scheduleDedup).observe(document.body, { childList: true, subtree: true });

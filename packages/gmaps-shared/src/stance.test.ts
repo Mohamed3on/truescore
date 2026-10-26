@@ -57,9 +57,16 @@ describe('reviewMark', () => {
 
 describe('trustedStance', () => {
   const review = (reviewId: string, text: string, reviewerReviewCount = 10): Review => ({ reviewId, stars: 5, reviewerReviewCount, timestamp: null, text });
+
   const reader = (reachable = true) => {
     const read: string[][] = [];
-    const stances = async (_topic: string, texts: string[]) => { read.push(texts); return texts.map((t): Stance => (t.includes('bad') ? 'complain' : 'praise')); };
+
+    const stances = async (_topic: string, texts: string[]) => {
+      read.push(texts);
+
+      return texts.map((t): Stance => (t.includes('bad') ? 'complain' : 'praise'));
+    };
+
     return { read, reader: { reachable: () => reachable, stances } };
   };
 

@@ -4,6 +4,7 @@ import { COOKIES_PATH } from './browser';
 
 const SAVED = COOKIES_PATH.replace(/cookies\.json$/, 'account.json');
 const origFetch = globalThis.fetch;
+
 afterEach(() => {
   globalThis.fetch = origFetch;
   delete process.env.TRUESCORE_ACCOUNT_COOKIES;
@@ -13,8 +14,10 @@ afterEach(() => {
 // account.ts reads its env at import, so each case takes a fresh instance: a restart.
 const boot = (cookies: string) => {
   process.env.TRUESCORE_ACCOUNT_COOKIES = cookies;
+
   return import(`./account?${Math.random()}`) as Promise<typeof import('./account')>;
 };
+
 // Not a Response: test-setup's happy-dom one drops Set-Cookie, as a browser's would.
 const googleRotatesTo = (psidts: string) => {
   const headers = { getAll: () => [`__Secure-1PSIDTS=${psidts}; Path=/; Domain=.google.com`] };

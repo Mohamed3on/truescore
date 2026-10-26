@@ -9,5 +9,6 @@ export type PreviewBundle = { histogram: Histogram | null; meta: PlaceMeta; chip
 
 export async function fetchPreviewBundle(placeUrl: string): Promise<PreviewBundle> {
   const data = await fetchPlacePreview(placeUrl);
+
   return { histogram: histogramFromPreview(data), meta: metaFromPreview(data), chips: chipsFromPreview(data) };
 }

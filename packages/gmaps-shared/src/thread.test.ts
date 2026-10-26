@@ -5,6 +5,7 @@ const t1 = (data: Record<string, unknown>, replies: unknown[] = []) => ({
   kind: 't1',
   data: { author: 'someone', score: 1, ...data, replies: replies.length ? { kind: 'Listing', data: { children: replies } } : '' },
 });
+
 const listing = (comments: unknown[]) => [
   { kind: 'Listing', data: { children: [{ kind: 't3', data: { id: 'p1', title: 'Best headphones?', selftext: 'Under $300' } }] } },
   { kind: 'Listing', data: { children: comments } },
@@ -18,6 +19,7 @@ describe('threadFromListing', () => {
       ]),
       t1({ id: 'd', parent_id: 't3_p1', body: 'Bose' }),
     ]));
+
     expect(thread).toMatchObject({ id: 'p1', title: 'Best headphones?', text: 'Under $300' });
     expect(thread.comments.map((c) => [c.id, c.parentId])).toEqual([['a', null], ['b', 'a'], ['c', 'b'], ['d', null]]);
     expect(thread.comments[0]!.score).toBe(9);
@@ -29,6 +31,7 @@ describe('threadFromListing', () => {
       t1({ id: 'r', parent_id: 't3_p1', body: '[removed]' }),
       { kind: 'more', data: { id: 'm', count: 40, children: ['x', 'y'] } },
     ]));
+
     expect(thread.comments.map((c) => c.id)).toEqual(['b']);
   });
 
@@ -39,6 +42,7 @@ describe('threadFromListing', () => {
       t1({ id: 'c', parent_id: 't3_p1', body: 'mod note', distinguished: 'moderator' }),
       t1({ id: 'd', parent_id: 't3_p1', body: 'Sony' }),
     ]));
+
     expect(thread.comments.map((c) => !!c.bot)).toEqual([true, true, true, false]);
   });
 });

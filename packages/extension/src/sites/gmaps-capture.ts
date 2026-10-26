@@ -22,20 +22,26 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
 
   const featureIdFromUrl = (u: string): string | null => {
     const m = u.replace(/%3A/gi, ':').match(/!1s(0x[a-f0-9]+:0x[a-f0-9]+)/i);
+
     return m ? m[1] : null;
   };
 
   const store = (url: string, text: string) => {
     const featureId = featureIdFromUrl(url);
+
     if (!featureId) return;
+
     try {
       const json = JSON.parse(text.replace(/^\)\]\}'\s*/, ''));
       cache[featureId] = { json, ts: Date.now() };
       const keys = Object.keys(cache);
+
       if (keys.length > MAX_ENTRIES) {
         keys.sort((a, b) => cache[a].ts - cache[b].ts);
+
         for (let i = 0; i < keys.length - MAX_ENTRIES; i++) delete cache[keys[i]];
       }
+
       document.dispatchEvent(new CustomEvent(PREVIEW_CAPTURED, { detail: { featureId } }));
     } catch {}
   };
@@ -48,6 +54,7 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
   let captureResolve: ((c: MapsCapturedCreds | null) => void) | null = null;
   let captureInFlight: Promise<MapsCapturedCreds | null> | null = null;
   let captureTimer: ReturnType<typeof setTimeout> | undefined;
+
   const settleCapture = (c: MapsCapturedCreds | null) => {
     clearTimeout(captureTimer);
     captureTimer = undefined;
@@ -56,25 +63,32 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
     captureInFlight = null;
     resolve?.(c);
   };
+
   // Anchor on the rating histogram (.jANrlb) or a review card, both in the
   // scrolling pane — Maps loads the list only once it scrolls into view, so a
   // list pushed below the fold (e.g. by a removal notice) has no card yet.
   const findReviewsScroll = (): HTMLElement | null => {
     let el = document.querySelector<HTMLElement>('.jftiEf[data-review-id], .jANrlb')?.parentElement ?? null;
+
     while (el) {
       const s = getComputedStyle(el);
+
       if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) return el;
       el = el.parentElement;
     }
+
     return null;
   };
+
   // Google's own visual-element id for the Reviews tab (jslog "145620") is the
   // same in every language; an English aria-label match silently missed every
   // non-English UI (German "Rezensionen zu …").
   const reviewsTab = () => document.querySelector<HTMLElement>('button[role="tab"][jslog^="145620"]');
+
   const requestCapture = (): Promise<MapsCapturedCreds | null> => {
     if (captureInFlight) return captureInFlight;
     captureInFlight = new Promise((resolve) => { captureResolve = resolve; });
+
     // Open the Reviews tab if needed, then scroll — Maps fires the bgkey-bearing
     // batchexecute when the list loads or paginates; a no-op click on an already-
     // open tab won't refetch, but a scroll forces the next page. Both are retried
@@ -89,13 +103,16 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
       if (!window.__truescoreMapsCreds) reviewsTab()?.click();
       findReviewsScroll()?.scrollBy({ top: 1e6 });
     };
+
     nudgeOnce();
     setTimeout(nudgeOnce, 1200);
     setTimeout(nudgeOnce, 3000);
     // A capture settles it at once (storeCreds); none by now and Maps isn't sending one.
     captureTimer = setTimeout(() => settleCapture(null), CAPTURE_WAIT_MS);
+
     return captureInFlight;
   };
+
   window.__truescoreRequestMapsCreds = requestCapture;
 
   // Our replays are signed the way Maps signs its own (see installMapsSigner). Maps
@@ -104,8 +121,10 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
   const signOnce = window.__truescoreSignMaps!;
   window.__truescoreSignMaps = async (request) => {
     const key = await signOnce(request);
+
     if (key) return key;
     await requestCapture();
+
     return signOnce(request);
   };
 
@@ -114,8 +133,10 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
   // from ever giving way to a fresh one). credsFromBatchExecute lifts sessionId + at.
   const storeCreds = (url: string, req: Request, body: string) => {
     const bgkey = req.headers.get('x-maps-bgkey');
+
     if (!bgkey) return;
     const { sessionId, at } = credsFromBatchExecute(bgkey, '', body);
+
     if (!sessionId) return;
     // The signed-in account Maps sent this as — the creds only replay as that account.
     const authuser = new URL(url, location.href).searchParams.get('authuser') ?? undefined;
@@ -128,6 +149,7 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
   const origFetch = window.fetch;
   window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
     const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+
     // Maps sends its review request as a bare Request (2026-10), headers and body on
     // it rather than in init; one Request reads any call shape. Cloned, so the body
     // Maps sends stays unread.
@@ -135,10 +157,13 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
       const req = new Request(input instanceof Request ? input.clone() : input, init);
       req.text().then((body) => storeCreds(url, req, body)).catch(() => {});
     } catch {}
+
     const promise = origFetch.call(this, input, init);
+
     if (isPreviewUrl(url)) {
       promise.then((r) => r.clone().text()).then((t) => store(url, t)).catch(() => {});
     }
+
     return promise;
   };
 
@@ -148,6 +173,7 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
     if (isPreviewUrl(url)) {
       this.addEventListener('load', () => { try { store(String(url), this.responseText); } catch {} });
     }
+
     return (origOpen as (...a: any[]) => void).call(this, method, url, ...rest);
   };
 })();

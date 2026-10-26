@@ -36,19 +36,24 @@ let current: PlaceEpoch | null = null;
 export const beginPlace = (featureId: string): PlaceEpoch => {
   const gen = ++generation;
   const inflight = new Map<string, Promise<void>>();
+
   const epoch: PlaceEpoch = {
     featureId,
     get alive() { return gen === generation; },
     run(fn) { return epoch.alive ? fn() : undefined; },
     once(key, fn) {
       const running = inflight.get(key);
+
       if (running) return running;
       const p = fn().finally(() => inflight.delete(key));
       inflight.set(key, p);
+
       return p;
     },
   };
+
   current = epoch;
+
   return epoch;
 };
 

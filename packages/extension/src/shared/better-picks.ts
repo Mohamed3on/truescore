@@ -55,14 +55,17 @@ export type Ranking<T> = {
 
 export const rankPicks = <T>(reference: Reference, candidates: Candidate<T>[]): Ranking<T> => {
   const threshold = adjust(reference.score, reference.ratio);
+
   const ranked = candidates
     .map((c): RankedPick<T> => {
       const adjusted = adjust(c.score, c.ratio);
+
       const passes = threshold == null
         ? false
         : c.unresolved
           ? true
           : adjusted != null && adjusted >= threshold;
+
       return { ...c, adjusted, passes };
     })
     .sort((a, b) => (b.adjusted ?? -Infinity) - (a.adjusted ?? -Infinity));

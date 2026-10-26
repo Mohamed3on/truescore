@@ -18,12 +18,15 @@ const MAX_PAGES = 4; // 25 reviews/page — 100 reviews is plenty for the variat
 
 const getLocale = () => {
   const parts = location.pathname.split('/').filter(Boolean);
+
   if (parts.length < 2) return null;
+
   return { country: parts[0], lang: parts[1] };
 };
 
 const extractProductId = () => {
   const match = location.pathname.match(/\/products\/([^/]+)/);
+
   return match ? match[1] : null;
 };
 
@@ -41,9 +44,11 @@ const findBuyBoxRating = (): Element | null =>
 const fetchReviewData = async (country: string, lang: string, productId: string) => {
   const cacheKey = `nps_uniqlo_v3_${productId}`;
   const cached = cacheGet(cacheKey, CACHE_TTL);
+
   if (cached) return cached;
 
   const headers = { 'x-fr-clientid': `uq.${country}.web-spa` };
+
   const page = (offset: number) =>
     fetch(
       `https://www.uniqlo.com/${country}/api/commerce/v5/${lang}/products/${productId}/reviews?limit=25&offset=${offset}&sort=submission_time&httpFailure=true`,
@@ -54,13 +59,16 @@ const fetchReviewData = async (country: string, lang: string, productId: string)
 
   const pages = await Promise.all(Array.from({ length: MAX_PAGES }, (_, i) => page(i * 25)));
   const rating = pages[0]?.result?.rating ?? null;
+
   if (!rating) return null;
 
   const reviews: any[] = [];
   const seen = new Set<unknown>();
+
   for (const p of pages) {
     for (const rv of p?.result?.reviews ?? []) {
       const id = rv.reviewId ?? rv.bvId ?? `${rv.name}-${rv.createDate}`;
+
       if (seen.has(id)) continue;
       seen.add(id);
       // Kept: the variation-breakdown fields plus the review prose the LLM summary needs.
@@ -77,20 +85,25 @@ const fetchReviewData = async (country: string, lang: string, productId: string)
 
   const data = { rating, reviews };
   cacheSet(cacheKey, data);
+
   return data;
 };
 
 const getScore = (rating: any) => {
   const rc = rating?.rateCount;
+
   if (!rc) return null;
   const { one = 0, two = 0, three = 0, four = 0, five = 0 } = rc;
   const total = one + two + three + four + five;
+
   if (total === 0) return null;
+
   return npsStats(five, one, total);
 };
 
 const appendScore = (ratingEl: Element, { score, nps }: { score: number; nps: number }) => {
   const parent = ratingEl.parentElement;
+
   if (!parent || parent.querySelector('.nps-score-badge')) return;
   const badge = document.createElement('span');
   // The pdp marker keeps cleanup() off the PLP grid script's badges, which
@@ -110,6 +123,7 @@ const polarity = (rate: number) => (rate >= 5 ? 1 : rate <= 1 ? -1 : 0);
 // ("56 OLIVGRÜN" / "56 VERT OLIVE"). They share a numeric code prefix — merge on it.
 const colorCode = (name: string) => {
   const t = (name || '').trim();
+
   return t.match(/^\d+/)?.[0] || t;
 };
 
@@ -123,17 +137,24 @@ const aggregate = (
   labelFn: (r: any) => string
 ): DimStat[] => {
   const groups = new Map<string, { net: number; n: number; fitSum: number; fitN: number; labels: Map<string, number> }>();
+
   for (const r of reviews) {
     const key = keyFn(r);
+
     if (!key) continue;
     let g = groups.get(key);
+
     if (!g) groups.set(key, (g = { net: 0, n: 0, fitSum: 0, fitN: 0, labels: new Map() }));
     g.net += polarity(r.rate);
     g.n++;
+
     if (typeof r.fit === 'number') { g.fitSum += r.fit; g.fitN++; }
+
     const lbl = (labelFn(r) || '').trim();
+
     if (lbl) g.labels.set(lbl, (g.labels.get(lbl) ?? 0) + 1);
   }
+
   return [...groups.entries()]
     .map(([key, g]) => ({
       // Most-frequent full colour name (e.g. "30 NATURAL"); fall back to the code if unnamed.
@@ -172,9 +193,11 @@ const buildVariations = (reviews: any[]): HTMLElement | null => {
 const renderInsights = (ratingEl: Element, rating: any, reviews: any[]) => {
   if (document.querySelector('.nps-insights')) return;
   const rc = rating?.rateCount;
+
   if (!rc) return;
   const { one = 0, two = 0, three = 0, four = 0, five = 0 } = rc;
   const total = one + two + three + four + five;
+
   if (total === 0) return;
 
   const bars = [
@@ -184,9 +207,11 @@ const renderInsights = (ratingEl: Element, rating: any, reviews: any[]) => {
     { label: '2 stars', value: two },
     { label: '1 star', value: one },
   ];
+
   const colors = ['#2e7d32', '#558b2f', '#f9a825', '#ef6c00', '#c62828'];
 
   let html = '';
+
   for (let i = 0; i < bars.length; i++) {
     const pct = Math.round((bars[i].value / total) * 100);
     html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
@@ -214,31 +239,37 @@ const renderInsights = (ratingEl: Element, rating: any, reviews: any[]) => {
   panel.innerHTML = html; // safe: browser extension with controlled data
 
   const variations = buildVariations(reviews);
+
   if (variations) {
     variations.style.marginTop = '0';
     panel.prepend(variations);
   }
 
   const gutter = ratingEl.closest('.gutter-container');
+
   if (gutter) gutter.after(panel);
 };
 
 // === LLM review summary (praised / complaints / better alternative / verdict) ===
 
 const bareText = (r: any) => [r.title, r.comment].filter(Boolean).join(': ').trim();
+
 // A review as the model reads it: after the size bought, when known.
 const reviewText = (r: any) => (r.purchasedSize ? `[Bought size ${r.purchasedSize}] ${bareText(r)}` : bareText(r));
 
 const reviewTexts = (reviews: any[]): string[] => {
   const seen = new Set<string>();
   const texts: string[] = [];
+
   for (const r of reviews) {
     // Dedupe on the bare text — syndicated copies of a review repeat it verbatim.
     const text = bareText(r);
+
     if (!text || seen.has(text)) continue;
     seen.add(text);
     texts.push(reviewText(r));
   }
+
   return texts;
 };
 
@@ -256,9 +287,11 @@ const addSummarizeUI = (
   // The reviews arrive newest-first (sort=submission_time), so they carry the
   // Amazon-style recent-positive gauge and the adjusted score it damps.
   const ratio = recentRatio(reviews.map((r) => r.rate));
+
   if (ratio != null) {
     wrapper.appendChild(buildRecentGauge(ratio));
     const stats = el('div', 'ars-stats') as HTMLElement;
+
     if (scoreData) appendStat(stats, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
     appendStat(stats, String(reviews.length), 'analyzed');
     wrapper.appendChild(stats);
@@ -285,21 +318,29 @@ setupSpaInjector({
   load: async () => {
     const locale = getLocale();
     const productId = extractProductId();
+
     if (!locale || !productId) return null;
     const data = await fetchReviewData(locale.country, locale.lang, productId);
+
     if (!data) return null;
+
     return { productId, rating: data.rating, reviews: data.reviews, scoreData: getScore(data.rating) };
   },
   inject: ({ productId, rating, reviews, scoreData }) => {
     const ratingEl = findBuyBoxRating();
+
     if (!ratingEl) return;
+
     if (scoreData && !ratingEl.parentElement?.querySelector('.nps-score-badge')) {
       appendScore(ratingEl, scoreData);
     }
+
     if (!document.querySelector('.nps-insights')) {
       renderInsights(ratingEl, rating, reviews);
     }
+
     const texts = reviewTexts(reviews);
+
     if (texts.length >= 5 && !document.querySelector('.ars-wrapper')) {
       addSummarizeUI(ratingEl, productId, texts, reviews, scoreData);
     }

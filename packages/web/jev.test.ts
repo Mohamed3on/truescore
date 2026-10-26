@@ -5,16 +5,26 @@ import { answersFor, setJevClient, stancesFor, withReceipts } from './jev';
 // A fake Jev: answers each question by a rule over the review text inside it,
 // and records every request so a test can see what was asked and how batched.
 type Req = { state: any; questions: Record<string, any> };
+
 let requests: Req[] = [];
 let failNext = false;
+
 const fake = (rule: (review: string, state: any, q: any) => any) => ({
   systemOne: (req: Req) => {
     requests.push(req);
-    if (failNext) { failNext = false; return Promise.reject(new Error('boom')) as any; }
+
+    if (failNext) {
+      failNext = false;
+
+      return Promise.reject(new Error('boom')) as any;
+    }
+
     const answers = Object.fromEntries(Object.entries(req.questions).map(([id, q]) => [id, rule(q.instructions.review, req.state, q)]));
+
     return Promise.resolve({ answers, usage: { input_tokens: 100, output_tokens: 0 }, model: 'jev-test' }) as any;
   },
 });
+
 const stanceRule = (review: string) => ({ choice: /bad|awful/.test(review) ? 'complain' : /great|good/.test(review) ? 'praise' : 'off' });
 
 let n = 0;
@@ -77,6 +87,7 @@ describe('withReceipts', () => {
     highlights: [{ text: 'The penguins are a favourite', sentiment: 'positive' }, { text: 'Parking is a nightmare', sentiment: 'negative' }],
     alternatives,
   });
+
   // A review makes a point when it shares its key word; one prefers a rival when it says it would rather go there.
   const rule = (review: string, state: any) => (state.point
     ? { noul: review.includes(state.point.split(' ')[1].toLowerCase()) ? 0.9 : 0.1 }

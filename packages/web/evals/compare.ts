@@ -21,17 +21,21 @@ const fixtures = [...baseFixtures, sukito];
 // A contestant is one summarize() configuration. Default: the three providers.
 // --luna: gpt-6-luna across its reasoning-effort ladder (wire.ts list).
 type Contestant = { label: string; provider: Provider; effort?: ReasoningEffort };
+
 const CONTESTANTS: Contestant[] = LUNA
   ? (REASONING_EFFORTS as readonly ReasoningEffort[]).map((e) => ({ label: `luna:${e}`, provider: 'openai', effort: e }))
   : CANDIDATES
     ? registerCandidates()
     : (Object.keys(PROVIDERS) as Provider[]).map((p) => ({ label: p, provider: p }));
+
 // --luna runs 6 judge pairs per fixture, so scope it to the most discriminating
 // real sets to keep the run time (and token cost) sane.
 const RUN_FIXTURES = LUNA ? fixtures.filter((f) => f.place === 'Sukito' || f.place === 'Bar La Pilareta') : fixtures;
 
 type Usage = { provider: Provider; call: string; inputTokens: number; outputTokens: number };
+
 let usages: Usage[] = [];
+
 setOnUsage((u) => usages.push(u));
 
 type Run = { label: string; ms: number; summary: Summary; inputTokens: number; outputTokens: number };
@@ -43,6 +47,7 @@ const runOne = async (f: (typeof fixtures)[number], c: Contestant): Promise<Run>
   // Tokens are keyed by provider, so they're only meaningful in provider mode
   // (every nano variant reports as 'openai'); --nano relies on ms + judge scores.
   const mine = usages.filter((u) => u.provider === c.provider);
+
   return {
     label: c.label,
     ms,
@@ -57,12 +62,14 @@ const judgeRuns = async (f: (typeof fixtures)[number], r0: Run, r1: Run, flip: b
   const object = await judge(f, a.summary, b.summary);
   const label = (x: 'A' | 'B' | 'tie') => (x === 'tie' ? 'tie' : (x === 'A') !== flip ? r0.label : r1.label);
   const scores = flip ? { [r0.label]: object.b, [r1.label]: object.a } : { [r0.label]: object.a, [r1.label]: object.b };
+
   return { scores, winner: label(object.winner), reason: object.reason };
 };
 
 const block = (r: Run) => {
   const s = r.summary;
   const hl = s.highlights.map((h) => `  - (${h.sentiment}) ${h.text}`).join('\n');
+
   return [
     `### ${r.label} — ${r.ms}ms, ${r.inputTokens} in / ${r.outputTokens} out`,
     `**Verdict:** ${s.verdict}`,
@@ -82,20 +89,26 @@ for (const [i, f] of RUN_FIXTURES.entries()) {
   console.log(`\n${'='.repeat(72)}\n## ${f.place}${f.filter ? ` [filter: ${f.filter}]` : ''} — ${f.reviewTexts.length} reviews\n`);
   usages = [];
   const runs = await Promise.all(CONTESTANTS.map((c) => runOne(f, c)));
+
   for (const r of runs) console.log(block(r) + '\n');
+
   if (!JUDGE) continue;
   // Every contestant pair (round-robin), A/B order flipped per pair to cancel
   // position bias. Judged with bounded parallelism — the thinking judge is slow,
   // so run several at once, capped, rather than all-at-once (which times out).
   const pairs: [Run, Run][] = [];
+
   for (let a = 0; a < runs.length; a++) for (let b = a + 1; b < runs.length; b++) pairs.push([runs[a]!, runs[b]!]);
   const judged = await mapPool(pairs, 4, ([r0, r1], k) => judgeRuns(f, r0, r1, (i + k) % 2 === 1));
   judged.forEach(({ scores, winner, reason }, k) => {
     const [r0, r1] = pairs[k]!;
+
     const line = Object.entries(scores)
       .map(([p, s]) => `${p}: grounded ${s.grounded}, coverage ${s.coverage}, concise ${s.concise}`)
       .join(' | ');
+
     console.log(`### judge: ${r0.label} vs ${r1.label} (gpt-6-sol thinking, blind)\n\n${line}\n\n**Winner:** ${winner} — ${reason}\n`);
+
     for (const [p, s] of Object.entries(scores)) {
       const x = acc(p);
       x.grounded += s.grounded;
@@ -103,6 +116,7 @@ for (const [i, f] of RUN_FIXTURES.entries()) {
       x.concise += s.concise;
       x.n++;
     }
+
     if (winner === 'tie') {
       acc(r0.label).t++;
       acc(r1.label).t++;
@@ -115,13 +129,17 @@ for (const [i, f] of RUN_FIXTURES.entries()) {
 
 if (JUDGE) {
   console.log(`\n${'='.repeat(72)}\n## standings — gpt-6-sol thinking, blind, all pairs across ${RUN_FIXTURES.length} review sets\n`);
+
   const ranked = CONTESTANTS.map((c) => {
     const x = acc(c.label);
+
     return { label: c.label, x, avg: x.n ? (x.grounded + x.coverage + x.concise) / x.n : 0 };
   }).sort((m, n) => n.x.w - m.x.w || n.avg - m.avg);
+
   for (const { label, x, avg } of ranked) {
     const a = (v: number) => (x.n ? (v / x.n).toFixed(2) : '—');
     console.log(`- **${label}** — ${x.w}W ${x.t}T ${x.l}L · grounded ${a(x.grounded)} · coverage ${a(x.coverage)} · concise ${a(x.concise)} · avg ${avg.toFixed(2)}/15`);
   }
+
   console.log(`\n**Best quality:** ${ranked[0]!.label}`);
 }

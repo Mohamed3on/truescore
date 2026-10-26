@@ -5,10 +5,13 @@ import type { Stance } from '@truescore/gmaps-shared';
 // the star share it always showed.
 let nextStances: ((texts: string[]) => Stance[]) | null = null;
 const jev = await import('./jev');
+
 await mock.module('./jev', () => ({ ...jev, readStances: async (_q: string, texts: string[]) => nextStances?.(texts) ?? null }));
+
 const { buildSearchSection, buildReviewCard, localSearchAsk, orSearch, queryTerms } = await import('./review-search');
 
 type R = { rating: number; title: string; body: string };
+
 const review = (rating: number, title: string, body = ''): R => ({ rating, title, body });
 
 const mount = (opts: Partial<Parameters<typeof buildSearchSection<R>>[0]> & { reviews: R[] }) =>
@@ -25,6 +28,7 @@ const mount = (opts: Partial<Parameters<typeof buildSearchSection<R>>[0]> & { re
 // The header's read waits for the query to stand (STANCE_SETTLE_MS), so a test
 // of it waits longer.
 const SETTLED = 1200;
+
 const search = async (section: HTMLElement, query: string, ms = 400) => {
   const input = section.querySelector('.ars-search-input') as HTMLInputElement;
   input.value = query;
@@ -35,13 +39,17 @@ const search = async (section: HTMLElement, query: string, ms = 400) => {
 // A remote OR-Search over an in-memory term search: each term finds the reviews
 // holding it and claims `counts[term]` hits (a site's endpoint counts past its page).
 type D = { body: string; date: string };
+
 const termSearch = (reviews: D[], counts: Record<string, number> = {}) => {
   const calls: string[] = [];
+
   const search = orSearch(async (term: string) => {
     calls.push(term);
     const hits = reviews.filter((r) => r.body.includes(term));
+
     return { reviews: hits, total: counts[term] ?? hits.length };
   }, { text: (r) => r.body, date: (r) => r.date });
+
   return { search, calls };
 };
 
@@ -52,6 +60,7 @@ describe('orSearch', () => {
       { body: 'cat and dog', date: '2026-03-01' },
       { body: 'cat only', date: '2026-02-01' },
     ]);
+
     const { matches } = await search(['dog', 'cat']);
     expect(matches.map((r) => r.body)).toEqual(['cat and dog', 'cat only', 'dog friendly']);
   });
@@ -116,6 +125,7 @@ describe('buildSearchSection', () => {
       total: 9000,
       search: async () => ({ matches: [review(5, 'battery good')], total: 412 }),
     });
+
     await search(section, 'battery');
     expect(section.querySelector('.ars-search-count')?.textContent).toBe('412');
     expect(section.querySelector('.ars-search-summary')?.textContent).toContain('of 9,000 reviews');
@@ -123,10 +133,12 @@ describe('buildSearchSection', () => {
 
   test('mountSummarize replaces the built-in button and gets the matched texts', async () => {
     let got: { query: string; texts: string[] } | null = null;
+
     const section = mount({
       reviews: [review(5, 'battery lasts'), review(1, 'strap frays')],
       mountSummarize: (host, query, texts) => { got = { query, texts }; host.textContent = 'widget'; },
     });
+
     expect((section.querySelector('.ars-search-sum-btn') as HTMLElement).style.display).toBe('none');
 
     await search(section, 'battery');
@@ -136,11 +148,17 @@ describe('buildSearchSection', () => {
 
   test('a query-aware prompt is built per search', async () => {
     const seen: string[] = [];
+
     const section = mount({
       reviews: [review(5, 'battery lasts')],
-      summaryPrompt: (q) => { seen.push(q); return `about ${q}`; },
+      summaryPrompt: (q) => {
+        seen.push(q);
+
+        return `about ${q}`;
+      },
       mountSummarize: () => {},
     });
+
     await search(section, 'battery');
     // The prompt fn is only called when a summary is actually requested; the
     // section holds the function rather than a baked string.

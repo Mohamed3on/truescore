@@ -8,19 +8,24 @@ export const APAC_RATING = '[data-testid="productHitReviewStarBox"]';
 
 export const getDecathlonSite = () => {
   const m = location.hostname.match(/\bdecathlon\.([a-z.]+)$/);
+
   if (!m) return null;
   const locale = document.documentElement.lang || 'en-US';
   const api = `https://www.decathlon.${m[1]}/api`;
+
   if (APAC.has(m[1])) {
     const reviews = (sku: string, from: number, to: number) =>
       `${api}/product/reviews/all?isDecathlonProduct=true&productIdentifier=${sku}&localeUnderscore=${locale.replace('-', '_')}&range=${from}-${to}`;
+
     return {
       apac: true,
       statsUrl: (sku: string) => reviews(sku, 0, 0),
       reviewsUrl: (sku: string, size: number, page: number) => reviews(sku, page * size, (page + 1) * size - 1),
     };
   }
+
   const reviews = (sku: string) => `${api}/reviews/${locale}/reviews-stats/${sku}/product`;
+
   return {
     apac: false,
     statsUrl: (sku: string) => `${reviews(sku)}?nbItemsPerPage=0&page=0`,
@@ -42,15 +47,20 @@ export const extractDecathlonIds = (
   href: string = location.href,
 ): { productId: string; sku: string } | null => {
   let path: string;
+
   try { path = new URL(href, location.href).pathname; }
   catch { return null; }
+
   const i = path.indexOf('/p/');
+
   if (i < 0) return null;
   const parts = path.slice(i + 3).split('/').filter(Boolean);
   const last = parts.at(-1) ?? '';
   const sku = (last.match(/(\d{5,})$/) ?? last.match(/-(\d{7})\.html$/))?.[1];
+
   if (!sku) return null;
   const prev = parts.at(-2) ?? '';
   const productId = /^\d{5,}$/.test(prev) ? prev : sku;
+
   return { productId, sku };
 };

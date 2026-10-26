@@ -512,7 +512,9 @@ const throttledFetch = createThrottledFetcher(
 
 const fetchDoc = async (url: string): Promise<Document> => {
   const res = await throttledFetch(url);
+
   if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`);
+
   return new DOMParser().parseFromString(await res.text(), 'text/html');
 };
 
@@ -532,17 +534,22 @@ type BookStats = {
 
 const parseBookNextData = (nextData: any): BookStats | null => {
   const apolloState = nextData?.props?.pageProps?.apolloState;
+
   if (!apolloState) return null;
   const workKey = Object.keys(apolloState).find(k => k.startsWith('Work:'));
+
   if (!workKey) return null;
   const stats = apolloState[workKey].stats;
+
   if (!stats) return null;
   const fiveStar = stats.ratingsCountDist?.[4] || 0;
   const oneStar = stats.ratingsCountDist?.[0] || 0;
   const total = stats.ratingsCount || 0;
+
   if (!total) return null;
   const scoreAbsolute = fiveStar - oneStar;
   const ratio = scoreAbsolute / total;
+
   return {
     avgRating: String(stats.averageRating),
     ratingsCount: total,
@@ -556,7 +563,9 @@ const parseBookNextData = (nextData: any): BookStats | null => {
 
 const getCurrentBookStats = (): BookStats | null => {
   const script = document.querySelector('#__NEXT_DATA__');
+
   if (!script?.textContent) return null;
+
   try { return parseBookNextData(JSON.parse(script.textContent)); } catch { return null; }
 };
 
@@ -576,24 +585,36 @@ class DeadBookError extends Error {}
 
 const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
   const id = getBookIdFromURL(bookURL);
+
   if (id) {
     const [cached, knownDead] = await Promise.all([idbGet(bookCacheKey(id), CONFIG.BOOK_CACHE_MS), idbGet(deadBookKey(id), CONFIG.DEAD_BOOK_CACHE_MS)]);
+
     if (cached) return cached;
+
     if (knownDead) throw new DeadBookError(bookURL);
   }
+
   const dead = (why: string) => {
     if (id) idbSet(deadBookKey(id), true);
+
     return new DeadBookError(`${why} on ${bookURL}`);
   };
+
   const res = await throttledFetch(bookURL);
+
   if (res.status === 404 || res.status === 410) throw dead(`HTTP ${res.status}`);
+
   if (!res.ok) throw new Error(`HTTP ${res.status} on ${bookURL}`);
   const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
   const script = doc.querySelector('#__NEXT_DATA__');
+
   if (!script?.textContent) throw dead('no __NEXT_DATA__');
   const stats = parseBookNextData(JSON.parse(script.textContent));
+
   if (!stats) throw dead('no book stats');
+
   if (id) cacheBookStats(id, stats);
+
   return stats;
 };
 
@@ -644,6 +665,7 @@ const getSessionToken = (): Promise<string | null> =>
 /** The JWT while signed in, else the API key; null on a page that carries neither. */
 const authHeaders = async (): Promise<Record<string, string> | null> => {
   const token = signedIn ? await getSessionToken() : null;
+
   return token ? { authorization: token } : apiKey ? { 'x-api-key': apiKey } : null;
 };
 
@@ -670,6 +692,7 @@ const fetchReviewNodes = async (
         }
       }`,
   });
+
   const request = async (auth: Record<string, string>) => {
     const res = await graphqlFetch(GRAPHQL_ENDPOINT, {
       method: 'POST',
@@ -677,21 +700,29 @@ const fetchReviewNodes = async (
       headers: { 'content-type': 'application/json', ...auth },
       body,
     });
+
     return { ok: res.ok, data: await res.json() };
   };
+
   const auth = await authHeaders();
+
   if (!auth) throw new Error(`no Goodreads credentials for ${workId}`);
   let { ok, data } = await request(auth);
+
   if (data?.errors?.some((e: any) => e?.errorType === 'UnauthorizedException')) {
     // A fresh token first; failing that, the key if it wasn't what just failed.
     const fresh = signedIn ? await mintToken() : null;
     const retry: Record<string, string> | null = fresh ? { authorization: fresh } : apiKey && !('x-api-key' in auth) ? { 'x-api-key': apiKey } : null;
+
     if (retry) ({ ok, data } = await request(retry));
   }
+
   const getReviews = data?.data?.getReviews;
+
   // Throw on a throttled/error response so callers can tell a real fetch failure from a
   // genuinely empty result — an error body (429, GraphQL errors) would otherwise read as [].
   if (!ok || data?.errors || !getReviews) throw new Error(`getReviews failed on ${workId}`);
+
   return {
     nodes: (getReviews.edges?.map((e: any) => e.node).filter(Boolean) as ReviewNode[]) || [],
     totalCount: getReviews.totalCount ?? 0,
@@ -721,19 +752,23 @@ const recentStatsCalls = new Map<string, Promise<RecentStats>>();
  */
 const fetchRecentStats = (workId: string): Promise<RecentStats> => {
   let pending = recentStatsCalls.get(workId);
+
   if (!pending) {
     pending = (async () => {
       // v3: earlier entries carried no sample size.
       const cacheKey = `gr_recent_v3_${workId}`;
       const cached = (await idbGet(cacheKey, CONFIG.RECENT_CACHE_MS)) as RecentStats | null;
+
       if (cached) return cached;
       const { nodes, totalCount } = await fetchReviewNodes(workId);
       const stats: RecentStats = { ratio: recentRatioFromNodes(nodes), total: totalCount, rated: nodes.filter((n) => n.rating).length };
       idbSet(cacheKey, stats);
+
       return stats;
     })();
     recentStatsCalls.set(workId, pending);
   }
+
   return pending;
 };
 
@@ -750,15 +785,20 @@ const getRecentStats = async (workId: string): Promise<RecentStats> => {
 const getBookShelves = async (bookURL: string): Promise<string[]> => {
   const id = getBookIdFromURL(bookURL);
   const cacheKey = id && `gr_shelves_v1_${id}`;
+
   const cached = cacheKey && (await idbGet(cacheKey, (shelves: string[]) =>
     shelves.length >= 100 ? CONFIG.FULL_SHELVES_CACHE_MS : CONFIG.SHELVES_CACHE_MS));
+
   if (cached) return cached;
   const shelvesURL = bookURL.replace('/show/', '/shelves/').replace(/(?<=goodreads\.com)\/[a-z]{2}(?=\/book)/, '');
   const doc = await fetchDoc(shelvesURL);
+
   const shelves = Array.from(doc.querySelectorAll('a.mediumText'))
     .map(el => el.textContent?.trim() || '')
     .filter(Boolean);
+
   if (cacheKey && shelves.length) idbSet(cacheKey, shelves);
+
   return shelves;
 };
 
@@ -784,6 +824,7 @@ const isEligible = (c: Candidate, avgGate: number) => !isRead(c) && parseFloat(c
 /** The shelf's own average, over the rows that show one. */
 const meanRating = (rows: Candidate[]): number | null => {
   const ratings = rows.map((r) => parseFloat(r.bookRating || '')).filter(Number.isFinite);
+
   return ratings.length ? ratings.reduce((a, b) => a + b, 0) / ratings.length : null;
 };
 
@@ -796,17 +837,22 @@ const parseShelfPage = (doc: Document): Candidate[] =>
   Array.from(doc.querySelectorAll<HTMLElement>('.leftContainer > .elementList')).map(row => {
     const titleEl = row.querySelector('.bookTitle') as HTMLAnchorElement | null;
     const href = titleEl?.getAttribute('href');
+
     if (!href) return null;
     const bookURL = new URL(href, 'https://www.goodreads.com').href;
     const bookId = getBookIdFromURL(bookURL);
+
     if (!bookId) return null;
     const title = titleEl!.textContent?.trim().replace(/\s+/g, ' ') || '';
     const author = row.querySelector('.authorName')?.textContent?.trim() || '';
     const cover = row.querySelector<HTMLImageElement>('img[src]')?.getAttribute('src') || '';
+
     const ratingText = Array.from(row.querySelectorAll('.greyText.smallText'))
       .map(e => e.textContent || '')
       .join(' ');
+
     const widget = row.querySelector('.wtrLeft');
+
     return {
       bookId,
       bookURL,
@@ -840,18 +886,22 @@ const shelfPages = new Map<string, Promise<Candidate[]>>();
 const getShelfPage = (shelf: string, page: number, viewerScope: string): Promise<Candidate[]> => {
   const cacheKey = `${viewerKey.shelfPage(viewerScope)}${shelf}_${page}`;
   let pending = shelfPages.get(cacheKey);
+
   if (!pending) {
     pending = (async () => {
       const cached = (await idbGet(cacheKey, CONFIG.SHELF_PAGE_CACHE_MS)) as Candidate[] | null;
+
       if (cached) return cached;
       const rows = parseShelfPage(await fetchDoc(shelfPageURL(shelf, page)));
       idbSet(cacheKey, rows);
+
       return rows;
     })();
     shelfPages.set(cacheKey, pending);
     // A failed fetch shouldn't pin its failure for the rest of the visit.
     pending.catch(() => shelfPages.delete(cacheKey));
   }
+
   return pending;
 };
 
@@ -866,13 +916,16 @@ const shelfScore = (firstPage: Candidate[]) =>
 
 const getShelfScore = async (shelf: string, viewerScope: string): Promise<number> => {
   const cacheKey = `${viewerKey.shelfScore(viewerScope)}${shelf}`;
+
   const cached = await idbGet(
     cacheKey,
     (score) => shelfScoreCacheTtl(score, CONFIG.IGNORED_SHELF_THRESHOLD),
   );
+
   if (cached !== null) return cached;
   const score = shelfScore(await getShelfPage(shelf, 1, viewerScope));
   idbSet(cacheKey, score);
+
   return score;
 };
 
@@ -884,17 +937,23 @@ const getShelfScore = async (shelf: string, viewerScope: string): Promise<number
 const pickShelf = async (shelves: string[], viewerScope: string): Promise<string | null> => {
   // The first is nearly always the pick, so the pages its scan starts on load alongside its probe.
   if (shelves.length) prefetchScan(shelves[0], viewerScope);
+
   for (let i = 0; i < shelves.length; i += CONFIG.SHELF_PROBE_BATCH) {
     const batch = shelves.slice(i, i + CONFIG.SHELF_PROBE_BATCH);
+
     const probes = batch.map((shelf) => getShelfScore(shelf, viewerScope).catch((e: any) => {
       debug(`shelf ${shelf} failed:`, e.message);
+
       return null;
     }));
+
     for (let j = 0; j < batch.length; j++) {
       const score = await probes[j];
+
       if (score !== null && score >= CONFIG.IGNORED_SHELF_THRESHOLD) return batch[j];
     }
   }
+
   return null;
 };
 
@@ -903,6 +962,7 @@ const pickShelf = async (shelves: string[], viewerScope: string): Promise<string
 // =============================================================================
 
 type ScoredCandidate = Candidate & BookStats;
+
 /** `permanent`: the page can't be scored at all (see DeadBookError) — a known gap, not a retry. */
 type FailedCandidate = Candidate & { failed: true; permanent: boolean };
 
@@ -953,6 +1013,7 @@ const findSimilarPicks = async (params: {
   // so it keeps its own entry — one throttled reviews call can't stand in for a week.
   const cacheKey = `${viewerKey.picks(viewerScope)}${originalId}_${shelf}${threshold === null ? '_alltime' : ''}`;
   const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
+
   if (cached) return cached;
   const refAvg = parseFloat(refAvgRating);
   /** Settled by the first batch of shelf pages, whose own average is the prior the book's is shrunk toward. */
@@ -972,6 +1033,7 @@ const findSimilarPicks = async (params: {
     const pageResults = await Promise.all(
       Array.from({ length: end - start + 1 }, (_, i) => {
         const pageNum = start + i;
+
         return getShelfPage(shelf, pageNum, viewerScope).then(rows => ({ pageNum, rows }));
       })
     );
@@ -979,7 +1041,9 @@ const findSimilarPicks = async (params: {
     pagesSearched = end;
 
     const rowsWithPage = pageResults.flatMap(({ pageNum, rows }) => rows.map(c => ({ ...c, pageNum })));
+
     if (!rowsWithPage.length) break;
+
     if (start === 1) {
       avgGate = shrunkAverage(refAvg, refRatingsCount, meanRating(rowsWithPage), CONFIG.AVG_PRIOR_WEIGHT) - CONFIG.AVG_RATING_TOLERANCE;
     }
@@ -990,9 +1054,11 @@ const findSimilarPicks = async (params: {
     const scored = await Promise.all(eligible.map(async (c) => {
       try {
         const stats = await getBookStatsFromURL(c.bookURL);
+
         // A book that will qualify — not another edition of this one, and able to reach
         // the bar — has its recent % started now rather than after the batch's slowest page.
         if (stats.workId !== refWorkId && couldReach(bar, stats.score)) fetchRecentStats(stats.workId).catch(() => {});
+
         return { ...c, ...stats } as ScoredCandidate;
       } catch (e) {
         return { ...c, failed: true as const, permanent: e instanceof DeadBookError };
@@ -1003,6 +1069,7 @@ const findSimilarPicks = async (params: {
     // same stats: it's the reference — never its own pick, and where the book sits.
     const refIds = new Set([originalId, ...scored.filter(b => !('failed' in b) && b.workId === refWorkId).map(b => b.bookId)]);
     const refRow = rowsWithPage.find(r => refIds.has(r.bookId));
+
     if (refRow && !foundOnPage) foundOnPage = refRow.pageNum;
     const candidates = scored.filter(b => !refIds.has(b.bookId));
     allScored.push(...candidates);
@@ -1014,7 +1081,9 @@ const findSimilarPicks = async (params: {
 
     if (qualifying.length) {
       const result: SimilarResult = { avgGate, qualifying, allScored, totalEligible, pagesSearched, foundOnPage };
+
       if (isComplete(result)) idbSet(cacheKey, result);
+
       return result;
     }
 
@@ -1023,7 +1092,9 @@ const findSimilarPicks = async (params: {
   }
 
   const result: SimilarResult = { avgGate, qualifying: [], allScored, totalEligible, pagesSearched, foundOnPage };
+
   if (isComplete(result)) idbSet(cacheKey, result);
+
   return result;
 };
 
@@ -1050,6 +1121,7 @@ const anchorLink = (href: string, className: string | undefined, text: string) =
   a.href = href;
   a.target = '_blank';
   a.rel = 'noopener';
+
   return a;
 };
 
@@ -1059,7 +1131,9 @@ const winnerBanner = (text: string, shelf: string | null) => {
   const wrap = el('div', 'gr-winner');
   wrap.append(el('span', 'gr-winner-star', '★'));
   wrap.append(el('span', 'gr-winner-text', text));
+
   if (shelf) wrap.append(anchorLink(shelfURL(shelf), 'gr-winner-source', `browse "${shelf}" →`));
+
   return wrap;
 };
 
@@ -1074,6 +1148,7 @@ const compare = (span: HTMLElement, label: string, value: number | null, ref: nu
   const trails = value < ref;
   span.classList.add(trails ? '-trails' : '-ahead');
   span.title = `${label} ${format(value)} vs this book's ${format(ref)}${trails ? ' \u2014 trails it' : ''}`;
+
   return span;
 };
 
@@ -1082,6 +1157,7 @@ const buildItem = (ranked: RankedPick<ScoredCandidate>, refRecentRatio: number |
   const item = el('li', 'gr-similar-item');
   const img = document.createElement('img');
   img.className = 'gr-similar-cover';
+
   if (pick.cover) img.src = pick.cover;
   img.alt = '';
   img.loading = 'lazy';
@@ -1089,10 +1165,13 @@ const buildItem = (ranked: RankedPick<ScoredCandidate>, refRecentRatio: number |
 
   const body = el('div', 'gr-similar-body');
   body.append(anchorLink(pick.bookURL, 'gr-similar-title', pick.title || `Book ${pick.bookId}`));
+
   if (pick.author) body.append(el('span', 'gr-similar-author', pick.author));
+
   if (pick.status === 'to-read' || pick.status === 'reading') {
     body.append(el('span', 'gr-similar-shelf-tag', pick.status === 'reading' ? 'Currently reading' : 'Want to Read'));
   }
+
   item.append(body);
 
   const scores = el('div', 'gr-similar-scores');
@@ -1100,10 +1179,12 @@ const buildItem = (ranked: RankedPick<ScoredCandidate>, refRecentRatio: number |
   // The adjusted score leads — the Score re-aimed by the recent run (see shared/recency),
   // the one number the verdict rests on. The all-time Score is only the tooltip's working.
   const adjusted = el('span', 'gr-similar-adjusted', ranked.adjusted === null ? '—' : addCommas(ranked.adjusted));
+
   if (ranked.adjusted === null) {
     adjusted.title = 'No rated reviews to adjust by';
   } else {
     const working = `${addCommas(Math.round(Math.abs(pick.score)))} × ${pct(rr!)} = ${addCommas(ranked.adjusted)} adjusted`;
+
     if (threshold === null) {
       adjusted.title = working;
     } else {
@@ -1111,13 +1192,17 @@ const buildItem = (ranked: RankedPick<ScoredCandidate>, refRecentRatio: number |
       adjusted.title = `${working} · ${ranked.passes ? 'reaches' : 'short of'} the ${addCommas(threshold)} to beat`;
     }
   }
+
   scores.append(adjusted);
   const recent = el('span', 'gr-similar-recent', rr === null ? 'recent N/A' : `recent ${pct(rr)}`);
+
   if (rr === null) recent.title = 'No rated reviews to judge it by';
   else compare(recent, 'Recent', rr, refRecentRatio, pct);
   scores.append(recent);
   item.append(scores);
+
   if (threshold !== null && !ranked.passes) item.classList.add('-excluded');
+
   return item;
 };
 
@@ -1126,6 +1211,7 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
   const toggle = el('div', 'gr-debug-toggle', '▶ Debug info');
   const content = el('div', 'gr-debug-content');
   content.style.display = 'none';
+
   const lines = [
     `Shelf: ${shelf}`,
     `Pages searched: ${result.pagesSearched}${result.foundOnPage ? ` (reference on page ${result.foundOnPage})` : ''}`,
@@ -1133,9 +1219,12 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
     `Scored: ${result.allScored.length}`,
     `Qualifying (score can reach ${addCommas(bar)}): ${result.qualifying.length}`,
   ];
+
   lines.push(threshold !== null ? `Adjusted threshold: ${addCommas(threshold)}` : 'Adjusted threshold: unknown (no recent reviews for this book)');
+
   if (result.allScored.length) {
     lines.push('', 'All scored:');
+
     for (const b of result.allScored) {
       if ('failed' in b) {
         lines.push(`  (${b.permanent ? 'unavailable' : 'failed'}) ${b.title || b.bookId}`);
@@ -1145,6 +1234,7 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
       }
     }
   }
+
   content.textContent = lines.join('\n');
   toggle.addEventListener('click', () => {
     const open = content.style.display !== 'none';
@@ -1153,10 +1243,12 @@ const debugPane = (shelf: string, result: SimilarResult, threshold: number | nul
   });
   const wrap = el('div');
   wrap.append(toggle, content);
+
   return wrap;
 };
 
 type PickRecent = Record<string, number | null>;
+
 type SimilarView = { shelf: string; result: SimilarResult; recent: PickRecent; refRecentRatio: number | null };
 
 // Books the user has muted from Better picks, by work so every edition goes with it
@@ -1170,6 +1262,7 @@ const IGNORED_KEY = 'gr_ignored';
  */
 const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: BookStats, ignored: Set<string>) => {
   const { shelf, result, recent, refRecentRatio } = view;
+
   // One verdict, shared with Letterboxd (shared/better-picks.ts): score folded
   // with the recent run into one comparable number. This used to be two
   // independent gates, which passed books Letterboxd's rule rejected and
@@ -1178,6 +1271,7 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
     { score: currentStats.score, ratio: refRecentRatio },
     result.qualifying.map((pick) => ({ key: pick.bookId, item: pick, score: pick.score, ratio: recent[pick.bookId] ?? null })),
   );
+
   const threshold = ranking.threshold;
   section.textContent = '';
 
@@ -1190,18 +1284,21 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   sub.append(anchorLink(shelfURL(shelf), undefined, 'browse shelf →'));
   const refInfo = el('span', 'gr-similar-ref');
   const strong = (text: string) => el('strong', undefined, text);
+
   // The bar every pick is judged by: the reference's Score re-aimed by its own recent run.
   if (threshold !== null) {
     refInfo.append('to beat ', strong(addCommas(threshold)), ' adjusted', ` · this book's ${addCommas(Math.round(Math.abs(currentStats.score)))} × recent `, strong(pct(refRecentRatio!)));
   } else {
     refInfo.append('this book ', strong(addCommas(Math.round(currentStats.score))), ' · recent unknown');
   }
+
   sub.append(refInfo);
   section.append(sub);
 
   if (!result.qualifying.length) {
     section.append(winnerBanner('Winner! Nothing in this shelf beats it.', shelf));
     section.append(debugPane(shelf, result, threshold, currentStats.score));
+
     return;
   }
 
@@ -1212,6 +1309,7 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   const drawer = el('ul', 'gr-similar-list gr-ignored-list');
   let drawerOpen = false;
   let drawerRevealed = false;
+
   // Best adjusted first, the way Letterboxd already ordered its list — the raw
   // score order buried the book that actually wins.
   const rows = ranking.ranked.map((ranked) => {
@@ -1219,6 +1317,7 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
     const button = el('button', 'gr-ignore') as HTMLButtonElement;
     button.type = 'button';
     item.append(button);
+
     return { pick: ranked.item, passes: ranked.passes, item, button };
   });
 
@@ -1229,8 +1328,10 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
     const focused = section.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
     let ignoredCount = 0;
     let passCount = 0;
+
     for (const { pick, passes, item, button } of rows) {
       const isIgnored = ignored.has(pick.workId);
+
       if (isIgnored) ignoredCount++;
       else if (passes) passCount++;
       button.textContent = isIgnored ? '↺' : '×';
@@ -1240,6 +1341,7 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
       // Appending in ranked order keeps both lists sorted.
       (isIgnored ? drawer : list).append(item);
     }
+
     focused?.focus({ preventScroll: true });
 
     drawerToggle.hidden = ignoredCount === 0;
@@ -1254,15 +1356,18 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   };
 
   drawerToggle.addEventListener('click', () => { drawerOpen = !drawerOpen; paint(); });
+
   for (const { pick, button } of rows) {
     button.addEventListener('click', () => {
       if (ignored.has(pick.workId)) {
         ignored.delete(pick.workId);
       } else {
         ignored.add(pick.workId);
+
         // First ignore of the visit springs the drawer open once, so undo is discoverable.
         if (!drawerRevealed) { drawerRevealed = true; drawerOpen = true; }
       }
+
       saveIgnored(IGNORED_KEY, pick.workId, ignored.has(pick.workId));
       paint();
     });
@@ -1296,7 +1401,12 @@ const renderSimilarPicks = async (
   const viewerScope = goodreadsViewerCacheScope(document);
   const viewKey = `${viewerKey.picksView(viewerScope)}${getBookIdFromURL(currentBookURL)}`;
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
-  if (cachedView) { renderPicksView(section, cachedView, currentStats, await ignored); return; }
+
+  if (cachedView) {
+    renderPicksView(section, cachedView, currentStats, await ignored);
+
+    return;
+  }
 
   renderProgress(section, 0);
 
@@ -1306,17 +1416,23 @@ const renderSimilarPicks = async (
 
   try {
     const shelves = await getBookShelves(currentBookURL);
+
     if (!shelves.length) {
       section.textContent = '';
       section.append(winnerBanner('No shelves found for this book.', null));
+
       return;
     }
+
     const picked = await pickShelf(shelves, viewerScope);
+
     if (!picked) {
       section.textContent = '';
       section.append(winnerBanner('No usable shelf found for this book.', null));
+
       return;
     }
+
     shelf = picked;
     // Its pages needn't wait on this book's recent % below — only the scan's bar does.
     prefetchScan(shelf, viewerScope);
@@ -1338,6 +1454,7 @@ const renderSimilarPicks = async (
     debug('similar picks error:', e);
     section.textContent = '';
     section.append(winnerBanner('Similar picks search failed.', null));
+
     return;
   }
 
@@ -1352,12 +1469,14 @@ const renderSimilarPicks = async (
   }));
 
   const view: SimilarView = { shelf, result, recent, refRecentRatio: currentRecentRatio };
+
   // Persist a slim copy — allScored is a large per-candidate debug list we don't need to keep.
   // Only a view that holds all week: no failed book, and the reference's own recency known —
   // the view keeps it, so an unknown one would stay unjudged long after it resolves.
   if (!recentFailed && isComplete(result) && currentRecentRatio !== null) {
     idbSet(viewKey, { ...view, result: { ...result, allScored: [] } });
   }
+
   renderPicksView(section, view, currentStats, await ignored);
 };
 
@@ -1378,15 +1497,18 @@ const syncViewerShelving = async (viewerScope: string, bookId: string, now: View
   const listings: Array<{ shelf: string; page: number; before: Candidate; rows: Candidate[] }> = [];
   await idbEdit(pages, (rows: Candidate[], key) => {
     const before = rows.find((r) => r.bookId === bookId);
+
     if (!before || (before.status === now.status && before.myRating === now.myRating)) return undefined;
     const at = key.lastIndexOf('_');
     const patched = rows.map((r) => (r === before ? { ...r, ...now } : r));
     listings.push({ shelf: key.slice(pages.length, at), page: Number(key.slice(at + 1)), before, rows: patched });
+
     return patched;
   });
 
   let crossed = false;
   const passes = (score: number) => score >= CONFIG.IGNORED_SHELF_THRESHOLD;
+
   for (const { shelf, page, before, rows } of listings) {
     if (page !== 1 || before.myRating === now.myRating) continue;
     const key = `${viewerKey.shelfScore(viewerScope)}${shelf}`;
@@ -1394,15 +1516,18 @@ const syncViewerShelving = async (viewerScope: string, bookId: string, now: View
       if (k !== key) return undefined;
       const next = shelfScore(rows);
       crossed ||= passes(next) !== passes(score);
+
       return next;
     });
   }
 
   const outdated = (pick: Candidate) => pick.bookId === bookId && (pick.status !== now.status || pick.myRating !== now.myRating);
+
   const stale = (refId: string, shelf: string, result: SimilarResult) => refId !== bookId && (
     result.qualifying.some(outdated) ||
     listings.some((l) => l.shelf === shelf && l.page <= result.pagesSearched &&
       !isEligible(l.before, result.avgGate) && isEligible({ ...l.before, ...now }, result.avgGate)));
+
   const views = viewerKey.picksView(viewerScope);
   const scans = viewerKey.picks(viewerScope);
   await Promise.all([
@@ -1410,6 +1535,7 @@ const syncViewerShelving = async (viewerScope: string, bookId: string, now: View
     // A scan's key runs `${refId}_${shelf}`, plus `_alltime` when the all-time Score bounded it.
     idbEdit(scans, (result: SimilarResult, key) => {
       const [refId, ...shelf] = key.slice(scans.length).replace(/_alltime$/, '').split('_');
+
       return stale(refId, shelf.join('_'), result) ? null : undefined;
     }),
   ]);
@@ -1425,13 +1551,16 @@ const watchViewerShelving = (bookId: string) => {
   // A book the viewer never shelved or rated has nothing to correct, so most visits walk nothing.
   let seen = JSON.stringify({ status: null, myRating: 0 });
   let syncing: Promise<unknown> = Promise.resolve();
+
   const check = () => {
     const now = readViewerShelving(document);
+
     if (!now || JSON.stringify(now) === seen) return;
     seen = JSON.stringify(now);
     // One at a time, so a quick second click never lands before the first.
     syncing = syncing.then(() => syncViewerShelving(viewerScope, bookId, now)).catch((e) => debug('shelving sync failed:', e));
   };
+
   new MutationObserver(check).observe(document.body, { childList: true, subtree: true, attributeFilter: ['aria-label'] });
   check();
 };
@@ -1454,7 +1583,9 @@ A plot spoiler many readers discuss (who dies, a twist, how it ends) is fine: pu
 const summaryPromptFor = (texts: string[]) => {
   const dates = texts.map((t) => t.match(/^\[(\d{4}-\d{2}-\d{2})/)?.[1]).filter((d): d is string => !!d).sort();
   const [oldest, newest] = [dates[0], dates.at(-1)];
+
   if (!oldest || !newest || Date.parse(newest) - Date.parse(oldest) < 365 * DAY_MS) return SUMMARY_PROMPT;
+
   return `${SUMMARY_PROMPT} These reviews run from ${oldest.slice(0, 4)} to ${newest.slice(0, 4)}: if the newest read differently from older ones — content that has dated, a consensus that turned — say so in the verdict, with the years.`;
 };
 
@@ -1473,9 +1604,12 @@ const toReview = (n: ReviewNode): GrReview => ({
 /** Reviews are server-rendered into __NEXT_DATA__ apolloState — a no-auth fallback when there's no GraphQL token. */
 const getEmbeddedReviews = (): GrReview[] => {
   const script = document.querySelector('#__NEXT_DATA__');
+
   if (!script?.textContent) return [];
+
   try {
     const apollo = JSON.parse(script.textContent)?.props?.pageProps?.apolloState || {};
+
     return Object.keys(apollo).filter((k) => k.startsWith('Review:')).map((k) => toReview(apollo[k]));
   } catch { return []; }
 };
@@ -1488,11 +1622,13 @@ const getEmbeddedReviews = (): GrReview[] => {
 const collectReviewTexts = (reviews: GrReview[]): string[] => {
   const seen = new Set<string>();
   const texts: string[] = [];
+
   for (const r of reviews) {
     if (r.body.length < 20 || seen.has(r.body)) continue;
     seen.add(r.body);
     texts.push(`[${r.date || 'undated'}${r.rating ? `, ${r.rating}★` : ''}] ${r.body}`);
   }
+
   return texts;
 };
 
@@ -1502,12 +1638,15 @@ const GR_QUESTION_PROMPT = `Answer this question using ONLY evidence from the bo
 // full text via GraphQL, else the reviews embedded in the page.
 const makeGetReviews = (workId: string): (() => Promise<GrReview[]>) => {
   let reviewsPromise: Promise<GrReview[]> | null = null;
+
   return () =>
     (reviewsPromise ??= (async () => {
       try {
         const { nodes } = await fetchReviewNodes(workId, { withText: true });
+
         if (nodes.length) return nodes.map(toReview);
       } catch {}
+
       return getEmbeddedReviews();
     })());
 };
@@ -1560,13 +1699,16 @@ const buildReviewSearch = (search: ReturnType<typeof makeReviewSearch>, total: n
 const appendScore = async (bookTitle: Element) => {
   injectStyles();
   const stats = getCurrentBookStats();
+
   if (!stats) return;
 
   const currentId = getBookIdFromURL(window.location.href);
+
   if (currentId) cacheBookStats(currentId, stats);
   sessionToken = stats.jwtToken;
   apiKey = stats.apiKey;
   signedIn = !!stats.jwtToken;
+
   if (currentId && signedIn) watchViewerShelving(currentId);
 
   // The adjusted score, as every picks list shows it, and the all-time net loved share on
@@ -1587,6 +1729,7 @@ const appendScore = async (bookTitle: Element) => {
   // The rating row is a link to the reviews; a click on the score stays put.
   score.addEventListener('click', (e) => e.preventDefault());
   const ratingMeta = document.querySelector('.BookPageMetadataSection__ratingStats .RatingStatistics__meta');
+
   if (ratingMeta) ratingMeta.append(score);
   else bookTitle.after(score);
 
@@ -1620,6 +1763,7 @@ const appendScore = async (bookTitle: Element) => {
   const recentStats = getRecentStats(stats.workId);
   renderSimilarPicks(summarySection, window.location.href, stats, recentStats.then((r) => r.ratio));
   const { ratio: recentRatio, total: reviewTotal, rated } = await recentStats;
+
   if (recentRatio === null) {
     figure.textContent = cardFigure.textContent = '—';
     working.append(' · recent unknown');
@@ -1627,6 +1771,7 @@ const appendScore = async (bookTitle: Element) => {
     figure.textContent = cardFigure.textContent = addCommas(adjust(stats.score, recentRatio));
     working.append(` × ${pct(recentRatio)} in ${rated >= reviewTotal ? 'all' : 'the newest'} ${rated} reviews`);
     lovedTail.before(' → ', el('strong', trendClass(stats.ratio, recentRatio), pct(recentRatio)));
+
     if (rated < THIN_SAMPLE) loved.append(` (${rated} reviews)`);
   }
 
@@ -1634,6 +1779,7 @@ const appendScore = async (bookTitle: Element) => {
     summarySection.appendChild(buildReviewSearch(searchReviews, reviewTotal));
   } else {
     const reviews = await getReviews();
+
     if (reviews.length) {
       summarySection.appendChild(buildSearchSection<GrReview>({
         reviews,
@@ -1650,16 +1796,24 @@ const init = () => {
   const ready = () => {
     const bookTitle = document.querySelector('[data-testid="bookTitle"]');
     const labelTotal5 = document.querySelector('[data-testid="labelTotal-5"]');
+
     return bookTitle && labelTotal5 ? bookTitle : null;
   };
 
   const bookTitle = ready();
-  if (bookTitle) { appendScore(bookTitle); return; }
+
+  if (bookTitle) {
+    appendScore(bookTitle);
+
+    return;
+  }
 
   const observer = new MutationObserver(() => {
     const bookTitle = ready();
+
     if (bookTitle) { appendScore(bookTitle); observer.disconnect(); }
   });
+
   observer.observe(document.body, { childList: true, subtree: true });
 };
 

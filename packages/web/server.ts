@@ -72,6 +72,7 @@ const corsJson = (v: any, status = 200) =>
     status,
     headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' },
   });
+
 const corsOptions = () => new Response(null, {
   headers: {
     'Access-Control-Allow-Origin': '*',
@@ -86,6 +87,7 @@ const corsOptions = () => new Response(null, {
 // Unset (local dev) leaves everything open.
 const PASSWORD = process.env.TRUESCORE_PASSWORD;
 const PASSWORD_COOKIE = 'truescore-key';
+
 const authed = (req: BunRequest) =>
   !PASSWORD || req.headers.get('x-truescore-key') === PASSWORD || req.cookies.get(PASSWORD_COOKIE) === PASSWORD;
 
@@ -93,16 +95,22 @@ const authed = (req: BunRequest) =>
 // later is locked without anyone remembering to. The seed-secret routes keep
 // their own check.
 const SEED_ROUTES = new Set(['/api/maps-creds', '/api/maps-creds/renew']);
+
 type Handler = (req: BunRequest, server: Server<undefined>) => Response | Promise<Response>;
+
 const lock = (handler: Handler): Handler => (req, server) =>
   authed(req) ? handler(req, server) : corsJson({ error: 'TrueScore password required' }, 401);
+
 function lockApi<R extends string>(routes: Serve.Routes<undefined, R>): Serve.Routes<undefined, R> {
   const all = routes as unknown as Record<string, Handler | Record<string, Handler>>;
+
   for (const [path, route] of Object.entries(all)) {
     if (!path.startsWith('/api/') || SEED_ROUTES.has(path)) continue;
+
     if (typeof route === 'function') all[path] = lock(route);
     else for (const [method, handler] of Object.entries(route)) if (method !== 'OPTIONS') route[method] = lock(handler);
   }
+
   return routes;
 }
 
@@ -110,6 +118,7 @@ function lockApi<R extends string>(routes: Serve.Routes<undefined, R>): Serve.Ro
 // /login, never off this site.
 const nextPath = (req: Request) => {
   const next = new URL(new URL(req.url).searchParams.get('next') ?? '/', 'https://truescore.invalid');
+
   return next.origin === 'https://truescore.invalid' ? next.pathname + next.search : '/';
 };
 
@@ -119,14 +128,22 @@ const nextPath = (req: Request) => {
 function friendlyError(e: unknown): string {
   const m = e instanceof Error ? e.message : String(e);
   const status = m.match(/googleFetch (\d+)/)?.[1];
+
   if (status === '429') return 'Google is throttling — try again in a moment';
+
   if (status === '502' || status === '522' || status === '524') return 'Google is busy upstream — try again';
+
   if (status === '503') return 'Google maps is unavailable right now';
+
   if (status && status.startsWith('5')) return `Google returned ${status} — try again`;
+
   if (m.includes('preview URL not found')) return "Google didn't return a preview for this place";
+
   return m;
 }
+
 const errBody = (e: unknown) => ({ error: friendlyError(e) });
+
 // A body's model overrides, honoured only for a configured provider or effort.
 const llmOf = (body: LlmOverrides) => ({ provider: parseProvider(body.provider), reasoningEffort: parseReasoningEffort(body.reasoningEffort) });
 
@@ -144,12 +161,14 @@ const replayAnswer = ({ answer, searches, ts }: CachedAnswer) => createUIMessage
     writer.write({ type: 'text-end', id: 'answer' });
   },
 });
+
 const mapsUrlFor = (featureId: string) => `https://www.google.com/maps?q=&ftid=${featureId}`;
 
 // A Score as a lookup streams it (see LookupScore): the reviews stay here, only
 // the newest one's date goes out. Google review timestamps come in microseconds.
 const lookupScore = ({ reviews, ...score }: ScoreResult): LookupScore => {
   const latest = reviews.reduce((max, r) => Math.max(max, r.timestamp ?? 0), 0);
+
   return { ...score, latestReviewTs: latest ? (latest > 1e14 ? Math.floor(latest / 1000) : latest) : null };
 };
 
@@ -162,23 +181,29 @@ function ndjsonStream<E extends { type: string }>(producer: (write: (event: E) =
     async start(controller) {
       const enc = new TextEncoder();
       let closed = false;
+
       const enqueue = (obj: unknown) => {
         if (closed) return;
+
         try { controller.enqueue(enc.encode(JSON.stringify(obj) + '\n')); }
         catch { closed = true; }
       };
+
       // Producer writes are checked against the event union E; the catch emits
       // the `error` variant every union carries, through the untyped enqueue.
       const write: (event: E) => void = enqueue;
+
       try {
         await producer(write);
       } catch (e) {
         console.error('[stream]', e);
         enqueue({ type: 'error', error: friendlyError(e) });
       }
+
       if (!closed) controller.close();
     },
   });
+
   return new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson', ...headers } });
 }
 
@@ -189,12 +214,15 @@ const drafter = (write: (event: SummaryDraftEvent) => void) => {
   let next: SummaryDraft | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let last = 0;
+
   const flush = () => {
     timer = undefined;
+
     if (next) write({ type: 'summary-draft', summary: next });
     next = undefined;
     last = Date.now();
   };
+
   return {
     onDraft: (draft: SummaryDraft) => {
       next = draft;
@@ -212,11 +240,13 @@ const drafter = (write: (event: SummaryDraftEvent) => void) => {
 const summaryStream = (answer: (onDraft: (draft: SummaryDraft) => void) => Promise<HighlightSummaryResponse & { later?: Promise<Summary['aliases']> }>) =>
   ndjsonStream<SummaryEvent>(async (write) => {
     const drafts = drafter(write);
+
     try {
       const { later, ...done } = await answer(drafts.onDraft);
       drafts.stop();
       write({ type: 'summary', ...done });
       const aliases = await later;
+
       if (aliases) write({ type: 'aliases', aliases });
     } finally {
       drafts.stop();
@@ -243,19 +273,24 @@ const HIGHLIGHTS_DRIFT_THRESHOLD = 0.01;
 // primitive.
 function ensureChips(featureId: string, name: string, quick = false): Promise<Harvest> {
   const cached = cache.get(featureId)?.chipMeta;
+
   if (cached?.length) return Promise.resolve({ chips: cached, ok: true });
+
   return warmChipsInflight.run(featureId, async () => {
     const url = mapsUrlFor(featureId);
     const first = quick ? await harvestQuick(url) : undefined;
     const harvest = first?.chips.length ? first : await harvestTokens(url);
     await recordHarvest(featureId, harvest);
     const { chips, ok } = harvest;
+
     const outcome = chips.length
       ? `cached ${chips.length} chips`
       : ok
         ? 'no chips after warm — marked topic-less'
         : 'warm failed (no usable preview response) — not marked, will retry';
+
     console.log(`[warm-chips] ${name} (${featureId}): ${outcome}`);
+
     return harvest;
   });
 }
@@ -277,7 +312,9 @@ const slimChip = ({ reviews: _r, stances: _s, ...rest }: Chip) => rest;
 async function chipsWithStance(featureId: string, chips: Chip[]): Promise<Chip[]> {
   if (!jevAvailable() || chips.every((c) => c.stance)) return chips;
   const read = await Promise.all(chips.map(async (c) => (c.stance || !c.reviews ? c : { ...c, ...(await stanceOfReviews(c.label, c.reviews)) })));
+
   if (read.every((c) => c.stance)) await cache.putHighlights(featureId, read);
+
   return read;
 }
 
@@ -306,7 +343,9 @@ async function scoreChips(
   }));
   const totalFetched = successes.reduce((a, h) => a + (h.fetched ?? 0), 0);
   const cached = totalFetched > 0;
+
   if (cached) await cache.putHighlights(featureId, successes);
+
   return { successes, failures, totalFetched, cached };
 }
 
@@ -316,6 +355,7 @@ async function scoreChips(
 // retries thrash and sometimes give up. The bare ftid URL avoids that.
 async function recomputeHighlights(featureId: string, name: string): Promise<void> {
   const { chips } = await ensureChips(featureId, name);
+
   if (!chips.length) return;
   const { successes, failures, totalFetched, cached } = await scoreChips(featureId, name, chips);
   const tag = `${successes.length}/${chips.length} chips, ${totalFetched} reviews${failures ? `, ${failures} failed` : ''}`;
@@ -330,26 +370,32 @@ function revalidate(featureId: string, name: string, resolvedUrl: string): Promi
     const bundle = await getOrFetchPreviewBundle(featureId).catch(() => null);
     const histogram = bundle?.histogram ?? null;
     const currentTotal = histogram ? histogramTotal(histogram) : null;
+
     if (currentTotal == null) return;
     const entry = cache.get(featureId);
     const prevTotal = entry?.totalReviewsAtCache;
     const hadHighlights = !!entry?.highlights?.length;
+
     // Skip the re-scrape when the entry is both fresh (histogram total unchanged)
     // and usable (not a throttled 0-review scrape); otherwise re-scrape.
     if (entry && cache.scoreFresh(entry, currentTotal) && cache.scoreUsable(entry, currentTotal)) return;
     const score = await scorePlace(featureId);
+
     // putScore returns false when it rejects a throttled (empty) scrape — keep the
     // prior entry and let the next request retry.
     if (!(await cache.putScore(featureId, name, score, currentTotal, resolvedUrl))) {
       console.warn(`[revalidate] ${name} (${featureId}): re-scrape got ${score.totalReviews} (relevant ${score.relevant.totalReviews}, newest ${score.newest.totalReviews}) vs histogram ${currentTotal} — keeping prior entry (likely throttle)`);
       logEvent('throttle', { where: 'revalidate', name, fid: featureId, histogram: currentTotal });
       onThrottledScrape();
+
       return;
     }
+
     console.log(`[revalidate] ${name}: total ${prevTotal ?? 'unset'} → ${currentTotal}, re-scored`);
 
     if (hadHighlights && prevTotal != null) {
       const drift = Math.abs(currentTotal - prevTotal) / prevTotal;
+
       // run() no-ops if a recompute is already in flight; streamCachedLookup
       // peeks the same key to await it. The catch keeps that await from throwing.
       if (drift > HIGHLIGHTS_DRIFT_THRESHOLD) {
@@ -372,22 +418,28 @@ function streamHighlights(name: string, featureId: string, url: string, chips: C
       write({ type: 'pending' });
       const heartbeat = setInterval(() => write({ type: 'pending' }), HIGHLIGHTS_HEARTBEAT_MS);
       chips = await chips.finally(() => clearInterval(heartbeat));
+
       if (!chips.length) return;
     }
+
     write({ type: 'chips', chips });
+
     const { successes, failures, totalFetched, cached } = await scoreChips(featureId, name, chips, {
       onChip: (h) => write({ type: 'chip', highlight: h }),
       onError: (chip, e) => write({ type: 'chip-error', token: chip.token, label: chip.label, error: friendlyError(e) }),
     });
+
     if (!cached && failures === 0) {
       console.warn(
         `[highlights] ${name} (${featureId}): all ${chips.length} chips fetched 0 reviews ` +
           `(likely upstream throttle). chips=[${chips.map((c) => c.label).join(', ')}] url=${url}`,
       );
     }
+
     const tag = failures
       ? `${successes.length}/${chips.length} ok, ${failures} failed`
       : `${chips.length} chips`;
+
     console.log(`[highlights] ${name} (${featureId}): ${tag}, ${totalFetched} reviews${cached ? '' : ' (not cached)'}`);
     write({ type: 'done', failures, totalFetched, cached });
   });
@@ -409,6 +461,7 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
   const summary = cached.summary && !(unread && !hasReceipts(cached.summary)) ? quotingReviews(cached.summary, cached.score?.reviews) : undefined;
   const cachedScoreTs = cached.scoreTs ?? 0;
   const cachedHighlightsTs = cached.highlightsTs ?? 0;
+
   return ndjsonStream<LookupEvent>(async (write) => {
     write({
       type: 'lookup',
@@ -422,9 +475,11 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
       resolvedUrl: cached.resolvedUrl ?? mapsUrlFor(featureId),
       cached: true,
     });
+
     try {
       await revalidate(featureId, name, resolvedUrl);
       const fresh = cache.get(featureId);
+
       if (fresh && (fresh.scoreTs ?? 0) > cachedScoreTs) {
         write({
           type: 'refreshed',
@@ -436,14 +491,17 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
           resolvedUrl: fresh.resolvedUrl ?? mapsUrlFor(featureId),
         });
       }
+
       // If revalidate kicked off a highlights recompute (drift > 1%), keep
       // the stream open until it lands so the chips stay in sync with the
       // refreshed score. Recompute is in-flight only on actual drift, so
       // this path is rare and otherwise zero-cost.
       const hp = highlightsRecomputeInflight.peek(featureId);
+
       if (hp) {
         await hp;
         const post = cache.get(featureId);
+
         if (post?.highlights?.length && (post.highlightsTs ?? 0) > cachedHighlightsTs) {
           write({
             type: 'highlights-refreshed',
@@ -465,12 +523,14 @@ function streamCachedLookup(featureId: string, name: string, resolvedUrl: string
 function streamFreshLookup(featureId: string, name: string, resolvedUrl: string, cached?: CacheEntry): Response {
   return ndjsonStream<LookupEvent>(async (write) => {
     write({ type: 'place', name, featureId, resolvedUrl });
+
     // Rehydrate: an extension already scored this place and contributed the
     // numbers, so paint them now rather than leaving the panel empty for the
     // length of a full scrape. The scrape below still runs and overwrites.
     if (cached?.contributedScore) {
       write({ type: 'provisional', score: cached.contributedScore, contributedAt: cached.contributedScoreTs ?? 0 });
     }
+
     const t0 = Date.now();
 
     // Run preview in parallel with the score scrape, but emit each as soon as
@@ -484,11 +544,13 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string,
           overallPct: bundle.histogram ? overallPctFromHistogram(bundle.histogram) : null,
           meta: bundle.meta,
         });
+
         return bundle;
       })
       .catch((e) => {
         console.error('[preview]', e);
         write({ type: 'preview', histogram: null, overallPct: null, meta: {} });
+
         return { histogram: null, meta: {}, chips: [] } as PreviewBundle;
       });
 
@@ -502,12 +564,14 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string,
     let harvested: Harvest | undefined;
     void previewPromise.then(({ chips }) => {
       if (chips.length || (cached && (cache.highlightsServable(cached) || cache.chipWarmedEmpty(cached)))) return;
+
       return ensureChips(featureId, name, true).then((h) => { harvested = h; });
     }).catch((e) => console.error(`[warm-chips] ${name} (${featureId}):`, e));
 
     const score = await scorePlace(featureId, (partial) => {
       write({ type: 'score-progress', score: partial });
     });
+
     const bundle = await previewPromise;
     const currentTotal = bundle.histogram ? histogramTotal(bundle.histogram) : null;
     // putScore rejects a throttled scrape — 0 reviews while the histogram shows
@@ -515,6 +579,7 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string,
     // of caching it. Genuinely review-less places have currentTotal 0 and still
     // cache. The client is told, so it doesn't paint the throttle as a score.
     const throttled = !(await cache.putScore(featureId, name, score, currentTotal, resolvedUrl));
+
     if (throttled) {
       console.warn(`[lookup] ${name} (${featureId}): scraped ${score.totalReviews} (relevant ${score.relevant.totalReviews}, newest ${score.newest.totalReviews}) but histogram has ${currentTotal} — not caching (likely throttle)`);
       logEvent('throttle', { where: 'lookup', name, fid: featureId, histogram: currentTotal });
@@ -524,20 +589,25 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string,
       // putPreviewBundle had nothing to patch — persist it now the row exists, and
       // a chip harvest that landed first likewise.
       await cache.putPreviewBundle(featureId, bundle);
+
       if (harvested) await recordHarvest(featureId, harvested);
     }
+
     write({ type: 'score', score: lookupScore(score), fetchMs: Date.now() - t0, throttled });
   });
 }
 
 function getOrFetchPreviewBundle(featureId: string): Promise<PreviewBundle> {
   const existing = cache.get(featureId);
+
   if (existing?.histogram && existing.meta && cache.histogramFresh(existing)) {
     return Promise.resolve({ histogram: existing.histogram, meta: existing.meta, chips: existing.chipMeta ?? [] });
   }
+
   return previewInflight.run(featureId, async () => {
     const bundle = await fetchPreviewBundle(mapsUrlFor(featureId));
     await cache.putPreviewBundle(featureId, bundle);
+
     return bundle;
   });
 }
@@ -561,6 +631,7 @@ Bun.serve({
       POST: async (req) => {
         if ((await req.formData()).get('password') !== PASSWORD) return json({ error: 'wrong password' }, 401);
         req.cookies.set(PASSWORD_COOKIE, PASSWORD, { maxAge: 365 * 86400, httpOnly: true, secure: true, sameSite: 'lax', path: '/' });
+
         return new Response(null, { status: 303, headers: { Location: nextPath(req) } });
       },
     },
@@ -570,6 +641,7 @@ Bun.serve({
           const { url } = await req.json() as LookupRequest;
           const { featureId, name, resolvedUrl } = await resolvePlace(url);
           const cached = cache.get(featureId);
+
           // A contribution-only stub (scoreTs 0) carries the extension's summary +
           // highlights but a placeholder 0-review score the server never computed.
           // Serving it cached paints "0 reviews" until revalidate lands — route it to
@@ -577,9 +649,11 @@ Bun.serve({
           // highlights still load from cache right after the score settles). A
           // throttle-cut score cached before putScore refused them goes fresh too.
           if (cached?.scoreTs && cache.scoreUsable(cached, cached.totalReviewsAtCache)) return streamCachedLookup(featureId, name, resolvedUrl, cached);
+
           return streamFreshLookup(featureId, name, resolvedUrl, cached);
         } catch (e) {
           console.error(`[lookup] ${e instanceof Error ? e.message : e}`);
+
           return json(errBody(e), 400);
         }
       },
@@ -592,8 +666,11 @@ Bun.serve({
       // Same secret as POST so it never leaks session-liveness publicly.
       GET: (req) => {
         const secret = process.env.TRUESCORE_SEED_SECRET;
+
         if (!secret) return json({ error: 'seeding disabled' }, 404);
+
         if (req.headers.get('x-truescore-seed') !== secret) return json({ error: 'forbidden' }, 403);
+
         return json(mapsCredsStatus());
       },
       POST: () => json({ error: 'seeding retired: the server mints and signs its own session' }, 410),
@@ -609,9 +686,12 @@ Bun.serve({
     '/api/maps-creds/renew': {
       POST: async (req) => {
         const secret = process.env.TRUESCORE_SEED_SECRET;
+
         if (!secret) return json({ error: 'seeding disabled' }, 404);
+
         if (req.headers.get('x-truescore-seed') !== secret) return json({ error: 'forbidden' }, 403);
         const ok = await renewSession('manual', true);
+
         return json({ ok, ...mapsCredsStatus() });
       },
     },
@@ -620,15 +700,19 @@ Bun.serve({
     '/api/cached': {
       GET: async (req) => {
         const featureId = new URL(req.url).searchParams.get('featureId');
+
         if (!featureId) return corsJson({ error: 'missing featureId' }, 400);
         const entry = cache.get(featureId);
+
         if (!entry) return corsJson({ found: false }, 404);
+
         // Chips and a summary Jev hasn't read yet are read now (once, then kept),
         // so the extension paints them with their counts and receipts first time.
         const [highlights, summary] = await Promise.all([
           cache.highlightsServable(entry) ? chipsWithStance(featureId, entry.highlights!) : undefined,
           entry.summary && summaryWithReceipts(entry.summary, cachedSubject(entry), (s) => cache.putSummary(featureId, s)),
         ]);
+
         return corsJson({
           found: true,
           summary: summary ? quotingReviews(summary, entry.score?.reviews) : undefined,
@@ -647,12 +731,16 @@ Bun.serve({
       POST: async (req) => {
         try {
           const { featureId, name, summary, highlights, highlightSummaries, score } = await req.json() as ContributeRequest;
+
           if (!featureId || !name) return corsJson({ error: 'missing featureId or name' }, 400);
+
           if (!summary && !highlights && !highlightSummaries && !score) return corsJson({ error: 'nothing to contribute' }, 400);
           await cache.putContribution(featureId, name, { summary, highlights, highlightSummaries, score });
+
           return corsJson({ ok: true } satisfies ContributeResponse);
         } catch (e) {
           console.error('[contribute]', e);
+
           return corsJson(errBody(e), 400);
         }
       },
@@ -670,6 +758,7 @@ Bun.serve({
             lastAccessTs: e.lastAccessTs,
           }))
           .sort((a, b) => b.lastAccessTs - a.lastAccessTs);
+
         return json({ places } satisfies PlacesResponse);
       },
     },
@@ -678,15 +767,20 @@ Bun.serve({
         try {
           const { featureId } = await req.json() as HistogramRequest;
           const entry = cache.get(featureId);
+
           if (!entry) return json({ error: 'look up the place first' }, 404);
           const { histogram, meta } = await getOrFetchPreviewBundle(featureId);
+
           if (!histogram) {
             console.warn(`[histogram] unavailable for ${entry.name} (${featureId}) — preview ${Object.keys(meta).length ? 'returned a place card without the rating histogram block' : 'fetch returned no place data (geo/A-B bucket or throttle)'}`);
+
             return json({ error: 'histogram unavailable' }, 500);
           }
+
           return json({ histogram, overallPct: overallPctFromHistogram(histogram), cached: cache.histogramFresh(entry) } satisfies HistogramResponse);
         } catch (e) {
           console.error('[histogram]', e);
+
           return json(errBody(e), 400);
         }
       },
@@ -701,20 +795,25 @@ Bun.serve({
         try {
           const body = await req.json() as SummarizeRequest;
           const featureId = body.featureId;
+
           if (!featureId) return corsJson({ error: 'missing featureId' }, 400);
 
           // A filtered summary is per-callsite: never kept in the Place's slot.
           const filter = body.filter?.trim() || undefined;
+
           const answer = (onDraft?: (draft: SummaryDraft) => void) => checkedSummary({
             featureId, entry: cache.get(featureId), of: filter ? { filter } : undefined, sent: body, force: !!body.force, llm: llmOf(body), onDraft,
           });
+
           if (body.stream) return summaryStream(answer);
           const { later, ...done } = await answer();
           const aliases = await later;
+
           return corsJson((aliases && done.summary ? { ...done, summary: { ...done.summary, aliases } } : done) satisfies SummarizeResponse);
         } catch (e) {
           // No reviews to summarize is the caller's 404, not a server fault.
           if (!(e instanceof NoReviews)) console.error('[summarize]', e);
+
           return corsJson(errBody(e), errStatus(e));
         }
       },
@@ -723,13 +822,17 @@ Bun.serve({
     '/api/highlights': {
       POST: async (req) => {
         let featureId = '';
+
         try {
           const body = await req.json() as HighlightsRequest;
           featureId = body.featureId;
           const entry = cache.get(featureId);
+
           if (!entry) return json({ error: 'look up the place first' }, 404);
+
           // One chip's reviews, for a client opening it: only ever a cache read.
           if (body.token) return json({ highlights: entry.highlights?.filter((h) => h.token === body.token), cached: true } satisfies HighlightsResponse);
+
           // `.length`, not truthiness: an empty contributed array must fall through
           // to a harvest, not pin the row blank forever. A set the throttle cut
           // short falls through the same way, so the missing topics come back.
@@ -738,6 +841,7 @@ Bun.serve({
 
           // Chips already in hand (a prior harvest, or the lookup's preview) — score + stream.
           if (entry.chipMeta?.length) return streamHighlights(entry.name, featureId, url, entry.chipMeta);
+
           // A recent background warm came back empty → the place genuinely has no
           // topics. `force` (the REFRESH button) re-harvests anyway: it's the only
           // way out if the stamp was wrong, and it's user-initiated so the cost is theirs.
@@ -747,11 +851,14 @@ Bun.serve({
           // lookup's harvest — is already running).
           if (!warmChipsInflight.peek(featureId)) {
             const { chips } = await harvestQuick(url);
+
             if (chips.length) {
               await cache.recordChipWarm(featureId, chips);
+
               return streamHighlights(entry.name, featureId, url, chips);
             }
           }
+
           // Still nothing — harvest persistently in the background. A client that asked
           // to `wait` is held through it and gets the chips the moment they land; any
           // other re-polls the 202.
@@ -759,12 +866,15 @@ Bun.serve({
           // doesn't pin the cached review arrays for its lifetime.
           const name = entry.name;
           const harvest = ensureChips(featureId, name);
+
           if (body.wait) return streamHighlights(name, featureId, url, harvest.then((h) => h.chips));
           void harvest.catch((e) => console.error(`[warm-chips] ${name} (${featureId}):`, e));
+
           return json({ pending: true } satisfies HighlightsResponse, 202);
         } catch (e) {
           const entry = featureId ? cache.get(featureId) : null;
           console.error(`[highlights] ${entry?.name ?? '?'} (${featureId || '?'}):`, e);
+
           return json(errBody(e), 400);
         }
       },
@@ -778,23 +888,30 @@ Bun.serve({
         try {
           const body = await req.json() as HighlightSummaryRequest;
           const { featureId, token, force } = body;
+
           if (!featureId || !token) return corsJson({ error: 'missing featureId or token' }, 400);
 
           const entry = cache.get(featureId);
           const cached = entry?.highlightSummaries?.[token];
           const highlight = entry?.highlights?.find((h) => h.token === token);
           const label = highlight?.label ?? body.label;
+
           if (!(cached && !force) && !label) return corsJson({ error: 'missing label (and no cached highlight)' }, 400);
+
           const answer = async (onDraft?: (draft: SummaryDraft) => void): Promise<HighlightSummaryResponse> => {
             const { summary, cached } = await checkedSummary({
               featureId, entry, of: { chip: { token, label: label ?? '', reviews: highlight?.reviews } }, sent: body, force, llm: llmOf(body), onDraft,
             });
+
             return { summary, label: label ?? '', cached };
           };
+
           if (body.stream) return summaryStream(answer);
+
           return corsJson((await answer()) satisfies HighlightSummaryResponse);
         } catch (e) {
           if (!(e instanceof NoReviews)) console.error('[highlight-summary]', e);
+
           return corsJson(errBody(e), errStatus(e));
         }
       },
@@ -807,13 +924,16 @@ Bun.serve({
       POST: async (req) => {
         let featureId = '';
         let term = '';
+
         try {
           const body = await req.json() as SearchRequest;
           featureId = body.featureId;
           term = (body.query ?? '').trim();
+
           if (!term) return json({ error: 'empty query' }, 400);
           const entry = cache.get(featureId);
           const doSummarize = !!body.summarize;
+
           // A summary needs the place's row (its name, its removal notice); a search
           // alone doesn't, and the extension searches places this server never looked up.
           if (!entry && doSummarize) return json({ error: 'look up the place first' }, 404);
@@ -827,17 +947,21 @@ Bun.serve({
             try {
               if (cached && !force && (!doSummarize || cached.summary) && (cached.stance || !jevAvailable())) {
                 write({ type: 'search', result: cached, cached: true });
+
                 return;
               }
 
               let result = cached && !force ? cached : null;
+
               if (!result) {
                 const reviews = await fetchAllForSearch(featureId, term, (_, rs) => {
                   const stats = statsForReviews(rs);
                   write({ type: 'search-progress', query: term, ...stats });
                 }, force, !!body.asWritten);
+
                 result = { query: term, ...statsForReviews(reviews), reviews, ts: Date.now() };
               }
+
               // What the matches say about the query, read before the result first shows.
               if (!result.stance) result = { ...result, ...(await stanceOfReviews(term, result.reviews)) };
               write({ type: 'search', result, cached: false });
@@ -849,12 +973,15 @@ Bun.serve({
               // cuts a search short without failing it. (putSearch itself
               // refuses an empty result.)
               const cacheable = mapsSessionHealthy();
+
               if (cacheable) await cache.putSearch(featureId, term, result);
 
               if (entry && doSummarize && textReviewsFor(result.reviews).length) {
                 const drafts = drafter(write);
+
                 const { summary } = await checkedSummary({ featureId, entry, of: { search: result, keep: cacheable }, force, llm: llmOf(body), onDraft: drafts.onDraft })
                   .finally(drafts.stop);
+
                 // Sent unless it's the one the result already carried.
                 if (summary !== result.summary) write({ type: 'search-summary', summary });
               }
@@ -865,6 +992,7 @@ Bun.serve({
           });
         } catch (e) {
           console.error('[search]', e);
+
           return json(errBody(e), 400);
         }
       },
@@ -878,13 +1006,17 @@ Bun.serve({
           const body = await req.json() as StanceRequest;
           const texts = (Array.isArray(body.texts) ? body.texts : []).filter((t): t is string => typeof t === 'string').slice(0, MAX_JUDGED);
           const question = body.question?.trim(), topic = body.topic?.trim();
+
           if (!question && !topic) return corsJson({ error: 'missing topic or question' }, 400);
           const answers = question ? await answersFor(question, texts) : null;
           const stances = question ? null : await stancesFor(topic!, texts);
+
           if (!answers && !stances) return corsJson({ error: 'unavailable' } satisfies StanceResponse, 503);
+
           return corsJson((answers ? { answers } : { stances: stances! }) satisfies StanceResponse);
         } catch (e) {
           console.error('[stance]', e);
+
           return corsJson(errBody(e), 400);
         }
       },
@@ -899,10 +1031,13 @@ Bun.serve({
           const body = await req.json() as ReceiptsRequest;
           const strings = (v: unknown) => (Array.isArray(v) ? v : []).filter((t): t is string => typeof t === 'string');
           const support = await supportFor(strings(body.points), strings(body.texts).slice(0, MAX_JUDGED));
+
           if (!support) return corsJson({ error: 'unavailable' } satisfies ReceiptsResponse, 503);
+
           return corsJson({ support } satisfies ReceiptsResponse);
         } catch (e) {
           console.error('[receipts]', e);
+
           return corsJson(errBody(e), 400);
         }
       },
@@ -916,12 +1051,16 @@ Bun.serve({
         try {
           const body = await req.json() as TallyRequest;
           const thread = threadOf(body.thread);
+
           if (!thread) return corsJson({ error: 'missing thread' }, 400);
+
           if (!jevAvailable()) return corsJson({ error: 'unavailable' }, 503);
           const overrides = { provider: parseProvider(body.provider), reasoningEffort: parseReasoningEffort(body.reasoningEffort) };
+
           return ndjsonStream<TallyEvent>((write) => tallyThread(thread, write, overrides), { 'Access-Control-Allow-Origin': '*' });
         } catch (e) {
           console.error('[tally]', e);
+
           return corsJson(errBody(e), 400);
         }
       },
@@ -935,14 +1074,17 @@ Bun.serve({
         try {
           const body = await req.json() as ThreadAskRequest;
           const thread = threadOf(body.thread), chat = chatOf(body.chat);
+
           if (!thread || !chat) return corsJson({ error: 'missing thread or question' }, 400);
           const options = { provider: parseProvider(body.provider), reasoningEffort: parseReasoningEffort(body.reasoningEffort), abortSignal: req.signal };
+
           return ndjsonStream<ThreadAskEvent>(async (write) => {
             await askThread(thread, chat, (text) => write({ type: 'text', text }), options);
             write({ type: 'done' });
           }, { 'Access-Control-Allow-Origin': '*' });
         } catch (e) {
           console.error('[thread-ask]', e);
+
           return corsJson(errBody(e), 400);
         }
       },
@@ -962,18 +1104,22 @@ Bun.serve({
           const body = await req.json() as AskRequest;
           const { featureId, messages = [] } = body;
           const question = questionOf(messages);
+
           if (!question) return corsJson({ error: 'missing question' }, 400);
 
           const entry = featureId ? cache.get(featureId) : undefined;
+
           const subject = resolveSubject({
             entry, name: body.name, reviewTexts: body.reviewTexts, reviews: entry?.score?.reviews, removedReviews: body.removedReviews,
             hint: 'look up the place first or pass reviewTexts in the body',
           });
+
           const key = answerKey(body.filter, question);
           const headers = { 'Access-Control-Allow-Origin': '*' };
 
           // The same question of the same scope within a day replays its Answer.
           const replay = entry && !body.force && messages.length === 1 ? entry.answers?.[key] : undefined;
+
           if (cache.answerServable(replay)) return createUIMessageStreamResponse({ headers, stream: replayAnswer(replay) });
 
           const result = await ask(subject, messages, {
@@ -982,6 +1128,7 @@ Bun.serve({
             reasoningEffort: parseReasoningEffort(body.reasoningEffort),
             abortSignal: req.signal,
           });
+
           return result.toUIMessageStreamResponse({
             headers,
             originalMessages: messages,
@@ -989,21 +1136,26 @@ Bun.serve({
             // Only a clean Answer is worth replaying: every Search it asked for ran.
             onFinish: async ({ responseMessage, finishReason, isAborted }) => {
               const { text, searches } = askViewOf(responseMessage);
+
               if (!entry || !featureId || isAborted || finishReason !== 'stop' || !text.trim() || !searches.every((s) => s.done && s.found != null)) return;
               // A replay's rows show what their matches say to the question, as the
               // live rows did: read now (the client's own read of them is memoised).
               const calls = responseMessage.parts.filter(isStaticToolUIPart);
+
               const answered = await Promise.all(searches.map(async (s, i) => {
                 const call = calls[i];
                 const texts = call?.state === 'output-available' ? call.output.texts.slice(0, MAX_JUDGED) : [];
                 const answers = texts.length ? await answersFor(question, texts) : null;
+
                 return answers ? { ...s, answers: countAnswers(answers) } : s;
               }));
+
               await cache.putAnswer(featureId, key, { answer: text.trim(), searches: answered, ts: Date.now() });
             },
           });
         } catch (e) {
           console.error('[ask]', e);
+
           return corsJson(errBody(e), errStatus(e));
         }
       },

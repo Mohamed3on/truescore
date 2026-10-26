@@ -51,6 +51,7 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
 
   const remote = searchTerm && total > allMax ? orSearch(searchTerm, { text, date }) : null;
   const reach = remote ? total : Math.min(total, allMax);
+
   const searchAsk: SearchAsk | undefined = reach <= Math.min(allMax, SAMPLE_MAX) ? undefined
     : remote ? {
       search: searchWith((terms) => remote(terms).then((hit) => hit.matches), text, (r) => card(r).rating),
@@ -61,6 +62,7 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
   // The newest reviews' share as a gauge, and the score they damp beside the
   // site's own stats.
   let stats: HTMLElement | undefined;
+
   if (recent) {
     const gauge = buildRecentGauge();
     stats = el('div', 'ars-stats');
@@ -70,7 +72,9 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
         const newest = rs.slice(0, RECENT_REVIEWS);
         const ratio = recentRatio(newest.map((r) => card(r).rating));
         fillRecentGauge(gauge, ratio);
+
         if (ratio == null) return;
+
         if (score != null) appendStat(stats!, addCommas(adjust(score, ratio)), 'adjusted');
         appendStat(stats!, String(newest.length), 'analyzed');
       })
@@ -83,6 +87,7 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
   // own search, else once the reviews in hand land.
   const searchSlot = el('div');
   host.append(searchSlot);
+
   const mountSearch = (inHand: T[]) => searchSlot.append(buildSearchSection({
     reviews: inHand,
     total: remote ? total : undefined,
@@ -93,6 +98,7 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
     exampleQuery: reviews.exampleQuery,
     mountSummarize: summarizeMatches(key, { context, searchAsk }),
   }));
+
   if (remote) mountSearch([]);
   else void all().then((rs) => { if (rs.length) mountSearch(rs); });
 
@@ -106,5 +112,6 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
     searchAsk,
     renderQuote: quoteCards(all, text, card),
   });
+
   return { stats };
 };

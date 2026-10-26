@@ -9,6 +9,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 export const shelfScoreCacheTtl = (score: number, threshold: number): number => {
   const distance = Math.abs(score - threshold);
+
   return (distance > 10 ? 365 : Math.max(7, distance * 15)) * DAY_MS;
 };
 
@@ -22,6 +23,7 @@ export const goodreadsViewerCacheScope = (root: ParentNode): string => {
   try {
     const data = JSON.parse(root.querySelector('#__NEXT_DATA__')?.textContent || '{}');
     const id = data.props?.pageProps?.apolloState?.ROOT_QUERY?.getUser?.__ref?.match(/^User:(\d+)$/)?.[1];
+
     return id ? `user-${id}` : 'anonymous';
   } catch {
     return 'anonymous';
@@ -51,8 +53,11 @@ export const readViewerShelving = (root: ParentNode): ViewerShelving | null => {
   const shelf = root
     .querySelector('.BookActions button[aria-label^="Shelved as "], .BookActions button[aria-label^="Tap to shelve"]')
     ?.getAttribute('aria-label');
+
   const stars = root.querySelector('.BookActions [aria-label^="Rating "]')?.getAttribute('aria-label')?.match(/^Rating (\d) out of 5$/);
+
   if (!shelf || !stars) return null;
   const name = shelf.match(/^Shelved as '(.+)'\./)?.[1];
+
   return { status: name ? (SHELF_BY_NAME[name] ?? 'other') : null, myRating: Number(stars[1]) };
 };

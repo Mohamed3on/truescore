@@ -39,5 +39,6 @@ test('uses Airbnb translated review text and falls back to the original when una
     [],
     3,
   );
+
   expect(sample.reviews.map(sampleText)).toEqual(['2★ Very noisy', '3★ It is noisy', '5★ Lovely stay']);
 });

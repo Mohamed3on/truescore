@@ -4,6 +4,7 @@ import * as realLlm from './llm';
 // The model, stubbed: each Ask records the Sample it reads and whether it may
 // Search, then stops.
 let asked: { sample: string[]; canSearch: boolean } | undefined;
+
 mock.module('./llm', () => ({
   ...realLlm,
   askTransport: async (_prompt: string, sample: string[], canSearch: boolean) => {
@@ -11,16 +12,20 @@ mock.module('./llm', () => ({
     throw new Error('stop');
   },
 }));
+
 const { buildReviewPanel } = await import('./review-panel');
 const { SAMPLE_MAX } = await import('./review-summary');
 const { el } = await import('./utils');
 
 type R = { rating: number; title: string; body: string };
+
 const review = (rating: number, title: string, body = ''): R => ({ rating, title, body });
 
 let keys = 0;
+
 const panel = (opts: Partial<Parameters<typeof buildReviewPanel<R>>[1]> & Pick<Parameters<typeof buildReviewPanel<R>>[1], 'all'>) => {
   const host = document.createElement('div');
+
   const built = buildReviewPanel<R>(host, {
     key: `panel-test-${keys++}`,
     total: Array.isArray(opts.all) ? opts.all.length : 0,
@@ -29,6 +34,7 @@ const panel = (opts: Partial<Parameters<typeof buildReviewPanel<R>>[1]> & Pick<P
     exampleQuery: 'battery',
     ...opts,
   });
+
   return { host, ...built };
 };
 
@@ -41,6 +47,7 @@ const ask = async (host: HTMLElement) => {
   input.dispatchEvent(new Event('input'));
   (host.querySelector('.ars-question-row .ars-summarize-btn') as HTMLButtonElement).click();
   await settle();
+
   return asked!;
 };
 
@@ -83,6 +90,7 @@ describe('the Search box', () => {
     input.dispatchEvent(new Event('input'));
     await settle(450);
   };
+
   const titles = (host: HTMLElement) => [...host.querySelectorAll('.ars-search-title')].map((t) => t.textContent);
 
   test('searches the reviews in hand, above the Summary', async () => {
@@ -97,10 +105,13 @@ describe('the Search box', () => {
 
   test("past what the site downloads, searches every review through the site's own search", async () => {
     const terms: string[] = [];
+
     const searchTerm = async (term: string) => {
       terms.push(term);
+
       return { reviews: [review(5, `old ${term}`)], total: 40 };
     };
+
     // Without waiting for the reviews in hand.
     const { host } = panel({ all: new Promise<R[]>(() => {}), allMax: 1, total: 900, searchTerm });
     await settle();

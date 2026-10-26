@@ -13,10 +13,12 @@ export type ThreadComment = {
   // AutoModerator, or a stickied or moderator-distinguished note: never counted.
   bot?: boolean;
 };
+
 // `author`: who posted it, the "OP" its comments speak to.
 export type Thread = { id: string; title: string; text: string; author?: string; comments: ThreadComment[] };
 
 type Thing = { kind: string; data: Record<string, any> };
+
 type Listing = { data: { children: Thing[] } };
 
 // What Reddit leaves of a deleted or removed comment: nothing to read.
@@ -25,9 +27,11 @@ const GONE = new Set(['[deleted]', '[removed]']);
 export const threadFromListing = ([post, comments]: [Listing, Listing]): Thread => {
   const p = post.data.children[0]!.data;
   const out: ThreadComment[] = [];
+
   const walk = (things: Thing[]) => {
     for (const { kind, data: d } of things) {
       if (kind !== 't1') continue;
+
       if (!GONE.has(d.body)) {
         out.push({
           id: d.id,
@@ -38,10 +42,13 @@ export const threadFromListing = ([post, comments]: [Listing, Listing]): Thread 
           ...(d.author === 'AutoModerator' || d.stickied || d.distinguished === 'moderator' ? { bot: true } : {}),
         });
       }
+
       if (d.replies && typeof d.replies === 'object') walk(d.replies.data.children);
     }
   };
+
   walk(comments.data.children);
+
   return { id: p.id, title: p.title ?? '', text: p.selftext ?? '', ...(p.author && p.author !== '[deleted]' ? { author: p.author } : {}), comments: out };
 };
 

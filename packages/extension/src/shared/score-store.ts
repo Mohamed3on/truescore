@@ -8,7 +8,9 @@
 import { isTrusted, starScore, type Review, type SortKey } from '@truescore/gmaps-shared';
 
 export const TIME_PERIODS = ['total', 'inPastYear', 'inPastMonth'] as const;
+
 export type Period = (typeof TIME_PERIODS)[number];
+
 const SORT_KEYS: readonly SortKey[] = ['relevant', 'newest'];
 
 export type ReviewData = {
@@ -30,6 +32,7 @@ export type ScoreCacheEntry = {
   relevantIds?: string[];
   newestIds?: string[];
 };
+
 type FullScoreCacheEntry = ScoreCacheEntry & {
   reviews: Record<string, Review>;
   relevantIds: string[];
@@ -38,6 +41,7 @@ type FullScoreCacheEntry = ScoreCacheEntry & {
 };
 
 export type MergedStats = { totalCount: number; totalAll: number; totalTrusted: number; mergedPct: number };
+
 export type Reconcile = 'fresh' | 'stale' | 'unknown';
 
 export type Storage = {
@@ -66,6 +70,7 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
     if (!timestamp) return { total: true, inPastYear: false, inPastMonth: false };
     const t = timestamp / 1000;
     const n = now();
+
     return { total: true, inPastYear: t >= n - 365 * 86400000, inPastMonth: t >= n - 30 * 86400000 };
   };
 
@@ -73,9 +78,11 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
     const trusted = isTrusted(review.reviewerReviewCount);
     const periods = classify(review.timestamp);
     const contribution = starScore(review.stars);
+
     for (const period of TIME_PERIODS) {
       if (!periods[period]) continue;
       rd.totalReviews[period]++;
+
       if (trusted) {
         rd.trustedReviews[period]++;
         rd.reviewsScores[period] += contribution;
@@ -88,7 +95,9 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
   // Year on its own instead of keeping the bucket it had when first fetched.
   const tally = (reviews: Record<string, Review>): ReviewData => {
     const rd = makeReviewData();
+
     for (const id in reviews) process(reviews[id], rd);
+
     return rd;
   };
 
@@ -98,13 +107,21 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
 
   const merge = (): Record<string, Review> => {
     const m: Record<string, Review> = {};
+
     for (const key of SORT_KEYS) for (const id in reviewMap[key]) if (!m[id]) m[id] = reviewMap[key][id];
+
     return m;
   };
 
   const pickFrom = (reviews: Record<string, Review>, ids: string[]): Record<string, Review> => {
     const out: Record<string, Review> = {};
-    for (const id of ids) { const r = reviews[id]; if (r) out[id] = r; }
+
+    for (const id of ids) {
+      const r = reviews[id];
+
+      if (r) out[id] = r;
+    }
+
     return out;
   };
 
@@ -115,10 +132,13 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
   const newestHeadId = (): string | null => {
     let bestId: string | null = null;
     let bestTs = -Infinity;
+
     for (const id in reviewMap.newest) {
       const ts = reviewMap.newest[id].timestamp ?? -Infinity;
+
       if (ts > bestTs) { bestTs = ts; bestId = id; }
     }
+
     return bestId;
   };
 
@@ -143,7 +163,9 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
     // it. The disk entry still has it, so that goes stale too.
     dropUnseen(sort: SortKey) {
       const gone = Object.keys(reviewMap[sort]).filter((id) => !seen.has(id));
+
       if (!gone.length) return;
+
       for (const key of SORT_KEYS) for (const id of gone) delete reviewMap[key][id];
       cached = null;
     },
@@ -155,7 +177,9 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
 
     newestHeadReview(): Review | null {
       const id = newestHeadId() ?? cached?.newestHeadId;
+
       if (!id) return null;
+
       return reviewMap.newest[id] ?? cached?.reviews?.[id] ?? null;
     },
 
@@ -164,13 +188,25 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
     // skips and the caller can abort its speculative refetch.
     reconcile(liveHeadId: string): Reconcile {
       const cachedHead = cached?.newestHeadId;
-      if (cachedHead && cachedHead !== liveHeadId) { cached = null; return 'stale'; }
-      if (cachedHead === liveHeadId && isFullyHydrated(cached)) { servedFresh = true; return 'fresh'; }
+
+      if (cachedHead && cachedHead !== liveHeadId) {
+        cached = null;
+
+        return 'stale';
+      }
+
+      if (cachedHead === liveHeadId && isFullyHydrated(cached)) {
+        servedFresh = true;
+
+        return 'fresh';
+      }
+
       return 'unknown';
     },
 
     scorePct(sort: SortKey, period: Period): number {
       const d = sortData(sort);
+
       return d ? d.reviewsScores[period] / d.trustedReviews[period] || 0 : 0;
     },
 
@@ -185,9 +221,11 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
     mergedStats(period: Period): MergedStats {
       const merged = merge();
       const liveCount = Object.keys(merged).length;
+
       if (liveCount === 0 && cached) {
         const m = cached.merged;
         const trusted = m.trustedReviews[period];
+
         return {
           totalCount: m.totalReviews.total,
           totalAll: m.totalReviews[period],
@@ -195,13 +233,18 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
           mergedPct: trusted ? m.reviewsScores[period] / trusted : 0,
         };
       }
+
       let totalAll = 0, totalTrusted = 0, totalScore = 0;
+
       for (const id in merged) {
         const r = merged[id];
+
         if (!classify(r.timestamp)[period]) continue;
         totalAll++;
+
         if (isTrusted(r.reviewerReviewCount)) { totalTrusted++; totalScore += starScore(r.stars); }
       }
+
       return { totalCount: liveCount, totalAll, totalTrusted, mergedPct: totalTrusted ? totalScore / totalTrusted : 0 };
     },
 
@@ -210,12 +253,15 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
     // the async read was in flight (an SPA nav to another place).
     async loadCache(key: string, stillValid: () => boolean = () => true): Promise<boolean> {
       const entry = await storage.get<ScoreCacheEntry>(key);
+
       if (!entry || !stillValid() || cached || store.hasLiveData()) return false;
       cached = entry;
+
       if (isFullyHydrated(entry)) {
         reviewMap.relevant = pickFrom(entry.reviews, entry.relevantIds);
         reviewMap.newest = pickFrom(entry.reviews, entry.newestIds);
       }
+
       return true;
     },
 
@@ -226,8 +272,10 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
     async persistIfReady(key: string): Promise<boolean> {
       if (servedFresh && isFullyHydrated(cached)) return false;
       const liveMerged = merge();
+
       if (!Object.keys(liveMerged).length) return false;
       const newestIds = Object.keys(reviewMap.newest);
+
       const entry: ScoreCacheEntry = {
         ts: now(),
         newestHeadId: newestHeadId() ?? newestIds[0],
@@ -238,16 +286,20 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
         relevantIds: Object.keys(reviewMap.relevant),
         newestIds,
       };
+
       if (isFullyHydrated(cached) &&
           cached.newestHeadId === entry.newestHeadId &&
           cached.merged.totalReviews.total === entry.merged.totalReviews.total) {
         return false;
       }
+
       cached = entry;
       await storage.set(key, entry);
+
       return true;
     },
   };
+
   return store;
 };
 

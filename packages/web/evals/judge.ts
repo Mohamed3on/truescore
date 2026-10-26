@@ -21,6 +21,7 @@ export async function mapPool<T, R>(items: T[], limit: number, fn: (x: T, i: num
       }
     }),
   );
+
   return out;
 }
 
@@ -49,5 +50,6 @@ export const judge = async (f: Fixture, a: Summary, b: Summary) => {
     schema: judgeSchema,
     prompt: `${f.reviewTexts.join('\n\n')}\n\n---\n\nTwo anonymous models summarized the reviews above for ${f.place}${f.filter ? ` (topic: "${f.filter}")` : ''}. Score each output 1-5 on: grounded (every claim traceable to the reviews and given the weight the reviews give it — inventing detail, overstating how many reviewers said something, or presenting a one-off as a pattern are grounding errors), coverage (conveys what matters most for deciding: the points many reviewers raise and any major caveat — leaving out minor or one-off points is not a flaw), concise (no padding or repetition; length is not a virtue). Then pick the overall winner: the output a careful reader should rely on to decide, where a grounding error weighs more than a missed minor detail.\n\nOutput A:\n${JSON.stringify(a, null, 1)}\n\nOutput B:\n${JSON.stringify(b, null, 1)}`,
   });
+
   return object;
 };

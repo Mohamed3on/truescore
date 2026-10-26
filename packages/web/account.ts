@@ -22,5 +22,6 @@ export async function rotateAccount(): Promise<string> {
   const cookies = await rotateCookies(await accountCookies());
   jar = Promise.resolve(cookies);
   await writeFile(SAVED_PATH, JSON.stringify({ seed, cookies }), { mode: 0o600 });
+
   return cookies;
 }

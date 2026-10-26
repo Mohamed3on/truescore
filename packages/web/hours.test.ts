@@ -23,6 +23,7 @@ describe('formatHourLabel', () => {
 describe('isOpenNow', () => {
   const day = (openHour?: number, closeHour?: number, label?: string): DayHours =>
     ({ day: 'Monday', openHour, closeHour, label }) as DayHours;
+
   const slots = (...s: Array<[number, number]>): DayHours => ({ day: 'Monday', label: '', slots: s });
   const closed: DayHours = { day: 'Sunday', label: 'Closed' };
 

@@ -29,6 +29,7 @@ describe('goodreadsViewerCacheScope', () => {
       <article class="ReviewCard"><a class="Avatar Avatar--medium" href="/user/show/999-reviewer">Reviewer</a></article>
       <script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { apolloState: { ROOT_QUERY: rootQuery } } } })}</script>
     `;
+
     return goodreadsViewerCacheScope(document);
   };
 
@@ -56,6 +57,7 @@ describe('readViewerShelving', () => {
       </div>
       <article class="ReviewCard"><span aria-label="Rating 5 out of 5"></span></article>
     `;
+
     return readViewerShelving(document);
   };
 

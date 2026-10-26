@@ -19,6 +19,7 @@ import { logEvent } from './events';
 // headless mint every 60s. Silent zeros, not a crash.
 let session: MapsSession | null = null;
 let seededAt: number | null = null;
+
 // Banner health: true while reviews load. Flipped false only when review RPCs come
 // back empty even after the transport's retries (a genuinely expired session that
 // needs a reseed), and true again on the next good reply — so a transient throttle
@@ -61,11 +62,15 @@ const envSession = (): MapsSession | null => {
   const sessionId = process.env.TRUESCORE_MAPS_SESSION;
   const at = process.env.TRUESCORE_MAPS_AT;
   const cookies = process.env.TRUESCORE_MAPS_COOKIES;
+
   if (!(bgkey && sessionId && at)) return null;
+
   if (!cookies) {
     console.warn('[maps-creds] TRUESCORE_MAPS_BGKEY is set without TRUESCORE_MAPS_COOKIES — ignoring: the token only validates against the session that minted it');
+
     return null;
   }
+
   return { creds: { bgkey, bgbind, sessionId, at, hl: 'en' }, cookies };
 };
 
@@ -73,8 +78,10 @@ const envSession = (): MapsSession | null => {
 export function mapsSession(): MapsSession | null {
   if (!session) {
     const fromEnv = envSession();
+
     if (fromEnv) adopt(fromEnv);
   }
+
   return session;
 }
 
@@ -90,13 +97,16 @@ export function getMapsCreds(): MapsCreds | null {
 // mint; a good reply proves the session works. The mint needs no extension and no
 // human. A good reply doesn't itself flip the banner; renewSession owns that.
 export function onStaleRpc(): void { void renewSession('stale-detected'); }
+
 export function onFreshRpc(): void { setRenewOk(true, 'fresh-rpc'); }
+
 // A whole scrape the cache refused: no reviews (or one sort empty, or short of a
 // page) for a place that has them. Its replies can parse as valid, which the stale
 // check above passes as fresh — so without this the banner stayed hidden while every
 // lookup read zero. The next good reply clears it. Mint too: a capped session never
 // looks stale, so nothing else would replace it.
 export function onThrottledScrape(): void { setRenewOk(false, 'throttled-scrape'); void renewSession('throttled-scrape'); }
+
 export function mapsSessionHealthy(): boolean { return !!getMapsCreds() && renewOk; }
 
 // --- self-mint: a fresh session, no browser, no human (see maps-minter) ---
@@ -107,12 +117,14 @@ const RESEED_ALERT_COOLDOWN_MS = 10 * 60_000;
 const FIRST_SESSION_WAIT_MS = 20_000;
 let lastRenewAttempt = 0;
 let lastReseedAlert = 0;
+
 // The latest renewal, settled once its session is adopted or its mint failed.
 let renewing: Promise<boolean> = Promise.resolve(false);
 
 export function renewSession(reason: string, force = false): Promise<boolean> {
   if (!force && Date.now() - lastRenewAttempt < RENEW_COOLDOWN_MS) return Promise.resolve(false);
   lastRenewAttempt = Date.now();
+
   return (renewing = renew(reason));
 }
 
@@ -120,24 +132,30 @@ export function renewSession(reason: string, force = false): Promise<boolean> {
 // boot) waits briefly for the mint in flight rather than scoring the place empty.
 export async function mapsCredsReady(): Promise<MapsCreds | null> {
   if (!getMapsCreds()) await Promise.race([renewing, Bun.sleep(FIRST_SESSION_WAIT_MS)]);
+
   return getMapsCreds();
 }
 
 async function renew(reason: string): Promise<boolean> {
   console.log(`[maps-creds] minting a fresh session (${reason})…`);
   const minted = await mintMapsCreds();
+
   if (!minted) {
     setRenewOk(false, `mint-failed:${reason}`);
+
     // Alert once per episode rather than on every stale RPC.
     if (Date.now() - lastReseedAlert >= RESEED_ALERT_COOLDOWN_MS) {
       lastReseedAlert = Date.now();
       logEvent('needs-reseed', { note: 'auto-mint failed' });
       console.warn('[maps-creds] auto-mint failed');
     }
+
     return false;
   }
+
   applySeed(minted); // sets renewOk = true
   console.log(`[maps-creds] session renewed (${reason})`);
+
   return true;
 }
 
@@ -150,10 +168,12 @@ let rotated = false;
 async function rotate(): Promise<void> {
   try {
     const cookies = await rotateAccount();
+
     if (session) {
       session = { ...session, cookies: withCookies(session.cookies, cookies.split(';')) };
       setGoogleCookieOverride(session.cookies);
     }
+
     if (!rotated) logEvent('rotate', { result: 'ok' });
     rotated = true;
   } catch (e) {
@@ -167,12 +187,20 @@ async function rotate(): Promise<void> {
 // (onStaleRpc) is the backstop. TRUESCORE_MINT_INTERVAL_MIN (default 240; 0 disables).
 export function startMintTimer(): void {
   void renewSession('boot', true);
+
   if (process.env.TRUESCORE_ACCOUNT_COOKIES) {
     void rotate();
     setInterval(rotate, ROTATE_MS);
   }
+
   const min = Number(process.env.TRUESCORE_MINT_INTERVAL_MIN ?? 240);
-  if (!(min > 0)) { console.log('[maps-creds] proactive mint disabled'); return; }
+
+  if (!(min > 0)) {
+    console.log('[maps-creds] proactive mint disabled');
+
+    return;
+  }
+
   const intervalMs = min * 60_000;
   setInterval(() => {
     // Skip if a reactive mint already refreshed within the interval.

@@ -10,8 +10,11 @@ import { isTrusted, type Review } from './index';
 // 'off' isn't about the topic at all — the word matched by chance, or the chip is
 // a mistranslation ("snake" for a bakery's queue: German Schlange).
 export const STANCES = ['praise', 'complain', 'mixed', 'off'] as const;
+
 export type Stance = (typeof STANCES)[number];
+
 export type StanceCounts = Record<Stance, number>;
+
 // A review's stance as its card marks it, beside its stars: the filters' ▲ and ▼,
 // a ● for mixed or neutral, a hollow ○ for not about it. All four are in every
 // system font's core set, so they render at one size wherever they show. The
@@ -25,14 +28,19 @@ export const STANCE_MARKS: Record<Stance, { text: string; label: (subject: strin
 
 // A review's answer to an Ask's question.
 export const ANSWERS = ['yes', 'no', 'unclear', 'none'] as const;
+
 export type Answer = (typeof ANSWERS)[number];
+
 export type AnswerCounts = Record<Answer, number>;
 
 const tally = <K extends string>(keys: readonly K[], values: Iterable<K | null | undefined>): Record<K, number> => {
   const counts = Object.fromEntries(keys.map((k) => [k, 0])) as Record<K, number>;
+
   for (const v of values) if (v != null && v in counts) counts[v]++;
+
   return counts;
 };
+
 export const countStances = (stances: Iterable<Stance | null | undefined>): StanceCounts => tally(STANCES, stances);
 export const countAnswers = (answers: Iterable<Answer | null | undefined>): AnswerCounts => tally(ANSWERS, answers);
 
@@ -63,6 +71,7 @@ export type Opinions = {
   sparse: boolean;
   title: string;
 };
+
 const sided = (pos: number, neg: number) => ({ net: pos - neg, share: pos + neg ? Math.round((pos / (pos + neg)) * 100) : 0 });
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -73,12 +82,14 @@ export const mentionsText = (n: number) => plural(n, 'mention');
 // server), so the counts say what they cover.
 const covered = (c: Record<string, number>, of?: number) => {
   const read = Object.values(c).reduce((a, n) => a + n, 0);
+
   return of && of > read ? [`${read} of ${of} checked`] : [];
 };
 
 export const opinionsOf = (c: StanceCounts, of?: number): Opinions => {
   const mentions = c.praise + c.complain + c.mixed;
   const rest = [c.mixed && `${c.mixed} mixed or neutral`, c.off && `${c.off} not about it`].filter(Boolean);
+
   return {
     pos: c.praise, neg: c.complain, ...sided(c.praise, c.complain), posWord: 'praise', negWord: 'complain', mentions,
     sparse: c.praise + c.complain < MIN_OPINIONS,
@@ -89,6 +100,7 @@ export const opinionsOf = (c: StanceCounts, of?: number): Opinions => {
 export const answersOf = (c: AnswerCounts, of?: number): Opinions => {
   const mentions = c.yes + c.no + c.unclear;
   const rest = [c.unclear && `${c.unclear} unclear`, c.none && `${c.none} don't say`].filter(Boolean);
+
   return {
     pos: c.yes, neg: c.no, ...sided(c.yes, c.no), posWord: 'yes', negWord: 'no', mentions,
     sparse: c.yes + c.no < MIN_OPINIONS,
@@ -113,9 +125,12 @@ export type StanceReader = { reachable: () => boolean; stances: (topic: string, 
 export async function trustedStance(topic: string, reviews: Review[], reader: StanceReader): Promise<StanceResult | null> {
   const readable = reviews.filter((r) => isTrusted(r.reviewerReviewCount) && r.text.trim().length > 1);
   const read = readable.slice(0, MAX_JUDGED);
+
   if (!read.length) return reader.reachable() ? { stance: countStances([]), stances: {} } : null;
   const labels = await reader.stances(topic, read.map((r) => r.text));
+
   if (!labels) return null;
+
   return { stance: countStances(labels), stances: Object.fromEntries(read.map((r, i) => [r.reviewId, labels[i]!])), ...(readable.length > read.length ? { of: readable.length } : {}) };
 }
 
@@ -125,7 +140,9 @@ export async function trustedStance(topic: string, reviews: Review[], reader: St
 // Positive from 80%, a net of +60 among those taking a side, the bar a TrueScore
 // clears to read green: shares bunch near 100%, and at 60% nine in ten read green.
 export const opinionTone = (o: Opinions): 'pos' | 'mid' | 'neg' => (o.share >= 80 ? 'pos' : o.share <= 40 ? 'neg' : 'mid');
+
 export type Tone = ReturnType<typeof opinionTone>;
+
 // Net with its sign, as a vote count reads: +37, −5, 0.
 export const signedNet = (n: number): string => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
 
@@ -138,5 +155,6 @@ export const bySupport = <T extends { support?: number }>(items: T[]): T[] =>
 
 export const opinionPct = (o: Opinions): number => {
   const sided = o.pos + o.neg;
+
   return sided ? Math.round(((o.pos - o.neg) / sided) * 100) : 0;
 };

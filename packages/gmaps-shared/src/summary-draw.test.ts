@@ -2,7 +2,9 @@ import { expect, test } from 'bun:test';
 import { mountBullets, writeMarkdown } from './summary-draw';
 
 const texts = (list: HTMLElement) => [...list.children].map((c) => c.textContent);
+
 type Bullet = { text: string; n?: number };
+
 const mount = (list: HTMLElement) =>
   mountBullets<Bullet>(list, (b) => b.text, () => document.createElement('li'), (row, b) => { row.textContent = b.n ? `${b.text} (${b.n})` : b.text; });
 
@@ -33,6 +35,7 @@ test('markdown is rewritten only when it changed', () => {
   const node = document.createElement('div');
   let renders = 0;
   const render = (n: HTMLElement, t: string) => { renders++; n.textContent = t; };
+
   writeMarkdown(node, 'Good', render);
   writeMarkdown(node, 'Good', render);
   writeMarkdown(node, 'Good food', render);

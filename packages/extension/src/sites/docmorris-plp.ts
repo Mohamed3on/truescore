@@ -11,8 +11,10 @@ const scoreOf = cardScores(DOCMORRIS);
 // until React has hydrated those cards (see afterHydration). Each prefetch is
 // handed over once, so the grid's retries of a failed one fetch afresh.
 const prefetched = new Map<string, ReturnType<typeof scoreOf>>();
+
 for (const card of document.querySelectorAll(CARD)) {
   const id = pznOf(card);
+
   if (id && !prefetched.has(id)) prefetched.set(id, scoreOf(id));
 }
 
@@ -21,9 +23,11 @@ afterHydration().then(() => setupScoreGrid({
   idOf: pznOf,
   scoreForCard: (card) => {
     const id = pznOf(card);
+
     if (!id) return Promise.resolve(null);
     const early = prefetched.get(id);
     prefetched.delete(id);
+
     return early ?? scoreOf(id);
   },
   // The stars, found by their icons: Chrome's page translation rewrites their

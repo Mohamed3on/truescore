@@ -12,18 +12,26 @@ import { wrapLanguageModel, type LanguageModelMiddleware } from 'ai';
 // call then ends as a reply, not a tool call: generateText reads no output from
 // a step that finished calling tools.
 const asReply = <R extends { unified: string }>(reason: R): R => (reason.unified === 'tool-calls' ? { ...reason, unified: 'stop' } : reason);
+
 const asText = (part: LanguageModelV4StreamPart): LanguageModelV4StreamPart | null => {
   if (part.type === 'tool-input-start') return { type: 'text-start', id: part.id };
+
   if (part.type === 'tool-input-delta') return { type: 'text-delta', id: part.id, delta: part.delta };
+
   if (part.type === 'tool-input-end') return { type: 'text-end', id: part.id };
+
   if (part.type === 'finish') return { ...part, finishReason: asReply(part.finishReason) };
+
   return part.type === 'tool-call' ? null : part;
 };
+
 export const strictJsonViaTool: LanguageModelMiddleware = {
   specificationVersion: 'v4',
   transformParams: async ({ params }) => {
     const format = params.responseFormat;
+
     if (format?.type !== 'json' || !format.schema) return params;
+
     return {
       ...params,
       responseFormat: undefined,
@@ -33,17 +41,22 @@ export const strictJsonViaTool: LanguageModelMiddleware = {
   },
   wrapGenerate: async ({ doGenerate, params }) => {
     const result = await doGenerate();
+
     if (params.toolChoice?.type !== 'tool' || params.toolChoice.toolName !== 'json') return result;
+
     return { ...result, finishReason: asReply(result.finishReason), content: result.content.map((part) => (part.type === 'tool-call' ? { type: 'text' as const, text: part.input } : part)) };
   },
   wrapStream: async ({ doStream, params }) => {
     const result = await doStream();
+
     if (params.toolChoice?.type !== 'tool' || params.toolChoice.toolName !== 'json') return result;
+
     return {
       ...result,
       stream: result.stream.pipeThrough(new TransformStream<LanguageModelV4StreamPart, LanguageModelV4StreamPart>({
         transform(part, controller) {
           const text = asText(part);
+
           if (text) controller.enqueue(text);
         },
       })),

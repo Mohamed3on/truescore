@@ -13,12 +13,15 @@ export const queryTerms = (query: string) => parseOrQuery(query).map((t) => t.to
 // evidence either way, so it stays out of the denominator.
 export const ratingStats = (ratings: number[]) => {
   let five = 0, one = 0, rated = 0;
+
   for (const r of ratings) {
     if (r <= 0) continue;
     rated++;
+
     if (r === 5) five++;
     else if (r === 1) one++;
   }
+
   return { nps: rated ? npsStats(five, one, rated).nps : 0, rated };
 };
 
@@ -33,6 +36,7 @@ export const searchWith = <T,>(
 ): SearchReviews => async (query, onFound) => {
   const matches = await find(queryTerms(query), onFound);
   const { nps, rated } = ratingStats(matches.map(rating));
+
   return { texts: matches.map(toText).filter(Boolean), scorePct: Math.round(nps), trustedReviews: rated };
 };
 
@@ -46,22 +50,29 @@ export const orSearch = <T,>(
   { text, date }: { text: (r: T) => string; date: (r: T) => string },
 ) => {
   const cache = new Map<string, { matches: T[]; total: number }>();
+
   return async (terms: string[]) => {
     const key = terms.join(' OR ');
     let hit = cache.get(key);
+
     if (!hit) {
       const found = await Promise.all(terms.map(searchTerm));
       const seen = new Set<string>();
+
       const matches = found.flatMap((f) => f.reviews).filter((r) => {
         const t = text(r);
+
         if (!t || seen.has(t)) return false;
         seen.add(t);
+
         return true;
       });
+
       if (found.length > 1) matches.sort((a, b) => date(b).localeCompare(date(a)));
       hit = { matches, total: found.length === 1 ? found[0].total : matches.length };
       cache.set(key, hit);
     }
+
     return hit;
   };
 };
@@ -69,6 +80,7 @@ export const orSearch = <T,>(
 // Run `query` in a search section's box as if typed, and bring it into view.
 export const runSearch = (section: Element, query: string) => {
   const input = section.querySelector<HTMLInputElement>('.ars-search-input');
+
   if (!input) return;
   input.value = query;
   input.dispatchEvent(new Event('input'));
@@ -78,16 +90,30 @@ export const runSearch = (section: Element, query: string) => {
 // Highlight every occurrence of ANY term. At each position take the
 // earliest-starting match (longest on ties) so overlapping terms don't double-wrap.
 const appendHighlighted = (parent: HTMLElement, text: string, terms: string[]) => {
-  if (!terms.length) { parent.appendChild(document.createTextNode(text)); return; }
+  if (!terms.length) {
+    parent.appendChild(document.createTextNode(text));
+
+    return;
+  }
+
   const lower = text.toLowerCase();
   let i = 0;
+
   while (i < text.length) {
     let best = -1, bestLen = 0;
+
     for (const t of terms) {
       const idx = lower.indexOf(t, i);
+
       if (idx >= 0 && (best < 0 || idx < best || (idx === best && t.length > bestLen))) { best = idx; bestLen = t.length; }
     }
-    if (best < 0) { parent.appendChild(document.createTextNode(text.slice(i))); return; }
+
+    if (best < 0) {
+      parent.appendChild(document.createTextNode(text.slice(i)));
+
+      return;
+    }
+
     if (best > i) parent.appendChild(document.createTextNode(text.slice(i, best)));
     parent.appendChild(el('mark', 'ars-search-hl', text.slice(best, best + bestLen)));
     i = best + bestLen;
@@ -106,8 +132,10 @@ export const SEARCH_MAX = 15000;
 export const localSearch = <T,>(reviews: T[], fields: (r: T) => SearchReviewFields) => {
   const projected = reviews.map((r) => {
     const f = fields(r);
+
     return { r, h: [f.title, f.body, f.meta].filter(Boolean).join(' ').toLowerCase() };
   });
+
   return (terms: string[]) => projected.filter((p) => terms.some((t) => p.h.includes(t))).map((p) => p.r);
 };
 
@@ -120,6 +148,7 @@ export const localSearchAsk = <T,>(
   island: Element,
 ): SearchAsk => {
   let find: ((terms: string[]) => T[]) | undefined;
+
   return {
     search: searchWith(async (terms) => (find ??= localSearch(await reviews, fields))(terms), toText, (r) => fields(r).rating),
     open: (query) => runSearch(island, query),
@@ -127,10 +156,12 @@ export const localSearchAsk = <T,>(
 };
 
 const MAX_RENDERED_RESULTS = 50;
+
 // How long a query must stand before its matches are read for what they say —
 // a pause, not a keystroke, is worth reading.
 const STANCE_SETTLE_MS = 700;
 const SEARCH_DEBOUNCE_MS = 120;
+
 // Remote searches cost a request per keystroke-burst, so they wait longer.
 const REMOTE_DEBOUNCE_MS = 350;
 
@@ -197,6 +228,7 @@ export const buildSearchSection = <T,>({
   // Re-filled with a fresh widget on every settled search when the caller mounts
   // its own; empty otherwise.
   const sumHost = el('div', 'ars-search-summarize');
+
   if (mountSummarize) { sumBtn.style.display = 'none'; section.appendChild(sumHost); }
 
   const summaryCache = new Map<string, string>();
@@ -204,6 +236,7 @@ export const buildSearchSection = <T,>({
   let currentQuery = '';
 
   type Match = { r: T; f: SearchReviewFields };
+
   let lastMatches: Match[] = [];
   // What each listed match says about the query (by index), once read, and the
   // stance the list is filtered to — set by the header's counts, cleared by a
@@ -216,10 +249,13 @@ export const buildSearchSection = <T,>({
   const findMatches = async (terms: string[]): Promise<{ matches: Match[]; total: number }> => {
     if (!search) {
       const matches = findLocal(terms).map((r) => ({ r, f: fields(r) }));
+
       return { matches, total: matches.length };
     }
+
     const hit = await search(terms);
     const matches = hit.matches.map((r) => ({ r, f: fields(r) }));
+
     return { matches, total: hit.total ?? matches.length };
   };
 
@@ -239,22 +275,29 @@ export const buildSearchSection = <T,>({
 
   sumBtn.addEventListener('click', async () => {
     const query = currentQuery;
+
     if (!query) return;
     const texts = lastMatches.map((p) => toText(p.r)).filter(Boolean);
+
     if (!texts.length) {
       sumPanel.style.display = 'block';
       sumPanel.textContent = 'No review text to summarize';
+
       return;
     }
+
     sumBtn.disabled = true;
     sumBtn.textContent = '⏳ Summarizing…';
     sumPanel.style.display = 'block';
     sumPanel.textContent = 'Summarizing…';
+
     try {
       const text = await llmSummarize(texts, promptFor(query), null, (partial) => {
         if (currentQuery === query) renderFreeFormAnswer(sumPanel, partial);
       });
+
       summaryCache.set(query.toLowerCase(), text);
+
       if (currentQuery !== query) return;
       renderCached(query, text);
     } catch (e: any) {
@@ -268,18 +311,22 @@ export const buildSearchSection = <T,>({
     const raw = input.value.trim();
     const q = raw.toLowerCase();
     currentQuery = raw;
+
     if (!q) {
       header.style.display = 'none';
       list.style.display = 'none';
       sumHost.textContent = '';
       hideSummary();
+
       return;
     }
+
     sumHost.textContent = '';
     const terms = queryTerms(raw);
 
     header.style.display = '';
     list.style.display = '';
+
     if (search) {
       hideSummary();
       summary.textContent = `Searching ${addCommas(corpusSize)} reviews…`;
@@ -288,13 +335,16 @@ export const buildSearchSection = <T,>({
     }
 
     let found: { matches: Match[]; total: number };
+
     try { found = await findMatches(terms); }
     catch {
       if (currentQuery !== raw) return;
       summary.textContent = 'Search failed';
       list.textContent = '';
+
       return;
     }
+
     // A slower earlier query must not overwrite the results now on screen.
     if (currentQuery !== raw) return;
     const { matches, total: matchTotal } = found;
@@ -309,25 +359,33 @@ export const buildSearchSection = <T,>({
     );
 
     const { nps, rated } = ratingStats(matches.map(({ f }) => f.rating));
+
     const starShare = () => {
       if (!rated) return null;
       const pct = el('span', undefined, `${Math.round(nps)}%`);
       pct.style.color = npsColor(nps);
+
       return pct;
     };
+
     // What the matches say about the query, read once the query has stood a
     // moment: their share/net (and ▲/▼ filters) in the score's place, its space
     // held until then; the star share when Jev can't read them.
     stances = null;
     filter = null;
+
     const read = (async () => {
       await new Promise((go) => setTimeout(go, STANCE_SETTLE_MS));
+
       if (currentQuery !== raw || !matches.length) return null;
       const labels = await readStances(raw, matches.map(({ f }) => [f.title, f.body].filter(Boolean).join('. ')));
+
       if (!labels || currentQuery !== raw) return null;
       stances = labels;
+
       return opinionsOf(countStances(labels), matches.length);
     })();
+
     // The share takes the old %'s place, in its type, coloured by tone; the
     // counts behind it are the tooltip, and the ▲/▼ filters join the line beside.
     scoreChip.style.color = '';
@@ -337,20 +395,24 @@ export const buildSearchSection = <T,>({
       if (!o) return null;
       scoreChip.title = o.title;
       scoreChip.setAttribute('aria-label', opinionsLabel(o));
+
       return opinionNumbers(o, { share: () => 'ts-op-share', color: (x) => toneColor(opinionTone(x)), sparse: 'dash' });
     }), starShare));
     void read.then((o) => {
       if (!o || currentQuery !== raw) return;
       // Each listed review marked with what it says, once read.
       renderList();
+
       if (o.sparse) return;
       filters.append(...opinionFilters(o, () => filter, setFilter));
       filters.classList.add('ts-op-in');
     });
 
     const cached = summaryCache.get(q);
+
     if (cached) renderCached(raw, cached);
     else hideSummary();
+
     if (matches.length) sumBtn.textContent = cached ? `Re-summarize "${raw}"` : `✦ Summarize "${raw}"`;
     // After the branch above: both renderCached and hideSummary re-enable the button.
     sumBtn.disabled = matches.length === 0;
@@ -361,6 +423,7 @@ export const buildSearchSection = <T,>({
 
     if (mountSummarize) {
       const texts = matches.map((p) => toText(p.r)).filter(Boolean);
+
       if (texts.length) mountSummarize(sumHost, raw, texts, quoteCards(() => matches, (m) => toText(m.r), (m) => m.f));
     }
   };
@@ -370,15 +433,20 @@ export const buildSearchSection = <T,>({
     list.textContent = '';
     const marked = lastMatches.map((m, i) => ({ ...m, stance: stances?.[i] }));
     const picked = filter && stances ? marked.filter((m) => m.stance === filter) : marked;
+
     if (!picked.length) {
       list.appendChild(el('div', 'ars-search-empty', 'No matching reviews'));
+
       return;
     }
+
     const shown = picked.slice(0, MAX_RENDERED_RESULTS);
+
     for (const p of shown) list.appendChild(buildReviewCard(p.f, listTerms, p.stance));
     // listTotal, not picked.length: a remote search reports every hit but only
     // hands back its first page.
     const total = filter ? picked.length : listTotal;
+
     if (total > shown.length) {
       list.appendChild(el('div', 'ars-search-truncated',
         `Showing first ${shown.length} — refine the search to see more.`));
@@ -391,6 +459,7 @@ export const buildSearchSection = <T,>({
     markPressed(header, stance);
     renderList();
     const top = list.getBoundingClientRect().top;
+
     if (top < 0 || top > window.innerHeight) list.scrollIntoView({ block: 'nearest' });
   };
 
@@ -402,14 +471,21 @@ export const buildSearchSection = <T,>({
   // Self-removing so SPA re-injections (which rebuild the section) don't stack
   // dead listeners on document.
   const onSearchKey = (e: KeyboardEvent) => {
-    if (!input.isConnected) { document.removeEventListener('keydown', onSearchKey, true); return; }
+    if (!input.isConnected) {
+      document.removeEventListener('keydown', onSearchKey, true);
+
+      return;
+    }
+
     // Esc clears a pressed filter — and goes no further, so the host page doesn't
     // also take it (dm.de clears the field). Only from within the section.
     if (e.key === 'Escape' && filter && (section.contains(document.activeElement) || document.activeElement === document.body)) {
       e.stopPropagation();
       setFilter(null);
+
       return;
     }
+
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
       e.preventDefault();
       e.stopPropagation();
@@ -418,6 +494,7 @@ export const buildSearchSection = <T,>({
       input.select();
     }
   };
+
   document.addEventListener('keydown', onSearchKey, true);
 
   return section;
@@ -431,18 +508,22 @@ export const buildReviewCard = (r: SearchReviewFields, terms: string[], stance?:
   const rating = Math.max(0, Math.min(5, Math.round(r.rating || 0)));
   head.appendChild(el('span', 'ars-search-stars', '★'.repeat(rating) + '☆'.repeat(5 - rating)));
   head.append(...stanceMark(stance));
+
   if (r.meta) head.appendChild(el('span', 'ars-search-meta', r.meta));
   card.appendChild(head);
+
   if (r.title) {
     const title = el('div', 'ars-search-title');
     appendHighlighted(title, r.title, terms);
     card.appendChild(title);
   }
+
   if (r.body) {
     const body = el('div', 'ars-search-body');
     appendHighlighted(body, r.body, terms);
     card.appendChild(body);
   }
+
   return card;
 };
 
@@ -451,9 +532,11 @@ export const buildReviewCard = (r: SearchReviewFields, terms: string[], stance?:
 // first receipt opened, so a summary shown from the cache fetches nothing till then.
 export const quoteCards = <T,>(reviews: () => T[] | Promise<T[]>, toText: (r: T) => string, fields: (r: T) => SearchReviewFields): RenderQuote => {
   let byText: Promise<Map<string, T>> | undefined;
+
   return async (text) => {
     byText ??= Promise.resolve().then(reviews).then((rs) => new Map(rs.map((r) => [toText(r), r])));
     const r = await byText.then((m) => m.get(text), () => (byText = undefined));
+
     return r ? buildReviewCard(fields(r), []) : null;
   };
 };

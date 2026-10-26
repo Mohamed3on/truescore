@@ -17,10 +17,12 @@ import type { Thread } from './thread';
 // bullet fewer than two reviews make is dropped (streamed, it shows dim till
 // then). Both absent on drafts and on summaries Jev didn't check.
 export type SummaryHighlight = { text: string; sentiment: string; support?: number; quotes?: Quote[] };
+
 // A receipt's review: the whole Review when the server holds it (quotingReviews,
 // web/jev.ts), else the text the model read, which a client finds among the
 // reviews it holds (receiptReviews).
 export type Quote = Review | string;
+
 // `items`: specific things reviewers single out (dishes, animals, exhibits…),
 // as short label-search terms (e.g. "alfajores", "gorilla"). Rendered as their
 // own clickable chips below the topic chips, each auto-scored by a label search.
@@ -49,8 +51,10 @@ export type Score = {
   newest: SortStats;
   reviews: Review[];
 };
+
 // A Score without its reviews: streamed progress, and an extension's contribution.
 export type PartialScore = Omit<Score, 'reviews'>;
+
 // A place's Score as a lookup streams it: the numbers, and when its newest review
 // was written (ms; null when none is dated) for the freshness label. Not the
 // reviews themselves — they run to megabytes, and no client read them for more.
@@ -84,6 +88,7 @@ export type LookupPayload = {
   fetchMs?: number;
   error?: string;
 };
+
 export type LookupEvent =
   | ({ type: 'lookup' } & LookupPayload)
   | { type: 'refreshed'; name: string; score: LookupScore; histogram?: number[]; overallPct?: number | null; meta?: PlaceMeta; resolvedUrl?: string }
@@ -109,6 +114,7 @@ export type LookupEvent =
 // that asks to `wait` gets the stream instead, held open through the harvest by a
 // `pending` line every 20s; one that closes without `chips` found none.
 export type HighlightsResponse = { highlights?: Chip[]; cached?: boolean; pending?: boolean; error?: string };
+
 export type HighlightEvent =
   | { type: 'pending' }
   | { type: 'chips'; chips: ChipMeta[] }
@@ -123,9 +129,12 @@ export type HighlightEvent =
 // model writes, then the checked summary — or, cached, just that. A place
 // summary's aliases that land after it follow it (`aliases`).
 export type SummaryDraft = Pick<Summary, 'verdict' | 'highlights'>;
+
 // At most one draft per DRAFT_MS on the stream.
 export const DRAFT_MS = 150;
+
 export type SummaryDraftEvent = { type: 'summary-draft'; summary: SummaryDraft };
+
 export type SummaryEvent =
   | SummaryDraftEvent
   | ({ type: 'summary' } & HighlightSummaryResponse)
@@ -134,6 +143,7 @@ export type SummaryEvent =
 
 // ---- /api/search (NDJSON stream) ----
 export type SearchResponse = { result?: SearchResult; cached?: boolean; error?: string };
+
 export type SearchEvent =
   | ({ type: 'search-progress'; query: string } & SortStats)
   | { type: 'search'; result: SearchResult; cached: boolean }
@@ -148,14 +158,19 @@ export type SearchEvent =
 // count holds each commenter once (for, against, or `mixed` when they say both
 // or neither), and the upvotes of the comments for and against.
 export type TallyCount = { for: number; against: number; mixed: number; upFor: number; upAgainst: number };
+
 // Fewer people than this speak of an Option and the drawer folds it into
 // "named once", with no reason written for it.
 export const MIN_TALLY_PEOPLE = 2;
 export const speakersOf = (c: TallyCount) => c.for + c.against + c.mixed;
+
 export type TitleTally = { key: string; name: string; count: TallyCount; reads: Record<string, Stance> };
+
 // An Option with the narrower ones named under it (an instructor's courses).
 export type OptionTally = TitleTally & { titles: TitleTally[] };
+
 export type ListedOption = { key: string; name: string; titles: { key: string; name: string }[] };
+
 export type TallyEvent =
   | { type: 'listed'; option: ListedOption }
   | { type: 'option'; option: OptionTally }
@@ -171,6 +186,7 @@ export type TallyEvent =
 // comments it rests on by id ("[k3j9x2a]"). A ThreadTurn is one question with
 // its answer; the one being asked has none yet.
 export type ThreadTurn = { question: string; answer?: string };
+
 export type ThreadAskEvent = { type: 'text'; text: string } | { type: 'done' } | { type: 'error'; error: string };
 
 // ---- /api/ask (AI SDK UI message stream) ----
@@ -185,26 +201,38 @@ export type ThreadAskEvent = { type: 'text'; text: string } | { type: 'done' } |
 // and once settled their TrueScore — `found: null` if it couldn't run.
 // `answers`: how its matches answer the question, once Jev has read them.
 export type AskSearch = { query: string; found: number | null; done: boolean; scorePct?: number; trustedReviews?: number; answers?: AnswerCounts };
+
 export type AskSearchOutput = SearchMatches & { found: number };
+
 export type AskMessage = UIMessage<{ answeredAt?: number }, never, { searchReviews: { input: { query: string }; output: AskSearchOutput } }>;
 
 // ---- JSON responses ----
 export type SummarizeResponse = { summary?: Summary; cached?: boolean; error?: string };
+
 export type HighlightSummaryResponse = { summary?: Summary; label?: string; cached?: boolean; error?: string };
+
 export type HistogramResponse = { histogram?: number[]; overallPct?: number; cached?: boolean; error?: string };
+
 // `scorePct` is the DISPLAY score — the removal penalty already applied, so a
 // tile and the detail page it opens can never show two different numbers.
 export type PlaceItem = { featureId: string; name: string; scorePct: number; adjusted?: boolean; resolvedUrl: string; lastAccessTs: number };
+
 export type PlacesResponse = { places?: PlaceItem[]; error?: string };
+
 export type CachedResponse = { found: boolean; summary?: Summary; highlights?: Chip[]; highlightSummaries?: Record<string, Summary> };
+
 export type ContributeResponse = { ok?: boolean; error?: string };
+
 // Jev's read of texts the caller already holds — the extension's own searches,
 // chips and Ask matches: each one's stance on `topic`, or its answer to
 // `question`, aligned with `texts` (null where it couldn't be read).
 export type StanceRequest = { texts: string[]; topic?: string; question?: string };
+
 export type StanceResponse = { stances?: (Stance | null)[]; answers?: (Answer | null)[]; error?: string };
+
 // Which of `texts` make each summary point (indices, per point).
 export type ReceiptsRequest = { points: string[]; texts: string[] };
+
 export type ReceiptsResponse = { support?: number[][]; error?: string };
 
 // ---- LLM provider selection (server-side; the popup threads its choice) ----
@@ -213,11 +241,14 @@ export type ReceiptsResponse = { support?: number[][]; error?: string };
 // definition instead of each re-declaring the union + its validation list.
 // In the order the extension falls back to when the default's key isn't saved.
 export const LLM_PROVIDERS = ['anthropic', 'openai', 'gemini', 'deepseek'] as const;
+
 export type Provider = (typeof LLM_PROVIDERS)[number];
+
 // The default model everywhere: server summaries, Ask and the Tally, and the
 // extension's own calls when the popup's toggle is unset and its key is saved.
 // Changing it here changes all of them.
 export const DEFAULT_PROVIDER: Provider = 'anthropic';
+
 // The model each provider runs, on the server and in the extension.
 export const MODELS: Record<Provider, string> = {
   anthropic: 'claude-sonnet-5-5',
@@ -225,10 +256,13 @@ export const MODELS: Record<Provider, string> = {
   gemini: 'gemini-3-flash-preview',
   deepseek: 'deepseek-flash',
 };
+
 // No 'none': the AI SDK won't send it to GPT-6 models, which then run at the
 // API default (medium) instead.
 export const REASONING_EFFORTS = ['low', 'medium', 'high'] as const;
+
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
 // Optional per-request overrides on the summarize/ask bodies. Unset leaves the
 // server on DEFAULT_PROVIDER. reasoningEffort is gpt-6-luna only; the server
 // ignores it on the other providers.
@@ -236,6 +270,7 @@ export type LlmOverrides = { reasoningEffort?: ReasoningEffort; provider?: Provi
 
 // ---- request bodies ----
 export type LookupRequest = { url: string };
+
 // `removedReviews`: Google's takedown notice for the place, when the caller has
 // it (the extension reads it off the preview Maps fetched for itself). The
 // server otherwise falls back to the notice on its own cached preview meta; a
@@ -243,23 +278,32 @@ export type LookupRequest = { url: string };
 // so it can weigh a survivor-only review set and hedge its verdict.
 // `stream`: answer with SummaryEvents rather than one JSON response.
 export type SummarizeRequest = { featureId: string; name?: string; reviewTexts?: string[]; filter?: string; force?: boolean; removedReviews?: RemovedReviews | null; stream?: boolean } & LlmOverrides;
+
 export type HistogramRequest = { featureId: string };
+
 // `wait`: hold the request through a background harvest rather than answer 202
 // (see HighlightsResponse). The web client opts in; the extension still polls.
 // `token`: just that chip, read from the cache — the web client opening one.
 export type HighlightsRequest = { featureId: string; force?: boolean; wait?: boolean; token?: string };
+
 export type HighlightSummaryRequest = { featureId: string; token: string; name?: string; label?: string; reviewTexts?: string[]; force?: boolean; stream?: boolean } & LlmOverrides;
+
 // `asWritten`: an Ask's search, whose terms aren't accent-folded (spellingVariants).
 export type SearchRequest = { featureId: string; query: string; force?: boolean; summarize?: boolean; asWritten?: boolean } & LlmOverrides;
+
 // A Search's matches as a client finds them: review texts and their TrueScore.
 export type SearchMatches = { texts: string[]; scorePct: number; trustedReviews: number };
+
 // `messages`: the Ask so far (see AskMessage). `force`: skip a replayed Answer.
 export type AskRequest = { messages: AskMessage[]; featureId?: string; name?: string; reviewTexts?: string[]; filter?: string; removedReviews?: RemovedReviews | null; force?: boolean } & LlmOverrides;
+
 // The Thread as the page loaded it (threadFromListing).
 export type TallyRequest = { thread: Thread } & LlmOverrides;
+
 // `chat`: the questions asked of the Thread so far, each with its answer, then
 // the one to answer.
 export type ThreadAskRequest = { thread: Thread; chat: ThreadTurn[] } & LlmOverrides;
+
 // `score` omits the per-review array — the web only needs the numbers to paint,
 // and a place's reviews run to megabytes. It is the extension's RAW score: the
 // removal penalty is applied by whoever renders, off their own preview meta, so

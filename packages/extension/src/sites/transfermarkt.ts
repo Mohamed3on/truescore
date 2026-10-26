@@ -33,6 +33,7 @@ const parseValue = (text: string): any => {
 
   // Number
   const num = parseLocaleNumber(cleaned, DECIMAL);
+
   if (!isNaN(num)) return num;
 
   return cleaned.toLowerCase();
@@ -42,14 +43,17 @@ const parseValue = (text: string): any => {
 // sorted as text, billions landed below millions.
 const linkValue = (link: Element) => {
   const linkText = link.textContent!.trim();
+
   return linkText.includes('€') ? parseValue(linkText) : linkText.toLowerCase();
 };
 
 const getColumnValue = (cell: Element): any => {
   const hauptlink = cell.querySelector('.hauptlink a');
+
   if (hauptlink) return linkValue(hauptlink);
 
   const link = cell.querySelector('a');
+
   if (link && !cell.querySelector('img')) return linkValue(link);
 
   return parseValue(cell.textContent!.trim());
@@ -59,16 +63,19 @@ const extractVereinId = (element: Element) => {
   const img = element.querySelector('img[src*="/verein/"]');
   const link = element.querySelector('a[href*="/verein/"]');
   const src = (img as HTMLImageElement)?.src || (link as HTMLAnchorElement)?.href || '';
+
   return src.match(/\/verein\/(\d+)\//)?.[1] || null;
 };
 
 const isMarketValueTable = (table: Element) => {
   const headerText = table.querySelector('thead tr')?.textContent?.toLowerCase() || '';
+
   return headerText.includes('market value') || headerText.includes('marktwert');
 };
 
 const isAverageMarketValueTable = (table: Element) => {
   const headerText = table.querySelector('thead tr')?.textContent || '';
+
   return headerText.includes('ø');
 };
 
@@ -84,14 +91,17 @@ const cache = {
     params.delete('page');
     params.delete('ajax');
     params.sort();
+
     return CACHE_PREFIX + urlObj.pathname + '?' + params.toString();
   },
 
   get(key: string) {
     try {
       const data = localStorage.getItem(key);
+
       if (!data) return null;
       const parsed = JSON.parse(data);
+
       return Date.now() - parsed.fetchedAt < CACHE_TTL ? parsed.rows : null;
     } catch { return null; }
   },
@@ -112,11 +122,13 @@ const buildPageUrl = (baseUrl: string, pageNum: number) => {
   const url = new URL(baseUrl);
   url.searchParams.set('page', String(pageNum));
   url.searchParams.set('ajax', 'yw1');
+
   return url.toString();
 };
 
 const parseRowsFromHtml = (html: string) => {
   const doc = new DOMParser().parseFromString(html, 'text/html');
+
   return Array.from(doc.querySelectorAll('tr.even, tr.odd')).map((row) => ({
     cells: Array.from(row.children)
       .filter(child => child.tagName === 'TD')
@@ -132,15 +144,19 @@ const fetchPage = async (baseUrl: string, pageNum: number) => {
   const response = await throttledFetch(buildPageUrl(baseUrl, pageNum), {
     headers: { 'X-Requested-With': 'XMLHttpRequest' }
   });
+
   if (!response.ok) throw new Error(`page ${pageNum}: HTTP ${response.status}`);
+
   return parseRowsFromHtml(await response.text());
 };
 
 const fetchAllPages = async (baseUrl: string, totalPages: number, onProgress?: (current: number, total: number) => void) => {
   const cacheKey = cache.getKey(baseUrl);
   const cached = cache.get(cacheKey);
+
   if (cached) {
     console.log('[TM Sorter] Using cache:', cached.length, 'rows');
+
     return { rows: cached, failedPages: 0 };
   }
 
@@ -156,9 +172,12 @@ const fetchAllPages = async (baseUrl: string, totalPages: number, onProgress?: (
   const rows = results.flatMap(r => (r.status === 'fulfilled' ? r.value : []));
   const failedPages = results.filter(r => r.status === 'rejected').length;
   console.log('[TM Sorter] Fetched:', rows.length, 'rows', failedPages ? `(${failedPages} pages failed)` : '');
+
   if (!rows.length) throw new Error('no rows loaded');
+
   // A result missing pages is shown (and flagged) but never cached.
   if (!failedPages) cache.set(cacheKey, rows);
+
   return { rows, failedPages };
 };
 
@@ -180,15 +199,18 @@ const detectPaginationInfo = () => {
 const getLeagueTableData = () => {
   for (const table of document.querySelectorAll('table.items')) {
     const headerText = table.querySelector('thead tr')?.textContent || '';
+
     if (!/Pts|Pkt\./.test(headerText) || isMarketValueTable(table)) continue; // .com / .de
 
     const leagueData = new Map<string, { position: number; points: number }>();
     table.querySelectorAll('tbody tr').forEach((row, index) => {
       const vereinId = extractVereinId(row);
+
       if (!vereinId) return;
 
       const cells = Array.from(row.querySelectorAll('td'))
         .filter(c => !c.classList.contains('tm-pts-diff-cell'));
+
       const points = parseInt(cells[cells.length - 1]?.textContent!.trim(), 10);
 
       if (!isNaN(points)) {
@@ -198,6 +220,7 @@ const getLeagueTableData = () => {
 
     if (leagueData.size > 0) return leagueData;
   }
+
   return null;
 };
 
@@ -209,6 +232,7 @@ const addRankingColumn = (table: HTMLTableElement) => {
 
   const thead = table.querySelector('thead tr');
   const tbody = table.querySelector('tbody');
+
   if (!thead || !tbody) return;
 
   const th = el('th', 'zentriert', '#');
@@ -220,6 +244,7 @@ const addRankingColumn = (table: HTMLTableElement) => {
   });
 
   const tfoot = table.querySelector('tfoot tr');
+
   if (tfoot) tfoot.insertBefore(el('td', '', '\u00A0'), tfoot.firstChild);
 
   table.setAttribute('data-has-ranking', 'true');
@@ -229,6 +254,7 @@ const updateRankings = (table: HTMLTableElement) => {
   if (!table.hasAttribute('data-has-ranking')) return;
   table.querySelectorAll('tbody tr.even, tbody tr.odd').forEach((row, i) => {
     const cell = row.querySelector('.tm-rank-cell');
+
     if (cell) cell.textContent = String(i + 1);
   });
 };
@@ -238,6 +264,7 @@ const updateRankings = (table: HTMLTableElement) => {
 // ============================================================
 const getMarketValueColumnIndex = (table: HTMLTableElement) => {
   const headers = Array.from(table.querySelectorAll('thead th'));
+
   return headers.findIndex(th => th.textContent!.includes('ø') && /market|marktwert/.test(th.textContent!.toLowerCase()));
 };
 
@@ -246,6 +273,7 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
 
   const thead = table.querySelector('thead tr');
   const tbody = table.querySelector('tbody');
+
   if (!thead || !tbody) return;
 
   const pointsByPosition: number[] = [];
@@ -259,6 +287,7 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
 
   const rowsWithMV = rows.map(row => {
     const cell = row.querySelector(`td:nth-child(${cellIndex})`);
+
     return { row, value: cell ? getColumnValue(cell) : 0, vereinId: extractVereinId(row) };
   });
 
@@ -289,10 +318,12 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
       td.textContent = '-';
       (td as HTMLElement).style.color = '#999';
     }
+
     row.appendChild(td);
   });
 
   const tfoot = table.querySelector('tfoot tr');
+
   if (tfoot) tfoot.appendChild(el('td', '', '\u00A0'));
 
   table.setAttribute('data-has-pts-diff', 'true');
@@ -334,6 +365,7 @@ const injectStyles = () => {
 
 const showLoading = (table: HTMLTableElement, current?: number, total?: number) => {
   let overlay = table.querySelector('.global-sort-loading') as HTMLElement | null;
+
   if (!overlay) {
     overlay = el('div', 'global-sort-loading') as HTMLElement;
     overlay.appendChild(el('div', 'loading-spinner'));
@@ -341,6 +373,7 @@ const showLoading = (table: HTMLTableElement, current?: number, total?: number) 
     table.style.position = 'relative';
     table.appendChild(overlay);
   }
+
   overlay.style.display = 'flex';
   overlay.querySelector('span')!.textContent = total
     ? `Loading page ${current} of ${total}...`
@@ -349,16 +382,19 @@ const showLoading = (table: HTMLTableElement, current?: number, total?: number) 
 
 const hideLoading = (table: HTMLTableElement) => {
   const overlay = table.querySelector('.global-sort-loading') as HTMLElement | null;
+
   if (overlay) overlay.style.display = 'none';
 };
 
 const showGlobalBadge = (table: HTMLTableElement, count: number, failedPages: number) => {
   const parent = table.parentNode as Element;
   let badge = parent.querySelector('.global-sort-badge') as HTMLElement | null;
+
   if (!badge) {
     badge = el('div', 'global-sort-badge') as HTMLElement;
     parent.insertBefore(badge, table);
   }
+
   badge.textContent = failedPages
     ? `Global Sort Active - Showing ${count} players, ${failedPages} page${failedPages > 1 ? 's' : ''} failed to load (Shift+Click to retry)`
     : `Global Sort Active - Showing all ${count} players (Shift+Click to re-sort)`;
@@ -367,6 +403,7 @@ const showGlobalBadge = (table: HTMLTableElement, count: number, failedPages: nu
 
 const hideGlobalBadge = (table: HTMLTableElement) => {
   const badge = (table.parentNode as Element)?.querySelector('.global-sort-badge') as HTMLElement | null;
+
   if (badge) badge.style.display = 'none';
 };
 
@@ -375,16 +412,19 @@ const hideGlobalBadge = (table: HTMLTableElement) => {
 // ============================================================
 const compareValues = (a: any, b: any, dir: number) => {
   if (typeof a === 'number' && typeof b === 'number') return (a - b) * dir;
+
   return String(a ?? '').localeCompare(String(b ?? '')) * dir;
 };
 
 const updateSortHeaders = (table: HTMLTableElement, columnIndex: number, ascending: boolean) => {
   table.querySelectorAll('th').forEach(th => th.classList.remove('sorted-asc', 'sorted-desc'));
+
   if (columnIndex === -1) return;
 
   const hasRanking = table.hasAttribute('data-has-ranking');
   const headerIndex = hasRanking ? columnIndex + 2 : columnIndex + 1;
   const header = table.querySelector(`th:nth-child(${headerIndex})`);
+
   if (header) {
     header.classList.add(ascending ? 'sorted-asc' : 'sorted-desc');
     header.setAttribute('data-sort-direction', ascending ? 'desc' : 'asc');
@@ -393,6 +433,7 @@ const updateSortHeaders = (table: HTMLTableElement, columnIndex: number, ascendi
 
 const sortTableByColumn = (table: HTMLTableElement, columnIndex: number, ascending: boolean) => {
   const tbody = table.querySelector('tbody');
+
   if (!tbody) return;
 
   const hasRanking = table.hasAttribute('data-has-ranking');
@@ -403,6 +444,7 @@ const sortTableByColumn = (table: HTMLTableElement, columnIndex: number, ascendi
   rows.sort((a, b) => {
     const aCol = a.querySelector(`td:nth-child(${cellIndex})`);
     const bCol = b.querySelector(`td:nth-child(${cellIndex})`);
+
     return aCol && bCol ? compareValues(getColumnValue(aCol), getColumnValue(bCol), dir) : 0;
   });
 
@@ -420,6 +462,7 @@ const globalSortTableByColumn = async (table: HTMLTableElement, columnIndex: num
   try {
     const { rows: allRows, failedPages } = await fetchAllPages(baseUrl, totalPages, (cur, tot) => showLoading(table, cur, tot));
     const dir = ascending ? 1 : -1;
+
     const sorted = [...allRows].sort((a: any, b: any) =>
       compareValues(a.cells[columnIndex]?.value, b.cells[columnIndex]?.value, dir)
     );
@@ -439,6 +482,7 @@ const globalSortTableByColumn = async (table: HTMLTableElement, columnIndex: num
 
 const renderGlobalResults = (table: HTMLTableElement, sortedRows: any[]) => {
   const tbody = table.querySelector('tbody');
+
   if (!tbody) return;
 
   const hasRanking = table.hasAttribute('data-has-ranking');
@@ -475,11 +519,13 @@ const makeTableSortable = (table: HTMLTableElement) => {
   if (table.classList.contains('items') && isAverageMarketValueTable(table)) {
     addRankingColumn(table);
     const leagueData = getLeagueTableData();
+
     if (leagueData) addPointDiffColumn(table, leagueData);
   }
 
   table.querySelectorAll('th').forEach((header, index) => {
     const text = header.textContent!.trim();
+
     if (text === '#') return; // Skip non-sortable columns
 
     header.style.cursor = 'pointer';
@@ -496,6 +542,7 @@ const makeTableSortable = (table: HTMLTableElement) => {
           hideGlobalBadge(table);
           table.removeAttribute('data-global-sorted');
         }
+
         sortTableByColumn(table, colIndex, ascending);
       }
 

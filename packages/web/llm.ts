@@ -19,10 +19,13 @@ const KEYS: Record<Provider, string | undefined> = {
   deepseek: process.env.DEEPSEEK_API_KEY,
   anthropic: process.env.ANTHROPIC_API_KEY,
 };
+
 const serverModel = (provider: Provider, setup: Omit<ModelSetup, 'apiKey'> = {}) => {
   const { model, providerOptions } = modelCall(provider, { apiKey: KEYS[provider], explicitCaching: true, ...setup });
+
   return { model, providerOptions };
 };
+
 export const PROVIDERS = Object.fromEntries(LLM_PROVIDERS.map((p) => [p, serverModel(p)])) as Record<Provider, ReturnType<typeof serverModel>>;
 
 // Validate untrusted request-body overrides against the canonical wire lists
@@ -31,6 +34,7 @@ export const PROVIDERS = Object.fromEntries(LLM_PROVIDERS.map((p) => [p, serverM
 // ignore reasoningEffort (it's gpt-6-luna only).
 export const parseReasoningEffort = (v: unknown): ReasoningEffort | undefined =>
   typeof v === 'string' && (REASONING_EFFORTS as readonly string[]).includes(v) ? (v as ReasoningEffort) : undefined;
+
 export const parseProvider = (v: unknown): Provider | undefined =>
   typeof v === 'string' && (LLM_PROVIDERS as readonly string[]).includes(v) ? (v as Provider) : undefined;
 
@@ -44,8 +48,10 @@ const providerFor = (provider: Provider, effort?: ReasoningEffort) =>
 // evals/compare.ts hooks this to collect per-call token usage; the server
 // never sets it.
 type UsageEvent = { provider: Provider; call: string; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number };
+
 let onUsage: ((u: UsageEvent) => void) | undefined;
 export const setOnUsage = (fn: typeof onUsage) => { onUsage = fn; };
+
 const report = (provider: Provider, call: string, u: { inputTokens?: number; outputTokens?: number; inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number } }) =>
   onUsage?.({
     provider, call, inputTokens: u.inputTokens ?? 0, outputTokens: u.outputTokens ?? 0,
@@ -61,6 +67,7 @@ const NOTES = `On factual disagreements (price, hours), trust the more recent re
 // Infinity. Field semantics and content hygiene (no duplicates, no placeholder
 // entries) live in structuredRequest's prompt; the code only caps the fan-out (capItems).
 const SENTIMENTS = ['positive', 'negative', 'neutral'] as const;
+
 const HIGHLIGHTS_SCHEMA = z.object({
   highlights: z.array(
     z.object({
@@ -77,6 +84,7 @@ const reviewBlock = (texts: string[]) => texts.join('\n\n');
 
 const subjectOf = (place: string, filter?: string) => {
   const p = place || 'this place';
+
   return filter ? `"${filter}" at ${p}` : p;
 };
 
@@ -84,6 +92,7 @@ const subjectOf = (place: string, filter?: string) => {
 // evals/latency.ts times this same request across models.
 export const structuredRequest = ({ placeName, reviewTexts, removedReviews }: Subject, filterQuery?: string) => {
   const removal = removalNote(removedReviews);
+
   return {
     maxOutputTokens: 8192,
     schema: HIGHLIGHTS_SCHEMA,
@@ -136,6 +145,7 @@ ${NOTES}${removal ? `\n\n${removal}` : ''}`;
   const [verdict, structured] = await Promise.all([
     writeText({ model, providerOptions, maxOutputTokens: 1024, prompt: verdictPrompt }, drafting && ((verdict) => drafting({ verdict }))).then((r) => {
       report(provider, 'verdict', r.usage);
+
       return r.text;
     }),
     // A sentiment still being written reads as neutral, not as half a word.
@@ -144,9 +154,11 @@ ${NOTES}${removal ? `\n\n${removal}` : ''}`;
     })), salvageStructured)
       .then((r) => {
         if (r.usage) report(provider, 'structured', r.usage);
+
         return { ...r.object, valueForMoney: r.object.valueForMoney ?? undefined, items: capItems(r.object.items), alternatives: capItems(r.object.alternatives) };
       }),
   ]);
+
   return { verdict: verdict.trim(), ...structured };
 }
 
@@ -162,6 +174,7 @@ const NO_REASONING = Object.fromEntries(LLM_PROVIDERS.map((p) => [p, serverModel
 // run beside the receipts. Sonnet at low effort skips thinking here anyway: 0
 // thinking tokens over 20 places (2026-10-20), aliases the same within noise.
 const ALIASES_SCHEMA = z.object({ items: z.array(z.object({ name: z.string(), aliases: z.array(z.string()) })) });
+
 export const aliasesRequest = ({ placeName, reviewTexts }: Subject, items: string[]) => ({
   maxOutputTokens: 1024,
   schema: ALIASES_SCHEMA,
@@ -172,12 +185,16 @@ export const aliasesRequest = ({ placeName, reviewTexts }: Subject, items: strin
 export async function aliasesFor(subject: Subject, items: string[] | undefined, provider: Provider = DEFAULT_PROVIDER): Promise<Summary['aliases']> {
   if (!items?.length) return undefined;
   const { model, providerOptions } = (!fakeModel && NO_REASONING[provider]) || providerFor(provider);
+
   try {
     const r = await writeObject({ model, providerOptions, ...aliasesRequest(subject, items) });
+
     if (r.usage) report(provider, 'aliases', r.usage);
+
     return aliasesOf(items, r.object.items);
   } catch (e) {
     console.warn('[aliases]', e instanceof Error ? e.message : e);
+
     return undefined;
   }
 }
@@ -193,6 +210,7 @@ const ASK_INSTRUCTIONS = `Answer the question about the place using its reviews.
 ${NOTES}
 
 ${SEARCH_NOTE}`;
+
 const CACHE_BREAKPOINT = {
   openai: { promptCacheBreakpoint: { mode: 'explicit' as const } },
   anthropic: { cacheControl: { type: 'ephemeral' as const } },
@@ -209,6 +227,7 @@ export async function ask({ placeName, reviewTexts, removedReviews }: Subject, m
   const removal = removalNote(removedReviews);
   const tools = { searchReviews: searchReviewsTool(reviewTexts, SEARCH_DESCRIPTION) };
   const history = await convertToModelMessages(messages.slice(1), { tools });
+
   return streamText({
     model, providerOptions, maxOutputTokens: 32768, abortSignal,
     instructions: ASK_INSTRUCTIONS,
@@ -235,6 +254,7 @@ const OPTIONS_SCHEMA = z.object({
     titles: z.array(z.object({ name: z.string(), aliases: z.array(z.string()) })),
   })),
 });
+
 export type ThreadOption = z.infer<typeof OPTIONS_SCHEMA>['options'][number];
 
 // The listing call's exact prompt, schema and output cap. The model only names
@@ -259,13 +279,19 @@ Not Options: answers to another question than this one (the store a product came
 export async function listOptions(question: string, comments: string[], onOption: (o: Partial<ThreadOption>) => void, provider: Provider = DEFAULT_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   let sent = 0;
+
   const listing = await writeObject({ model, providerOptions, ...optionsRequest(question, comments) }, (partial) => {
     const options = partial.options ?? [];
+
     while (sent < options.length - 1) onOption(options[sent++] as Partial<ThreadOption>);
   });
+
   const { options } = listing.object;
+
   while (sent < options.length) onOption(options[sent++]!);
+
   if (listing.usage) report(provider, 'options', listing.usage);
+
   return options;
 }
 
@@ -278,6 +304,7 @@ export async function listOptions(question: string, comments: string[], onOption
 // the comments naming it: a comment naming three Options isn't paid for three
 // times.
 type ReasonGroup = { key: string; option: string; comments: number[] };
+
 export const reasonsRequest = (question: string, comments: string[], groups: ReasonGroup[]) => ({
   maxOutputTokens: 4096,
   schema: z.object(Object.fromEntries(groups.map((g) => [g.key, z.string()]))),
@@ -290,15 +317,20 @@ export async function explainOptions(question: string, comments: string[], group
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   const keys = groups.map((g) => g.key);
   let sent = 0;
+
   const writing = await writeObject({ model, providerOptions, ...reasonsRequest(question, comments, groups) }, (partial) => {
     while (sent < keys.length - 1 && (partial as Record<string, unknown>)[keys[sent + 1]!] !== undefined) {
       onReason(keys[sent]!, String((partial as Record<string, unknown>)[keys[sent]!] ?? ''));
       sent++;
     }
   });
+
   const reasons = writing.object as Record<string, string>;
+
   while (sent < keys.length) { onReason(keys[sent]!, reasons[keys[sent]!] ?? ''); sent++; }
+
   if (writing.usage) report(provider, 'reasons', writing.usage);
+
   return reasons;
 }
 
@@ -309,6 +341,7 @@ export async function explainOptions(question: string, comments: string[], group
 // the prompt, closed by a cache breakpoint, so a follow-up reads them back from
 // the provider's prompt cache.
 const THREAD_ASK_INSTRUCTIONS = `Answer the question about this Reddit thread from its post and comments. Be concise. Quote commenters' own words inline ("...") when they answer it directly. Cite the comments each sentence rests on by id in brackets at the end of that sentence: [k3j9x2a], or [k3j9x2a, m2n4p1q] for several. Weigh how many people say something and how many points their comments have: what many say, or a comment with many points, outweighs a lone comment. Say so when commenters disagree, and when the thread doesn't answer the question. Answer in the language of the question.`;
+
 // The comments the model reads, in the page's order, up to this many characters.
 const THREAD_CHARS = 300_000;
 
@@ -318,9 +351,11 @@ const THREAD_CHARS = 300_000;
 const threadBlock = ({ title, text, author, comments }: Thread) => {
   const who = (name: string) => `u/${name}${name === author ? ' (OP)' : ''}`;
   let chars = 0;
+
   const lines = comments.filter((c) => !c.bot)
     .map((c) => `[${c.id}] ${who(c.author)} · ${c.score} points${c.parentId ? ` · replying to [${c.parentId}]` : ''}\n${c.body}`)
     .filter((c) => (chars += c.length) <= THREAD_CHARS);
+
   return `Post${author ? ` by ${who(author)}` : ''}: ${title}\n\n${text}\n\n---\n\nComments:\n\n${lines.join('\n\n')}`.toWellFormed();
 };
 
@@ -345,9 +380,11 @@ export const threadAskRequest = (thread: Thread, chat: ThreadTurn[]) => ({
 export async function askThread(thread: Thread, chat: ThreadTurn[], onText: (text: string) => void, { provider = DEFAULT_PROVIDER, reasoningEffort, abortSignal }: AskOptions = {}): Promise<void> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   let sent = 0;
+
   const { usage } = await writeText({ model, providerOptions, maxOutputTokens: 32768, abortSignal, ...threadAskRequest(thread, chat) }, (text) => {
     onText(text.slice(sent));
     sent = text.length;
   });
+
   report(provider, 'thread-ask', usage);
 }

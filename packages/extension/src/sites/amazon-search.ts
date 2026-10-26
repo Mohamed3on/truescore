@@ -5,9 +5,11 @@ import { markBestRatios, cycleBestRatios, orderByCssBand } from '../shared/score
 
 const CACHE_KEY = 'amz-rating-cache';
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+
 // Definitive zero-parses are cached too, short-lived, so no-review products
 // don't refetch on every sort pass; transport failures throw and stay uncached.
 const NEG_TTL = 6 * 60 * 60 * 1000;
+
 // Result grids: search (current and legacy), browse/promo pages, brand stores.
 const RESULT_LISTS = '.s-result-list.s-search-results, #mainResults .s-result-list, .dcl-html-grid, [data-testid="product-grid-container"] > ul';
 
@@ -15,12 +17,14 @@ const RESULT_LISTS = '.s-result-list.s-search-results, #mainResults .s-result-li
 // rating on the card, or a failed popover fetch — in page order, then the hated.
 // Unknown is not a net 0, so it never ranks among the zeros.
 const band = (score: number | null) => (score == null ? 1 : score < 0 ? 2 : 0);
+
 const sortFunction = ([a]: [number | null, Element], [b]: [number | null, Element]) =>
   band(a) - band(b) || (b ?? 0) - (a ?? 0);
 
 const htmlToElement = (html: string) => {
   const template = document.createElement('template');
   template.innerHTML = html.trim();
+
   return template.content.firstChild as Element;
 };
 
@@ -28,9 +32,11 @@ const getCache = () => {
   try {
     const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
     const now = Date.now();
+
     for (const key in cache) {
       if (now - cache[key].ts > (cache[key].totalReviews > 0 ? CACHE_TTL : NEG_TTL)) delete cache[key];
     }
+
     return cache;
   } catch { return {}; }
 };
@@ -42,26 +48,33 @@ const saveCache = (cache: any) => {
 const getRatingPercentage = (ratingText: string) => {
   try {
     const template = htmlToElement(ratingText);
+
     const totalReviews = parseInt(
       template.querySelector('[data-hook="total-review-count"]')?.textContent?.trim().replace(/\D/g, '') || '0', 10
     );
+
     const fiveStars = parseInt(
       template.querySelector('#histogramTable li:first-child .a-section.a-spacing-none.a-text-right')?.textContent?.trim().replace('%', '') || '0', 10
     );
+
     const oneStars = parseInt(
       template.querySelector('#histogramTable li:last-child .a-section.a-spacing-none.a-text-right span:last-child')?.textContent?.trim().replace('%', '') || '0', 10
     );
+
     return { fiveStars, oneStars, totalReviews };
   } catch (e) {
     console.error('Error parsing rating:', e);
+
     return { fiveStars: 0, oneStars: 0, totalReviews: 0 };
   }
 };
 
 // One popover request per ASIN at a time, so overlapping sort passes share it.
 const popovers = new Map<string, Promise<any>>();
+
 const fetchRatings = (productSIN: string) => {
   let ratings = popovers.get(productSIN);
+
   if (!ratings) {
     ratings = fetch(
       `/gp/customer-reviews/widgets/average-customer-review/popover/ref=dpx_acr_pop_?contextId=dpx&asin=${productSIN}`,
@@ -69,11 +82,13 @@ const fetchRatings = (productSIN: string) => {
     )
       .then(async (resp) => {
         if (!resp.ok) throw new Error('Failed to fetch ratings');
+
         return { ...getRatingPercentage(await resp.text()), ts: Date.now() };
       })
       .finally(() => popovers.delete(productSIN));
     popovers.set(productSIN, ratings);
   }
+
   return ratings;
 };
 
@@ -81,19 +96,23 @@ const getRatingScores = async (productSIN: string, elementToReplace: Element, ca
   try {
     const now = Date.now();
     let ratings = cache[productSIN];
+
     if (!ratings || now - ratings.ts > CACHE_TTL) {
       ratings = await fetchRatings(productSIN);
       cache[productSIN] = ratings;
     }
+
     const scorePercentage = ratings.fiveStars - ratings.oneStars;
     const scoreAbsolute = Math.round(ratings.totalReviews * (scorePercentage / 100));
     const calculatedScore = netScore(scoreAbsolute, ratings.totalReviews) || 0;
     elementToReplace.textContent = ` ${addCommas(calculatedScore)} ratio: (${scorePercentage}%)`;
     elementToReplace.setAttribute('data-nps', String(calculatedScore));
     elementToReplace.setAttribute('data-nps-ratio', String(scorePercentage));
+
     return { calculatedScore };
   } catch (e) {
     console.error(`Failed to get rating for ${productSIN}:`, e);
+
     return { calculatedScore: null };
   }
 };
@@ -107,6 +126,7 @@ let picks: (Element | null)[] = [];
 let resultObs: MutationObserver | null = null;
 let observedContainer: Element | null = null;
 const pauseObs = () => { if (resultObs) resultObs.disconnect(); };
+
 const resumeObs = () => {
   if (resultObs && observedContainer?.isConnected)
     resultObs.observe(observedContainer, { childList: true });
@@ -116,6 +136,7 @@ const resumeObs = () => {
 // out the previous pass — and only the newest pass, which saw the most cards,
 // applies its order.
 let latestSort = 0;
+
 const sortAmazonResults = async () => {
   const pass = ++latestSort;
   // Browse/promo pages and brand stores list the same product cards in their own
@@ -129,21 +150,27 @@ const sortAmazonResults = async () => {
   // The scan loop is synchronous, so pausing here blinds the observer only to
   // our own dedup removals — host mutations can't interleave with it.
   pauseObs();
+
   for (const item of items) {
     // A sponsored carousel is one result slot whose cards are result items too.
     // Only the slots are results: a carousel card that claimed an ASIN or a
     // variant family first would get its organic twin removed.
     if (item.parentElement?.closest('.s-result-item') || item.querySelector('.s-shopping-adviser')) continue;
+
     const productSIN = item.getAttribute('data-asin') || item.querySelector('[data-asin]')?.getAttribute('data-asin') ||
       item.getAttribute('data-csa-c-item-id')?.match(/asin\.([A-Z0-9]{10})/)?.[1];
+
     if (!productSIN) continue;
+
     // Already covered by an earlier card: the same listing, or a variant in its swatches.
     if (seenASINs.has(productSIN)) { item.remove(); continue; }
 
     const swatchASINs = [...item.querySelectorAll('[data-csa-c-swatch-url]')]
       .map(el => (el.getAttribute('data-csa-c-swatch-url')?.match(/\/dp\/([A-Z0-9]{10})/) || [])[1])
       .filter(Boolean);
+
     if (swatchASINs.some(a => seenASINs.has(a))) { item.remove(); continue; }
+
     swatchASINs.forEach(a => seenASINs.add(a));
     seenASINs.add(productSIN);
 
@@ -155,6 +182,7 @@ const sortAmazonResults = async () => {
       ratingEls.get(item);
 
     if (!numberOfRatingsElement) { fetchPromises.push(Promise.resolve([null, item])); continue; }
+
     ratingEls.set(item, numberOfRatingsElement);
 
     // Fallback dedup: color/style variants Amazon lists as separate ASINs without
@@ -163,11 +191,15 @@ const sortAmazonResults = async () => {
     const reviewCount = parseInt(
       (numberOfRatingsElement.closest('a')?.getAttribute('aria-label') || '').replace(/\D/g, ''), 10
     ) || 0;
+
     const titleKey = (item.querySelector('[data-cy="title-recipe"] h2')?.textContent || '')
       .toLowerCase().replace(/[^a-z0-9\s]+/g, ' ').trim().split(/\s+/).slice(0, 3).join(' ');
+
     if (reviewCount >= 20 && titleKey) {
       const dupKey = `${titleKey}|${reviewCount}`;
+
       if (seenKeys.has(dupKey)) { item.remove(); continue; }
+
       seenKeys.add(dupKey);
     }
 
@@ -175,11 +207,13 @@ const sortAmazonResults = async () => {
       getRatingScores(productSIN, numberOfRatingsElement, cache).then(({ calculatedScore }) => [calculatedScore, item] as [number | null, Element])
     );
   }
+
   resumeObs();
 
   const results = await Promise.allSettled(fetchPromises);
   // Merged into what's stored now: an overlapping pass may have saved meanwhile.
   saveCache({ ...getCache(), ...cache });
+
   if (pass !== latestSort) return;
 
   const itemsArr: [number | null, Element][] = results
@@ -189,6 +223,7 @@ const sortAmazonResults = async () => {
   itemsArr.sort(sortFunction);
 
   const searchResults = document.querySelector(RESULT_LISTS);
+
   if (searchResults && itemsArr.length > 0) {
     // Rank by CSS `order`, never by moving cards: Amazon doesn't refill an emptied
     // card once it has been moved, so a re-sort after infinite scroll left every
@@ -204,6 +239,7 @@ const sortAmazonResults = async () => {
 
   const debouncedSort = (() => {
     let timer: ReturnType<typeof setTimeout>;
+
     return () => {
       clearTimeout(timer);
       timer = setTimeout(() => void sortAmazonResults(), 300);
@@ -212,6 +248,7 @@ const sortAmazonResults = async () => {
 
   const watchResults = () => {
     const container = document.querySelector(RESULT_LISTS);
+
     if (!container || container === observedContainer) return;
     pauseObs();
     observedContainer = container;
@@ -220,21 +257,26 @@ const sortAmazonResults = async () => {
   };
 
   cycleBestRatios(() => picks);
+
   if (isSearchPage()) { await sortAmazonResults(); watchResults(); }
 
   let navObs: MutationObserver | null = null;
+
   const onNavigate = () => {
     if (!isSearchPage()) return;
     debouncedSort();
     navObs?.disconnect(); // one live slot — pushState bursts must not stack 10s body observers
+
     const bodyObs = new MutationObserver(() => {
       const container = document.querySelector(RESULT_LISTS);
+
       if (container && container !== observedContainer) {
         bodyObs.disconnect();
         watchResults();
         debouncedSort();
       }
     });
+
     navObs = bodyObs;
     bodyObs.observe(document.body, { childList: true, subtree: true });
     setTimeout(() => bodyObs.disconnect(), 10000);
@@ -242,7 +284,9 @@ const sortAmazonResults = async () => {
 
   const origPush = history.pushState;
   history.pushState = function (...args: Parameters<History['pushState']>) { origPush.apply(this, args); onNavigate(); };
+
   const origReplace = history.replaceState;
   history.replaceState = function (...args: Parameters<History['replaceState']>) { origReplace.apply(this, args); onNavigate(); };
+
   window.addEventListener('popstate', onNavigate);
 })();

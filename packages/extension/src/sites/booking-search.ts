@@ -8,6 +8,7 @@ const scoresByUrl = new Map<string, number>();
 // by its numbers alone — see parseRatingAndCount.
 const calculateScore = (reviewText: string) => {
   const { rating, count } = parseRatingAndCount(reviewText);
+
   return Math.round(count * Math.pow(rating / 10, 15));
 };
 
@@ -16,23 +17,29 @@ const calculateScore = (reviewText: string) => {
 const reviewTextOf = (card: Element) => {
   const block = card.querySelector('[data-testid="review-score"]')?.cloneNode(true) as Element | undefined;
   block?.querySelector('.score')?.remove();
+
   return block?.textContent;
 };
 
 const getCardScore = (card: Element) => {
   const url = (card.querySelector('a') as HTMLAnchorElement)?.href?.split('?')[0];
+
   if (url && scoresByUrl.has(url)) return scoresByUrl.get(url)!;
   const reviewText = reviewTextOf(card);
+
   // Score not rendered yet — 0 for this pass, but uncached so a later pass
   // reads the real value instead of locking the URL to 0.
   if (!reviewText) return 0;
   const score = calculateScore(reviewText);
+
   if (url) scoresByUrl.set(url, score);
+
   return score;
 };
 
 const addScoreBadge = (card: Element, score: number) => {
   const reviewEl = card.querySelector('[data-testid="review-score"]');
+
   if (!reviewEl?.textContent || reviewEl.querySelector('.score')) return;
   const badge = document.createElement('div');
   badge.className = 'score';
@@ -48,6 +55,7 @@ const sortCards = (cards: Element[]) => {
   const shared = cards.every(card => card.parentElement === cards[0].parentElement);
   const units = shared ? cards : cards.map(card => card.parentElement!);
   const container = units[0]?.parentElement;
+
   if (!container || units.some(unit => unit?.parentElement !== container)) return;
 
   const sorted = cards
@@ -58,7 +66,9 @@ const sortCards = (cards: Element[]) => {
   const unitSet = new Set(units);
   let next = 0;
   const desired = [...container.children].map(child => (unitSet.has(child) ? sorted[next++] : child));
+
   if (desired.every((child, i) => container.children[i] === child)) return;
+
   for (const child of desired) container.appendChild(child);
 };
 
@@ -66,24 +76,29 @@ const isOutOfOrder = (cards: Element[]) => {
   for (let i = 1; i < cards.length; i++) {
     if (getCardScore(cards[i]) > getCardScore(cards[i - 1])) return true;
   }
+
   return false;
 };
 
 const applySortAndBadges = () => {
   const cards = [...document.querySelectorAll('[data-testid="property-card"]')];
+
   if (!cards.length) return;
+
   if (isOutOfOrder(cards)) sortCards(cards);
   cards.forEach(card => addScoreBadge(card, getCardScore(card)));
 };
 
 const createSortButton = () => {
   const header = document.querySelector('h1');
+
   if (!header || document.querySelector('#sort-btn') || !document.querySelector('[data-testid="property-card"]')) return;
   const button = document.createElement('button');
   button.id = 'sort-btn';
   button.textContent = 'Sort by score';
   button.style.cssText = 'border-radius:8px; background:#0071c2; color:white; padding:10px; font-weight:bold; margin-top:10px';
   button.onclick = () => { sortingEnabled = true; applySortAndBadges(); };
+
   header.parentElement!.style.cssText = 'display:flex; justify-content:space-between; align-items:center';
   header.parentElement!.appendChild(button);
 };
@@ -91,10 +106,12 @@ const createSortButton = () => {
 setTimeout(createSortButton, 1500);
 
 let debounceTimer: ReturnType<typeof setTimeout>;
+
 new MutationObserver(() => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     createSortButton();
+
     if (sortingEnabled) applySortAndBadges();
   }, 200);
 }).observe(document.body, { childList: true, subtree: true });

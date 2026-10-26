@@ -13,6 +13,7 @@ describe('resolveSubject', () => {
       reviews: [review('from cache')],
       hint: 'x',
     });
+
     expect(s.reviewTexts).toEqual(['already formatted']);
   });
 
@@ -33,6 +34,7 @@ describe('resolveSubject', () => {
     // /api/ask answered 404, for the same condition.
     for (const req of [{ hint: 'a' }, { reviewTexts: [], hint: 'b' }, { entry: entry('P'), reviews: [], hint: 'c' }]) {
       expect(() => resolveSubject(req)).toThrow(NoReviews);
+
       try { resolveSubject(req); } catch (e) { expect(errStatus(e)).toBe(404); }
     }
   });

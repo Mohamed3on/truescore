@@ -16,6 +16,7 @@ import { el, npsColor } from './utils';
 // nothing.
 const viaWorker = typeof chrome !== 'undefined' && !!chrome.runtime?.id;
 const inPage = !viaWorker && typeof location !== 'undefined' && /(^|\.)google\.[a-z.]+$/.test(location.hostname);
+
 // A refusal (no password set, or Jev down) holds off further asks for a while,
 // so the star share shows at once instead of after a wait each time.
 const OFF_MS = 10 * 60_000;
@@ -26,15 +27,19 @@ const reachable = () => Date.now() >= offUntil && (viaWorker || inPage);
 
 const post = async <T,>(route: 'stance' | 'receipts', body: unknown): Promise<T | null> => {
   if (!reachable()) return null;
+
   try {
     const r = inPage
       ? await fetch(`${TRUESCORE_API_BASE}/api/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         .then((res) => (res.ok ? res.json() : null))
       : await chrome.runtime.sendMessage({ type: 'jev', route, body });
+
     if (!r || r.error) offUntil = Date.now() + OFF_MS;
+
     return r?.error ? null : (r as T | null);
   } catch {
     offUntil = Date.now() + OFF_MS;
+
     return null;
   }
 };
@@ -42,31 +47,42 @@ const post = async <T,>(route: 'stance' | 'receipts', body: unknown): Promise<T 
 // A read is kept, like the summaries: the same question of the same reviews is
 // never asked twice.
 const KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+
 const hash = (s: string) => {
   let h = 0x811c9dc5;
+
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+
   return (h >>> 0).toString(36);
 };
+
 const kept = async <T,>(kind: string, parts: unknown[], read: () => Promise<T | null>): Promise<T | null> => {
   const key = `ts_jev_${kind}_${hash(JSON.stringify(parts))}`;
   const hit = cacheGet(key, KEEP_MS) as T | null;
+
   if (hit) return hit;
   const fresh = await read();
+
   if (fresh) cacheSet(key, fresh);
+
   return fresh;
 };
 
 // Each text's stance on `topic`, aligned with the first MAX_JUDGED of `texts`.
 export const readStances = (topic: string, texts: string[]): Promise<Stance[] | null> => {
   const read = texts.slice(0, MAX_JUDGED);
+
   if (!read.length) return Promise.resolve(null);
+
   return kept('stance', [topic, read], () => post<StanceResponse>('stance', { topic, texts: read }).then((r) => (r?.stances?.every(Boolean) ? (r.stances as Stance[]) : null)));
 };
 
 // Each text's answer to an Ask's `question`.
 export const readAnswers = (question: string, texts: string[]): Promise<Answer[] | null> => {
   const read = texts.slice(0, MAX_JUDGED);
+
   if (!read.length) return Promise.resolve(null);
+
   return kept('answer', [question, read], () => post<StanceResponse>('stance', { question, texts: read }).then((r) => (r?.answers?.every(Boolean) ? (r.answers as Answer[]) : null)));
 };
 
@@ -118,6 +134,7 @@ const STYLES = `
 @keyframes ts-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .ars-receipt-quotes, .ts-op-in > * { animation-name: ts-fade; } }
 `;
+
 export const ensureJevStyles = () => {
   if (typeof document === 'undefined' || document.getElementById('ts-jev-styles')) return;
   const style = document.createElement('style');
@@ -140,9 +157,12 @@ export type NumberStyle = { share: (tone: Tone | '') => string; net?: string; co
 export const opinionNumbers = (o: Opinions, style: NumberStyle, word = ''): HTMLElement[] => {
   if (o.sparse) return [style.net && style.sparse !== 'dash' ? el('span', style.net, `·${o.mentions}`) : el('span', style.share(''), '—')];
   const share = el('span', style.share(opinionTone(o)), `${o.share}%${word && ` ${word}`}`);
+
   if (style.color) share.style.color = style.color(o);
+
   return style.net ? [share, el('span', style.net, `·${signedNet(o.net)}`)] : [share];
 };
+
 // The same, held together where the host has no row of its own to lay them out
 // in (a header, a panel title), with the counts behind them in the tooltip.
 export const opinionsEl = (o: Opinions, style: NumberStyle, word = ''): HTMLElement => {
@@ -150,8 +170,10 @@ export const opinionsEl = (o: Opinions, style: NumberStyle, word = ''): HTMLElem
   const span = el('span', 'ts-opinions');
   span.title = o.title;
   span.append(...opinionNumbers(o, style, word));
+
   return span;
 };
+
 export const opinionsLabel = (o: Opinions) => (o.sparse ? mentionsText(o.mentions) : `${o.share}% ${o.posWord}, net ${signedNet(o.net)} (${o.title})`);
 
 // A ▲ and a ▼ that list just the reviews praising or complaining about the
@@ -165,16 +187,20 @@ export const opinionFilters = (o: Opinions, current: () => Stance | null, set: (
     btn.setAttribute('aria-label', `${n} ${word} — show only these reviews`);
     btn.setAttribute('aria-pressed', String(current() === stance));
     btn.onclick = () => set(current() === stance ? null : stance);
+
     return btn;
   };
+
   return [press('praise', '▲', o.pos, 'praise'), press('complain', '▼', o.neg, 'complain')];
 };
+
 export const markPressed = (root: Element, stance: Stance | null) =>
   root.querySelectorAll<HTMLButtonElement>('.ts-op-filter').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.stance === stance)));
 
 // A listed review's mark beside its stars (reviewMark); none when it wasn't read.
 export const stanceMark = (stance: Stance | undefined, authorReviews?: number): HTMLElement[] => {
   const m = reviewMark(stance, authorReviews);
+
   if (!m) return [];
   ensureJevStyles();
   const { text, label } = m;
@@ -182,6 +208,7 @@ export const stanceMark = (stance: Stance | undefined, authorReviews?: number): 
   mark.title = label;
   mark.setAttribute('role', 'img');
   mark.setAttribute('aria-label', label);
+
   return [mark];
 };
 
@@ -205,13 +232,21 @@ export const receiptButton = <Q extends string | { text: string }>(
   btn.addEventListener('click', async () => {
     const open = item.querySelector('.ars-receipt-quotes');
     btn.setAttribute('aria-expanded', String(!open));
-    if (open) { open.remove(); return; }
+
+    if (open) {
+      open.remove();
+
+      return;
+    }
+
     // Open at once, so a second press closes it while the cards are found.
     const box = item.appendChild(el('div', 'ars-receipt-quotes'));
     const shown = typeof quotes === 'function' ? quotes() : quotes;
     box.append(...await Promise.all(shown.map(async (q) => (await renderQuote(q)) ?? el('p', 'ars-receipt-quote', typeof q === 'string' ? q : q.text))));
+
     if (n > shown.length) box.appendChild(el('span', 'ars-receipt-more', `+${n - shown.length} more`));
   });
+
   return btn;
 };
 
@@ -226,5 +261,6 @@ export const opinionsSlot = (read: Promise<HTMLElement[] | null>, fallback: () =
     slot.replaceChildren(...(filled ?? (fell ? [fell] : [])));
     slot.classList.add('ts-op-in');
   });
+
   return slot;
 };

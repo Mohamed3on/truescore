@@ -33,9 +33,16 @@ export type CacheTtl = number | ((data: any) => number);
 export const idbGet = async (key: string, ttl: CacheTtl): Promise<any> => {
   try {
     const entry = await run<{ data: any; ts: number } | undefined>('readonly', (s) => s.get(key));
+
     if (!entry) return null;
     const entryTtl = typeof ttl === 'function' ? ttl(entry.data) : ttl;
-    if (Date.now() - entry.ts > entryTtl) { idbDel(key); return null; }
+
+    if (Date.now() - entry.ts > entryTtl) {
+      idbDel(key);
+
+      return null;
+    }
+
     return entry.data;
   } catch { return null; }
 };
@@ -67,19 +74,25 @@ export const idbEdit = async (prefix: string, edit: (data: any, key: string) => 
     const req = read.objectStore(STORE).openCursor(IDBKeyRange.bound(prefix, `${prefix}￿`));
     req.onsuccess = () => {
       const cursor = req.result;
+
       if (!cursor) return;
       const data = edit(cursor.value.data, String(cursor.key));
+
       if (data !== undefined) edits.push([cursor.key, data === null ? null : { ...cursor.value, data }]);
       cursor.continue();
     };
+
     await done(read);
+
     if (!edits.length) return;
     const write = db.transaction(STORE, 'readwrite');
     const store = write.objectStore(STORE);
+
     for (const [key, entry] of edits) {
       if (entry) store.put(entry, key);
       else store.delete(key);
     }
+
     await done(write);
   } catch {}
 };

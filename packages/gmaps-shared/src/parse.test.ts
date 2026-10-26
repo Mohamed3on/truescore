@@ -11,8 +11,10 @@ import {
 const mkWrapper = (id: string, stars: number, count: number, textEntry?: any[]) => {
   const r1: any = []; r1[2] = 1_700_000_000_000; r1[4] = []; r1[4][5] = []; r1[4][5][5] = count;
   const r2: any = []; r2[0] = [stars]; r2[15] = textEntry ?? [[`text-${id}`]];
+
   return [[id, r1, r2]];
 };
+
 const page = (wrappers: any[], nextCursor: string | null) =>
   ")]}'\n" + JSON.stringify([null, nextCursor, wrappers]);
 
@@ -23,6 +25,7 @@ const envelope = (rpc: string, payload: string) =>
     ['wrb.fr', rpc, payload, null, null, null, 'generic'],
     ['di', 42], ['af.httprm', 42, 'hash', 9],
   ]);
+
 const batchPage = (wrappers: any[], nextCursor: string | null) =>
   envelope('/MapsUgcPostService.ListUgcPosts', JSON.stringify([null, nextCursor, wrappers]));
 
@@ -31,6 +34,7 @@ describe('parseReviewsResponse', () => {
     const { reviews, nextCursor } = parseReviewsResponse(
       page([mkWrapper('a', 5, 9), mkWrapper('b', 1, 4)], 'cur1'),
     );
+
     expect(reviews.map((r) => r.reviewId)).toEqual(['a', 'b']);
     expect(reviews[0]!.stars).toBe(5);
     expect(reviews[0]!.reviewerReviewCount).toBe(9);
@@ -107,10 +111,21 @@ describe('isStaleReviewsResponse', () => {
 });
 
 describe('chipsFromPreview', () => {
-  const mk = (chips: any[]) => { const d: any = []; d[6] = []; d[6][153] = []; d[6][153][0] = chips; return d; };
-  const chip = (token: string, label: string, count: number) => {
-    const c: any = []; c[0] = [token]; c[1] = label; c[3] = []; c[3][4] = count; return c;
+  const mk = (chips: any[]) => {
+    const d: any = [];
+    d[6] = [];
+    d[6][153] = [];
+    d[6][153][0] = chips;
+
+    return d;
   };
+
+  const chip = (token: string, label: string, count: number) => {
+    const c: any = []; c[0] = [token]; c[1] = label; c[3] = []; c[3][4] = count;
+
+    return c;
+  };
+
   test('reads token/label/count', () => {
     expect(chipsFromPreview(mk([chip('t1', 'Light show', 12)]))).toEqual([
       { token: 't1', label: 'Light show', count: 12 },
@@ -130,7 +145,15 @@ describe('chipsFromPreview', () => {
 });
 
 describe('histogramFromPreview', () => {
-  const mk = (counts: any) => { const d: any = []; d[6] = []; d[6][175] = []; d[6][175][3] = counts; return d; };
+  const mk = (counts: any) => {
+    const d: any = [];
+    d[6] = [];
+    d[6][175] = [];
+    d[6][175][3] = counts;
+
+    return d;
+  };
+
   test('reverses Google 1★→5★ counts into [5★,4★,3★,2★,1★]', () => {
     expect(histogramFromPreview(mk([10, 20, 30, 40, 50]))).toEqual([50, 40, 30, 20, 10]);
   });
@@ -183,8 +206,17 @@ describe('removedReviewsFromPreview', () => {
     [detail, 'Reviews have been removed from this place', [['https://support.google.com/x'], 'Learn more'], short, 1, null, 2, 'en'],
     [[1, 1]],
   ];
-  const mk = (notices: any[]) => { const d: any = []; d[6] = []; d[6][241] = [notices, 'token']; return d; };
+
+  const mk = (notices: any[]) => {
+    const d: any = [];
+    d[6] = [];
+    d[6][241] = [notices, 'token'];
+
+    return d;
+  };
+
   const POSTING_OFF = notice(1, 'Our policies do not permit contributions to this type of place.', 'Posting is currently turned off');
+
   const DEFAMATION = notice(
     3,
     '21 to 50 reviews were removed in the past year due to defamation complaints under German law.',

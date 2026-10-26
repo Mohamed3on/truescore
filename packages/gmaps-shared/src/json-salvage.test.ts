@@ -54,7 +54,11 @@ describe('salvageObjects', () => {
 describe('parseOrSalvage', () => {
   test('valid JSON never reaches the salvage path', () => {
     let salvaged = false;
-    expect(parseOrSalvage('{"ok":1}', () => { salvaged = true; return {}; })).toEqual({ ok: 1 });
+    expect(parseOrSalvage('{"ok":1}', () => {
+      salvaged = true;
+
+      return {};
+    })).toEqual({ ok: 1 });
     expect(salvaged).toBe(false);
   });
 

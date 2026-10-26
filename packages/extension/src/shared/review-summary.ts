@@ -45,6 +45,7 @@ export const SAMPLE_MAX = 3000;
 // Reviews a summary's points are checked against: the longest, as the summary
 // reads them first. Past this a point's count says how many it covers.
 const RECEIPT_REVIEWS = 200;
+
 type Receipt = { n: number; quotes: string[] };
 
 type Rival = { name: string; aliases: string[]; why: string };
@@ -55,6 +56,7 @@ type Rival = { name: string; aliases: string[]; why: string };
 const naming = async ({ name, aliases }: Rival, reviews: string[], search?: SearchReviews): Promise<string[]> => {
   const query = [name, ...(aliases ?? [])].join(' OR ');
   const names = parseOrQuery(query);
+
   return (search && (await search(query, () => {}))?.texts) || reviews.filter((t) => names.some((n) => t.toLowerCase().includes(n.toLowerCase())));
 };
 
@@ -69,14 +71,21 @@ export const withReceipts = async (parsed: any, reviews: string[], search?: Sear
   const points: string[] = [...(parsed.praised ?? []), ...(parsed.complaints ?? [])];
   const rivals: Rival[] = (parsed.rivals ?? []).filter((r: Rival) => r?.name?.trim()).slice(0, MAX_RIVALS);
   const checked = await receiptsFor(points, texts, rivals.map((r) => ({ name: r.name, texts: naming(r, reviews, search) })), { support: readSupport, answers: readAnswers });
+
   if (!checked) return parsed;
   const receipts: Record<string, Receipt> = {};
-  points.forEach((p, i) => { const r = checked.points[i]; if (r) receipts[p] = { n: r.support, quotes: r.quotes }; });
+  points.forEach((p, i) => {
+    const r = checked.points[i];
+
+    if (r) receipts[p] = { n: r.support, quotes: r.quotes };
+  });
   const [best] = [...(checked.alternatives ?? [])].sort((a, b) => b.support - a.support);
   const why = best && rivals.find((r) => r.name === best.name)?.why;
   const line = best ? (why ? `**${best.name}** — ${why}` : `**${best.name}**`) : '';
+
   if (best) receipts[line] = { n: best.support, quotes: best.quotes };
   const made = (p: string) => p in receipts;
+
   return {
     ...parsed,
     praised: (parsed.praised ?? []).filter(made),
@@ -108,6 +117,7 @@ const inOrder = (container: HTMLElement, blocks: () => (HTMLElement | undefined)
 const sectionOf = (type: string, title: string) => {
   const section = el('div', `ars-section ars-section--${type}`);
   section.appendChild(el('div', 'ars-section-title', title));
+
   return section;
 };
 
@@ -120,14 +130,19 @@ const mountStructuredSummary = (container: HTMLElement, renderQuote: RenderQuote
   container.textContent = '';
   const conclusion = el('div', 'ars-conclusion');
   let receiptsOf: number | undefined;
+
   const listOf = (type: string, title: string) => {
     const section = sectionOf(type, title);
+
     const bullets = mountBullets<{ text: string; receipt?: Receipt }>(section, (b) => b.text, () => el('div', 'ars-section-item'), (row, b) => {
       renderMarkdownInline(row, b.text);
+
       if (b.receipt) row.appendChild(receiptFor(row, b.receipt, receiptsOf, renderQuote));
     });
+
     return { section, bullets };
   };
+
   const lists = [listOf('praised', '\u25B3 Universally praised'), listOf('complaints', '\u25BD Common complaints')] as const;
   let alt: HTMLElement | undefined;
   let streamed = false;
@@ -143,6 +158,7 @@ const mountStructuredSummary = (container: HTMLElement, renderQuote: RenderQuote
         conclusion.classList.add('ars-conclusion-wait');
         conclusion.replaceChildren(el('span'), el('span'), el('span'));
       }
+
       show(conclusion);
     } else conclusion.remove();
   };
@@ -154,25 +170,32 @@ const mountStructuredSummary = (container: HTMLElement, renderQuote: RenderQuote
     drawConclusion(summary.conclusion, phase);
     const { receipts, betterAlternative } = summary;
     receiptsOf = summary.receiptsOf;
+
     for (const [i, { section, bullets }] of lists.entries()) {
       if (phase !== 'checked') {
         streamed = true;
         bullets.draft(written[i]!.map((text) => ({ text })));
+
         if (written[i]!.length) show(section);
         continue;
       }
+
       // Most-backed first once checked.
       const ordered = receipts ? bySupport(written[i]!.map((text) => ({ text, support: receipts[text]?.n }))).map((x) => x.text) : written[i]!;
       void bullets.settle(ordered.map((text) => ({ text, receipt: receipts?.[text] })));
+
       if (ordered.length) show(section);
       else void foldAway(section);
     }
+
     if (phase !== 'checked' || !betterAlternative) return;
     alt = sectionOf('alt', '\u21C4 Better alternative');
     const item = alt.appendChild(el('div', 'ars-section-item'));
     renderMarkdownInline(item, betterAlternative);
+
     // Its count spans every review naming it, not the longest RECEIPT_REVIEWS.
     if (receipts?.[betterAlternative]) item.appendChild(receiptFor(item, receipts[betterAlternative], undefined, renderQuote));
+
     if (streamed) alt.classList.add('ars-arrive');
     show(alt);
   };
@@ -217,6 +240,7 @@ export const llmSummarize = (reviewTexts: string[], prompt: string, schema: JSON
 // Rewrites the answer already there, so a streamed one grows in place.
 export const renderFreeFormAnswer = (container: HTMLElement, text: string) => {
   let answer = container.querySelector<HTMLElement>(':scope > .ars-answer');
+
   if (!answer) container.replaceChildren((answer = el('div', 'ars-answer')));
   writeMarkdown(answer, text, renderMarkdown);
 };
@@ -253,14 +277,19 @@ interface SummarizeWidgetOpts {
 
 const collectAlternates = (prefix: string, currentKey: string): AlternateEntry[] => {
   const items: AlternateEntry[] = [];
+
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
+
     if (!key || key === currentKey || !key.startsWith(prefix)) continue;
+
     try {
       const v = JSON.parse(localStorage.getItem(key) || '');
+
       if (v?.parsed) items.push({ key, ts: v.ts || 0, meta: v.meta ?? null });
     } catch {}
   }
+
   return items.sort((a, b) => b.ts - a.ts);
 };
 
@@ -268,9 +297,11 @@ const renderAlternatesRow = (config: AlternatesConfig, currentKey: string): HTML
   const decoded = collectAlternates(config.prefix, currentKey)
     .map((entry) => config.decode(entry))
     .filter((d): d is { label: string; onSelect: () => void } => d !== null);
+
   if (!decoded.length) return null;
   const row = el('div', 'ars-alternates');
   row.appendChild(el('span', 'ars-alternates-label', 'Also cached'));
+
   for (const item of decoded) {
     const chip = document.createElement('button');
     chip.type = 'button';
@@ -279,6 +310,7 @@ const renderAlternatesRow = (config: AlternatesConfig, currentKey: string): HTML
     chip.addEventListener('click', item.onSelect);
     row.appendChild(chip);
   }
+
   return row;
 };
 
@@ -337,6 +369,7 @@ export const buildSummarizeWidget = ({
     summarizeBtn.style.display = !asking && panelMode === 'summary' ? 'none' : '';
     const showDate = !asking && panelMode === 'summary';
     dateRow.style.display = showDate ? '' : 'none';
+
     if (showDate) {
       dateLabel.textContent = `Summarized on ${new Date(summaryTs).toLocaleDateString()}`;
       reBtn.style.display = checkRateLimit().count < RL_MAX ? '' : 'none';
@@ -345,14 +378,17 @@ export const buildSummarizeWidget = ({
 
   const loadReviews = async () => {
     const reviews = [...await fetchReviews()];
+
     if (!reviews.length) throw new Error('No reviews found');
     reviews.sort((a, b) => b.length - a.length);
+
     return reviews;
   };
 
   const runSummary = async (btn: HTMLButtonElement) => {
     btn.disabled = true;
     btn.textContent = '\u23F3 Fetching reviews\u2026';
+
     try {
       const reviews = await loadReviews();
       btn.textContent = '\u23F3 Summarizing\u2026';
@@ -367,8 +403,10 @@ export const buildSummarizeWidget = ({
       const parsed = await withReceipts(summary, reviews, searchAsk?.search);
       bumpRateLimit();
       summaryTs = Date.now();
+
       // Quota-full must not discard a summary the LLM call already paid for.
       try { localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta })); } catch {}
+
       void draw(parsed);
       panelMode = 'summary';
     } catch (e: any) {
@@ -377,6 +415,7 @@ export const buildSummarizeWidget = ({
       summaryPanel.style.display = 'block';
     } finally {
       btn.disabled = false;
+
       // syncControls relabels the Summarize button only; without this the
       // Re-summarize button keeps the progress label it wore during the run.
       if (btn === reBtn) btn.textContent = RESUMMARIZE_LABEL;
@@ -401,11 +440,13 @@ export const buildSummarizeWidget = ({
           btn.textContent = '\u23F3 Fetching reviews\u2026';
           const reviews = await loadReviews();
           btn.textContent = '\u23F3 Asking\u2026';
+
           return askTransport(withContext(questionPrompt, context), reviews, canSearch);
         },
         mount: (reads) => {
           summaryPanel.style.display = 'block';
           panelMode = 'answer';
+
           return mountAskView(summaryPanel, 'ars-answer', searchAsk?.open, reads);
         },
       });
@@ -425,9 +466,16 @@ export const buildSummarizeWidget = ({
   const renderQAHistory = () => {
     qaHistoryRow.textContent = '';
     const items = loadQAs(cacheKey);
-    if (!items.length) { qaHistoryRow.style.display = 'none'; return; }
+
+    if (!items.length) {
+      qaHistoryRow.style.display = 'none';
+
+      return;
+    }
+
     qaHistoryRow.style.display = '';
     qaHistoryRow.appendChild(el('span', 'ars-alternates-label', 'Recent questions'));
+
     for (const item of items) {
       const chip = document.createElement('button');
       chip.type = 'button';
@@ -458,6 +506,7 @@ export const buildSummarizeWidget = ({
   });
   summarizeBtn.addEventListener('click', () => {
     const question = questionInput.value.trim();
+
     if (question) runAsk(summarizeBtn, question);
     else runSummary(summarizeBtn);
   });
@@ -468,17 +517,20 @@ export const buildSummarizeWidget = ({
   const COPY_ICON = '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/>';
   const copyBtn = el('button', 'ars-copy-btn') as HTMLButtonElement;
   copyBtn.type = 'button';
+
   const showCopy = (state: 'idle' | 'copied' | 'failed', label: string) => {
     copyBtn.dataset.state = state;
     copyBtn.title = label;
     copyBtn.setAttribute('aria-label', label);
     copyBtn.innerHTML = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${state === 'copied' ? '<path d="M3.5 8.5l3 3 6-7"/>' : COPY_ICON}</svg>`;
   };
+
   showCopy('idle', 'Copy reviews');
   let copyReset: ReturnType<typeof setTimeout> | undefined;
   copyBtn.addEventListener('click', async () => {
     clearTimeout(copyReset);
     copyBtn.disabled = true;
+
     try {
       const reviews = await loadReviews();
       await navigator.clipboard.writeText(`${document.title}\n${location.href}\n\n${reviews.join('\n---\n')}`);
@@ -495,9 +547,11 @@ export const buildSummarizeWidget = ({
   // Restore cached summary
   const rawCache = localStorage.getItem(cacheKey);
   let cached: any = null;
+
   if (rawCache) {
     try { cached = JSON.parse(rawCache); } catch (_) {}
   }
+
   if (cached?.parsed) {
     summaryTs = cached.ts;
     renderStructuredSummary(summaryPanel, cached.parsed, renderQuote);
@@ -513,6 +567,7 @@ export const buildSummarizeWidget = ({
 
   if (alternates) {
     const altRow = renderAlternatesRow(alternates, cacheKey);
+
     if (altRow) wrapper.appendChild(altRow);
   }
 
@@ -619,6 +674,7 @@ export const buildMediaSummary = ({
 
   const askRow = el('div', `${p}-ask`);
   let input: HTMLInputElement | null = null;
+
   if (ask) {
     input = document.createElement('input');
     input.type = 'text';
@@ -626,15 +682,18 @@ export const buildMediaSummary = ({
     input.placeholder = ask.placeholder;
     askRow.append(input);
   }
+
   const btn = el('button', `${p}-btn`) as HTMLButtonElement;
   askRow.append(btn);
 
   const body = el('div', `${p}-body`);
   body.style.display = 'none';
   const qaRow = ask ? el('div', `${p}-qa`) : null;
+
   if (qaRow) qaRow.style.display = 'none';
 
   section.append(head, askRow, body);
+
   if (qaRow) section.append(qaRow);
   anchor.parentNode!.insertBefore(section, anchor.nextSibling);
 
@@ -653,21 +712,28 @@ export const buildMediaSummary = ({
     const texts = new Map<number, HTMLElement>();
     const kinds: string[] = [];
     let started = false;
+
     return (data: any) => {
       const value = String(data?.verdict ?? '').trim();
       const points: any[] = Array.isArray(data?.points) ? data.points : [];
+
       if (!value && !points.length) return;
+
       // The progress note gives way to the first words.
       if (!started) {
         body.replaceChildren(verdict, list);
         body.style.display = 'block';
+
         if (animate) fadeIn(body);
         started = true;
       }
+
       writeMarkdown(verdict, value, renderMarkdownInline);
       points.forEach((point, i) => {
         const mark = MEDIA_MARKS[point?.sentiment];
+
         if (!mark) return;
+
         if (!texts.has(i)) {
           if (!kinds.includes(point.sentiment)) kinds.push(point.sentiment);
           const li = el('li', `${p}-point`);
@@ -680,13 +746,16 @@ export const buildMediaSummary = ({
           texts.set(i, li.appendChild(el('span', `${p}-text`)));
           const kind = kinds.indexOf(point.sentiment);
           list.insertBefore(li, [...list.children].find((c) => kinds.indexOf((c as HTMLElement).dataset.sentiment!) > kind) ?? null);
+
           if (animate) enter(li, '1');
         }
+
         // Only some providers write the sentiment last; with it first, the text is still coming.
         writeMarkdown(texts.get(i)!, String(point.text ?? '').trim(), renderMarkdownInline);
       });
     };
   };
+
   const renderMediaSummary = (data: any) => mountMediaSummary(false)(data);
 
   const renderAnswer = (text: string, searches: AskSearch[] = []) => {
@@ -711,20 +780,26 @@ export const buildMediaSummary = ({
   const runSummary = async () => {
     btn.disabled = true;
     note(`${p}-progress`, '⏳ Reading reviews…');
+
     try {
       const texts = await fetchReviews();
+
       if (!texts.length) throw new Error('No written reviews found yet.');
       note(`${p}-progress`, '✦ Summarizing…');
       // Each point shows as it's written, flowing in a frame at a time: the
       // partials come in bursts, a few at once after a stall of up to ~300ms.
       const draw = mountMediaSummary();
+
       const drafts = smoothDrafts<any>(draw, (shown, target, grow) => ({
         verdict: grow(shown?.verdict, String(target?.verdict ?? '')),
         points: (Array.isArray(target?.points) ? target.points : []).map((point: any, i: number) => ({ ...point, text: grow(shown?.points?.[i]?.text, String(point?.text ?? '')) })),
       }));
+
       const data = await llmSummarize(texts, typeof summaryPrompt === 'string' ? summaryPrompt : summaryPrompt(texts), MEDIA_SUMMARY_SCHEMA, drafts.push)
         .finally(drafts.stop);
+
       bumpRateLimit();
+
       if (summaryCacheKey) cacheSet(summaryCacheKey, data);
       draw(data);
       showingSummary = true;
@@ -740,9 +815,16 @@ export const buildMediaSummary = ({
     if (!qaRow || !ask) return;
     const items = ask.qaCacheKey ? loadQAs(ask.qaCacheKey) : [];
     qaRow.textContent = '';
-    if (!items.length) { qaRow.style.display = 'none'; return; }
+
+    if (!items.length) {
+      qaRow.style.display = 'none';
+
+      return;
+    }
+
     qaRow.style.display = 'flex';
     qaRow.append(el('span', `${p}-qa-label`, 'Recent questions'));
+
     for (const item of items) {
       const chip = el('button', `${p}-qa-chip`, item.q) as HTMLButtonElement;
       chip.title = item.q;
@@ -758,6 +840,7 @@ export const buildMediaSummary = ({
 
   const runAsk = async (question: string) => {
     if (!ask) return;
+
     try {
       await askReviews({
         question, search: searchAsk?.search, qaKey: ask.qaCacheKey, limited: true,
@@ -766,11 +849,14 @@ export const buildMediaSummary = ({
           btn.disabled = true;
           note(`${p}-progress`, '⏳ Reading reviews…');
           const texts = await fetchReviews();
+
           if (!texts.length) throw new Error('No written reviews found yet.');
+
           return askTransport(ask.questionPrompt, texts, canSearch);
         },
         mount: (reads) => {
           body.style.display = 'block';
+
           return mountAskView(body, `${p}-text`, searchAsk?.open, reads);
         },
       });
@@ -786,9 +872,11 @@ export const buildMediaSummary = ({
 
   btn.addEventListener('click', () => {
     const q = input?.value.trim();
+
     if (ask && q) runAsk(q);
     else runSummary();
   });
+
   if (input) {
     input.addEventListener('input', syncBtn);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
@@ -796,10 +884,12 @@ export const buildMediaSummary = ({
 
   // A summary cached in an older shape is left to be written again.
   const cached = summaryCacheKey ? cacheGet(summaryCacheKey, summaryTtl) : null;
+
   if (cached?.points) {
     renderMediaSummary(cached);
     showingSummary = true;
   }
+
   renderQA();
   syncBtn();
 

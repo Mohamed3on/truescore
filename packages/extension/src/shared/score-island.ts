@@ -23,6 +23,7 @@ export const createIslandShell = (): HTMLElement => {
   header.className = 'ars-header';
   header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence'; // safe: static
   wrapper.appendChild(header);
+
   return wrapper;
 };
 
@@ -54,6 +55,7 @@ export const buildGauge = ({ score, nps, total }: IslandScore, recent?: number |
     const recentPct = Math.round(recent * 100);
     const trend = el('span', 'ars-gauge-trend', 'steady recently');
     trend.title = `${recentPct}% positive in the newest reviews`;
+
     if (Math.abs(recentPct - Math.round(nps)) >= STEADY_POINTS) {
       const val = el('span', 'ars-gauge-trend-pct', `${recentPct}%`);
       val.style.color = npsColor(recentPct);
@@ -62,6 +64,7 @@ export const buildGauge = ({ score, nps, total }: IslandScore, recent?: number |
       tick.style.left = `${Math.max(0, Math.min(100, recentPct))}%`;
       gauge.appendChild(tick);
     }
+
     gauge.querySelector('.ars-gauge-label')!.appendChild(trend);
   }
 
@@ -90,7 +93,9 @@ export const buildRecentGauge = (ratio?: number): HTMLElement => {
     <div class="ars-gauge-label"><span class="ars-gauge-pct">—</span> recent positive <span class="ars-scan-spinner"></span></div>
     <div class="ars-gauge-track"><div class="ars-gauge-fill" style="transform:scaleX(0)"></div></div>
   `; // safe: no user content in template
+
   if (ratio !== undefined) fillRecentGauge(gauge, ratio);
+
   return gauge;
 };
 
@@ -99,6 +104,7 @@ export const buildRecentGauge = (ratio?: number): HTMLElement => {
 // its spinner out; one still detached just drops it.
 export const fillRecentGauge = (gauge: HTMLElement, ratio: number | null): void => {
   const spinner = gauge.querySelector('.ars-scan-spinner');
+
   if (spinner) {
     if (gauge.isConnected) {
       spinner.classList.add('ars-scan-done');
@@ -107,6 +113,7 @@ export const fillRecentGauge = (gauge: HTMLElement, ratio: number | null): void 
       spinner.remove();
     }
   }
+
   if (ratio == null) return gauge.remove();
   const pct = Math.round(ratio * 100);
   const tone = npsColor(pct);
@@ -123,8 +130,10 @@ export const fillRecentGauge = (gauge: HTMLElement, ratio: number | null): void 
 export const appendStat = (row: HTMLElement, value: string, label: string, color?: string): void => {
   const stat = el('div', 'ars-stat');
   const val = el('span', 'ars-stat-val', value);
+
   if (color) val.style.color = color;
   stat.append(val, el('span', 'ars-stat-lbl', label));
+
   if (row.children.length) row.appendChild(el('div', 'ars-stat-div'));
   row.appendChild(stat);
 };

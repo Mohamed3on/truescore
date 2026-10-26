@@ -19,13 +19,16 @@
 /** Every `"field": "…"` string value. Undefined when the field never appeared. */
 export const salvageString = (text: string, field: string): string | undefined => {
   const m = text.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+
   if (!m?.[1]) return undefined;
+
   try { return JSON.parse(`"${m[1]}"`) as string; } catch { return m[1]; }
 };
 
 /** A `"field": 12` numeric value. Undefined when absent or unreadable. */
 export const salvageNumber = (text: string, field: string): number | undefined => {
   const m = text.match(new RegExp(`"${field}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`));
+
   return m ? Number(m[1]) : undefined;
 };
 
@@ -36,14 +39,17 @@ export const salvageNumber = (text: string, field: string): number | undefined =
  */
 export const salvageStringArray = (text: string, field: string): string[] => {
   const open = text.match(new RegExp(`"${field}"\\s*:\\s*\\[`));
+
   if (open?.index == null) return [];
   const body = text.slice(open.index + open[0].length);
   const close = body.indexOf(']');
   const inner = close === -1 ? body : body.slice(0, close);
   const out: string[] = [];
+
   for (const m of inner.matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
     try { out.push(JSON.parse(`"${m[1]}"`) as string); } catch { out.push(m[1] ?? ''); }
   }
+
   // A truncated array ends mid-string; that fragment has no closing quote and so
   // never matched above. Nothing to drop.
   return out;
@@ -56,10 +62,13 @@ export const salvageStringArray = (text: string, field: string): string[] => {
  */
 export const salvageObjects = <T>(text: string, key: string): T[] => {
   const out: T[] = [];
+
   for (const m of text.matchAll(/\{[^{}]*\}/g)) {
     if (!m[0].includes(`"${key}"`)) continue;
+
     try { out.push(JSON.parse(m[0]) as T); } catch {}
   }
+
   return out;
 };
 

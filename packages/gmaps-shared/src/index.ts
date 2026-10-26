@@ -22,17 +22,22 @@ export type Review = {
 };
 
 export type SortKey = 'relevant' | 'newest';
+
 export type Histogram = number[]; // [5★, 4★, 3★, 2★, 1★]
+
 export type Locale = { hl?: string; gl?: string };
+
 // `ratio` is the unrounded net polarity (−1..1) that `scorePct` rounds — what
 // displayScore penalises. Absent on stats built before it existed.
 export type SortStats = { totalReviews: number; trustedReviews: number; scorePct: number; ratio?: number };
+
 export type ChipMeta = { token: string; label: string; count: number };
 
 export const PAGE_SIZE = 20;
 export const TRUSTED_MIN_REVIEWS = 3;
 
 export const isTrusted = (reviewerReviewCount: number) => reviewerReviewCount >= TRUSTED_MIN_REVIEWS;
+
 // What a listed review's card says beside its stars: its stance on the subject
 // (STANCE_MARKS), or, when its author isn't trusted, why it has none (no score
 // counts it, so Jev never reads it), in Google's own "· N reviews" style. Null
@@ -40,10 +45,13 @@ export const isTrusted = (reviewerReviewCount: number) => reviewerReviewCount >=
 export const reviewMark = (stance: Stance | undefined, authorReviews?: number, subject = 'it'): { cls: string; text: string; label: string } | null => {
   if (authorReviews != null && !isTrusted(authorReviews)) {
     const n = `${authorReviews} review${authorReviews === 1 ? '' : 's'}`;
+
     return { cls: 'untrusted', text: `untrusted · ${n}`, label: `Not counted or read: its author has ${n}, and TrueScore trusts authors with ${TRUSTED_MIN_REVIEWS}+` };
   }
+
   return stance ? { cls: stance, text: STANCE_MARKS[stance].text, label: STANCE_MARKS[stance].label(subject) } : null;
 };
+
 export const starScore = (stars: number): number => (stars === 5 ? 1 : stars === 1 ? -1 : 0);
 
 // Fold removed reviews into the score by treating them as 1★ reviews the place
@@ -61,6 +69,7 @@ export const starScore = (stars: number): number => (stars === 5 ? 1 : stars ===
 export const scoreWithRemovalPenalty = (scorePct: number, removedCount: number, totalReviews: number): number => {
   if (removedCount <= 0 || totalReviews <= 0) return scorePct;
   const rate = removedCount / totalReviews;
+
   return Math.max(-1, Math.min(1, (scorePct - rate) / (1 + rate)));
 };
 
@@ -73,9 +82,11 @@ export const textReviewsFor = (reviews: Review[]): string[] =>
     .filter((r) => r.text.length > 1)
     .map((r) => {
       const t = r.timestamp;
+
       if (t == null) return `[undated] ${r.text}`;
       const ms = t > 1e14 ? t / 1000 : t;
       const date = new Date(ms).toISOString().slice(0, 10);
+
       return `[${date}] ${r.text}`;
     })
     .sort((a, b) => b.length - a.length);
@@ -87,6 +98,7 @@ export const textReviewsFor = (reviews: Review[]): string[] =>
 export const receiptReviews = (quotes: Quote[], reviews: Review[] = []): Quote[] => {
   const byText = new Map(reviews.map((r) => [r.text, r]));
   const ts = (q: Quote) => (typeof q === 'string' ? 0 : q.timestamp ?? 0);
+
   return quotes.map((q) => (typeof q === 'string' ? byText.get(q) ?? q : q)).sort((a, b) => ts(b) - ts(a));
 };
 
@@ -106,8 +118,10 @@ export const starString = (stars: number): string =>
 // Bargain rail: the word that carries the verdict, its tone, and where the dot
 // sits along the rail (0–1). Shared so web and extension read the scale alike.
 const VALUE_WORDS = ['Overpriced', 'Pricey', 'Fair value', 'Good value', 'Bargain'];
+
 export const valueForMoneyScale = (rating: number): { label: string; tone: 'neg' | 'mid' | 'pos'; position: number } => {
   const v = Math.max(1, Math.min(5, Math.round(rating)));
+
   return { label: VALUE_WORDS[v - 1]!, tone: v < 3 ? 'neg' : v > 3 ? 'pos' : 'mid', position: (v - 1) / 4 };
 };
 
@@ -124,9 +138,16 @@ export const chipPolarity = (scorePct: number, overallPct: number): 'pos' | 'neg
 // weighted by how many reviews back the chip. Returns a new array. Shared
 // because web and extension reverse-engineered the identical ordering.
 export type ChipLike = { score?: { scorePct: number } | null; count: number };
+
 export const sortChipsByImpact = <T extends ChipLike>(chips: T[], overallPct: number): T[] => {
-  const impact = (c: T) => { const r = (c.score?.scorePct ?? 0) / 100; return r * Math.abs(r) * c.count; };
+  const impact = (c: T) => {
+    const r = (c.score?.scorePct ?? 0) / 100;
+
+    return r * Math.abs(r) * c.count;
+  };
+
   const above = (c: T) => chipPolarity(c.score?.scorePct ?? 0, overallPct) === 'pos';
+
   return [...chips].sort((a, b) => (Number(above(b)) - Number(above(a))) || (impact(b) - impact(a)));
 };
 
@@ -135,6 +156,7 @@ export const sortChipsByImpact = <T extends ChipLike>(chips: T[], overallPct: nu
 // and the sort key are the policy the web and extension chip panels each reverse-
 // engineered; each renders its own DOM and its own still-loading placeholders.
 export const SCORED_CHIP_MIN_REVIEWS = 2;
+
 export const selectScoredChips = <T>(
   items: T[],
   statsOf: (item: T) => { totalReviews: number } | null | undefined
@@ -150,7 +172,9 @@ export const selectScoredChips = <T>(
 // fan-out, collapsed to a single deduped list.
 export const mergeByReviewId = (...lists: Review[][]): Review[] => {
   const m = new Map<string, Review>();
+
   for (const list of lists) for (const r of list) m.set(r.reviewId, r);
+
   return [...m.values()];
 };
 
@@ -182,11 +206,15 @@ export const stripAccents = (s: string): string =>
 // word lands on another one ("hoț", thief, → "hot").
 export const spellingVariants = (term: string, fold = true): string[] => {
   const variants = new Set<string>();
+
   for (const base of fold ? [term, stripAccents(term)] : [term]) {
     variants.add(base);
+
     if (base.includes('-')) variants.add(base.replace(/-/g, ' '));
+
     if (/\s/.test(base)) variants.add(base.replace(/\s+/g, '-'));
   }
+
   return [...variants];
 };
 
@@ -211,11 +239,13 @@ export const expandSearchTerms = (query: string, fold = true): string[] =>
 // `authuser`: which signed-in account Maps' own request ran as. The token and `at`
 // belong to that account, so a replay without it runs as account 0 and gets a 400.
 export type MapsCreds = { bgkey: string; bgbind: string; sessionId: string; at: string; hl?: string; authuser?: string };
+
 export type MapsReq = { url: string; init?: { method?: string; headers?: Record<string, string>; body?: string } };
 
 // The place a Maps URL is on: its last !3m…!1s data id.
 export const featureIdFromPlaceUrl = (url: string): string | null => {
   const id = [...url.matchAll(/!3m\d+!1s(0x[a-f0-9]+(?:%3A|:)0x[a-f0-9]+)/gi)].pop()?.[1];
+
   return id ? decodeURIComponent(id) : null;
 };
 
@@ -228,11 +258,15 @@ export const featureIdFromPlaceUrl = (url: string): string | null => {
 // One home for this RPC-schema-coupled extraction: the extension capture and the
 // server minter both call it, so a Google-side change is fixed in one place.
 const SESSION_ID_RE = /\[\\?"([A-Za-z0-9_-]{16,}?)\\?",null,null,null,null,null,81\]/;
+
 export const credsFromBatchExecute = (bgkey: string, bgbind: string, body: string): Omit<MapsCreds, 'hl'> => {
   let decoded = body;
+
   try { decoded = decodeURIComponent(body); } catch { /* body already raw */ }
+
   const sessionId = (bgbind.match(SESSION_ID_RE) || decoded.match(SESSION_ID_RE) || [])[1] || '';
   const atRaw = (body.match(/(?:^|&)at=([^&]+)/) || [])[1];
+
   return { bgkey, bgbind, sessionId, at: atRaw ? decodeURIComponent(atRaw) : '' };
 };
 
@@ -258,6 +292,7 @@ const innerListReq = (featureId: string, sort: SortKey, token: string | null, qu
 
 const batchExecuteReq = (featureId: string, sort: SortKey, token: string | null, query: string | null, cursor: string, creds: MapsCreds): MapsReq => {
   const fReq = JSON.stringify([[['/MapsUgcPostService.ListUgcPosts', innerListReq(featureId, sort, token, query, cursor, creds.sessionId), null, 'generic']]]);
+
   return {
     url: `https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=qv9Egd&hl=${creds.hl || 'en'}${creds.authuser ? `&authuser=${encodeURIComponent(creds.authuser)}` : ''}&_reqid=${(batchReqId += 100)}&rt=c`,
     init: {
@@ -297,8 +332,11 @@ const hasText = (entry: any): boolean => typeof entry?.[0] === 'string' && entry
 // translation carries none and highlighting falls back to the query term.
 const pickTextEntry = (r: any): any[] | null => {
   const arr = r?.[2]?.[15];
+
   if (!Array.isArray(arr) || arr.length === 0) return null;
+
   if (arr.length > 1 && hasText(arr[1])) return arr[1];
+
   return hasText(arr[0]) ? arr[0] : null;
 };
 
@@ -308,16 +346,21 @@ const pickTextEntry = (r: any): any[] | null => {
 const matchTermsFromEntry = (entry: any[] | null): string[] => {
   const text = entry?.[0];
   const spans = entry?.[1];
+
   if (typeof text !== 'string' || !Array.isArray(spans)) return [];
   const out: string[] = [];
+
   for (const m of spans) {
     const s = m?.[0];
     const e = m?.[1];
+
     if (typeof s === 'number' && typeof e === 'number' && e > s) {
       const w = text.slice(s, e).trim();
+
       if (w) out.push(w);
     }
   }
+
   return out;
 };
 
@@ -330,11 +373,15 @@ const matchTermsFromEntry = (entry: any[] | null): string[] => {
 // and the stale-session detector below.
 const computeUnwrap = (text: string): any[] | null => {
   let inner = text;
+
   if (text.includes('"wrb.fr"')) {
     const m = text.match(/"\/MapsUgcPostService\.ListUgcPosts","((?:\\.|[^"\\])*)"/);
+
     if (!m) return null;
+
     try { inner = JSON.parse(`"${m[1]}"`); } catch { return null; }
   }
+
   try { return JSON.parse(inner.replace(/^\)\]\}'\s*/, '')); } catch { return null; }
 };
 
@@ -343,19 +390,24 @@ const computeUnwrap = (text: string): any[] | null => {
 // parses the SAME string for reviews. The two calls share the exact string, so
 // the lookup is a reference hit; bounded to a few entries so it retains nothing.
 const unwrapCache: { raw: string; data: any[] | null }[] = [];
+
 const unwrapBatchPayload = (text: string): any[] | null => {
   for (const e of unwrapCache) if (e.raw === text) return e.data;
   const data = computeUnwrap(text);
   unwrapCache.push({ raw: text, data });
+
   if (unwrapCache.length > 4) unwrapCache.shift();
+
   return data;
 };
 
 export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCursor: string | null } => {
   const data = unwrapBatchPayload(text);
   const arr = data?.[2];
+
   if (!data || !Array.isArray(arr) || !arr.length) return { reviews: [], nextCursor: null };
   const reviews: Review[] = [];
+
   for (const wrapper of arr) {
     if (!wrapper?.[0]) continue;
     const r = wrapper[0];
@@ -366,8 +418,10 @@ export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCur
     const entry = pickTextEntry(r);
     const text = typeof entry?.[0] === 'string' ? entry[0] : '';
     const matchTerms = matchTermsFromEntry(entry);
+
     if (reviewId && stars) reviews.push({ reviewId, stars, reviewerReviewCount, timestamp, text, ...(matchTerms.length ? { matchTerms } : {}) });
   }
+
   return { reviews, nextCursor: data[1] || null };
 };
 
@@ -379,6 +433,7 @@ export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCur
 // stale (they didn't parse to a payload at all), so they report false.
 export const isStaleReviewsResponse = (text: string): boolean => {
   const data = unwrapBatchPayload(text);
+
   return data !== null && !Array.isArray(data[2]);
 };
 
@@ -387,21 +442,27 @@ export const isStaleReviewsResponse = (text: string): boolean => {
 // null when nothing is left to match. Pure string logic shared by both UIs;
 // each owns how it applies the regex to its own DOM.
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 export const compileMatchRegex = (terms: string[]): RegExp | null => {
   const uniq = [...new Set(terms.map((t) => t.trim().toLowerCase()).filter((t) => t.length >= 2))];
+
   if (!uniq.length) return null;
   uniq.sort((a, b) => b.length - a.length);
+
   return new RegExp(uniq.map(escapeRegExp).join('|'), 'gi');
 };
 
 export const statsForReviews = (reviews: Review[]): SortStats => {
   let trusted = 0, score = 0;
+
   for (const r of reviews) {
     if (!isTrusted(r.reviewerReviewCount)) continue;
     trusted++;
     score += starScore(r.stars);
   }
+
   const ratio = trusted ? score / trusted : 0;
+
   return {
     totalReviews: reviews.length,
     trustedReviews: trusted,
@@ -415,31 +476,39 @@ export const scorePct = (reviews: Review[]): number => statsForReviews(reviews).
 // Preview JSON readers — shape comes from /maps/preview/place RPC.
 export const chipsFromPreview = (data: any): ChipMeta[] => {
   const chips = data?.[6]?.[153]?.[0];
+
   if (!Array.isArray(chips)) return [];
   const out: ChipMeta[] = [];
   const seen = new Set<string>();
+
   for (const c of chips) {
     const token = c?.[0]?.[0];
     const label = c?.[1];
     const count = c?.[3]?.[4] ?? 0;
+
     if (typeof token !== 'string' || typeof label !== 'string') continue;
     const key = label.toLowerCase();
+
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({ token, label, count });
   }
+
   return out;
 };
 
 export const histogramFromPreview = (data: any): Histogram | null => {
   const counts = data?.[6]?.[175]?.[3];
+
   if (!Array.isArray(counts) || counts.length !== 5) return null;
+
   return [counts[4], counts[3], counts[2], counts[1], counts[0]];
 };
 
 // One opening slot, [open, close] in fractional hours (11:30 → 11.5). A close at
 // or before its open runs past midnight into the next day.
 export type HoursSlot = [open: number, close: number];
+
 // `slots` is every slot of the day — Google splits lunch/dinner days in two.
 // `openHour`/`closeHour` are only what metas cached before `slots` carry: the
 // first slot, in whole hours.
@@ -484,6 +553,7 @@ const asNumber = (v: unknown): number | undefined => (typeof v === 'number' ? v 
 const decodeCategory = (raw: unknown): string | undefined => {
   if (typeof raw !== 'string') return undefined;
   const s = raw.replace(/^SearchResult\.TYPE_/, '').toLowerCase().replace(/_/g, ' ').trim();
+
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : undefined;
 };
 
@@ -491,10 +561,17 @@ const decodeCategory = (raw: unknown): string | undefined => {
 // drifts between place types; deep-search is more robust than fixed indices.
 const findPhotoUrl = (v: any, depth = 0): string | undefined => {
   if (depth > 8 || v == null) return undefined;
+
   if (typeof v === 'string' && v.startsWith('https://lh3.googleusercontent.com/')) return v;
+
   if (Array.isArray(v)) {
-    for (const c of v) { const r = findPhotoUrl(c, depth + 1); if (r) return r; }
+    for (const c of v) {
+      const r = findPhotoUrl(c, depth + 1);
+
+      if (r) return r;
+    }
   }
+
   return undefined;
 };
 
@@ -504,6 +581,7 @@ const resizePhoto = (url: string, w: number, h: number): string =>
 // A slot's time is [hour, minute?] — the minute is dropped when it's zero.
 const slotHour = (t: any): number | undefined => {
   const h = asNumber(t?.[0]);
+
   return h == null ? undefined : h + (asNumber(t?.[1]) ?? 0) / 60;
 };
 
@@ -511,14 +589,19 @@ const slotHour = (t: any): number | undefined => {
 // one [label, times] per slot.
 const parseHoursDay = (entry: any): DayHours | null => {
   const day = asString(entry?.[0]);
+
   if (!day) return null;
   const raw: any[] = Array.isArray(entry?.[3]) ? entry[3] : [];
+
   if (!raw[0]) return { day, label: 'Closed' };
+
   const slots = raw.flatMap((s): HoursSlot[] => {
     const open = slotHour(s?.[1]?.[0]);
     const close = slotHour(s?.[1]?.[1]);
+
     return open != null && close != null ? [[open, close]] : [];
   });
+
   return {
     day,
     label: raw.map((s) => asString(s?.[0])).filter(Boolean).join(', ') || '—',
@@ -547,10 +630,12 @@ const NUMBER_WORDS: Record<string, number> = {
 
 const countsIn = (text: string): number[] => {
   const out: number[] = [];
+
   for (const tok of text.toLowerCase().match(/\d+|[a-z]+/g) ?? []) {
     if (tok[0]! >= '0' && tok[0]! <= '9') out.push(Number(tok));
     else if (tok in NUMBER_WORDS) out.push(NUMBER_WORDS[tok]!);
   }
+
   return out;
 };
 
@@ -558,15 +643,19 @@ const REMOVAL_NOTICE_KIND = 3;
 
 export const removedReviewsFromPreview = (data: any): RemovedReviews | undefined => {
   const notices = data?.[6]?.[241]?.[0];
+
   if (!Array.isArray(notices)) return undefined;
+
   for (const n of notices) {
     if (n?.[0] !== REMOVAL_NOTICE_KIND) continue;
     const body = n[1];
     const detail = asString(body?.[0]);
     const text = asString(body?.[3]) ?? detail;
+
     if (!text) continue;
     const nums = countsIn(text);
     const url = asString(body?.[2]?.[0]?.[0]);
+
     return {
       text,
       ...(detail && detail !== text ? { detail } : {}),
@@ -574,6 +663,7 @@ export const removedReviewsFromPreview = (data: any): RemovedReviews | undefined
       ...(url ? { url } : {}),
     };
   }
+
   return undefined;
 };
 
@@ -589,13 +679,16 @@ export const removedCountEstimate = (removed: RemovedReviews | null | undefined)
 
 export const metaFromPreview = (data: any): PlaceMeta => {
   const six = data?.[6];
+
   if (!six) return {};
   const ratingBlock = six[4];
   const photo = findPhotoUrl(six[51]) ?? findPhotoUrl(six[37]);
   const hoursRaw = six[203]?.[0];
+
   const hoursWeek = Array.isArray(hoursRaw)
     ? hoursRaw.map(parseHoursDay).filter((d): d is DayHours => d !== null)
     : undefined;
+
   return {
     canonicalName: asString(six[11]),
     address: asString(six[39]),
@@ -617,7 +710,9 @@ export const histogramTotal = (h: Histogram): number => h.reduce((a, b) => a + b
 
 export const overallPctFromHistogram = (h: Histogram): number => {
   const total = histogramTotal(h);
+
   if (!total) return 0;
+
   return Math.round((((h[0] ?? 0) - (h[4] ?? 0)) / total) * 100);
 };
 
@@ -629,6 +724,7 @@ export const overallPctFromHistogram = (h: Histogram): number => {
 export const netScore = (net: number, total: number): number => {
   if (!(total > 0)) return 0;
   const magnitude = Math.round((net * net) / total);
+
   return net < 0 && magnitude ? -magnitude : magnitude;
 };
 
@@ -679,17 +775,25 @@ export const displayScore = ({ score, histogram, googleReviewCount, removedRevie
   const removedCount = removedCountEstimate(removedReviews);
   const placeTotal = (histogram?.length ? histogramTotal(histogram) : 0) || googleReviewCount || 0;
   const pct = Math.round(scoreWithRemovalPenalty(raw, removedCount, placeTotal) * 100);
+
   return { pct, rawPct, adjusted: pct !== rawPct, removedCount, placeTotal };
 };
 
 export const timeAgo = (ms: number): string => {
   const sec = Math.max(0, (Date.now() - ms) / 1000);
+
   if (sec < 60) return 'just now';
+
   if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+
   if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+
   if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}d ago`;
+
   if (sec < 86400 * 30) return `${Math.floor(sec / 86400 / 7)}w ago`;
+
   if (sec < 86400 * 365) return `${Math.floor(sec / 86400 / 30)}mo ago`;
+
   return `${Math.floor(sec / 86400 / 365)}y ago`;
 };
 
@@ -708,8 +812,11 @@ export * from './botguard';
 // The truescore-web HTTP contract (request / response / stream-event shapes),
 // shared by the server, the web client, and the extension.
 export * from './wire';
+
 export * from './http';
+
 export * from './ask';
+
 export * from './markdown';
 
 // What reviews say about a topic or a question, as Jev reads them on the server.
@@ -723,7 +830,9 @@ export * from './thread';
 
 // The topic row: topic chips and standouts pooled, ranked and animated alike.
 export * from './chip-row';
+
 export * from './summary-draw';
+
 export * from './write';
 
 // Reading fields out of JSON a model didn't finish writing — both packages hit

@@ -12,14 +12,17 @@ import { explainOptions, listOptions, optionsRequest, reasonsRequest, type Threa
 const MAX_COMMENTS = 2_000;
 const MAX_BODY = 10_000;
 const MAX_QUESTION = 3_000;
+
 // The comments the model reads to list Options, in the page's order, up to this
 // many characters.
 const LIST_CHARS = 300_000;
 
 export const threadOf = (v: unknown): Thread | null => {
   const t = v as Partial<Thread> | undefined;
+
   if (!t || typeof t.id !== 'string' || !Array.isArray(t.comments)) return null;
   const str = (s: unknown) => (typeof s === 'string' ? s : '');
+
   const comments = t.comments.slice(0, MAX_COMMENTS).flatMap((c): ThreadComment[] =>
     c && typeof c.id === 'string' && typeof c.body === 'string'
       ? [{
@@ -31,17 +34,22 @@ export const threadOf = (v: unknown): Thread | null => {
           ...(c.bot ? { bot: true } : {}),
         }]
       : []);
+
   const author = str(t.author);
+
   return { id: t.id, title: str(t.title), text: str(t.text), ...(author ? { author } : {}), comments };
 };
 
 // The questions asked of a Thread so far (ThreadAskRequest): the last
 // MAX_TURNS, each with its answer but the one to answer. null without one.
 const MAX_TURNS = 11;
+
 export const chatOf = (v: unknown): ThreadTurn[] | null => {
   const asked = (Array.isArray(v) ? v : []).filter((t) => typeof t?.question === 'string' && t.question.trim()).slice(-MAX_TURNS);
   const last = asked.pop();
+
   if (!last) return null;
+
   return [
     ...asked.filter((t) => typeof t.answer === 'string').map((t) => ({ question: t.question.slice(0, MAX_QUESTION), answer: t.answer.slice(0, MAX_BODY) })),
     { question: last.question.slice(0, MAX_QUESTION) },
@@ -60,18 +68,22 @@ const keyOf = (name: string) => words(name).trim().replace(/ /g, '-');
 // a name of several words, run together ("toehold").
 const needles = (ns: string[]) => [...new Set(ns.map(words))].filter((n) => n.trim().length > 1)
   .flatMap((n) => [...new Set([n, ` ${n.trim().replace(/ /g, '')} `])]).flatMap((n) => [n, `${n.trimEnd()}s `]);
+
 // Whether a text holds one of the needles, once the `hidden` ones are blanked
 // out in turn. Blanking only takes words away, so a hidden needle whose first
 // word the text lacks is never there: only the rest are looked for, since a
 // thread can list a couple of hundred Options, each hiding all the others.
 const sayer = (ns: string[], hidden: string[] = []) => {
   const byWord = Map.groupBy(hidden.map((h, i) => [i, h] as const), ([, h]) => h.split(' ')[1]!);
+
   return (text: string) => {
     for (const [, h] of [...new Set(text.split(' '))].flatMap((w) => byWord.get(w) ?? []).sort(([a], [b]) => a - b))
       while (text.includes(h)) text = text.replace(h, ' ');
+
     return ns.some((n) => text.includes(n));
   };
 };
+
 const postOf = (thread: Thread) => words(`${thread.title} ${thread.text}`);
 
 // The counted comments that name any of `names`, or reply to a comment (or, at
@@ -95,9 +107,11 @@ export const naming = (thread: Thread, names: string[], rivals: string[] = [], g
   const byId = new Map(thread.comments.map((c) => [c.id, c]));
   const post = postOf(thread);
   const listed = says(post), inPost = asked && listed && !rival(post);
+
   return thread.comments.filter((c) => {
     if (!countsInTally(c)) return false;
     const parent = c.parentId ? words(byId.get(c.parentId)?.body ?? '') : undefined;
+
     return says(words(c.body)) || picked.has(c.id) || (parent !== undefined
       ? (says(parent) || picked.has(c.parentId!)) && !rival(parent)
       : inPost || (listed && group.has(c.id)));
@@ -108,11 +122,13 @@ export const naming = (thread: Thread, names: string[], rivals: string[] = [], g
 // they disagree or only mention it, nothing when none speaks of it.
 export const combine = (stances: Iterable<Stance | undefined>): Stance | undefined => {
   let praise = false, complain = false, mixed = false;
+
   for (const s of stances) {
     if (s === 'praise') praise = true;
     else if (s === 'complain') complain = true;
     else if (s === 'mixed') mixed = true;
   }
+
   return praise && complain ? 'mixed' : praise ? 'praise' : complain ? 'complain' : mixed ? 'mixed' : undefined;
 };
 
@@ -125,44 +141,60 @@ const personOf = (c: ThreadComment) => (c.author === '[deleted]' ? `[deleted]:${
 export const countOf = (thread: Thread, reads: Record<string, Stance>): TallyCount => {
   const people = new Map<string, Stance[]>();
   const count: TallyCount = { for: 0, against: 0, mixed: 0, upFor: 0, upAgainst: 0 };
+
   for (const c of thread.comments) {
     const s = reads[c.id];
+
     if (!s || s === 'off') continue;
     people.set(personOf(c), [...(people.get(personOf(c)) ?? []), s]);
+
     if (s === 'praise') count.upFor += c.score;
     else if (s === 'complain') count.upAgainst += c.score;
   }
+
   for (const said of people.values()) {
     const s = combine(said);
+
     if (s === 'praise') count.for++;
     else if (s === 'complain') count.against++;
     else if (s) count.mixed++;
   }
+
   return count;
 };
 
 const also = (aliases: string[]) => (aliases.length ? `; also written ${aliases.join(', ')}` : '');
+
 // Each title carries its maker's name, so another maker's course of the same
 // name reads as not about it.
 type Title = ThreadOption['titles'][number];
+
 const titleOf = (o: ThreadOption, t: Title) => `${o.name}'s ${t.name}`;
+
 const describeOption = (o: ThreadOption) =>
   `${o.name}${o.titles.length ? ` (including ${o.titles.map((t) => titleOf(o, t)).join(', ')})` : ''}${also(o.aliases)}`;
+
 const namesOf = (o: ThreadOption) => [o.name, ...o.aliases, ...o.titles.flatMap((t) => [t.name, ...t.aliases])];
+
 // How many of `all` have each name, as its words.
 const owners = (all: ThreadOption[]) => {
   const n = new Map<string, number>();
+
   for (const x of all) for (const w of new Set(namesOf(x).map(words))) n.set(w, (n.get(w) ?? 0) + 1);
+
   return n;
 };
+
 // The names that pick an Option's comments among the thread's `all`: its own,
 // less any another Option has too, which could mean either.
 const ownNames = (o: ThreadOption, all: ThreadOption[], n = owners(all)) => namesOf(o).filter((name) => n.get(words(name)) === 1);
+
 // Its rivals (naming): the other Options' names, less any its own hold. So
 // one whose name holds its own ("Inside heel hook" beside "Heel hook") hides
 // from it only its own mentions, as a sibling title's does (tallyOption).
 const rivalsOf = (o: ThreadOption, all: ThreadOption[]) => {
   const n = owners(all);
+
   return telling(all.filter((x) => x !== o).flatMap((x) => ownNames(x, all, n)), ownNames(o, all, n));
 };
 
@@ -172,7 +204,12 @@ const rivalsOf = (o: ThreadOption, all: ThreadOption[]) => {
 // titles don't count against it.
 export const telling = (mine: string[], others: string[]): string[] => {
   const theirs = others.map(words);
-  return mine.filter((n) => { const w = words(n); return !theirs.some((t) => t.includes(w)); });
+
+  return mine.filter((n) => {
+    const w = words(n);
+
+    return !theirs.some((t) => t.includes(w));
+  });
 };
 
 // Jev's reads of the comments naming something, kept where they speak of it.
@@ -182,13 +219,16 @@ export const telling = (mine: string[], others: string[]): string[] => {
 async function readsOf(thread: Thread, question: string, name: string, names: string[], description: string, others: string, rivals?: string[], group?: ReadonlySet<string>, asked?: boolean, picked?: ReadonlySet<string>): Promise<Record<string, Stance> | null> {
   const byId = new Map(thread.comments.map((c) => [c.id, c]));
   const comments = naming(thread, names, rivals, group, asked, picked);
+
   const stances = await optionStancesFor(question, name, description, others,
     comments.map((c) => ({ text: c.body, parent: c.parentId ? byId.get(c.parentId)?.body : group?.has(c.id) ? question : undefined })));
+
   return stances && Object.fromEntries(comments.flatMap((c, i) => (stances[i] === 'off' ? [] : [[c.id, stances[i]!]])));
 }
 
 export const listedOf = (o: ThreadOption): ListedOption => {
   const key = keyOf(o.name);
+
   return { key, name: o.name, titles: o.titles.map((t) => ({ key: `${key}/${keyOf(t.name)}`, name: t.name })) };
 };
 
@@ -208,20 +248,25 @@ export async function tallyOption(thread: Thread, question: string, o: ThreadOpt
   const others = rest.map((x) => x.name);
   const listed = listedOf(o);
   const isAsked = (key: string) => !asked || asked.has(key);
+
   const [own, ...titles] = await Promise.all([
     readsOf(thread, question, o.name, ownNames(o, all), describeOption(o), others.join(', '), rivalsOf(o, all), group, isAsked(listed.key), picked),
     ...o.titles.map((t, i) => {
       const mine = [t.name, ...t.aliases];
       const siblings = o.titles.filter((x) => x !== t);
       const theirs = siblings.flatMap((x) => [x.name, ...x.aliases]);
+
       return readsOf(thread, question, titleOf(o, t), telling(mine, rest.flatMap(namesOf)),
         `${titleOf(o, t)}${also(t.aliases)}`, [...siblings.map((x) => titleOf(o, x)), `${o.name} in general`, ...others].join(', '),
         telling(theirs, mine), group, isAsked(listed.titles[i]!.key));
     }),
   ]);
+
   if (!own || titles.some((r) => !r)) return null;
+
   const reads = Object.fromEntries([...new Set([own, ...titles].flatMap((r) => Object.keys(r!)))]
     .map((id) => [id, combine([own, ...titles].map((r) => r![id]))!]));
+
   return {
     key: listed.key, name: o.name, count: countOf(thread, reads), reads,
     titles: listed.titles.map((t, i) => ({ ...t, count: countOf(thread, titles[i]!), reads: titles[i]! })),
@@ -232,9 +277,16 @@ export async function tallyOption(thread: Thread, question: string, o: ThreadOpt
 // Option is checked by nothing until the list ends.
 const distinct = <T extends { name: string }>(items: T[]) => {
   const seen = new Set<string>();
-  return items.filter((i) => { const k = keyOf(i.name); return !!k && !seen.has(k) && !!seen.add(k); });
+
+  return items.filter((i) => {
+    const k = keyOf(i.name);
+
+    return !!k && !seen.has(k) && !!seen.add(k);
+  });
 };
+
 const strings = (v: unknown) => (Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : []);
+
 const tidy = (o: Partial<ThreadOption>): ThreadOption => ({
   name: o.name ?? '',
   aliases: strings(o.aliases),
@@ -245,6 +297,7 @@ const tidy = (o: Partial<ThreadOption>): ThreadOption => ({
 // reopened lists nothing again (and Jev's reads are kept, jev_memo), a thread
 // that has grown, or a reworded prompt, lists afresh.
 db.run('CREATE TABLE IF NOT EXISTS tally_options (k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER NOT NULL)');
+
 const getOptions = db.prepare<{ v: string }, [string]>('SELECT v FROM tally_options WHERE k = ?');
 const putOptions = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO tally_options (k, v, ts) VALUES (?, ?, ?)');
 const LISTING = Bun.hash(optionsRequest('', []).prompt).toString(36);
@@ -253,6 +306,7 @@ async function listOptionsOf(thread: Thread, question: string, { provider, reaso
   const counted = thread.comments.filter(countsInTally);
   const k = `${thread.id}:${provider ?? ''}:${LISTING}:${Bun.hash(counted.map((c) => c.id).sort().join(',')).toString(36)}`;
   const hit = getOptions.get(k);
+
   if (hit) return void (JSON.parse(hit.v) as ThreadOption[]).forEach(onOption);
   let chars = 0;
   const bodies = counted.map((c) => c.body).filter((b) => (chars += b.length) <= LIST_CHARS);
@@ -266,25 +320,31 @@ async function listOptionsOf(thread: Thread, question: string, { provider, reaso
 // yet to rank by. Streamed as written and kept for the same comments; a failure
 // costs nothing else, since the counts are the Tally.
 db.run('CREATE TABLE IF NOT EXISTS tally_reasons (k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER NOT NULL)');
+
 const getReasons = db.prepare<{ v: string }, [string]>('SELECT v FROM tally_reasons WHERE k = ?');
 const putReasons = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO tally_reasons (k, v, ts) VALUES (?, ?, ?)');
 const QUOTE_CHARS = 800;
 
 async function reasonsOf(thread: Thread, question: string, options: ThreadOption[], { provider, reasoningEffort }: LlmOverrides, write: (e: TallyEvent) => void, asked: ReadonlySet<string>, picks: ReadonlySet<string>[]): Promise<void> {
   const index = new Map<ThreadComment, number>();
+
   const groups = options
     .map((o, i) => {
       const named = naming(thread, ownNames(o, options), rivalsOf(o, options), undefined, asked.has(keyOf(o.name)), picks[i]);
+
       return { o, named, people: new Set(named.map(personOf)).size, upvotes: named.reduce((n, c) => n + c.score, 0) };
     })
     .filter((g) => g.people >= MIN_TALLY_PEOPLE)
     .sort((a, b) => b.people - a.people || b.upvotes - a.upvotes)
     .map(({ o, named }) => ({ key: keyOf(o.name), option: o.name, comments: named.map((c) => index.get(c) ?? index.set(c, index.size).get(c)!) }));
+
   if (!groups.length) return;
   const comments = [...index.keys()].map((c) => c.body.replace(/\s+/g, ' ').slice(0, QUOTE_CHARS));
   const k = `${thread.id}:${provider ?? ''}:${Bun.hash(reasonsRequest(question, comments, groups).prompt).toString(36)}`;
   const hit = getReasons.get(k);
+
   if (hit) return void Object.entries(JSON.parse(hit.v) as Record<string, string>).forEach(([key, text]) => write({ type: 'why', key, text }));
+
   try {
     const reasons = await explainOptions(question, comments, groups, (key, text) => { if (text.trim()) write({ type: 'why', key, text: text.trim() }); }, provider, reasoningEffort);
     putReasons.run(k, JSON.stringify(reasons), Date.now());
@@ -300,6 +360,7 @@ async function reasonsOf(thread: Thread, question: string, options: ThreadOption
 async function groupAnswersOf(thread: Thread, question: string): Promise<ReadonlySet<string>> {
   const top = thread.comments.filter((c) => !c.parentId && countsInTally(c));
   const says = await groupAnswersFor(question, top.map((c) => c.body));
+
   return new Set(says ? top.filter((_, i) => says[i]).map((c) => c.id) : []);
 }
 
@@ -310,12 +371,15 @@ async function groupAnswersOf(thread: Thread, question: string): Promise<Readonl
 // can't say.
 async function askedOf(question: string, post: string, o: ThreadOption): Promise<string[]> {
   const listed = listedOf(o);
+
   const named = [
     ...(sayer(needles(namesOf(o)))(post) ? [{ key: listed.key, about: describeOption(o) }] : []),
     ...o.titles.flatMap((t, i) => (sayer(needles([t.name, ...t.aliases]))(post) ? [{ key: listed.titles[i]!.key, about: `${titleOf(o, t)}${also(t.aliases)}` }] : [])),
   ];
+
   if (!named.length) return [];
   const says = await askedAboutFor(question, named.map((n) => n.about));
+
   return says ? named.filter((_, i) => says[i]).map((n) => n.key) : [];
 }
 
@@ -327,6 +391,7 @@ async function pickedOf(thread: Thread, question: string, o: ThreadOption): Prom
   if (!(await describedFor(question, [describeOption(o)]))?.[0]) return new Set();
   const counted = thread.comments.filter(countsInTally);
   const says = await putsForwardFor(question, o.name, describeOption(o), counted.map((c) => c.body));
+
   return new Set(says ? counted.filter((_, i) => says[i]).map((c) => c.id) : []);
 }
 
@@ -348,23 +413,29 @@ export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void
   await listOptionsOf(thread, question, overrides, (raw) => {
     const o = tidy(raw);
     const key = keyOf(o.name);
+
     if (!key || options.some((x) => keyOf(x.name) === key)) return;
     options.push(o);
     write({ type: 'listed', option: listedOf(o) });
     asking.push(askedOf(question, post, o));
     picking.push(pickedOf(thread, question, o));
+
     if (!group && options.filter((x) => sayer(needles(namesOf(x)))(post)).length >= 2) group = groupAnswersOf(thread, question);
   });
   const answers = await group;
   const asked = new Set((await Promise.all(asking)).flat());
+
   const [tallies] = await Promise.all([
     Promise.all(options.map(async (o, i) => {
       const t = await tallyOption(thread, question, o, options, answers, asked, await picking[i]);
+
       if (t) write({ type: 'option', option: t });
+
       return t;
     })),
     Promise.all(picking).then((picks) => reasonsOf(thread, question, options, overrides, write, asked, picks)),
   ]);
+
   if (tallies.some((t) => !t)) throw new Error("Couldn't read every comment right now — try again");
   write({ type: 'done' });
 }

@@ -3,7 +3,9 @@ import { resolvePlace } from './resolve';
 
 const origFetch = globalThis.fetch;
 const sleepSpy = spyOn(Bun, 'sleep').mockImplementation(() => Promise.resolve());
+
 afterEach(() => { globalThis.fetch = origFetch; });
+
 afterAll(() => sleepSpy.mockRestore());
 
 const shared = 'https://maps.app.goo.gl/71M8xCv3vTbPHZHP8?g_st=com.apple.shortcuts.Run-Workflow.(null)';

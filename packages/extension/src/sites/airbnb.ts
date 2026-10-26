@@ -80,35 +80,46 @@ const buildScore = ({ count, five, one, score }: AirbnbStats) => {
     el('span', 'ts-air-meta', `${Math.round(((five - one) / count) * 100)}% net loved · ${addCommas(count)} reviews`),
     card,
   );
+
   return item;
 };
 
 // Keep the score beside the overview rather than tucked into the host rating line.
 const place = (item: HTMLElement): boolean => {
   const banner = document.querySelector('[data-section-id="GUEST_FAVORITE_BANNER"]');
+
   if (banner?.textContent?.trim()) {
     const caption = el('div', 'ts-air-caption');
     caption.append(item);
     banner.append(caption);
+
     return true;
   }
+
   const overview = document.querySelector('[data-section-id="OVERVIEW_DEFAULT_V2"]');
+
   if (overview) {
     const caption = el('div', 'ts-air-caption');
     caption.append(item);
     overview.append(caption);
+
     return true;
   }
+
   return false;
 };
 
 const style = document.createElement('style');
+
 style.textContent = STYLES;
+
 document.head.append(style);
 
 const stats = airbnbStats(document.getElementById('data-deferred-state-0')?.textContent || 'null');
+
 if (stats) {
   const item = buildScore(stats);
+
   if (!place(item)) {
     const observer = new MutationObserver(() => { if (place(item)) observer.disconnect(); });
     observer.observe(document.body, { childList: true, subtree: true });
@@ -116,23 +127,28 @@ if (stats) {
 }
 
 const listingId = location.pathname.match(/^\/rooms\/(\d+)/)?.[1];
+
 if (listingId) {
   const wrapper = createIslandShell();
   wrapper.classList.add('ts-air-reviews');
   const note = el('div', 'ts-air-reviews-note', 'Loading up to 100 guest reviews, including the lowest rated…');
   wrapper.append(note);
   let pendingReviews: ReturnType<typeof fetchAirbnbReviewSample> | null = null;
+
   const loadReviewSample = () => {
     pendingReviews ??= fetchAirbnbReviewSample(listingId).then((sample) => {
       note.textContent = `Read ${sample.sampled} written reviews, including ${sample.lowRated} below five stars, from ${addCommas(sample.total)} total reviews.`;
+
       return sample;
     }).catch((error) => {
       pendingReviews = null;
       note.textContent = 'Reviews could not be loaded. Summarize will retry.';
       throw error;
     });
+
     return pendingReviews;
   };
+
   buildSummarizeWidget({
     wrapper,
     cacheKey: `airbnb-summary-v2-${listingId}`,
@@ -142,19 +158,25 @@ if (listingId) {
     fetchReviews: async () => {
       if (!(await getActiveLLM()).key) throw new Error('Set an AI key in the TrueScore popup to summarize reviews.');
       const sample = await loadReviewSample();
+
       return sample.reviews.map(sampleText);
     },
     renderQuote: quoteCards(async () => (await loadReviewSample()).reviews, sampleText, (r) => ({ rating: r.rating, body: r.text })),
   });
+
   const mountReviews = (): boolean => {
     const section = document.querySelector('[data-section-id="REVIEWS_DEFAULT"]');
+
     if (!section) return false;
     section.before(wrapper);
+
     return true;
   };
+
   if (!mountReviews()) {
     const observer = new MutationObserver(() => { if (mountReviews()) observer.disconnect(); });
     observer.observe(document.body, { childList: true, subtree: true });
   }
+
   void loadReviewSample().catch(() => {});
 }

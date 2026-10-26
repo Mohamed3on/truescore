@@ -8,46 +8,61 @@ const throttledFetch = createThrottledFetcher(8);
 
 const getLocale = () => {
   const parts = location.pathname.split('/').filter(Boolean);
+
   if (parts.length < 2) return null;
+
   return { country: parts[0], lang: parts[1] };
 };
 
 const extractProductId = (href: string) => {
   const match = href.match(/\/products\/([^/]+)/);
+
   return match ? match[1] : null;
 };
 
 const scoreFromRateCount = (rc: any) => {
   const { one = 0, two = 0, three = 0, four = 0, five = 0 } = rc;
   const total = one + two + three + four + five;
+
   if (total === 0) return null;
+
   return npsStats(five, one, total);
 };
 
 const fetchScore = async (country: string, lang: string, productId: string) => {
   const cacheKey = `nps_uniqlo_score_v2_${productId}`; // v2: scores keep their sign (netScore)
   const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
+
   if (cached) return cached.value;
   // Reuse the product page's cache when it has one: its aggregate rating carries
   // the same star counts this would fetch.
   const rateCount = cacheGet(`nps_uniqlo_v3_${productId}`, CACHE_TTL)?.rating?.rateCount;
+
   if (rateCount) {
     const result = scoreFromRateCount(rateCount);
-    if (result) { cacheSet(cacheKey, result); return result; }
+
+    if (result) {
+      cacheSet(cacheKey, result);
+
+      return result;
+    }
   }
 
   const res = await throttledFetch(
     `https://www.uniqlo.com/${country}/api/commerce/v5/${lang}/products/${productId}/reviews?limit=1&offset=0&sort=submission_time&httpFailure=true`,
     { headers: { 'x-fr-clientid': `uq.${country}.web-spa` } }
   );
+
   if (!res.ok) return null;
   const json = await res.json();
   const result = scoreFromRateCount(json?.result?.rating?.rateCount ?? {});
   cacheSetMaybe(cacheKey, result);
+
   return result;
 };
 
 const locale = getLocale();
+
 if (!locale) throw new Error('unsupported locale');
 
 setupScoreGrid({
@@ -55,6 +70,7 @@ setupScoreGrid({
   scoreForCard: (tile) => {
     const link = tile.closest('a[href*="/products/"]') || tile.querySelector('a[href*="/products/"]');
     const productId = link && extractProductId(link.getAttribute('href')!);
+
     return productId ? fetchScore(locale.country, locale.lang, productId) : Promise.resolve(null);
   },
   placeBadge: (tile, badge) => {

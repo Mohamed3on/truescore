@@ -12,6 +12,7 @@ export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday',
 export function formatHourLabel(h: number): string {
   const hour = Math.floor(h);
   const min = Math.round((h - hour) * 60);
+
   return `${hour % 12 || 12}${min ? `:${String(min).padStart(2, '0')}` : ''} ${hour % 24 < 12 ? 'AM' : 'PM'}`;
 }
 
@@ -22,13 +23,17 @@ export const slotsOf = (d: DayHours | undefined): HoursSlot[] =>
 
 export function localHourInTz(tz: string | undefined, now = new Date()): { day: number; hour: number } {
   const fallback = { day: now.getDay(), hour: now.getHours() + now.getMinutes() / 60 };
+
   if (!tz) return fallback;
+
   try {
     const fmt = new Intl.DateTimeFormat('en-US', {
       timeZone: tz, weekday: 'long', hour: 'numeric', minute: 'numeric', hour12: false,
     });
+
     const parts = Object.fromEntries(fmt.formatToParts(now).map((p) => [p.type, p.value]));
     const day = WEEKDAYS.indexOf(parts.weekday as typeof WEEKDAYS[number]);
+
     return {
       day: day >= 0 ? day : fallback.day,
       hour: parseInt(parts.hour!, 10) + parseInt(parts.minute!, 10) / 60,
@@ -44,9 +49,13 @@ export function localHourInTz(tz: string | undefined, now = new Date()): { day: 
 // Sunday's own hours say, and Tuesday's 18–02 says nothing about Tuesday 01:00.
 export function isOpenNow(today: DayHours | undefined, hour: number, yesterday?: DayHours): boolean | null {
   if (slotsOf(yesterday).some(([open, close]) => close <= open && hour < close)) return true;
+
   if (!today) return null;
   const slots = slotsOf(today);
+
   if (slots.length) return slots.some(([open, close]) => hour >= open && (close <= open || hour < close));
+
   if (today.label === 'Closed') return false;
+
   return null;
 }

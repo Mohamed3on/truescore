@@ -7,6 +7,7 @@ import { cardScore } from '../shared/otto';
 const CARD = 'article[data-qa="reptile-product-tile"][data-product-id]';
 const idOf = (card: Element) => card.getAttribute('data-product-id');
 const scoreOf = (card: Element) => cardScore(idOf(card)!);
+
 // The stars' line, else the brand and title block.
 const lineOf = (card: Element) => card.querySelector('.reptile-rating') ?? card.querySelector('.reptile-product-header');
 
@@ -15,20 +16,24 @@ const lineOf = (card: Element) => card.querySelector('.reptile-rating') ?? card.
 // it, so the scores start fetching at once and only the badges wait. Each
 // prefetch is handed over once.
 const APP = 'script[data-kestrel-app="reptile.dundee"]';
+
 const hydrated = new Promise<void>((resolve) => {
   const check = () => {
     if (document.querySelector(APP)) return;
     observer.disconnect();
     resolve();
   };
+
   const observer = new MutationObserver(check);
   observer.observe(document, { childList: true, subtree: true });
   check();
 });
 
 const prefetched = new Map<string, ReturnType<typeof scoreOf>>();
+
 for (const card of document.querySelectorAll(CARD)) {
   const id = idOf(card);
+
   if (id && !prefetched.has(id)) prefetched.set(id, scoreOf(card));
 }
 
@@ -39,6 +44,7 @@ hydrated.then(() => {
     scoreForCard: (card) => {
       const early = prefetched.get(idOf(card)!);
       prefetched.delete(idOf(card)!);
+
       return early ?? scoreOf(card);
     },
     // Or at the end of a placeholder, which survives its drawing (the

@@ -15,12 +15,15 @@ const throttledFetch = createThrottledFetcher(8);
 const evaluationFor = async (id: string): Promise<Evaluation> => {
   const key = `ali_eval_v2_${id}`; // v2: scores keep their sign (netScore)
   const cached = cacheGet(key, EVAL_TTL);
+
   if (cached) return cached;
 
   const data = await fetchEvaluation(throttledFetch, id).catch(
     (): Evaluation => ({ score: null, reviews: [] })
   );
+
   if (data.score || data.reviews.length) cacheSet(key, data);
+
   return data;
 };
 
@@ -28,6 +31,7 @@ const evaluationFor = async (id: string): Promise<Evaluation> => {
 // review order, so its dimensions tally by index.
 const buildDims = (reviews: AliReview[]) => {
   const variations = parseVariations(reviews.map((r) => r.skuInfo));
+
   return tallyVariationDims(reviews, {
     variationsOf: (_r, i) => variations[i],
     ratingOf: (r) => r.rating,
@@ -39,8 +43,10 @@ const buildDims = (reviews: AliReview[]) => {
 // it under the title instead.
 const panelAnchor = (): [Element, InsertPosition] | null => {
   const rating = document.querySelector('[class*="reviewer--wrap"]');
+
   if (rating) return [rating, 'afterend'];
   const title = document.querySelector('[class*="title--wrap"]');
+
   return title ? [title, 'afterend'] : null;
 };
 
@@ -50,13 +56,16 @@ const buildIsland = async (id: string): Promise<HTMLElement | null> => {
   const evaluation = evaluationFor(id);
   const score = cachedItemScore(id) || (await evaluation).score;
   const early = score ? null : await evaluation;
+
   if (!score && !early?.reviews.length) return null;
 
   const wrapper = createIslandShell();
+
   if (score) wrapper.append(...buildGauge(score));
 
   const fillReviews = ({ reviews }: Evaluation) => {
     const dims = buildDims(reviews);
+
     if (dims.length) {
       const card = renderVariationCard(dims, { animate: true });
       card.style.maxWidth = '100%';
@@ -65,6 +74,7 @@ const buildIsland = async (id: string): Promise<HTMLElement | null> => {
     }
 
     const texts = [...new Set(reviews.map((r) => r.text).filter(Boolean))];
+
     if (texts.length >= 5) {
       buildSummarizeWidget({
         wrapper,
@@ -75,8 +85,10 @@ const buildIsland = async (id: string): Promise<HTMLElement | null> => {
       });
     }
   };
+
   if (early) fillReviews(early);
   else evaluation.then(fillReviews);
+
   return wrapper;
 };
 
@@ -86,10 +98,12 @@ setupSpaInjector<HTMLElement>({
   match: () => productId(),
   load: async () => {
     const id = productId();
+
     return id ? buildIsland(id) : null;
   },
   inject: (wrapper) => {
     const anchor = panelAnchor();
+
     if (anchor && !document.body.contains(wrapper)) anchor[0].insertAdjacentElement(anchor[1], wrapper);
   },
   cleanup: () => document.querySelectorAll('.ars-wrapper').forEach((node) => node.remove()),

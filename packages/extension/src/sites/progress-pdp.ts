@@ -15,6 +15,7 @@ const sizeOf = (r: StampedReview) => (r.productVariantName !== r.productName && 
 
 const toText = (r: StampedReview) => {
   const text = reviewToText(r);
+
   return text && sizeOf(r) ? `[Size: ${sizeOf(r)}] ${text}` : text;
 };
 
@@ -34,6 +35,7 @@ const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: IslandScore
     summaryPrompt: SUMMARY_PROMPT,
     autoSummarize,
   });
+
   return wrapper;
 };
 
@@ -50,11 +52,13 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
     e.stopPropagation();
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+
   return item;
 };
 
 (function main() {
   const info = getProductInfo();
+
   if (!info) return;
   const reviewsWidget = document.getElementById('stamped-main-widget')!;
   const titleBlock = document.querySelector('.product__title-and-price');
@@ -62,14 +66,18 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
   // Stamped redraws its stars line once its script loads, wiping whatever is
   // inside, so the score goes back in whenever it's missing.
   let lineScore: HTMLElement | null = null;
+
   const placeLineScore = () => {
     const line = titleBlock?.querySelector('.stamped-main-badge .stamped-badge');
+
     if (lineScore && line && !line.contains(lineScore)) line.append(lineScore);
   };
+
   if (titleBlock) new MutationObserver(placeLineScore).observe(titleBlock, { childList: true, subtree: true });
 
   loadReviews(PROGRESS, info, (bundle, autoSummarize) => {
     const scored = computeScore(bundle);
+
     if (!scored || scored.total < 5) return;
     document.querySelector('.ars-wrapper')?.remove();
     lineScore?.remove();

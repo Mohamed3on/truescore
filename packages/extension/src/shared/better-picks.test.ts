@@ -52,6 +52,7 @@ describe('rankPicks', () => {
     const { ranked } = rankPicks({ score: 100, ratio: 0.5 }, [
       c('mid', 100, 0.6), c('unknown', 900, null), c('best', 100, 0.9), c('worst', 100, 0.1),
     ]);
+
     expect(ranked.map((p) => p.key)).toEqual(['best', 'mid', 'worst', 'unknown']);
   });
 
@@ -85,6 +86,7 @@ describe('rankPicks with hated items', () => {
       { key: 'meh', item: null, score: 100, ratio: 0 },
       { key: 'worse', item: null, score: -2000, ratio: -0.5 },
     ]);
+
     expect(threshold).toBe(-500);
     expect(passed.map((p) => p.key)).toEqual(['meh']);
   });

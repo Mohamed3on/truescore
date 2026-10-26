@@ -5,18 +5,23 @@ import { normalizeQuestion, runAsk, type AskMessage, type AskView } from './inde
 // A transport that answers each round with the given chunks, keeping what it was sent.
 const transport = (...rounds: UIMessageChunk[][]) => {
   const sent: AskMessage[][] = [];
+
   const t: ChatTransport<AskMessage> = {
     sendMessages: async ({ messages }) => {
       sent.push(structuredClone(messages));
       const chunks = rounds.shift()!;
+
       return new ReadableStream({ start(c) { chunks.forEach((chunk) => c.enqueue(chunk)); c.close(); } });
     },
     reconnectToStream: async () => null,
   };
+
   return { t, sent };
 };
+
 const text = (id: string, ...deltas: string[]): UIMessageChunk[] =>
   [{ type: 'text-start', id }, ...deltas.map((delta) => ({ type: 'text-delta' as const, id, delta })), { type: 'text-end', id }];
+
 const call = (toolCallId: string, query: string): UIMessageChunk => ({ type: 'tool-input-available', toolCallId, toolName: 'searchReviews', input: { query } });
 
 describe('runAsk', () => {
@@ -33,9 +38,15 @@ describe('runAsk', () => {
       [{ type: 'start' }, { type: 'start-step' }, ...text('a', 'Let me check'), call('c1', 'dog OR Hund'), { type: 'finish-step' }, { type: 'finish' }],
       [{ type: 'start' }, { type: 'start-step' }, ...text('b', 'Yes, dogs are welcome.'), { type: 'finish-step' }, { type: 'finish' }],
     );
+
     const matches = { texts: ['[2024-01-01] dog friendly', '[2024-02-01] Hunde willkommen'], scorePct: 80, trustedReviews: 2 };
     const views: AskView[] = [];
-    const settled = await runAsk(t, 'Dogs?', async (_q, onFound) => { onFound(1); return matches; }, (v) => views.push(v));
+
+    const settled = await runAsk(t, 'Dogs?', async (_q, onFound) => {
+      onFound(1);
+
+      return matches;
+    }, (v) => views.push(v));
 
     expect(sent[1]?.at(-1)?.parts).toContainEqual(expect.objectContaining({ toolCallId: 'c1', state: 'output-available', output: { ...matches, found: 2 } }));
     // The draft written before searching gave way; the row climbed, then settled.
@@ -48,15 +59,27 @@ describe('runAsk', () => {
     // The first round holds its stream open until the Search has started.
     let started!: () => void;
     const searching = new Promise<void>((r) => { started = r; });
+
     const rounds: Array<(c: ReadableStreamDefaultController<UIMessageChunk>) => Promise<void>> = [
       async (c) => { c.enqueue({ type: 'start' }); c.enqueue(call('c1', 'wifi')); await searching; c.enqueue({ type: 'finish' }); },
       async (c) => { for (const chunk of [{ type: 'start' } as const, ...text('a', 'Fast wifi.'), { type: 'finish' } as const]) c.enqueue(chunk); },
     ];
+
     const t: ChatTransport<AskMessage> = {
-      sendMessages: async () => { const round = rounds.shift()!; return new ReadableStream({ async start(c) { await round(c); c.close(); } }); },
+      sendMessages: async () => {
+        const round = rounds.shift()!;
+
+        return new ReadableStream({ async start(c) { await round(c); c.close(); } });
+      },
       reconnectToStream: async () => null,
     };
-    const settled = await runAsk(t, 'Wifi?', async () => { started(); return { texts: ['[2024-01-01] fast wifi'], scorePct: 100, trustedReviews: 1 }; }, () => {});
+
+    const settled = await runAsk(t, 'Wifi?', async () => {
+      started();
+
+      return { texts: ['[2024-01-01] fast wifi'], scorePct: 100, trustedReviews: 1 };
+    }, () => {});
+
     expect(settled).toEqual({ searches: [{ query: 'wifi', found: 1, done: true, scorePct: 100, trustedReviews: 1 }], text: 'Fast wifi.', done: true });
   });
 
@@ -65,6 +88,7 @@ describe('runAsk', () => {
       [{ type: 'start' }, call('c1', 'wifi'), { type: 'finish' }],
       [{ type: 'start' }, ...text('a', 'Only part of the reviews could be checked.'), { type: 'finish' }],
     );
+
     const settled = await runAsk(t, 'Wifi?', async () => { throw new Error('no session'); }, () => {});
     expect(sent[1]?.at(-1)?.parts).toContainEqual(expect.objectContaining({ toolCallId: 'c1', state: 'output-error' }));
     expect(settled.searches).toEqual([{ query: 'wifi', found: null, done: true }]);
@@ -75,6 +99,7 @@ describe('runAsk', () => {
       [{ type: 'start' }, call('c1', 'wifi'), { type: 'finish' }],
       [{ type: 'start' }, ...text('a', 'a', 'b'), { type: 'finish' }],
     );
+
     const views: AskView[] = [];
     await runAsk(t, 'Wifi?', async () => ({ texts: ['[2024-01-01] fast wifi'], scorePct: 100, trustedReviews: 1 }), (v) => views.push(v));
     const [a, b] = views.filter((v) => v.text === 'a' || v.text === 'ab');
@@ -89,8 +114,13 @@ describe('runAsk', () => {
       ...text('a', 'Yes.'),
       { type: 'finish' },
     ]);
+
     let searched = 0;
-    expect(await runAsk(t, 'Dogs?', async () => { searched++; return null; }, () => {})).toEqual({ searches: [{ query: 'dog', found: 3, done: true, scorePct: 90, trustedReviews: 3 }], text: 'Yes.', done: true, answeredAt: 1234 });
+    expect(await runAsk(t, 'Dogs?', async () => {
+      searched++;
+
+      return null;
+    }, () => {})).toEqual({ searches: [{ query: 'dog', found: 3, done: true, scorePct: 90, trustedReviews: 3 }], text: 'Yes.', done: true, answeredAt: 1234 });
     expect(sent).toHaveLength(1);
     expect(searched).toBe(0);
   });

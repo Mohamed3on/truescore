@@ -12,8 +12,11 @@ export async function writeText(call: Call, onText?: (text: string) => void): Pr
   let failure: unknown;
   let text = '';
   const stream = streamText({ ...call, onError: ({ error }) => { failure = error; } });
+
   for await (const delta of stream.textStream) onText((text += delta));
+
   if (failure) throw failure;
+
   return { text, usage: await stream.usage };
 }
 
@@ -22,16 +25,22 @@ export async function writeText(call: Call, onText?: (text: string) => void): Pr
 // of its text rather than lose the whole object.
 export async function writeObject<T, S = T>({ schema, ...call }: Call & { schema: FlexibleSchema<T> }, onPartial?: (partial: DeepPartial<T>) => void, salvage?: (text: string) => S): Promise<{ object: T | S; usage: LanguageModelUsage | undefined }> {
   const output = Output.object({ schema });
+
   try {
     if (!onPartial) {
       const whole = await generateText({ ...call, output });
+
       return { object: whole.output, usage: whole.usage };
     }
+
     // As in writeText, a failed call reaches only onError.
     let failure: unknown;
     const stream = streamText({ ...call, output, onError: ({ error }) => { failure = error; } });
+
     for await (const partial of stream.partialOutputStream) onPartial(partial);
+
     if (failure) throw failure;
+
     return { object: await stream.output, usage: await stream.usage };
   } catch (e) {
     if (salvage && NoObjectGeneratedError.isInstance(e) && e.text) return { object: salvage(e.text), usage: e.usage };

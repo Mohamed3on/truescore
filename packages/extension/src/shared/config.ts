@@ -6,6 +6,7 @@ import { DEFAULT_PROVIDER, LLM_PROVIDERS, REASONING_EFFORTS, type ReasoningEffor
 const storedKey = async (name: string): Promise<string> => {
   try {
     const items = await chrome.storage.sync.get(name) as Record<string, string>;
+
     return items[name] || '';
   } catch {
     // MAIN-world scripts can't reach chrome.storage; they use the web proxy, not this.
@@ -22,7 +23,9 @@ export const getTruescorePassword = (): Promise<string> => storedKey('truescoreP
 // them from config. Default 'low'; only the OpenAI path reads it (Gemini and
 // DeepSeek run non-thinking).
 export type { ReasoningEffort, LLMProvider };
+
 export { REASONING_EFFORTS };
+
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 
 // Active provider for extension-direct summaries: the popup toggle wins; unset,
@@ -31,6 +34,7 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 // server's default instead.)
 export async function getReasoningEffort(): Promise<ReasoningEffort> {
   const effort = await storedKey('openaiReasoningEffort');
+
   return (REASONING_EFFORTS as readonly string[]).includes(effort) ? (effort as ReasoningEffort) : DEFAULT_REASONING_EFFORT;
 }
 
@@ -41,7 +45,9 @@ export async function getActiveLLM(): Promise<{ provider: LLMProvider; key: stri
       .then(([anthropic, openai, gemini, deepseek]): Record<LLMProvider, string> => ({ anthropic, openai, gemini, deepseek })),
     getReasoningEffort(),
   ]);
+
   const provider: LLMProvider = pref ?? [DEFAULT_PROVIDER, ...LLM_PROVIDERS].find((p) => keys[p]) ?? DEFAULT_PROVIDER;
+
   return { provider, key: keys[provider], reasoningEffort };
 }
 
@@ -50,5 +56,6 @@ export async function getActiveLLM(): Promise<{ provider: LLMProvider; key: stri
 // unset toggle returns undefined and leaves the server on its own default.
 export async function getProviderChoice(): Promise<LLMProvider | undefined> {
   const pref = await storedKey('llmProvider');
+
   return (LLM_PROVIDERS as readonly string[]).includes(pref) ? (pref as LLMProvider) : undefined;
 }

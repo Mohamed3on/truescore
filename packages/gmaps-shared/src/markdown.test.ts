@@ -9,6 +9,7 @@ test('stray/odd ** does not invert emphasis and leaves no literal markers', () =
   const out = mdInline(
     '**Buy this if you want a complete seated open-guard attack game (gi or no-gi), not a grab-bag of techniques.**** The single most important takeaway',
   );
+
   // The intended span is bold…
   expect(out).toContain(
     '<strong>Buy this if you want a complete seated open-guard attack game (gi or no-gi), not a grab-bag of techniques.</strong>',

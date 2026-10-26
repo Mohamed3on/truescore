@@ -3,6 +3,7 @@ import { tallyVariationDims } from './variation-table';
 
 // starScore (from gmaps-shared): 5★ → +1, 1★ → −1, else 0.
 const review = (rating: number, v: [string, string][]) => ({ rating, v });
+
 const opts = {
   variationsOf: (r: { v: [string, string][] }) => r.v,
   ratingOf: (r: { rating: number }) => r.rating,
@@ -19,6 +20,7 @@ describe('tallyVariationDims', () => {
       ],
       opts
     );
+
     expect(dims).toHaveLength(1);
     expect(dims[0].label).toBe('Colour');
     expect(dims[0].rows.map((r) => r.label)).toEqual(['Red', 'Blue']); // Red +2, Blue 0
@@ -35,6 +37,7 @@ describe('tallyVariationDims', () => {
       ],
       opts
     );
+
     // Size has M + L → kept; Colour is Red-only → dropped.
     expect(dims.map((d) => d.label)).toEqual(['Size']);
   });
@@ -48,6 +51,7 @@ describe('tallyVariationDims', () => {
       ],
       opts
     );
+
     expect(dims[0].rows.map((r) => r.label).sort()).toEqual(['Blue', 'Red']);
   });
 
@@ -56,6 +60,7 @@ describe('tallyVariationDims', () => {
       [review(5, [['Colour', 'Red']]), review(1, [['Colour', 'Blue']])],
       opts
     );
+
     expect(dims[0].rows[0].meta).toBe('1 review');
   });
 
@@ -65,10 +70,12 @@ describe('tallyVariationDims', () => {
       [2, [['Fit', 'Runs small']]],
       [3, [['Fit', 'True to size']]],
     ]);
+
     const dims = tallyVariationDims([{ id: 1, rating: 5 }, { id: 2, rating: 1 }, { id: 3, rating: 5 }], {
       variationsOf: (r) => lookup.get(r.id) ?? [],
       ratingOf: (r) => r.rating,
     });
+
     expect(dims[0].rows[0].label).toBe('True to size'); // +2 vs Runs small −1
     expect(dims[0].rows[0].score).toBe(2);
   });
