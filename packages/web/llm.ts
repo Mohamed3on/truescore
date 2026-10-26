@@ -207,6 +207,8 @@ const SEARCH_NOTE = `The reviews given are a sample; the rest can say otherwise.
 // then the place's Sample, closed by a cache breakpoint; only the scope and
 // question vary after it. Each round and each new question on a place then
 // reads everything up to the Sample back from the provider's prompt cache.
+// The Sample is a system message: the last round's toolChoice 'none' drops
+// Anthropic's cached messages, not its cached system prompt.
 const ASK_INSTRUCTIONS = `Answer the question about the place using its reviews. Be concise. Name specifics (prices, hours, names) when relevant. Quote reviewer phrasing inline ("...") when it directly answers. If reviewers disagree or don't cover it, say so.
 
 ${NOTES}
@@ -232,13 +234,13 @@ export async function ask({ placeName, reviewTexts, removedReviews }: Subject, m
 
   return streamText({
     model, providerOptions, maxOutputTokens: 32768, abortSignal,
-    instructions: ASK_INSTRUCTIONS,
+    instructions: [
+      { role: 'system', content: ASK_INSTRUCTIONS },
+      { role: 'system', content: reviewBlock(reviewTexts), providerOptions: CACHE_BREAKPOINT },
+    ],
     messages: [{
       role: 'user',
-      content: [
-        { type: 'text', text: reviewBlock(reviewTexts), providerOptions: CACHE_BREAKPOINT },
-        { type: 'text', text: `\n\n---\n\n${removal ? `${removal}\n\n` : ''}About: ${subjectOf(placeName, filterQuery)}\n\nQuestion: ${questionOf(messages)}` },
-      ],
+      content: `${removal ? `${removal}\n\n` : ''}About: ${subjectOf(placeName, filterQuery)}\n\nQuestion: ${questionOf(messages)}`,
     }, ...history],
     tools,
     toolChoice: searchesLeft(history) ? 'auto' : 'none',

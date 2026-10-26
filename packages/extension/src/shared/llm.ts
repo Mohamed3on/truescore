@@ -82,10 +82,16 @@ const SEARCH_DESCRIPTION = 'Search every review, not just the sample, for any of
 // An Ask's model for runAsk, in-process: the site's `prompt` and the `sample`
 // reviews as its instructions, and — when the page can Search — the
 // searchReviews tool it answers; without one it answers in a single pass.
+// Anthropic caches them at the breakpoint, so each step and follow-up reads
+// them back; the other providers cache on their own.
 export const askTransport = async (prompt: string, sample: string[], canSearch: boolean): Promise<ChatTransport<AskMessage>> => new DirectChatTransport({
   agent: new ToolLoopAgent({
     ...await activeModel(),
-    instructions: withReviews(canSearch ? `${prompt}\n\n${SEARCH_NOTE}` : prompt, sample),
+    instructions: {
+      role: 'system',
+      content: withReviews(canSearch ? `${prompt}\n\n${SEARCH_NOTE}` : prompt, sample),
+      providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    },
     tools: canSearch ? { searchReviews: searchReviewsTool(sample, SEARCH_DESCRIPTION) } : {},
     prepareStep: ({ messages }) => (searchesLeft(messages) ? {} : { toolChoice: 'none' }),
   }),
