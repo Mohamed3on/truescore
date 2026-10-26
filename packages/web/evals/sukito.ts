@@ -4,9 +4,11 @@
 // (an abandoned market/food hall), explicit value mentions, and one clear
 // negative — so it discriminates summary quality far better than the small
 // cached fixtures. Consumed by evals/compare.ts.
-const fixture = {
+import type { Fixture } from './judge';
+
+const fixture: Fixture = {
   place: 'Sukito',
-  filter: null as string | null,
+  filter: null,
   reviewTexts: [
     `[2026-05-10] Don't expect a restaurant with Japanese decor or anything fancy, because it won't be like that. It's located inside a food hall.
 Here, the food is the priority, and boy, do they deliver.

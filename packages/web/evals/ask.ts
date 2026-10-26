@@ -72,6 +72,7 @@ const searchOver = (reviews: Review[]): SearchReviews => async (query) => {
 
 // /api/ask without the HTTP hop: the same ask() round, streamed as UI messages.
 const transportFor = (subject: Subject, provider: Provider): ChatTransport<AskMessage> => ({
+  // SAFETY: onError only reads .message through ?. and falls back to e, so a non-Error still prints.
   sendMessages: async ({ messages, abortSignal }) =>
     (await ask(subject, messages, { provider, abortSignal })).toUIMessageStream({ originalMessages: messages, onError: (e) => String((e as Error)?.message ?? e) }),
   reconnectToStream: async () => null,

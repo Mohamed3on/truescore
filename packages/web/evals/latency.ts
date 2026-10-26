@@ -34,7 +34,7 @@ const dsBeta = createDeepSeek({ apiKey: process.env.DEEPSEEK_API_KEY, baseURL: '
 
 // DeepSeek has no native JSON-schema response format, so the SDK injects the
 // schema into the system prompt and logs a warning on every call — hush it.
-(globalThis as any).AI_SDK_LOG_WARNINGS = false;
+globalThis.AI_SDK_LOG_WARNINGS = false;
 
 const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const RUNS = Number(args[0]) || 3;
@@ -97,7 +97,10 @@ type Q = { grounded: number; coverage: number; concise: number };
 const judge = openai('gpt-6-sol');
 const QUALITY_SCHEMA = z.object({ grounded: z.number().int(), coverage: z.number().int(), concise: z.number().int() });
 
-const scoreQuality = async (summary: unknown): Promise<Q> => {
+// What every variant's run() extracts: REQUEST.schema's output.
+type Extracted = z.infer<typeof REQUEST.schema>;
+
+const scoreQuality = async (summary: Extracted): Promise<Q> => {
   const { object } = await writeObject({
     model: judge,
     providerOptions: { openai: { reasoningEffort: 'medium' } },

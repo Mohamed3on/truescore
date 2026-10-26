@@ -35,7 +35,7 @@ for (const row of db.prepare<{ data: string }, []>('SELECT data FROM entries').i
 places.sort((a, b) => b.n - a.n);
 
 const fixtures: Fixture[] = [
-  ...places.slice(0, 2).map(({ n, ...f }) => f),
+  ...places.slice(0, 2).map(({ n: _n, ...f }) => f),
   ...(search ? [search] : []),
 ];
 

@@ -11,7 +11,7 @@ export type Fixture = { place: string; filter: string | null; reviewTexts: strin
 // input order. Lets the slow thinking judge run concurrently without firing
 // every pair at once (which overruns the API → timeouts, as latency.ts showed).
 export async function mapPool<T, R>(items: T[], limit: number, fn: (x: T, i: number) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
+  const out: R[] = [];
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(limit, items.length) }, async () => {

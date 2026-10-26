@@ -45,6 +45,8 @@ type Slot = { storage: Record<string, string | undefined>; usage?: LanguageModel
 
 const slot = new AsyncLocalStorage<Slot>();
 
+// SAFETY: the summary call reaches chrome only through config.ts's
+// chrome.storage.sync.get(name), the one method this stub has.
 (globalThis as any).chrome = { storage: { sync: { get: async (name: string) => ({ [name]: slot.getStore()?.storage[name] }) } } };
 
 setOnUsage((usage) => { slot.getStore()!.usage = usage; });
@@ -90,7 +92,7 @@ const boldHealth = (md: string) => {
   const oddMarkers = ((md.match(/\*\*/g)?.length ?? 0) % 2) === 1;
 
   const filler = spans.filter((s) => {
-    if (/:$/.test(s.trim())) return false; // a bolded "Section label:" is fine, not the bug
+    if (s.trim().endsWith(':')) return false; // a bolded "Section label:" is fine, not the bug
     const t = s.replace(/[:,.]+$/, '');
 
     return (FILLER_OPENER.test(t) || TAIL_WORD.test(t)) && !SPECIFIC.test(t);
@@ -122,7 +124,7 @@ const load = async (f: (typeof FIXTURES)[number]) => ({
   context: 'context' in f && f.context ? (await Bun.file(new URL(`./fixtures/${f.context}`, import.meta.url)).text()).trim() : '',
 });
 
-const fixtures = await Promise.all(FIXTURES.filter((f) => !fixtureArg || f.name.includes(fixtureArg)).map(load));
+const fixtures = await Promise.all(FIXTURES.values().filter((f) => !fixtureArg || f.name.includes(fixtureArg)).map(load).toArray());
 
 const available = CONTESTANTS.filter((c) => {
   if (ONLY && !ONLY.includes(c.label)) return false;
@@ -194,7 +196,7 @@ if (JUDGE && KEYS.openai) {
   const acc = (p: string) => (tally[p] ??= { w: 0, t: 0, l: 0, grounded: 0, coverage: 0, concise: 0, n: 0 });
   const out = (x: any) => JSON.stringify({ conclusion: x.conclusion, praised: x.praised, complaints: x.complaints, betterAlternative: x.betterAlternative }, null, 1);
 
-  const groups = [...new Set(rows.filter((r) => r.parsed).map((r) => r.fixture))];
+  const groups = [...new Set(rows.values().filter((r) => r.parsed).map((r) => r.fixture))];
 
   for (const [gi, g] of groups.entries()) {
     const ok = rows.filter((r) => r.parsed && r.fixture === g);

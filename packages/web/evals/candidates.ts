@@ -28,5 +28,7 @@ export const registerCandidates = () => {
   // --only=a,b keeps just those labels.
   const only = process.argv.find((a) => a.startsWith('--only='))?.slice('--only='.length).split(',');
 
+  // SAFETY: the Object.assign above made every label a PROVIDERS key, which is
+  // all summarize() and ask() need of a Provider.
   return Object.keys(candidates).filter((label) => !only || only.includes(label)).map((label) => ({ label, provider: label as Provider }));
 };

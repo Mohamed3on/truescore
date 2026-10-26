@@ -31,6 +31,7 @@ const { setOnUsage } = await import('../llm');
 
 type Provider = import('../llm').Provider;
 
+// SAFETY: the operator passes --provider a Provider name, as the usage above lists.
 const provider = (arg('provider') ?? 'openai') as Provider;
 const DIR = join(import.meta.dir, 'fixtures/reddit');
 
@@ -59,11 +60,11 @@ const expectedOf = (thread: Thread, labels: Record<string, Label[]>, subject: (l
     }
   }
 
-  return [...bySubject].map(([name, said]) => {
+  return bySubject.entries().map(([name, said]) => {
     const reads = Object.fromEntries(Object.entries(said).map(([id, s]) => [id, combine(s)!]));
 
     return { name, reads, count: countOf(thread, reads) };
-  }).filter((o) => speakers(o.count) >= 2).sort((a, b) => net(b.count) - net(a.count) || a.count.against - b.count.against);
+  }).filter((o) => speakers(o.count) >= 2).toArray().sort((a, b) => net(b.count) - net(a.count) || a.count.against - b.count.against);
 };
 
 // A listed Option is the labelled one when their names, or a name and one of
@@ -72,7 +73,7 @@ const expectedOf = (thread: Thread, labels: Record<string, Label[]>, subject: (l
 const sameThing = (produced: string, names: string[]) => {
   const p = ` ${words(produced)} `;
 
-  return names.map(words).filter((n) => n.length > 2).some((n) => p.trim() === n || p.includes(` ${n} `) || ` ${n} `.includes(p));
+  return names.values().map(words).filter((n) => n.length > 2).some((n) => p.trim() === n || p.includes(` ${n} `) || ` ${n} `.includes(p));
 };
 
 // Produced titles read as one: what each comment says of any of them, together.

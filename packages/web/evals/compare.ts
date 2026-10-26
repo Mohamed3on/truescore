@@ -3,8 +3,8 @@
 //   bun evals/compare.ts --judge    # adds blind LLM-judge scoring (gpt-6-sol)
 //   bun evals/compare.ts --judge --luna   # compare gpt-6-luna effort ladder
 //   bun evals/compare.ts --judge --candidates [--only=a,b]   # shipped models vs newer ones (candidates.ts)
-import { summarize, setOnUsage, PROVIDERS, type Provider, type ReasoningEffort, type Summary } from '../llm';
-import { REASONING_EFFORTS } from '@truescore/gmaps-shared';
+import { summarize, setOnUsage, type Provider, type ReasoningEffort, type Summary } from '../llm';
+import { LLM_PROVIDERS, REASONING_EFFORTS } from '@truescore/gmaps-shared';
 import { registerCandidates } from './candidates';
 import baseFixtures from './fixtures.json';
 import { judge, mapPool } from './judge';
@@ -23,10 +23,10 @@ const fixtures = [...baseFixtures, sukito];
 type Contestant = { label: string; provider: Provider; effort?: ReasoningEffort };
 
 const CONTESTANTS: Contestant[] = LUNA
-  ? (REASONING_EFFORTS as readonly ReasoningEffort[]).map((e) => ({ label: `luna:${e}`, provider: 'openai', effort: e }))
+  ? REASONING_EFFORTS.map((e) => ({ label: `luna:${e}`, provider: 'openai', effort: e }))
   : CANDIDATES
     ? registerCandidates()
-    : (Object.keys(PROVIDERS) as Provider[]).map((p) => ({ label: p, provider: p }));
+    : LLM_PROVIDERS.map((p) => ({ label: p, provider: p }));
 
 // --luna runs 6 judge pairs per fixture, so scope it to the most discriminating
 // real sets to keep the run time (and token cost) sane.
