@@ -7,6 +7,13 @@
 /** Signs one review request: resolves to its x-maps-bgkey, or null when it can't. */
 export type Signer = (request: string) => Promise<string | null>;
 
+declare global {
+  interface Window {
+    // Maps' own signer, once installMapsSigner has run in the page.
+    __truescoreSignMaps?: Signer;
+  }
+}
+
 // What Maps' BotGuard signs for a review request: the inner ListUgcPosts JSON in the
 // body's f.req.
 export const bgkeyRequestOf = (body: string): string | null => {
@@ -32,10 +39,14 @@ export const signReq = async <T extends { body?: string; headers?: Record<string
 export function installMapsSigner(): void {
   type Snapshot = (done: (key: string) => void, args: unknown[]) => void;
 
+  // window.botguard, which Maps calls as botguard.a(program, ready, …): the program
+  // is the string its challenge carries (as packages/web/maps-minter reads it).
+  type Botguard = { a: Function };
+
   let snapshot: Snapshot | null = null;
   const wrappedA = new WeakMap<Function, Function>();
 
-  const wrapA = (a: Function) => function (this: unknown, program: unknown, ready: (...fns: any[]) => unknown, ...rest: unknown[]) {
+  const wrapA = (a: Function) => function (this: Botguard, program: string, ready: (...fns: any[]) => void, ...rest: unknown[]) {
     return a.call(this, program, (...fns: any[]) => {
       snapshot = fns[0];
 
@@ -62,7 +73,7 @@ export function installMapsSigner(): void {
       }) : v;
     },
   });
-  (window as any).__truescoreSignMaps = (request: string): Promise<string | null> => new Promise((resolve) => {
+  window.__truescoreSignMaps = (request: string): Promise<string | null> => new Promise((resolve) => {
     const sign = snapshot;
 
     if (!sign) return resolve(null);

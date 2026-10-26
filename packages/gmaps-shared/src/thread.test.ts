@@ -1,15 +1,21 @@
 import { describe, expect, test } from 'bun:test';
 import { countsInTally, threadFromListing } from './thread';
 
-const t1 = (data: Record<string, unknown>, replies: unknown[] = []) => ({
+type Listings = Parameters<typeof threadFromListing>[0];
+
+type Thing = Listings[1]['data']['children'][number];
+
+type CommentData = Extract<Thing, { kind: 't1' }>['data'];
+
+const t1 = (data: Partial<CommentData> & Pick<CommentData, 'id' | 'body'>, replies: Thing[] = []): Thing => ({
   kind: 't1',
   data: { author: 'someone', score: 1, ...data, replies: replies.length ? { kind: 'Listing', data: { children: replies } } : '' },
 });
 
-const listing = (comments: unknown[]) => [
+const listing = (comments: Thing[]): Listings => [
   { kind: 'Listing', data: { children: [{ kind: 't3', data: { id: 'p1', title: 'Best headphones?', selftext: 'Under $300' } }] } },
   { kind: 'Listing', data: { children: comments } },
-] as any;
+];
 
 describe('threadFromListing', () => {
   test('flattens the tree with each reply pointing at its parent', () => {

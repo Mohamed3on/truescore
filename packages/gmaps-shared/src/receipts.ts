@@ -64,8 +64,9 @@ export async function receiptsFor(points: string[], texts: string[], rivals: Riv
 
   if (!support) return null;
 
-  return {
-    points: support.map((ids) => (ids.length >= MIN_SUPPORT ? receipt(ids.map((i) => texts[i]!)) : null)),
-    ...(preferred.includes(undefined) ? {} : { alternatives: rivals.flatMap((r, i) => (preferred[i] ? [{ name: r.name, ...receipt(preferred[i]) }] : [])) }),
-  };
+  const receipts: Receipts = { points: support.map((ids) => (ids.length >= MIN_SUPPORT ? receipt(ids.map((i) => texts[i]!)) : null)) };
+
+  if (!preferred.includes(undefined)) receipts.alternatives = rivals.flatMap((r, i) => (preferred[i] ? [{ name: r.name, ...receipt(preferred[i]) }] : []));
+
+  return receipts;
 }

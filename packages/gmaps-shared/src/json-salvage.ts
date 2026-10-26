@@ -22,7 +22,10 @@ export const salvageString = (text: string, field: string): string | undefined =
 
   if (!m?.[1]) return undefined;
 
-  try { return JSON.parse(`"${m[1]}"`) as string; } catch { return m[1]; }
+  try {
+    // SAFETY: a JSON string literal parses to a string, or throws.
+    return JSON.parse(`"${m[1]}"`) as string;
+  } catch { return m[1]; }
 };
 
 /** A `"field": 12` numeric value. Undefined when absent or unreadable. */
@@ -47,7 +50,10 @@ export const salvageStringArray = (text: string, field: string): string[] => {
   const out: string[] = [];
 
   for (const m of inner.matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
-    try { out.push(JSON.parse(`"${m[1]}"`) as string); } catch { out.push(m[1] ?? ''); }
+    try {
+      // SAFETY: a JSON string literal parses to a string, or throws.
+      out.push(JSON.parse(`"${m[1]}"`) as string);
+    } catch { out.push(m[1] ?? ''); }
   }
 
   // A truncated array ends mid-string; that fragment has no closing quote and so
@@ -66,7 +72,11 @@ export const salvageObjects = <T>(text: string, key: string): T[] => {
   for (const m of text.matchAll(/\{[^{}]*\}/g)) {
     if (!m[0].includes(`"${key}"`)) continue;
 
-    try { out.push(JSON.parse(m[0]) as T); } catch {}
+    try {
+      // SAFETY: T is the flat object the caller's schema had the model write, and
+      // this is one it finished.
+      out.push(JSON.parse(m[0]) as T);
+    } catch {}
   }
 
   return out;
@@ -78,5 +88,8 @@ export const salvageObjects = <T>(text: string, key: string): T[] => {
  * doesn't, a partial answer beats no answer.
  */
 export const parseOrSalvage = <T>(text: string, salvage: (raw: string) => T): T => {
-  try { return JSON.parse(text) as T; } catch { return salvage(text); }
+  try {
+    // SAFETY: text is the model's reply to the caller's schema for T, and it parses only when finished.
+    return JSON.parse(text) as T;
+  } catch { return salvage(text); }
 };

@@ -9,7 +9,7 @@
 // The daylight skin's ease (DESIGN.md).
 const EASE = 'cubic-bezier(0.25, 1, 0.5, 1)';
 const DIM = '0.5';
-export const animates = (node: HTMLElement) => typeof node.animate === 'function' && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+export const animates = (node: HTMLElement) => typeof node.animate !== 'undefined' && !matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // Markdown written into `node`, rewritten only when it changed: a streamed
 // partial redraws just what grew.

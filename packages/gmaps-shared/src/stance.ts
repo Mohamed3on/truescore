@@ -34,6 +34,7 @@ export type Answer = (typeof ANSWERS)[number];
 export type AnswerCounts = Record<Answer, number>;
 
 const tally = <K extends string>(keys: readonly K[], values: Iterable<K | null | undefined>): Record<K, number> => {
+  // SAFETY: keys is STANCES or ANSWERS, which list every K, so each key gets its 0.
   const counts = Object.fromEntries(keys.map((k) => [k, 0])) as Record<K, number>;
 
   for (const v of values) if (v != null && v in counts) counts[v]++;
@@ -131,7 +132,11 @@ export async function trustedStance(topic: string, reviews: Review[], reader: St
 
   if (!labels) return null;
 
-  return { stance: countStances(labels), stances: Object.fromEntries(read.map((r, i) => [r.reviewId, labels[i]!])), ...(readable.length > read.length ? { of: readable.length } : {}) };
+  const result: StanceResult = { stance: countStances(labels), stances: Object.fromEntries(read.map((r, i) => [r.reviewId, labels[i]!])) };
+
+  if (readable.length > read.length) result.of = readable.length;
+
+  return result;
 }
 
 // How an opinion split reads: mostly positive, mostly negative, or split. The
