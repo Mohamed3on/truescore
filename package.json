@@ -6,8 +6,8 @@
   "scripts": {
     "build:extension": "bun run --cwd packages/extension build",
     "deploy:web": "SERVER=root@65.108.153.112 ./deploy/sync.sh",
-    "lint": "oxlint",
-    "check": "bun test && tsgo -p packages/gmaps-shared && tsgo -p packages/web && tsgo -p packages/extension",
+    "lint": "bun --bun oxlint",
+    "check": "bun run lint && bun test && tsgo -p packages/gmaps-shared && tsgo -p packages/web && tsgo -p packages/extension",
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
