@@ -54,6 +54,9 @@ let failure = '';
 let view: View = 'people';
 let level: Level = 'makers';
 let openKey: string | null = null;
+
+// The Option first by people and by upvotes alike, if one is.
+let leadKey: string | null = null;
 let openTitle: string | null = null;
 let stop: (() => void) | null = null;
 
@@ -66,17 +69,17 @@ let stopAsk: (() => void) | null = null;
 
 // ---- figures ----
 
-const sides = (c: TallyCount): [number, number] => (view === 'people' ? [c.for, c.against] : [c.upFor, c.upAgainst]);
+const sides = (c: TallyCount, v = view): [number, number] => (v === 'people' ? [c.for, c.against] : [c.upFor, c.upAgainst]);
 
-const net = (c: TallyCount) => {
-  const [a, b] = sides(c);
+const net = (c: TallyCount, v = view) => {
+  const [a, b] = sides(c, v);
 
   return a - b;
 };
 
 // Equal nets rank the less contested first (6–0 above 10–4): the one with fewer
 // against, which is the one with the higher share for.
-const byStanding = (a: TallyCount, b: TallyCount) => net(b) - net(a) || sides(a)[1] - sides(b)[1] || b.upFor - a.upFor;
+const byStanding = (a: TallyCount, b: TallyCount, v = view) => net(b, v) - net(a, v) || sides(a, v)[1] - sides(b, v)[1] || b.upFor - a.upFor;
 
 const figures = (c: TallyCount) => {
   const [a, b] = sides(c);
@@ -251,6 +254,7 @@ const DRAWER_CSS = `:host { all: initial !important; }
 
 .ts-tally-list { list-style: none; margin: 0; padding: 0; }
 .ts-tally-row { border-bottom: 1px solid var(--ts-line); }
+.ts-tally-lead { background: rgba(21, 128, 61, 0.06); box-shadow: inset 2px 0 0 rgba(21, 128, 61, 0.55); }
 .ts-tally-opt,
 .ts-tally-title,
 .ts-tally-receipt { display: flex; align-items: baseline; gap: 8px; width: 100%; }
@@ -442,6 +446,7 @@ const rowEl = (row: Row) => {
   const { listed, tally } = row;
   const li = rowEls.get(listed.key) ?? el('li', 'ts-tally-row');
   rowEls.set(listed.key, li);
+  li.classList.toggle('ts-tally-lead', listed.key === leadKey);
   const isOpen = openKey === listed.key && !!tally;
   const head = button('ts-tally-opt');
   head.setAttribute('aria-expanded', String(isOpen));
@@ -518,6 +523,9 @@ function render() {
   const visible = level === 'products' && !levelSwitch.hidden ? shown().flatMap(products) : shown();
   const counted = visible.filter((r) => r.tally && speakersOf(r.tally.count) >= MIN_TALLY_PEOPLE).sort((a, b) => byStanding(a.tally!.count, b.tally!.count));
   const pending = visible.filter((r) => !r.tally);
+  const firstBy = (v: View) => counted.toSorted((a, b) => byStanding(a.tally!.count, b.tally!.count, v))[0]?.listed.key ?? null;
+  const lead = firstBy('people');
+  leadKey = lead === firstBy('upvotes') ? lead : null;
   const folded = visible.filter((r) => r.tally && speakersOf(r.tally.count) < MIN_TALLY_PEOPLE).sort((a, b) => byStanding(a.tally!.count, b.tally!.count));
   replaceChips(list, [...counted, ...pending].map((r) => ({ key: r.listed.key, el: rowEl(r) })));
   onceList.replaceChildren(...folded.map(rowEl));
