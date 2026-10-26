@@ -1,7 +1,8 @@
 import { countsInTally, MIN_TALLY_PEOPLE, stripAccents, type ListedOption, type LlmOverrides, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type ThreadComment, type ThreadTurn } from '@truescore/gmaps-shared';
+import { z } from 'zod';
 import { db } from './db';
 import { askedAboutFor, describedFor, groupAnswersFor, optionStancesFor, putsForwardFor } from './jev';
-import { explainOptions, listOptions, optionsRequest, reasonsRequest, type ThreadOption } from './llm';
+import { explainOptions, listOptions, optionsRequest, reasonsRequest, type StreamedOption, type ThreadOption } from './llm';
 
 // A Reddit Thread's Tally (CONTEXT.md). The model lists the Options and how the
 // thread writes them; Jev reads what each comment naming one says of it; the
@@ -17,44 +18,57 @@ const MAX_QUESTION = 3_000;
 // many characters.
 const LIST_CHARS = 300_000;
 
-export const threadOf = (v: unknown): Thread | null => {
-  const t = v as Partial<Thread> | undefined;
+// The strings in a list, anything else in it dropped; none when it isn't one.
+export const STRINGS = z.array(z.string().optional().catch(undefined)).catch([]).transform((list) => list.filter((s) => s !== undefined));
 
-  if (!t || typeof t.id !== 'string' || !Array.isArray(t.comments)) return null;
-  const str = (s: unknown) => (typeof s === 'string' ? s : '');
+// A comment as a client sent it, kept when it has an id and a body.
+const SENT_COMMENT = z.object({
+  id: z.string(),
+  parentId: z.string().nullable().catch(null),
+  author: z.string().catch(''),
+  score: z.number().catch(0),
+  body: z.string(),
+  bot: z.unknown().optional(),
+});
 
-  const comments = t.comments.slice(0, MAX_COMMENTS).flatMap((c): ThreadComment[] =>
-    c && typeof c.id === 'string' && typeof c.body === 'string'
-      ? [{
-          id: c.id,
-          parentId: typeof c.parentId === 'string' ? c.parentId : null,
-          author: str(c.author) || '[deleted]',
-          score: Number.isFinite(c.score) ? c.score : 0,
-          body: c.body.slice(0, MAX_BODY),
-          ...(c.bot ? { bot: true } : {}),
-        }]
-      : []);
+// The Thread a client sent (TallyRequest, ThreadAskRequest); null when it
+// isn't one.
+export const SENT_THREAD = z.object({
+  id: z.string(),
+  title: z.string().catch(''),
+  text: z.string().catch(''),
+  author: z.string().catch(''),
+  comments: z.array(z.unknown()),
+}).transform(({ id, title, text, author, comments }): Thread => {
+  const kept = comments.slice(0, MAX_COMMENTS).flatMap((sent): ThreadComment[] => {
+    const c = SENT_COMMENT.safeParse(sent);
 
-  const author = str(t.author);
+    if (!c.success) return [];
+    const comment = { id: c.data.id, parentId: c.data.parentId, author: c.data.author || '[deleted]', score: c.data.score, body: c.data.body.slice(0, MAX_BODY) };
 
-  return { id: t.id, title: str(t.title), text: str(t.text), ...(author ? { author } : {}), comments };
-};
+    return [c.data.bot ? { ...comment, bot: true } : comment];
+  });
+
+  return author ? { id, title, text, author, comments: kept } : { id, title, text, comments: kept };
+}).nullable().catch(null);
 
 // The questions asked of a Thread so far (ThreadAskRequest): the last
 // MAX_TURNS, each with its answer but the one to answer. null without one.
 const MAX_TURNS = 11;
 
-export const chatOf = (v: unknown): ThreadTurn[] | null => {
-  const asked = (Array.isArray(v) ? v : []).filter((t) => typeof t?.question === 'string' && t.question.trim()).slice(-MAX_TURNS);
+const SENT_TURN = z.object({ question: z.string(), answer: z.string().optional().catch(undefined) });
+
+export const SENT_CHAT = z.array(SENT_TURN.nullable().catch(null)).catch([]).transform((turns): ThreadTurn[] | null => {
+  const asked = turns.flatMap((t) => (t?.question.trim() ? [t] : [])).slice(-MAX_TURNS);
   const last = asked.pop();
 
   if (!last) return null;
 
   return [
-    ...asked.filter((t) => typeof t.answer === 'string').map((t) => ({ question: t.question.slice(0, MAX_QUESTION), answer: t.answer.slice(0, MAX_BODY) })),
+    ...asked.flatMap((t) => (t.answer === undefined ? [] : [{ question: t.question.slice(0, MAX_QUESTION), answer: t.answer.slice(0, MAX_BODY) }])),
     { question: last.question.slice(0, MAX_QUESTION) },
   ];
-};
+});
 
 // The question every comment answers: the post's title and text.
 const questionOf = ({ title, text }: Thread) => `${title}\n\n${text.slice(0, MAX_QUESTION)}`.trim();
@@ -285,13 +299,17 @@ const distinct = <T extends { name: string }>(items: T[]) => {
   });
 };
 
-const strings = (v: unknown) => (Array.isArray(v) ? v.filter((a): a is string => typeof a === 'string') : []);
+const STREAMED_OPTION = z.object({
+  name: z.string().catch(''),
+  aliases: STRINGS,
+  titles: z.array(z.object({ name: z.string(), aliases: STRINGS }).nullable().catch(null)).catch([]),
+}).catch({ name: '', aliases: [], titles: [] });
 
-const tidy = (o: Partial<ThreadOption>): ThreadOption => ({
-  name: o.name ?? '',
-  aliases: strings(o.aliases),
-  titles: distinct((o.titles ?? []).flatMap((t) => (typeof t?.name === 'string' ? [{ name: t.name, aliases: strings(t.aliases) }] : []))),
-});
+const tidy = (o: StreamedOption): ThreadOption => {
+  const { name, aliases, titles } = STREAMED_OPTION.parse(o);
+
+  return { name, aliases, titles: distinct(titles.flatMap((t) => (t ? [t] : []))) };
+};
 
 // The Options are listed once per set of comments and prompt: the same page
 // reopened lists nothing again (and Jev's reads are kept, jev_memo), a thread
@@ -302,12 +320,16 @@ const getOptions = db.prepare<{ v: string }, [string]>('SELECT v FROM tally_opti
 const putOptions = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO tally_options (k, v, ts) VALUES (?, ?, ?)');
 const LISTING = Bun.hash(optionsRequest('', []).prompt).toString(36);
 
-async function listOptionsOf(thread: Thread, question: string, { provider, reasoningEffort }: LlmOverrides, onOption: (o: Partial<ThreadOption>) => void): Promise<void> {
+async function listOptionsOf(thread: Thread, question: string, { provider, reasoningEffort }: LlmOverrides, onOption: (o: StreamedOption) => void): Promise<void> {
   const counted = thread.comments.filter(countsInTally);
   const k = `${thread.id}:${provider ?? ''}:${LISTING}:${Bun.hash(counted.map((c) => c.id).sort().join(',')).toString(36)}`;
   const hit = getOptions.get(k);
 
-  if (hit) return void (JSON.parse(hit.v) as ThreadOption[]).forEach(onOption);
+  if (hit) {
+    // SAFETY: a row holds only what listOptions returned, which its schema checked.
+    return void (JSON.parse(hit.v) as ThreadOption[]).forEach(onOption);
+  }
+
   let chars = 0;
   const bodies = counted.map((c) => c.body).filter((b) => (chars += b.length) <= LIST_CHARS);
   putOptions.run(k, JSON.stringify(await listOptions(question, bodies, onOption, provider, reasoningEffort)), Date.now());
@@ -328,13 +350,14 @@ const QUOTE_CHARS = 800;
 async function reasonsOf(thread: Thread, question: string, options: ThreadOption[], { provider, reasoningEffort }: LlmOverrides, write: (e: TallyEvent) => void, asked: ReadonlySet<string>, picks: ReadonlySet<string>[]): Promise<void> {
   const index = new Map<ThreadComment, number>();
 
-  const groups = options
+  const groups = options.values()
     .map((o, i) => {
       const named = naming(thread, ownNames(o, options), rivalsOf(o, options), undefined, asked.has(keyOf(o.name)), picks[i]);
 
       return { o, named, people: new Set(named.map(personOf)).size, upvotes: named.reduce((n, c) => n + c.score, 0) };
     })
     .filter((g) => g.people >= MIN_TALLY_PEOPLE)
+    .toArray()
     .sort((a, b) => b.people - a.people || b.upvotes - a.upvotes)
     .map(({ o, named }) => ({ key: keyOf(o.name), option: o.name, comments: named.map((c) => index.get(c) ?? index.set(c, index.size).get(c)!) }));
 
@@ -343,7 +366,10 @@ async function reasonsOf(thread: Thread, question: string, options: ThreadOption
   const k = `${thread.id}:${provider ?? ''}:${Bun.hash(reasonsRequest(question, comments, groups).prompt).toString(36)}`;
   const hit = getReasons.get(k);
 
-  if (hit) return void Object.entries(JSON.parse(hit.v) as Record<string, string>).forEach(([key, text]) => write({ type: 'why', key, text }));
+  if (hit) {
+    // SAFETY: a row holds only what explainOptions returned: a line per key.
+    return void Object.entries(JSON.parse(hit.v) as Record<string, string>).forEach(([key, text]) => write({ type: 'why', key, text }));
+  }
 
   try {
     const reasons = await explainOptions(question, comments, groups, (key, text) => { if (text.trim()) write({ type: 'why', key, text: text.trim() }); }, provider, reasoningEffort);
@@ -380,7 +406,7 @@ async function askedOf(question: string, post: string, o: ThreadOption): Promise
   if (!named.length) return [];
   const says = await askedAboutFor(question, named.map((n) => n.about));
 
-  return says ? named.filter((_, i) => says[i]).map((n) => n.key) : [];
+  return says ? named.flatMap((n, i) => (says[i] ? [n.key] : [])) : [];
 }
 
 // The comments speaking of an Option the answers put in their own words

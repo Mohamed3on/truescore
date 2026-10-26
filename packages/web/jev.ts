@@ -1,5 +1,6 @@
-import { choice, noul, TypeSafeClient, type Question } from '@typesafe-ai/sdk';
-import { receiptsFor, stripAccents, trustedStance, type Answer, type Review, type Stance, type StanceReader, type StanceResult, type Summary, type SupportReader } from '@truescore/gmaps-shared';
+import { choice, noul, TypeSafeClient, type EntryType, type Question, type Questions, type SystemOneRequest, type Usage } from '@typesafe-ai/sdk';
+import { receiptsFor, stripAccents, trustedStance, type Answer, type Quote, type Review, type Stance, type StanceReader, type StanceResult, type Summary, type SupportReader } from '@truescore/gmaps-shared';
+import { z } from 'zod';
 import { db } from './db';
 import type { Subject } from './summary-subject';
 
@@ -16,7 +17,16 @@ import type { Subject } from './summary-subject';
 
 const apiKey = process.env.TYPESAFE_API_KEY;
 
-type Client = Pick<TypeSafeClient, 'systemOne'>;
+// Jev's client as this module uses it: a request's answers, decoded on arrival
+// (REPLIES), and the input tokens it cost.
+type Client = { systemOne: (request: SystemOneRequest<Questions>) => PromiseLike<{ answers: object; usage: Pick<Usage, 'input_tokens'> }> };
+
+// An answer as Jev sends it back: a choice's label, or a yes/no's chance of
+// yes. Anything else reads as no answer.
+const REPLY = z.object({ choice: z.string().optional().catch(undefined), noul: z.number().optional().catch(undefined) }).optional().catch(undefined);
+const REPLIES = z.record(z.string(), REPLY).catch({});
+
+type Reply = z.infer<typeof REPLY>;
 
 let client: Client | null = apiKey ? new TypeSafeClient({ apiKey, timeout: 8_000, retry: { maxRetries: 1 } }) : null;
 
@@ -50,18 +60,18 @@ export const jevAvailable = (): boolean => !!client && Date.now() >= downUntil;
 export const setJevClient = (fake: Client | null) => { client = fake; downUntil = 0; };
 
 // One request's answers by question id, or null when it failed.
-async function evaluate(kind: string, state: Record<string, unknown>, questions: Record<string, Question>): Promise<Record<string, any> | null> {
+async function evaluate(kind: string, state: EntryType, questions: Questions): Promise<Record<string, Reply> | null> {
   if (!client || !jevAvailable()) return null;
 
   if (inFlight >= MAX_IN_FLIGHT) await new Promise<void>((go) => waiting.push(go));
   inFlight++;
 
   try {
-    const { answers, usage } = await client.systemOne({ state: state as never, questions });
+    const { answers, usage } = await client.systemOne({ state, questions });
     spent[kind] = (spent[kind] ?? 0) + usage.input_tokens;
     console.log(`[jev] ${kind} q=${Object.keys(questions).length} in=${usage.input_tokens}`);
 
-    return answers as Record<string, any>;
+    return REPLIES.parse(answers);
   } catch (e) {
     downUntil = Date.now() + DOWN_MS;
     console.warn(`[jev] ${kind} request failed, pausing ${DOWN_MS / 60_000} min:`, e instanceof Error ? e.message : e);
@@ -129,10 +139,10 @@ const pending = new Map<string, Promise<string | null>>();
 // inside its own question. All or nothing: a count missing a failed batch would
 // understate, so any failure returns null and the caller keeps its old display.
 // `ask` builds the question for one text (and its index), `read` its answer.
-async function judge<T extends string>(kind: string, about: string, state: Record<string, unknown>, texts: string[], ask: (text: string, i: number) => Question, read: (answer: any) => T | undefined): Promise<T[] | null> {
+async function judge<T extends string>(kind: string, about: string, state: EntryType, texts: string[], ask: (text: string, i: number) => Question, read: (reply: Reply) => T | undefined): Promise<T[] | null> {
   if (!jevAvailable()) return null;
   const memo = texts.map((t) => memoKey(kind, about, t));
-  const out: (T | null)[] = memo.map((k) => (getMemo.get(k)?.v as T | undefined) ?? null);
+  const out: (string | null)[] = memo.map((k) => getMemo.get(k)?.v ?? null);
   const elsewhere: Promise<void>[] = [];
   const todo: number[] = [];
   const settle = new Map<string, (v: string | null) => void>();
@@ -142,7 +152,7 @@ async function judge<T extends string>(kind: string, about: string, state: Recor
     const p = pending.get(k);
 
     if (p) {
-      elsewhere.push(p.then((w) => { out[i] = w as T | null; }));
+      elsewhere.push(p.then((w) => { out[i] = w; }));
 
       return;
     }
@@ -166,13 +176,16 @@ async function judge<T extends string>(kind: string, about: string, state: Recor
 
   await Promise.all(elsewhere);
 
+  // SAFETY: each read is one this kind's `read` returned: just now, or kept or
+  // pending under a memo key, which holds the kind.
   return out.every((v) => v != null) ? (out as T[]) : null;
 }
 
-const inCriteria = <T extends string>(criteria: Record<T, unknown>) => (a: any): T | undefined =>
-  typeof a?.choice === 'string' && a.choice in criteria ? (a.choice as T) : undefined;
+// SAFETY: `in` has just found the label among the criteria.
+const inCriteria = <T extends string>(criteria: Record<T, string>) => (reply: Reply): T | undefined =>
+  reply?.choice !== undefined && reply.choice in criteria ? (reply.choice as T) : undefined;
 
-const yesNo = (a: any): '1' | '0' | undefined => (typeof a?.noul === 'number' ? (a.noul >= 0.5 ? '1' : '0') : undefined);
+const yesNo = (reply: Reply): '1' | '0' | undefined => (reply?.noul === undefined ? undefined : reply.noul >= 0.5 ? '1' : '0');
 
 // Each text's stance on `topic` (a chip's label, a search's query).
 export const stancesFor = (topic: string, texts: string[]): Promise<Stance[] | null> =>
@@ -292,7 +305,7 @@ export async function supportFor(points: string[], texts: string[]): Promise<num
     return says && texts.flatMap((_, i) => (says[i] === '1' ? [i] : []));
   }));
 
-  return support.every(Boolean) ? (support as number[][]) : null;
+  return support.every((s) => s !== null) ? support : null;
 }
 
 // A rival's mentions: reviews holding its name, or failing that its longest word
@@ -321,11 +334,17 @@ export async function withReceipts(summary: Summary, { reviewTexts }: Subject): 
   if (!checked) return summary;
   const { points, alternatives } = checked;
 
-  return {
+  const receipted: Summary = {
     ...summary,
     highlights: summary.highlights.flatMap((h, k) => (points[k] ? [{ ...h, ...points[k] }] : [])),
-    ...(alternatives ? { alternatives: alternatives.map((a) => a.name), preferredBy: Object.fromEntries(alternatives.map((a) => [a.name, a.support])) } : {}),
   };
+
+  if (alternatives) {
+    receipted.alternatives = alternatives.map((a) => a.name);
+    receipted.preferredBy = Object.fromEntries(alternatives.map((a) => [a.name, a.support]));
+  }
+
+  return receipted;
 }
 
 // Whether a summary already carries its receipts (summaries cached before Jev don't).
@@ -337,7 +356,8 @@ export const hasReceipts = (summary: Summary): boolean => summary.highlights.eve
 // extension's own scrape may not match.
 export const quotingReviews = (summary: Summary, reviews: Review[] | undefined): Summary => {
   if (!reviews?.length) return summary;
-  const byText = new Map(reviews.map((r) => [r.text, r]));
+  // Keyed by text, so a quote that's already a review finds nothing and stays.
+  const byText = new Map<Quote, Review>(reviews.map((r) => [r.text, r]));
 
-  return { ...summary, highlights: summary.highlights.map((h) => (h.quotes ? { ...h, quotes: h.quotes.map((q) => (typeof q === 'string' ? byText.get(q) ?? q : q)) } : h)) };
+  return { ...summary, highlights: summary.highlights.map((h) => (h.quotes ? { ...h, quotes: h.quotes.map((q) => byText.get(q) ?? q) } : h)) };
 };

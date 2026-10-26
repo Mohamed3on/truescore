@@ -4,7 +4,7 @@ import { answersFor, setJevClient, stancesFor, withReceipts } from './jev';
 
 // A fake Jev: answers each question by a rule over the review text inside it,
 // and records every request so a test can see what was asked and how batched.
-type Req = { state: any; questions: Record<string, any> };
+type Req = { state: any; questions: Record<string, { instructions?: any }> };
 
 let requests: Req[] = [];
 let failNext = false;
@@ -16,12 +16,12 @@ const fake = (rule: (review: string, state: any, q: any) => any) => ({
     if (failNext) {
       failNext = false;
 
-      return Promise.reject(new Error('boom')) as any;
+      return Promise.reject(new Error('boom'));
     }
 
     const answers = Object.fromEntries(Object.entries(req.questions).map(([id, q]) => [id, rule(q.instructions.review, req.state, q)]));
 
-    return Promise.resolve({ answers, usage: { input_tokens: 100, output_tokens: 0 }, model: 'jev-test' }) as any;
+    return Promise.resolve({ answers, usage: { input_tokens: 100, output_tokens: 0 }, model: 'jev-test' });
   },
 });
 
@@ -41,7 +41,7 @@ describe('stancesFor', () => {
     expect(stances![1]).toBe('praise');
     expect(requests.map((r) => Object.keys(r.questions).length)).toEqual([20, 20, 5]);
     expect(requests[0]!.state).toEqual({ topic: 'parking' });
-    expect(requests[0]!.questions.r0.instructions.review).toBe(texts[0]);
+    expect(requests[0]!.questions.r0!.instructions.review).toBe(texts[0]);
   });
 
   test('a judgement made once is never asked again', async () => {

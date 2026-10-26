@@ -3,7 +3,7 @@ import type { TallyEvent, Thread, ThreadComment } from '@truescore/gmaps-shared'
 import { fakeModel } from './fake-model';
 import { setJevClient } from './jev';
 import { setModel } from './llm';
-import { chatOf, combine, countOf, naming, tallyOption, tallyThread, telling, threadOf } from './tally';
+import { combine, countOf, naming, SENT_CHAT, SENT_THREAD, tallyOption, tallyThread, telling } from './tally';
 
 let n = 0;
 
@@ -147,29 +147,29 @@ describe('countOf', () => {
   });
 });
 
-describe('threadOf', () => {
+describe('SENT_THREAD', () => {
   test('keeps a well-formed thread and drops malformed comments', () => {
-    const thread = threadOf({ id: 'p', title: 'Q', text: 5, comments: [{ id: 'a', body: 'Sony', score: 3, author: 'u', parentId: null }, { id: 'b' }, null] });
+    const thread = SENT_THREAD.parse({ id: 'p', title: 'Q', text: 5, comments: [{ id: 'a', body: 'Sony', score: 3, author: 'u', parentId: null }, { id: 'b' }, null] });
     expect(thread).toEqual({ id: 'p', title: 'Q', text: '', comments: [{ id: 'a', parentId: null, author: 'u', score: 3, body: 'Sony' }] });
-    expect(threadOf({ id: 'p' })).toBeNull();
+    expect(SENT_THREAD.parse({ id: 'p' })).toBeNull();
   });
 });
 
-describe('chatOf', () => {
+describe('SENT_CHAT', () => {
   test('keeps the answered questions before the one to answer, and needs one', () => {
-    expect(chatOf([{ question: 'best?', answer: 'Sony' }, { question: 'why?', answer: 'stale' }, { question: ' ' }])).toEqual([
+    expect(SENT_CHAT.parse([{ question: 'best?', answer: 'Sony' }, { question: 'why?', answer: 'stale' }, { question: ' ' }])).toEqual([
       { question: 'best?', answer: 'Sony' },
       { question: 'why?' },
     ]);
-    expect(chatOf([{ question: 'best?' }, { question: 'why?' }])).toEqual([{ question: 'why?' }]);
-    expect(chatOf([])).toBeNull();
-    expect(chatOf('best?')).toBeNull();
+    expect(SENT_CHAT.parse([{ question: 'best?' }, { question: 'why?' }])).toEqual([{ question: 'why?' }]);
+    expect(SENT_CHAT.parse([])).toBeNull();
+    expect(SENT_CHAT.parse('best?')).toBeNull();
   });
 });
 
 // A fake Jev reading each comment by a rule; a reply reads through its parent.
 // Its yes/no questions (is it asked about, described, a group answer) are all no.
-type Req = { state: any; questions: Record<string, any> };
+type Req = { state: any; questions: Record<string, { instructions?: any }> };
 
 let requests: Req[] = [];
 const verdict = (text: string) => (/awful|bad/.test(text) ? 'against' : /great|best/.test(text) ? 'for' : /^(this|same)\b/.test(text) ? 'agree' : 'off');
@@ -186,9 +186,9 @@ beforeEach(() => {
         return [id, { choice: own === 'agree' ? verdict(q.instructions.replying_to ?? '') : own, noul: 0 }];
       }));
 
-      return Promise.resolve({ answers, usage: { input_tokens: 100, output_tokens: 0 }, model: 'jev-test' }) as any;
+      return Promise.resolve({ answers, usage: { input_tokens: 100, output_tokens: 0 }, model: 'jev-test' });
     },
-  } as any);
+  });
 });
 
 describe('tallyOption', () => {
@@ -295,7 +295,7 @@ describe('tallyThread', () => {
 
     const events: TallyEvent[] = [];
     await tallyThread(thread, (e) => events.push(e));
-    expect(events.filter((e) => e.type === 'listed').map((e) => e.option.name)).toEqual(['Sony', 'Bose']);
+    expect(events.flatMap((e) => (e.type === 'listed' ? [e.option.name] : []))).toEqual(['Sony', 'Bose']);
     expect(Object.fromEntries(events.flatMap((e) => (e.type === 'option' ? [[e.option.key, e.option.count]] : [])))).toEqual({
       sony: { for: 2, against: 0, mixed: 0, upFor: 2, upAgainst: 0 },
       bose: { for: 1, against: 1, mixed: 0, upFor: 1, upAgainst: 1 },

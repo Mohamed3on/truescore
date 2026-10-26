@@ -27,13 +27,13 @@ const model = fakeModel(async (fields) => {
 let jevCalls = 0;
 
 const jev = {
-  systemOne: (req: { questions: Record<string, any> }) => {
+  systemOne: (req: { questions: Record<string, { instructions?: any }> }) => {
     jevCalls++;
     const answers = Object.fromEntries(Object.entries(req.questions).map(([id, q]) => [id, { noul: /penguin/.test(q.instructions.review) ? 0.9 : 0.1 }]));
 
-    return Promise.resolve({ answers, usage: { input_tokens: 1, output_tokens: 0 }, model: 'jev-test' }) as any;
+    return Promise.resolve({ answers, usage: { input_tokens: 1, output_tokens: 0 }, model: 'jev-test' });
   },
-} as any;
+};
 
 beforeEach(() => { aliasesDue = Promise.resolve(); modelCalls = jevCalls = 0; setModel(model); setJevClient(jev); });
 
@@ -46,7 +46,7 @@ const review = (text: string): Review => ({ reviewId: `r${++n}`, stars: 5, revie
 const place = async () => {
   const featureId = `0x${++n}:0x1`;
   const reviews = [review(`loved the penguins ${n}`), review(`penguins! ${n}`), review(`parking was hard ${n}`)];
-  const score = { featureId, totalReviews: 3, trustedReviews: 3, scorePct: 90, relevant: { totalReviews: 3, trustedReviews: 3, scorePct: 90 }, newest: { totalReviews: 3, trustedReviews: 3, scorePct: 90 }, reviews } as ScoreResult;
+  const score: ScoreResult = { featureId, totalReviews: 3, trustedReviews: 3, scorePct: 90, relevant: { totalReviews: 3, trustedReviews: 3, scorePct: 90 }, newest: { totalReviews: 3, trustedReviews: 3, scorePct: 90 }, reviews };
   await cache.putScore(featureId, 'Aquarium', score, 3);
 
   return { featureId, reviews };

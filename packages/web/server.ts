@@ -42,14 +42,14 @@ import {
   type ThreadAskEvent,
   type ThreadAskRequest,
 } from '@truescore/gmaps-shared';
-import type { BunRequest, Serve, Server } from 'bun';
+import type { BunRequest, HTMLBundle, Server } from 'bun';
 import { resolvePlace } from './resolve';
 import { mapsCredsStatus, mapsSessionHealthy, onThrottledScrape, startMintTimer, renewSession } from './maps-creds';
 import { scorePlace, fetchAllForSearch, type ScoreResult } from './gmaps';
 import { createUIMessageStream, createUIMessageStreamResponse, isStaticToolUIPart } from 'ai';
 import { ask, askThread, parseProvider, parseReasoningEffort } from './llm';
 import { cachedSubject, checkedSummary, summaryWithReceipts } from './checked-summary';
-import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Histogram, type PreviewBundle } from './histogram';
+import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type PreviewBundle } from './histogram';
 import { harvestTokens, harvestQuick, scoreHighlight, type Harvest } from './highlights';
 import { answerKey, cache, type CachedAnswer, type CacheEntry } from './cache';
 import { logEvent } from './events';
@@ -58,7 +58,7 @@ import index from './index.html';
 import login from './login.html';
 import { errStatus, NoReviews, resolveSubject } from './summary-subject';
 import { answersFor, hasReceipts, jevAvailable, quotingReviews, stanceOfReviews, stancesFor, supportFor } from './jev';
-import { chatOf, tallyThread, threadOf } from './tally';
+import { SENT_CHAT, SENT_THREAD, STRINGS, tallyThread } from './tally';
 
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -98,17 +98,21 @@ const SEED_ROUTES = new Set(['/api/maps-creds', '/api/maps-creds/renew']);
 
 type Handler = (req: BunRequest, server: Server<undefined>) => Response | Promise<Response>;
 
+// A route's handlers, by method.
+type Methods = Record<string, Handler>;
+
 const lock = (handler: Handler): Handler => (req, server) =>
   authed(req) ? handler(req, server) : corsJson({ error: 'TrueScore password required' }, 401);
 
-function lockApi<R extends string>(routes: Serve.Routes<undefined, R>): Serve.Routes<undefined, R> {
-  const all = routes as unknown as Record<string, Handler | Record<string, Handler>>;
-
-  for (const [path, route] of Object.entries(all)) {
+// Every route is a page or a table of methods, never a bare handler, so locking
+// one is locking each of its methods.
+function lockApi<R extends string>(routes: Record<R, HTMLBundle | Methods>): Record<R, HTMLBundle | Methods> {
+  for (const [path, route] of Object.entries<HTMLBundle | Methods>(routes)) {
     if (!path.startsWith('/api/') || SEED_ROUTES.has(path)) continue;
+    // SAFETY: the only pages are / and /login; every /api route is a table of methods.
+    const methods = route as Methods;
 
-    if (typeof route === 'function') all[path] = lock(route);
-    else for (const [method, handler] of Object.entries(route)) if (method !== 'OPTIONS') route[method] = lock(handler);
+    for (const [method, handler] of Object.entries(methods)) if (method !== 'OPTIONS') methods[method] = lock(handler);
   }
 
   return routes;
@@ -125,8 +129,8 @@ const nextPath = (req: Request) => {
 // Translate proxy / upstream errors into something users can act on, instead
 // of surfacing raw "googleFetch 502 for https://…" strings. Unknown errors
 // pass through so the chip tooltip still has useful detail in dev.
-function friendlyError(e: unknown): string {
-  const m = e instanceof Error ? e.message : String(e);
+function friendlyError(cause: unknown): string {
+  const m = cause instanceof Error ? cause.message : String(cause);
   const status = m.match(/googleFetch (\d+)/)?.[1];
 
   if (status === '429') return 'Google is throttling — try again in a moment';
@@ -142,7 +146,7 @@ function friendlyError(e: unknown): string {
   return m;
 }
 
-const errBody = (e: unknown) => ({ error: friendlyError(e) });
+const errBody = (cause: unknown) => ({ error: friendlyError(cause) });
 
 // A body's model overrides, honoured only for a configured provider or effort.
 const llmOf = (body: LlmOverrides) => ({ provider: parseProvider(body.provider), reasoningEffort: parseReasoningEffort(body.reasoningEffort) });
@@ -172,6 +176,9 @@ const lookupScore = ({ reviews, ...score }: ScoreResult): LookupScore => {
   return { ...score, latestReviewTs: latest ? (latest > 1e14 ? Math.floor(latest / 1000) : latest) : null };
 };
 
+// The `error` event every NDJSON stream's event union carries.
+type StreamError = { type: 'error'; error: string };
+
 // NDJSON streaming response. The producer pushes one JSON object per line via
 // `write`; if it throws, we emit a final `{type:'error'}` event so the client
 // always gets a defined terminus. The `closed` flag silently swallows writes
@@ -182,19 +189,17 @@ function ndjsonStream<E extends { type: string }>(producer: (write: (event: E) =
       const enc = new TextEncoder();
       let closed = false;
 
-      const enqueue = (obj: unknown) => {
+      // Producer writes are checked against the event union E; the catch emits
+      // the `error` variant.
+      const enqueue = (event: E | StreamError) => {
         if (closed) return;
 
-        try { controller.enqueue(enc.encode(JSON.stringify(obj) + '\n')); }
+        try { controller.enqueue(enc.encode(JSON.stringify(event) + '\n')); }
         catch { closed = true; }
       };
 
-      // Producer writes are checked against the event union E; the catch emits
-      // the `error` variant every union carries, through the untyped enqueue.
-      const write: (event: E) => void = enqueue;
-
       try {
-        await producer(write);
+        await producer(enqueue);
       } catch (e) {
         console.error('[stream]', e);
         enqueue({ type: 'error', error: friendlyError(e) });
@@ -326,7 +331,7 @@ async function scoreChips(
   featureId: string,
   name: string,
   chips: ChipMeta[],
-  hooks?: { onChip?: (h: Chip) => void; onError?: (chip: ChipMeta, e: unknown) => void },
+  hooks?: { onChip?: (h: Chip) => void; onError?: (chip: ChipMeta, cause: unknown) => void },
 ): Promise<{ successes: Chip[]; failures: number; totalFetched: number; cached: boolean }> {
   const successes: Chip[] = [];
   let failures = 0;
@@ -547,11 +552,11 @@ function streamFreshLookup(featureId: string, name: string, resolvedUrl: string,
 
         return bundle;
       })
-      .catch((e) => {
+      .catch((e): PreviewBundle => {
         console.error('[preview]', e);
         write({ type: 'preview', histogram: null, overallPct: null, meta: {} });
 
-        return { histogram: null, meta: {}, chips: [] } as PreviewBundle;
+        return { histogram: null, meta: {}, chips: [] };
       });
 
     // The preview carries the topic chips only ~15-20% of the time, and harvesting
@@ -638,6 +643,7 @@ Bun.serve({
     '/api/lookup': {
       POST: async (req) => {
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a LookupRequest.
           const { url } = await req.json() as LookupRequest;
           const { featureId, name, resolvedUrl } = await resolvePlace(url);
           const cached = cache.get(featureId);
@@ -730,6 +736,7 @@ Bun.serve({
     '/api/contribute': {
       POST: async (req) => {
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a ContributeRequest.
           const { featureId, name, summary, highlights, highlightSummaries, score } = await req.json() as ContributeRequest;
 
           if (!featureId || !name) return corsJson({ error: 'missing featureId or name' }, 400);
@@ -765,6 +772,7 @@ Bun.serve({
     '/api/histogram': {
       POST: async (req) => {
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a HistogramRequest.
           const { featureId } = await req.json() as HistogramRequest;
           const entry = cache.get(featureId);
 
@@ -793,6 +801,7 @@ Bun.serve({
     '/api/summarize': {
       POST: async (req) => {
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a SummarizeRequest.
           const body = await req.json() as SummarizeRequest;
           const featureId = body.featureId;
 
@@ -824,6 +833,7 @@ Bun.serve({
         let featureId = '';
 
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a HighlightsRequest.
           const body = await req.json() as HighlightsRequest;
           featureId = body.featureId;
           const entry = cache.get(featureId);
@@ -886,6 +896,7 @@ Bun.serve({
     '/api/highlight-summary': {
       POST: async (req) => {
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a HighlightSummaryRequest.
           const body = await req.json() as HighlightSummaryRequest;
           const { featureId, token, force } = body;
 
@@ -926,6 +937,7 @@ Bun.serve({
         let term = '';
 
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a SearchRequest.
           const body = await req.json() as SearchRequest;
           featureId = body.featureId;
           term = (body.query ?? '').trim();
@@ -1003,8 +1015,9 @@ Bun.serve({
     '/api/stance': {
       POST: async (req) => {
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a StanceRequest.
           const body = await req.json() as StanceRequest;
-          const texts = (Array.isArray(body.texts) ? body.texts : []).filter((t): t is string => typeof t === 'string').slice(0, MAX_JUDGED);
+          const texts = STRINGS.parse(body.texts).slice(0, MAX_JUDGED);
           const question = body.question?.trim(), topic = body.topic?.trim();
 
           if (!question && !topic) return corsJson({ error: 'missing topic or question' }, 400);
@@ -1028,9 +1041,9 @@ Bun.serve({
     '/api/receipts': {
       POST: async (req) => {
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a ReceiptsRequest.
           const body = await req.json() as ReceiptsRequest;
-          const strings = (v: unknown) => (Array.isArray(v) ? v : []).filter((t): t is string => typeof t === 'string');
-          const support = await supportFor(strings(body.points), strings(body.texts).slice(0, MAX_JUDGED));
+          const support = await supportFor(STRINGS.parse(body.points), STRINGS.parse(body.texts).slice(0, MAX_JUDGED));
 
           if (!support) return corsJson({ error: 'unavailable' } satisfies ReceiptsResponse, 503);
 
@@ -1049,8 +1062,9 @@ Bun.serve({
     '/api/tally': {
       POST: async (req) => {
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a TallyRequest.
           const body = await req.json() as TallyRequest;
-          const thread = threadOf(body.thread);
+          const thread = SENT_THREAD.parse(body.thread);
 
           if (!thread) return corsJson({ error: 'missing thread' }, 400);
 
@@ -1072,8 +1086,9 @@ Bun.serve({
     '/api/thread-ask': {
       POST: async (req) => {
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send a ThreadAskRequest.
           const body = await req.json() as ThreadAskRequest;
-          const thread = threadOf(body.thread), chat = chatOf(body.chat);
+          const thread = SENT_THREAD.parse(body.thread), chat = SENT_CHAT.parse(body.chat);
 
           if (!thread || !chat) return corsJson({ error: 'missing thread or question' }, 400);
           const options = { provider: parseProvider(body.provider), reasoningEffort: parseReasoningEffort(body.reasoningEffort), abortSignal: req.signal };
@@ -1101,6 +1116,7 @@ Bun.serve({
     '/api/ask': {
       POST: async (req) => {
         try {
+          // SAFETY: lockApi admits only the web client and extension, which send an AskRequest.
           const body = await req.json() as AskRequest;
           const { featureId, messages = [] } = body;
           const question = questionOf(messages);

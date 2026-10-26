@@ -1,4 +1,4 @@
-import { convertToModelMessages, streamText, type LanguageModel, type ModelMessage } from 'ai';
+import { convertToModelMessages, streamText, type DeepPartial, type LanguageModel, type ModelMessage } from 'ai';
 import { z } from 'zod';
 import { DEFAULT_PROVIDER, LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
 import { modelCall, type ModelSetup } from '@truescore/gmaps-shared/models';
@@ -26,17 +26,19 @@ const serverModel = (provider: Provider, setup: Omit<ModelSetup, 'apiKey'> = {})
   return { model, providerOptions };
 };
 
+// SAFETY: one entry per provider in LLM_PROVIDERS.
 export const PROVIDERS = Object.fromEntries(LLM_PROVIDERS.map((p) => [p, serverModel(p)])) as Record<Provider, ReturnType<typeof serverModel>>;
 
 // Validate untrusted request-body overrides against the canonical wire lists
 // (gmaps-shared/wire.ts): the server only honors a configured provider/effort,
 // never one injected from the body. Unset → DEFAULT_PROVIDER. Gemini/DeepSeek
-// ignore reasoningEffort (it's gpt-6-luna only).
-export const parseReasoningEffort = (v: unknown): ReasoningEffort | undefined =>
-  typeof v === 'string' && (REASONING_EFFORTS as readonly string[]).includes(v) ? (v as ReasoningEffort) : undefined;
+// ignore reasoningEffort (it's gpt-6-luna only). Anything not on the list,
+// a string or not, matches none of it.
+export const parseReasoningEffort = (sent: string | undefined): ReasoningEffort | undefined =>
+  REASONING_EFFORTS.find((e) => e === sent);
 
-export const parseProvider = (v: unknown): Provider | undefined =>
-  typeof v === 'string' && (LLM_PROVIDERS as readonly string[]).includes(v) ? (v as Provider) : undefined;
+export const parseProvider = (sent: string | undefined): Provider | undefined =>
+  LLM_PROVIDERS.find((p) => p === sent);
 
 // Tests swap in a fake model for every call; the server never calls this.
 let fakeModel: LanguageModel | null = null;
@@ -164,7 +166,7 @@ ${NOTES}${removal ? `\n\n${removal}` : ''}`;
 
 // Each provider at its lowest reasoning, for the aliases call. An eval's extra
 // contestant (evals/candidates.ts) runs as it is.
-const NO_REASONING = Object.fromEntries(LLM_PROVIDERS.map((p) => [p, serverModel(p, { noReasoning: true })])) as Partial<typeof PROVIDERS>;
+const NO_REASONING: Partial<typeof PROVIDERS> = Object.fromEntries(LLM_PROVIDERS.map((p) => [p, serverModel(p, { noReasoning: true })]));
 
 // The other names reviewers write for each of a summary's items (Summary.aliases),
 // so a standout searches them all and a topic chip going by one pools into it.
@@ -257,6 +259,10 @@ const OPTIONS_SCHEMA = z.object({
 
 export type ThreadOption = z.infer<typeof OPTIONS_SCHEMA>['options'][number];
 
+// An Option as far as the model has written it, checked by nothing until the
+// list ends.
+export type StreamedOption = DeepPartial<ThreadOption> | undefined;
+
 // The listing call's exact prompt, schema and output cap. The model only names
 // the Options and how the thread writes them; it never counts. Jev reads every
 // comment naming one (web/tally.ts), so a title's aliases must not repeat its
@@ -276,14 +282,14 @@ Not Options: answers to another question than this one (the store a product came
 // Streams the listing: each Option goes to `onOption` once the model has moved
 // on to the next one (the last when the list ends), so counting it can start
 // while the rest are still being written.
-export async function listOptions(question: string, comments: string[], onOption: (o: Partial<ThreadOption>) => void, provider: Provider = DEFAULT_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
+export async function listOptions(question: string, comments: string[], onOption: (o: StreamedOption) => void, provider: Provider = DEFAULT_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<ThreadOption[]> {
   const { model, providerOptions } = providerFor(provider, reasoningEffort);
   let sent = 0;
 
   const listing = await writeObject({ model, providerOptions, ...optionsRequest(question, comments) }, (partial) => {
     const options = partial.options ?? [];
 
-    while (sent < options.length - 1) onOption(options[sent++] as Partial<ThreadOption>);
+    while (sent < options.length - 1) onOption(options[sent++]);
   });
 
   const { options } = listing.object;
@@ -319,13 +325,13 @@ export async function explainOptions(question: string, comments: string[], group
   let sent = 0;
 
   const writing = await writeObject({ model, providerOptions, ...reasonsRequest(question, comments, groups) }, (partial) => {
-    while (sent < keys.length - 1 && (partial as Record<string, unknown>)[keys[sent + 1]!] !== undefined) {
-      onReason(keys[sent]!, String((partial as Record<string, unknown>)[keys[sent]!] ?? ''));
+    while (sent < keys.length - 1 && partial[keys[sent + 1]!] !== undefined) {
+      onReason(keys[sent]!, String(partial[keys[sent]!] ?? ''));
       sent++;
     }
   });
 
-  const reasons = writing.object as Record<string, string>;
+  const reasons = writing.object;
 
   while (sent < keys.length) { onReason(keys[sent]!, reasons[keys[sent]!] ?? ''); sent++; }
 
