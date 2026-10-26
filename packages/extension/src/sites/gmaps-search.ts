@@ -33,6 +33,7 @@ const setOrder = (el: HTMLElement, order: string) => {
 // row keep theirs. Orders are negative so whatever Maps appends before the next
 // pass lands at the bottom, where Maps put it, rather than above the header.
 const applySort = (feed: HTMLElement) => {
+  // SAFETY: Maps' feed is plain HTML markup (theirs, not ours); its rows are HTML elements.
   const kids = [...feed.children] as HTMLElement[];
   const slots = kids.flatMap((kid, i) => (kid.querySelector(RESULT) ? [i] : []));
   const ranked = slots.map((i) => ({ kid: kids[i], n: reviewCount(kids[i]) })).sort((a, b) => b.n - a.n);
@@ -45,7 +46,10 @@ const applySort = (feed: HTMLElement) => {
 const clearSort = (feed: HTMLElement) => {
   sortedQuery = null;
 
-  for (const kid of feed.children) setOrder(kid as HTMLElement, '');
+  for (const kid of feed.children) {
+    // SAFETY: as in applySort, the rows of Maps' feed are HTML elements.
+    setOrder(kid as HTMLElement, '');
+  }
 };
 
 const toggle = (feed: HTMLElement) => {

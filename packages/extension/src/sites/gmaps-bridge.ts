@@ -4,12 +4,14 @@ import { getProviderChoice, getReasoningEffort } from '../shared/config';
 // ISOLATED world, document_start. Bridges chrome.storage.local, which
 // MAIN-world gmaps.ts can't reach itself (request/response via CustomEvents).
 
-const respond = (id: string, value: unknown) => {
+// Relays whatever the request produced; gmaps.ts types each reply by the request it made.
+const respond = <Reply>(id: string, value: Reply) => {
   document.dispatchEvent(new CustomEvent(STORAGE_RESULT, { detail: { id, value } }));
 };
 
 document.addEventListener(STORAGE_GET, (e) => {
-  const { id, key } = (e as CustomEvent).detail || {};
+  if (!(e instanceof CustomEvent)) return;
+  const { id, key } = e.detail || {};
 
   if (!id || !key) return;
 
@@ -21,7 +23,8 @@ document.addEventListener(STORAGE_GET, (e) => {
 });
 
 document.addEventListener(STORAGE_SET, (e) => {
-  const { id, key, value } = (e as CustomEvent).detail || {};
+  if (!(e instanceof CustomEvent)) return;
+  const { id, key, value } = e.detail || {};
 
   if (!id || !key) return;
 
@@ -34,7 +37,8 @@ document.addEventListener(STORAGE_SET, (e) => {
 
 // Only the two choices themselves (see LLM_SETTINGS_GET).
 document.addEventListener(LLM_SETTINGS_GET, async (e) => {
-  const { id } = (e as CustomEvent).detail || {};
+  if (!(e instanceof CustomEvent)) return;
+  const { id } = e.detail || {};
 
   if (!id) return;
   const [reasoningEffort, provider] = await Promise.all([getReasoningEffort(), getProviderChoice()]);
@@ -47,7 +51,8 @@ document.addEventListener(LLM_SETTINGS_GET, async (e) => {
 // page this bridge is running in, which we can read ourselves; only the search
 // text comes from the event.
 document.addEventListener(SERVER_SCORE_GET, (e) => {
-  const { id, query, asWritten } = (e as CustomEvent).detail || {};
+  if (!(e instanceof CustomEvent)) return;
+  const { id, query, asWritten } = e.detail || {};
 
   if (!id) return;
 

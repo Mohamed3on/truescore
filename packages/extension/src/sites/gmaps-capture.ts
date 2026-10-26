@@ -169,11 +169,13 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
 
   // Maps fetches the place preview over XHR.
   const origOpen = XMLHttpRequest.prototype.open;
-  (XMLHttpRequest.prototype as any).open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: any[]) {
+  XMLHttpRequest.prototype.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: any[]) {
     if (isPreviewUrl(url)) {
       this.addEventListener('load', () => { try { store(String(url), this.responseText); } catch {} });
     }
 
+    // SAFETY: origOpen is the native open, handed the page's own argument list unchanged
+    // (an omitted `async` stays omitted, so the request stays async).
     return (origOpen as (...a: any[]) => void).call(this, method, url, ...rest);
   };
 })();

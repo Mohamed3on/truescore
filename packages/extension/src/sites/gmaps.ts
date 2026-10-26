@@ -101,7 +101,7 @@ type CardEls = {
   highlightsBtn?: HTMLButtonElement;
   highlightsStale?: HTMLElement;
   alternativesSection?: HTMLElement;
-  removedNotice?: HTMLElement;
+  removedNotice?: HTMLAnchorElement;
   chipPanel?: HTMLElement;
   chipPanelTitle?: HTMLElement;
   chipPanelBody?: HTMLElement;
@@ -168,8 +168,6 @@ const standoutReviewsCache = new Map<string, ItemReviews>();
 // standout caches when new reviews land.
 const searchTermCache = createTermCache(60 * 60 * 1000, 300);
 
-const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
 const createLimiter = (limit: number) => {
   let active = 0;
   const queue: (() => void)[] = [];
@@ -220,14 +218,16 @@ let appStateTriedFor: string | null = null;
 
 const abortControllers: Record<SortKey, AbortController | null> = { relevant: null, newest: null };
 
+type SummaryCache = { all: SummaryResult | null };
+
 // Summaries persist indefinitely — they're invalidated only by an explicit
 // re-summarize, never by review count drift like score/highlights.
-let summaryCache: { all: SummaryResult | null } = { all: null };
+let summaryCache: SummaryCache = { all: null };
 
 const getSummaryCacheKey = (featureId: string | null = lastFeatureId) => `${SUMMARY_CACHE_PREFIX}${featureId || 'default'}`;
 
 const loadSummaryCache = () => {
-  try { summaryCache = JSON.parse(localStorage.getItem(getSummaryCacheKey()) as string) || { all: null }; }
+  try { summaryCache = JSON.parse(localStorage.getItem(getSummaryCacheKey()) ?? 'null') || { all: null }; }
   catch { summaryCache = { all: null }; }
 };
 
@@ -243,7 +243,7 @@ let searchSummaryCache: Record<string, SummaryResult> = {};
 const getSearchSummaryCacheKey = (featureId: string | null = lastFeatureId) => `${SEARCH_SUMMARY_CACHE_PREFIX}${featureId || 'default'}`;
 
 const readSearchSummaryCache = (featureId?: string | null): Record<string, SummaryResult> => {
-  try { return JSON.parse(localStorage.getItem(getSearchSummaryCacheKey(featureId)) as string) || {}; }
+  try { return JSON.parse(localStorage.getItem(getSearchSummaryCacheKey(featureId)) ?? 'null') || {}; }
   catch { return {}; }
 };
 
@@ -285,6 +285,8 @@ const bridgeStorage = (() => {
     };
 
     const handler = (e: Event) => {
+      // SAFETY: gmaps-bridge sends STORAGE_RESULT as a CustomEvent; anything else has
+      // no detail and fails the id check.
       const detail = (e as CustomEvent).detail;
 
       if (detail?.id !== id) return;
@@ -354,6 +356,7 @@ const ensureCreds = async (): Promise<MapsCapturedCreds | null> => {
 };
 
 document.addEventListener(MAPS_CREDS_CAPTURED, (e) => {
+  // SAFETY: gmaps-capture dispatches this with the MapsCapturedCreds it just captured.
   mapsCreds = (e as CustomEvent).detail as MapsCapturedCreds;
   bridgeStorage.set(MAPS_CREDS_KEY, mapsCreds).catch(() => {});
 });
@@ -377,7 +380,7 @@ const chipFetchFailed = (h: Highlight): boolean => h.fetched === 0 && h.count > 
 
 const loadHighlightsCache = () => {
   try {
-    highlightsState = JSON.parse(localStorage.getItem(getHighlightsCacheKey()) as string) || null;
+    highlightsState = JSON.parse(localStorage.getItem(getHighlightsCacheKey()) ?? 'null') || null;
 
     if (highlightsState) highlightsState.items = highlightsState.items.filter((h) => !chipFetchFailed(h));
   } catch { highlightsState = null; }
@@ -402,6 +405,7 @@ const fetchCloudCache = async (featureId: string): Promise<CloudCache | null> =>
     if (!resp.ok) return null;
     const data = await resp.json();
 
+    // SAFETY: our own /api/cached answers with a CloudCache whenever it reports `found`.
     return data?.found ? data as CloudCache : null;
   } catch { return null; }
 };
@@ -546,9 +550,12 @@ const fetchServerScore = (featureId: string): void => {
   };
 
   const handler = (e: Event) => {
+    // SAFETY: gmaps-bridge sends SERVER_SCORE_RESULT as a CustomEvent; anything else
+    // has no detail and fails the id check.
     const detail = (e as CustomEvent).detail;
 
     if (detail?.id !== id) return;
+    // SAFETY: the bridge relays the worker's ServerScoreMessages as they come.
     const msg = detail.msg as ServerScoreMessage;
 
     if (msg.kind === 'end') return cleanup();
@@ -777,7 +784,7 @@ const getPlaceInfo = () => {
     || placeNameFromTitle()
     || '';
 
-  const category = (document.querySelector('button.DkEaL') as HTMLElement)?.textContent?.trim() || '';
+  const category = document.querySelector('button.DkEaL')?.textContent?.trim() || '';
 
   return { name, category };
 };
@@ -844,6 +851,8 @@ const waitForCapturedPreview = (featureId: string): Promise<any | null> => new P
   };
 
   const handler = (e: Event) => {
+    // SAFETY: gmaps-capture sends PREVIEW_CAPTURED as a CustomEvent naming the place's
+    // featureId; anything else has no detail and fails the check.
     if ((e as CustomEvent).detail?.featureId !== featureId) return;
     cleanup();
     resolve(window.__truescorePreviews?.[featureId]?.json ?? null);
@@ -917,12 +926,19 @@ const renderRemovedNotice = (): void => {
     : (removed.detail ?? removed.text);
 
   if (removed.url) {
-    (banner as HTMLAnchorElement).href = removed.url;
+    banner.href = removed.url;
     banner.setAttribute('target', '_blank');
     banner.setAttribute('rel', 'noopener noreferrer');
   } else banner.removeAttribute('href');
   banner.style.display = 'flex';
 };
+
+declare global {
+  interface Window {
+    // Maps' own inlined page state, in whatever shape Google gives it.
+    APP_INITIALIZATION_STATE?: unknown;
+  }
+}
 
 // A cold page load never issues the /maps/preview/place XHR gmaps-capture
 // listens for — Maps inlines the very same payload in APP_INITIALIZATION_STATE
@@ -964,7 +980,7 @@ const previewFromAppState = (featureId: string): any | null => {
     if (v && typeof v === 'object') { for (const k in v) walk(v[k], depth + 1); }
   };
 
-  walk((window as any).APP_INITIALIZATION_STATE, 0);
+  walk(window.APP_INITIALIZATION_STATE, 0);
 
   return found;
 };
@@ -989,7 +1005,7 @@ const tryRemovedNoticeFromCapture = (): void => {
   // tick — and since that state only ever describes the first-loaded place, one
   // attempt per place is all it could ever be worth. Wait for it to exist
   // before spending the attempt, so a tick that fires early isn't the one shot.
-  if (!(window as any).APP_INITIALIZATION_STATE || appStateTriedFor === featureId) return;
+  if (!window.APP_INITIALIZATION_STATE || appStateTriedFor === featureId) return;
   appStateTriedFor = featureId;
   const inlined = previewFromAppState(featureId);
 
@@ -1026,9 +1042,12 @@ const serverSearch = (featureId: string, query: string, onFound?: (found: number
   let reviews: Review[] | null = null;
 
   const handler = (e: Event) => {
+    // SAFETY: gmaps-bridge sends SERVER_SCORE_RESULT as a CustomEvent; anything else
+    // has no detail and fails the id check.
     const detail = (e as CustomEvent).detail;
 
     if (detail?.id !== id) return;
+    // SAFETY: the bridge relays the worker's ServerScoreMessages as they come.
     const msg = detail.msg as ServerScoreMessage;
 
     if (msg.kind === 'found') onFound?.(msg.found);
@@ -1253,6 +1272,7 @@ const mountAsk = (panel: HTMLElement, job: AskJob, reads: Map<string, Read>) => 
     text.classList.toggle('rc-reading', !v.done && !v.text && v.searches.every((s) => s.done));
 
     if (v.answeredAt && !shown?.answeredAt) {
+      // SAFETY: el creates the tag it's given, here a <button>.
       const again = el('button', 'rc-ask-again', 'Ask again') as HTMLButtonElement;
       again.type = 'button';
       again.onclick = () => askPlace(panel, job, true).catch((e) => {
@@ -1306,7 +1326,8 @@ const renderRecentQuestions = () => {
   row.append(el('span', 'rc-qa-label', 'Recent questions'));
 
   for (const qa of items) {
-    const chip = el('button', 'rc-qa-chip') as HTMLButtonElement;
+    const chip = document.createElement('button');
+    chip.className = 'rc-qa-chip';
     chip.type = 'button';
     chip.title = qa.q;
     const forget = el('span', 'rc-qa-remove', '×');
@@ -1324,7 +1345,8 @@ const renderRecentQuestions = () => {
 };
 
 const askSearchRow = (s: AskSearch, read?: Read) => {
-  const row = el('button', s.done ? 'rc-ask-search' : 'rc-ask-search live') as HTMLButtonElement;
+  const row = document.createElement('button');
+  row.className = s.done ? 'rc-ask-search' : 'rc-ask-search live';
   row.type = 'button';
   row.disabled = !s.done || !s.found;
   row.title = s.found == null ? "Couldn't search right now" : `${s.query} — open these reviews`;
@@ -1513,6 +1535,8 @@ const startFetching = async () => {
 };
 
 const cardEls: CardEls = {};
+
+// SAFETY: cardEls only ever gets CardEls keys assigned, so those are all Object.keys lists.
 const clearCardEls = () => { for (const k of Object.keys(cardEls) as (keyof CardEls)[]) delete cardEls[k]; };
 
 // A chip in the topic row or the alternatives' row: its label, then what its
@@ -1521,7 +1545,8 @@ const clearCardEls = () => { for (const k of Object.keys(cardEls) as (keyof Card
 type ChipStats = { stance?: StanceCounts; of?: number; score?: { scorePct: number }; count: number };
 
 const chipEl = (label: string, c: ChipStats, overall: number, onClick: () => void, cls?: string) => {
-  const chip = el('button', cls ? `rc-chip ${cls}` : 'rc-chip') as HTMLButtonElement;
+  const chip = document.createElement('button');
+  chip.className = cls ? `rc-chip ${cls}` : 'rc-chip';
   chip.type = 'button';
   chip.appendChild(el('span', 'rc-chip-label', label));
 
@@ -1543,7 +1568,8 @@ const chipEl = (label: string, c: ChipStats, overall: number, onClick: () => voi
 // One still scoring, its "…" pulsing until the score lands. A label search's
 // can be run before then; a topic's waits.
 const pendingChip = (label: string, count?: number, onClick?: () => void, cls?: string) => {
-  const chip = el('button', cls ? `rc-chip ${cls} rc-chip-pending` : 'rc-chip rc-chip-pending') as HTMLButtonElement;
+  const chip = document.createElement('button');
+  chip.className = cls ? `rc-chip ${cls} rc-chip-pending` : 'rc-chip rc-chip-pending';
   chip.type = 'button';
   chip.appendChild(el('span', 'rc-chip-label', label));
   chip.appendChild(el('span', 'rc-chip-pct rc-chip-scoring', '…'));
@@ -1720,7 +1746,10 @@ const highlightTerms = (root: HTMLElement, terms: string[]) => {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
 
-  for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n as Text);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    // SAFETY: the walker shows text nodes only (NodeFilter.SHOW_TEXT).
+    nodes.push(n as Text);
+  }
 
   for (const node of nodes) {
     const s = node.nodeValue ?? '';
@@ -1768,7 +1797,7 @@ const receiptOf = (h: SummaryHighlight) => () =>
   receiptReviews(h.quotes ?? [], [...Object.values(store.mergedReviews()), ...(activeHighlight?.reviews ?? []), ...(activeLabelSearch?.reviews ?? [])]);
 
 const renderReviewsInto = (container: HTMLElement, reviews: Review[], terms: string[] = [], stances?: Record<string, Stance>) => {
-  const fallback = terms.flatMap((t) => t.split(/\s+/)).map((t) => t.trim()).filter(Boolean);
+  const fallback = terms.flatMap((t) => t.split(/\s+/)).flatMap((t) => t.trim() || []);
 
   for (const r of sortedDisplayReviews(reviews)) {
     container.appendChild(reviewCardEl(r, fallback, stances?.[r.reviewId]));
@@ -2079,6 +2108,7 @@ const renderLabelSearchResult = () => {
   header.appendChild(filters);
   res.appendChild(header);
 
+  // SAFETY: el creates the tag it's given, here a <button>.
   const sumBtn = el('button', 'rc-summarize-btn', `Summarize "${query}"`) as HTMLButtonElement;
   sumBtn.onclick = () => summarizeLabelSearch(sumBtn);
   res.appendChild(sumBtn);
@@ -2244,7 +2274,11 @@ const createUIElements = () => {
   ([['total', 'Total'], ['inPastYear', 'Past Year'], ['inPastMonth', 'Past Month']] as const).forEach(([v, t]) => {
     const opt = document.createElement('option'); opt.value = v; opt.textContent = t; select.appendChild(opt);
   });
-  select.onchange = (e) => { currentOption = (e.target as HTMLSelectElement).value as Period; updateUI(); };
+  select.onchange = () => {
+    // SAFETY: the select holds just the three Period options added above.
+    currentOption = select.value as Period;
+    updateUI();
+  };
 
   headerRight.appendChild(select);
   const collapseBtn = el('button', 'rc-collapse');
@@ -2296,6 +2330,7 @@ const createUIElements = () => {
   hlStale.style.display = 'none';
   hlTitleWrap.appendChild(hlStale);
   hlHeader.appendChild(hlTitleWrap);
+  // SAFETY: el creates the tag it's given, here a <button>.
   const hlBtn = el('button', 'rc-highlights-btn', 'Compute Highlights') as HTMLButtonElement;
   hlBtn.type = 'button';
   hlBtn.onclick = () => computeHighlights(!!highlightsState);
@@ -2357,9 +2392,11 @@ const createUIElements = () => {
   if (highlightsState && highlightsState.items.length) renderHighlights();
 
   const sumRow = el('div', 'rc-sum-row');
+  // SAFETY: el creates the tag it's given, here a <button>.
   const sumBtn = el('button', 'rc-summarize-btn', 'Summarize') as HTMLButtonElement;
   sumBtn.onclick = () => triggerSummarize();
   sumRow.appendChild(sumBtn);
+  // SAFETY: el creates the tag it's given, here a <button>.
   const resumBtn = el('button', 'rc-resummarize-btn', '↻') as HTMLButtonElement;
   resumBtn.type = 'button';
   resumBtn.title = 'Re-summarize';
@@ -2392,9 +2429,11 @@ const createUIElements = () => {
   chipPanel.style.display = 'none';
   const chipHeader = el('div', 'rc-chip-panel-header');
   const chipTitle = el('span', 'rc-chip-panel-title');
+  // SAFETY: el creates the tag it's given, here a <button>.
   const chipSumBtn = el('button', 'rc-summarize-btn rc-chip-panel-btn', 'Summarize') as HTMLButtonElement;
   chipSumBtn.type = 'button';
   chipSumBtn.onclick = () => summarizeActiveChip();
+  // SAFETY: el creates the tag it's given, here a <button>.
   const chipCloseBtn = el('button', 'rc-chip-panel-close', '✕') as HTMLButtonElement;
   chipCloseBtn.type = 'button';
   chipCloseBtn.onclick = closeChipPanel;
@@ -2776,11 +2815,15 @@ const loadScoredCache = () => {
   if (!lastFeatureId) return;
 
   try {
-    const raw = JSON.parse(localStorage.getItem(getScoredCacheKey()) as string);
+    const raw = JSON.parse(localStorage.getItem(getScoredCacheKey()) ?? 'null');
 
     if (!raw?.scores) return;
 
-    for (const [item, stats] of Object.entries(raw.scores)) standoutScoreCache.set(`${lastFeatureId}|${item}`, stats as SortStats);
+    for (const [item, stats] of Object.entries(raw.scores)) {
+      // SAFETY: saveScoredCache is all that writes this key, its scores SortStats by item.
+      standoutScoreCache.set(`${lastFeatureId}|${item}`, stats as SortStats);
+    }
+
     scoredCacheHeadId = raw.newestHeadId;
   } catch {}
 };
@@ -2812,10 +2855,11 @@ const refreshStaleScores = () => {
 
   for (const k of standoutScoreCache.keys()) if (k.startsWith(prefix)) standoutScoreStale.add(k);
 
-  for (const k of [...standoutReviewsCache.keys()]) if (k.startsWith(prefix)) standoutReviewsCache.delete(k);
+  for (const k of standoutReviewsCache.keys()) if (k.startsWith(prefix)) standoutReviewsCache.delete(k);
   searchTermCache.dropPlace(featureId);
   scoredCacheHeadId = live;
 
+  // SAFETY: scoredCtx is a Record over ScoredKind and only ever gets those keys.
   for (const kind of Object.keys(scoredCtx) as ScoredKind[]) {
     const ctx = scoredCtx[kind];
 
