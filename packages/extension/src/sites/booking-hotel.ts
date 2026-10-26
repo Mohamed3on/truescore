@@ -45,15 +45,15 @@ type ReviewFilterState = {
   selectedTopicIds: number[];
 };
 
-const GUEST_LABELS: Record<string, string> = {
-  COUPLE: 'Couple',
-  SOLO_TRAVELER: 'Solo',
-  GROUP_OF_FRIENDS: 'Group',
-  FAMILY_WITH_YOUNG_CHILDREN: 'Family (young)',
-  FAMILY_WITH_OLDER_CHILDREN: 'Family (older)',
-  BUSINESS_TRAVELER: 'Business',
-  REVIEW_FROM_A_FAMILY_WITH_CHILDREN: 'Family',
-};
+const GUEST_LABELS = new Map([
+  ['COUPLE', 'Couple'],
+  ['SOLO_TRAVELER', 'Solo'],
+  ['GROUP_OF_FRIENDS', 'Group'],
+  ['FAMILY_WITH_YOUNG_CHILDREN', 'Family (young)'],
+  ['FAMILY_WITH_OLDER_CHILDREN', 'Family (older)'],
+  ['BUSINESS_TRAVELER', 'Business'],
+  ['REVIEW_FROM_A_FAMILY_WITH_CHILDREN', 'Family'],
+]);
 
 const FALLBACK_TRAVELER_FILTERS: TravelerFilter[] = [
   { name: 'Families', value: 'FAMILIES', count: 0 },
@@ -98,7 +98,7 @@ ${betterAlternativeRule('nearby hotel, apartment, or chain')}
 End with a short summary: the gist of what guests say, anything to watch out for, and whether this is the best stay you can get for the price.`;
 
 const formatGuest = (value: string) =>
-  GUEST_LABELS[value] ||
+  GUEST_LABELS.get(value) ||
   value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
 
 const formatRoom = (value: string) => value.replace(/\s+/g, ' ').trim();
@@ -136,13 +136,14 @@ const groupBy = (
     map.get(rawKey)!.push(review);
   }
 
-  return [...map.entries()]
+  return map.entries()
     .filter(([, groupedReviews]) => groupedReviews.length >= MIN_REVIEWS_PER_GROUP)
     .map(([label, groupedReviews]) => ({
       label: format(label),
       count: groupedReviews.length,
       pct: scoreOf(groupedReviews),
     }))
+    .toArray()
     .sort((a, b) => b.count - a.count);
 };
 
@@ -280,6 +281,19 @@ const cacheKeyFor = (hotelId: string, filterState: ReviewFilterState) =>
 const requestKeyFor = (filterState: ReviewFilterState) =>
   `${cacheSuffix(filterState)}-${normalizeReviewLimit(filterState.reviewLimit)}`;
 
+// ReviewList's filters: the search text always, the traveler type and topics only when set.
+type ReviewListFilters = { text: string; customerType?: string; selectedTopics?: number[] };
+
+const reviewListFilters = (filterState: ReviewFilterState): ReviewListFilters => {
+  const filters: ReviewListFilters = { text: normalizeSearchText(filterState.searchText) };
+
+  if (filterState.travelerType) filters.customerType = filterState.travelerType;
+
+  if (filterState.selectedTopicIds.length) filters.selectedTopics = normalizeTopicIds(filterState.selectedTopicIds);
+
+  return filters;
+};
+
 const createPayload = (
   { hotelId, destId, hotelCountryCode }: HotelData,
   skip: number,
@@ -292,13 +306,7 @@ const createPayload = (
       hotelCountryCode,
       ufi: parseInt(destId, 10),
       sorter: 'NEWEST_FIRST',
-      filters: {
-        text: normalizeSearchText(filterState.searchText),
-        ...(filterState.travelerType ? { customerType: filterState.travelerType } : {}),
-        ...(filterState.selectedTopicIds.length
-          ? { selectedTopics: normalizeTopicIds(filterState.selectedTopicIds) }
-          : {}),
-      },
+      filters: reviewListFilters(filterState),
       skip,
       limit: PAGE_SIZE,
     },
@@ -609,8 +617,9 @@ const renderEmptyPanel = (
 // every 500 ms until they render.
 function waitForHotelData(callback: (data: HotelData) => void) {
   const check = () => {
-    const hotelIdInput = document.querySelector('input[name="hotel_id"]') as HTMLInputElement;
-    const destIdInput = document.querySelector('input[name="dest_id"]') as HTMLInputElement;
+    // SAFETY: both selectors only match <input> elements.
+    const hotelIdInput = document.querySelector('input[name="hotel_id"]') as HTMLInputElement | null,
+      destIdInput = document.querySelector('input[name="dest_id"]') as HTMLInputElement | null;
 
     if (!hotelIdInput?.value || !destIdInput?.value) return false;
     callback({
@@ -772,6 +781,8 @@ waitForHotelData((hotelData) => {
           alternates: {
             prefix: `bk-summary-${hotelData.hotelId}-`,
             decode: (entry) => {
+              // SAFETY: entries under this prefix carry the cacheMeta set above, so meta
+              // holds the summary's ReviewFilterState; older entries have none.
               const fromMeta = entry.meta?.filterState as ReviewFilterState | undefined;
 
               const filterState = fromMeta || parseLegacyCacheSuffix(

@@ -25,7 +25,12 @@ const mainGrid = (): Element | null => {
     .sort((a, b) => b.querySelectorAll(CARD).length - a.querySelectorAll(CARD).length)[0] || null;
 };
 
-const deferredVariables = async (url: string, initialUrl: string): Promise<Record<string, any> | null> => {
+type SearchFilter = { filterName: string; filterValues: string[] };
+
+// The page's own StaysSearch variables, sent back whole with only the filters rewritten.
+type StaysSearchVariables = { staysSearchRequest?: { rawParams?: SearchFilter[] } };
+
+const deferredVariables = async (url: string, initialUrl: string): Promise<StaysSearchVariables | null> => {
   let state = document.getElementById('data-deferred-state-0')?.textContent;
 
   if (url !== initialUrl) {
@@ -37,6 +42,8 @@ const deferredVariables = async (url: string, initialUrl: string): Promise<Recor
   }
 
   if (!state) return null;
+  // SAFETY: Airbnb's deferred state lists its query cache as [query key, data] pairs;
+  // any other shape throws here and the caller's catch drops the extra results.
   const entries = JSON.parse(state).niobeClientData as [string, unknown][];
   const key = entries.find(([name]) => name.startsWith('StaysSearch:'))?.[0];
 
@@ -51,7 +58,7 @@ const loadResults = async (url: string, initialUrl: string): Promise<{ listings:
   if (!apiKey || !variables?.staysSearchRequest?.rawParams) return null;
   // Airbnb adds its default 18-item filter before URL filters. Replace every
   // copy so the server returns two pages of native search data in one request.
-  const params = variables.staysSearchRequest.rawParams as { filterName: string; filterValues: string[] }[];
+  const params = variables.staysSearchRequest.rawParams;
   variables.staysSearchRequest.rawParams = [
     ...params.filter((param) => param.filterName !== 'itemsPerGrid'),
     { filterName: 'itemsPerGrid', filterValues: [String(PAGE_SIZE)] },

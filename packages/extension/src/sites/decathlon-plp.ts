@@ -57,6 +57,7 @@ const dedupGrid = () => {
     const ids = extractDecathlonIds(link.getAttribute('href')!);
 
     if (!ids) continue;
+    // SAFETY: the selector only matches <li> elements.
     (li as HTMLElement).style.display = seen.has(ids.productId) ? 'none' : '';
     seen.add(ids.productId);
   }

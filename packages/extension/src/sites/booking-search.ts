@@ -15,6 +15,7 @@ const calculateScore = (reviewText: string) => {
 // The score block's text minus our own badge (appended inside it), whose
 // digits would otherwise read as the review count on a re-parse.
 const reviewTextOf = (card: Element) => {
+  // SAFETY: the clone of an Element is an Element.
   const block = card.querySelector('[data-testid="review-score"]')?.cloneNode(true) as Element | undefined;
   block?.querySelector('.score')?.remove();
 
@@ -22,7 +23,7 @@ const reviewTextOf = (card: Element) => {
 };
 
 const getCardScore = (card: Element) => {
-  const url = (card.querySelector('a') as HTMLAnchorElement)?.href?.split('?')[0];
+  const url = card.querySelector('a')?.href?.split('?')[0];
 
   if (url && scoresByUrl.has(url)) return scoresByUrl.get(url)!;
   const reviewText = reviewTextOf(card);

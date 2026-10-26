@@ -6,6 +6,7 @@ import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-s
 import { quoteCards } from '../shared/review-search';
 import { appendStat, buildRecentGauge, createIslandShell } from '../shared/score-island';
 import { adjust, recentRatio } from '../shared/recency';
+import { z } from 'zod';
 
 // Uniqlo reviews are overwhelmingly about fit, fabric, and sizing, so nudge those
 // to the front as actionable buying tips rather than leaving them buried.
@@ -131,6 +132,9 @@ const fitText = (fit: number) => (fit < 2.4 ? 'runs small' : fit > 3.6 ? 'runs l
 
 interface DimStat { label: string; net: number; n: number; fit: number | null; }
 
+// A review's fit rating; reviewers who skipped it count toward the row but not its fit.
+const ReviewFit = z.number();
+
 const aggregate = (
   reviews: any[],
   keyFn: (r: any) => string,
@@ -148,7 +152,9 @@ const aggregate = (
     g.net += polarity(r.rate);
     g.n++;
 
-    if (typeof r.fit === 'number') { g.fitSum += r.fit; g.fitN++; }
+    const fit = ReviewFit.safeParse(r.fit);
+
+    if (fit.success) { g.fitSum += fit.data; g.fitN++; }
 
     const lbl = (labelFn(r) || '').trim();
 
@@ -290,7 +296,7 @@ const addSummarizeUI = (
 
   if (ratio != null) {
     wrapper.appendChild(buildRecentGauge(ratio));
-    const stats = el('div', 'ars-stats') as HTMLElement;
+    const stats = el('div', 'ars-stats');
 
     if (scoreData) appendStat(stats, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
     appendStat(stats, String(reviews.length), 'analyzed');

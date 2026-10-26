@@ -25,6 +25,8 @@ const htmlToElement = (html: string) => {
   const template = document.createElement('template');
   template.innerHTML = html.trim();
 
+  // SAFETY: Amazon's histogram popover HTML opens with its wrapper element; if it
+  // ever doesn't, querySelector throws into getRatingPercentage's catch.
   return template.content.firstChild as Element;
 };
 
@@ -166,8 +168,7 @@ const sortAmazonResults = async () => {
     if (seenASINs.has(productSIN)) { item.remove(); continue; }
 
     const swatchASINs = [...item.querySelectorAll('[data-csa-c-swatch-url]')]
-      .map(el => (el.getAttribute('data-csa-c-swatch-url')?.match(/\/dp\/([A-Z0-9]{10})/) || [])[1])
-      .filter(Boolean);
+      .flatMap(el => el.getAttribute('data-csa-c-swatch-url')?.match(/\/dp\/([A-Z0-9]{10})/)?.[1] || []);
 
     if (swatchASINs.some(a => seenASINs.has(a))) { item.remove(); continue; }
 
@@ -204,7 +205,7 @@ const sortAmazonResults = async () => {
     }
 
     fetchPromises.push(
-      getRatingScores(productSIN, numberOfRatingsElement, cache).then(({ calculatedScore }) => [calculatedScore, item] as [number | null, Element])
+      getRatingScores(productSIN, numberOfRatingsElement, cache).then(({ calculatedScore }): [number | null, Element] => [calculatedScore, item])
     );
   }
 
@@ -230,7 +231,7 @@ const sortAmazonResults = async () => {
     // card that was emptied at the time blank for good.
     orderByCssBand(searchResults, itemsArr.map(([, item]) => item));
     const tinted = markBestRatios(itemsArr.map(([, item]) => ratingEls.get(item) ?? null));
-    picks = itemsArr.map(([, item]) => item).filter((item) => tinted.some((el) => el === ratingEls.get(item)));
+    picks = itemsArr.values().map(([, item]) => item).filter((item) => tinted.some((el) => el === ratingEls.get(item))).toArray();
   }
 };
 

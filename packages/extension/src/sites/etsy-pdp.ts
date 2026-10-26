@@ -264,7 +264,8 @@ const renderTopics = (topics: Topic[], meta: ListingMeta): HTMLElement | null =>
     const tone = npsColor(nps);
 
     const row = el('div', 'ars-topic');
-    const btn = el('button', 'ars-topic-btn') as HTMLButtonElement;
+    const btn = document.createElement('button');
+    btn.className = 'ars-topic-btn';
     btn.type = 'button';
 
     const name = el('span', 'ars-topic-name');
@@ -298,7 +299,7 @@ const renderTopics = (topics: Topic[], meta: ListingMeta): HTMLElement | null =>
 
       if (open && open !== detail) {
         open.style.display = 'none';
-        (open.previousElementSibling as HTMLElement)?.classList.remove('is-open');
+        open.previousElementSibling?.classList.remove('is-open');
       }
 
       open = isOpen ? null : detail;
@@ -332,7 +333,7 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
 
   // One gauge: the overall percent, carrying the recent trend once the reviews —
   // the newest ~104, whose ratings are the trend the histogram can't show — land.
-  const [gauge, stats] = score ? buildGauge(score) : [null, el('div', 'ars-stats') as HTMLElement];
+  const [gauge, stats] = score ? buildGauge(score) : [null, el('div', 'ars-stats')];
 
   if (gauge) wrapper.append(gauge);
   wrapper.append(stats);
@@ -341,6 +342,7 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
 
   if (score) {
     appendStat(stats, '…', 'adjusted');
+    // SAFETY: appendStat has just appended its stat <div> as the row's last child.
     adjusted = stats.lastElementChild as HTMLElement;
   }
 

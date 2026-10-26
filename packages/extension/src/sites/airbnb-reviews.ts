@@ -67,6 +67,8 @@ const reviewPage = async (id: string, apiKey: string, sort: 'RATING_ASC' | 'BEST
   });
 
   if (!response.ok) throw new Error('Airbnb reviews could not be loaded.');
+  // SAFETY: Airbnb's own reviews payload; `reviews` is checked to be an array just
+  // below, and every Review field is optional and read with fallbacks.
   const page = (await response.json())?.data?.presentation?.stayProductDetailPage?.reviews as ReviewPage | undefined;
 
   if (!Array.isArray(page?.reviews)) throw new Error('Airbnb reviews could not be read.');

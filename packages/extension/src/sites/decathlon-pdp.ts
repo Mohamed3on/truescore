@@ -176,8 +176,11 @@ const replaceSizometer = (stats: any) => {
   ].join('\n');
 
   const btn = wrapper.querySelector('button')!;
-  const body = wrapper.querySelector('.nps-fit-body') as HTMLElement;
-  const chevron = wrapper.querySelector('.nps-fit-chevron') as HTMLElement;
+
+  // SAFETY: the markup just above holds one .nps-fit-body <div> and one .nps-fit-chevron <svg>.
+  const body = wrapper.querySelector('.nps-fit-body') as HTMLElement,
+    chevron = wrapper.querySelector('.nps-fit-chevron') as SVGElement;
+
   btn.addEventListener('click', () => {
     const open = body.style.display !== 'none';
     body.style.display = open ? 'none' : 'block';
@@ -188,6 +191,7 @@ const replaceSizometer = (stats: any) => {
   // Vue-managed, and removing it invites the framework to fight or crash on
   // its next patch of that subtree. Ours sits after it; cleanup un-hides.
   sizometer.after(wrapper);
+  // SAFETY: Decathlon's sizometer is an HTML block in its own markup, as the cleanup below also assumes.
   (sizometer as HTMLElement).style.display = 'none';
 };
 

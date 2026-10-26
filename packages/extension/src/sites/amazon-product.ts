@@ -1,4 +1,5 @@
 import { netScore } from '@truescore/gmaps-shared';
+import { z } from 'zod';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas, el } from '../shared/utils';
 import { adjust, ratioFromTally } from '../shared/recency';
@@ -54,7 +55,7 @@ const cleanFormatStrip = (el: Element) => {
 
 // Fallback for strips without separator elements: "Color: Space Gray Size: 256 GB".
 // Keys are single tokens; values run until the next key, so multi-word values survive.
-const VAR_PAIR_RE = /([A-Za-z][\w.\/-]*):\s*([^:]*?)(?=\s+[A-Za-z][\w.\/-]*:|$)/g;
+const VAR_PAIR_RE = /([A-Za-z][\w./-]*):\s*([^:]*?)(?=\s+[A-Za-z][\w./-]*:|$)/g;
 
 const parseVariation = (text: string): [string, string][] => {
   const pairs: [string, string][] = [];
@@ -230,12 +231,24 @@ const productContext = () => {
   return title ? `The product on this page: ${title}` : undefined;
 };
 
+// recent.percentage stays 0 until the walk sets it to the ratio's toFixed(2) string.
+type RatingScores = {
+  recent: { absolute: number; percentage: number | string };
+  total: { calculated: number; percentage: number };
+};
+
+// Amazon's review AJAX headers: the CSRF token goes along when the page has one.
+type PortalHeaders = { 'x-requested-with': string; 'content-type': string; 'anti-csrftoken-a2z'?: string };
+
+// One chunk of Amazon's review AJAX: [action, selector, html, …].
+const AjaxChunk = z.tuple([z.unknown(), z.unknown(), z.string()], z.unknown());
+
 const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLElement, numOfRatings: any, cacheASIN: string) => {
   const recentRatingsURL = `/product-reviews/${productSIN}/?sortBy=recent`;
   let numberOfParsedReviews = 0;
 
-  const scores = {
-    recent: { absolute: 0, percentage: 0 as any },
+  const scores: RatingScores = {
+    recent: { absolute: 0, percentage: 0 },
     total: { calculated: 0, percentage: 0 },
   };
 
@@ -259,10 +272,10 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   }
 
   const getCrState = () => {
-    const el = document.querySelector('#cr-state-object') as HTMLElement | null;
+    const state = document.querySelector('#cr-state-object')?.getAttribute('data-state');
 
-    if (el?.dataset?.state) {
-      try { return JSON.parse(el.dataset.state); } catch (_) {}
+    if (state) {
+      try { return JSON.parse(state); } catch {}
     }
 
     return null;
@@ -276,10 +289,10 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
     for (const chunk of raw.split('&&&')) {
       try {
-        const arr = JSON.parse(chunk.trim());
+        const parsed = AjaxChunk.safeParse(JSON.parse(chunk.trim()));
 
-        if (Array.isArray(arr) && typeof arr[2] === 'string') html += arr[2];
-      } catch (_) {}
+        if (parsed.success) html += parsed.data[2];
+      } catch {}
     }
 
     return html;
@@ -287,11 +300,12 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
   const portalUrl = '/portal/customer-reviews/ajax/reviews/get/ref=cm_cr_getr_d_paging_btm';
 
-  const portalHeaders = {
+  const portalHeaders: PortalHeaders = {
     'x-requested-with': 'XMLHttpRequest',
     'content-type': 'application/x-www-form-urlencoded',
-    ...(antiCsrf ? { 'anti-csrftoken-a2z': antiCsrf } : {}),
   };
+
+  if (antiCsrf) portalHeaders['anti-csrftoken-a2z'] = antiCsrf;
 
   // Once the POST has failed, every later page goes straight to the fallback GET
   // instead of paying for a doomed POST first.
@@ -312,13 +326,13 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     let nextToken: string | null = null;
 
     for (let page = 1; page <= NUMBER_OF_PAGES_TO_PARSE; page++) {
-      const params: Record<string, string> = {
+      const params = new URLSearchParams({
         sortBy: 'recent', pageNumber: String(page), pageSize: '10',
         asin: productSIN, scope: `reviewsAjax${page}`,
         deviceType: 'desktop', reftag: 'cm_cr_getr_d_paging_btm', ...extraParams,
-      };
+      });
 
-      if (nextToken) params.nextPageToken = nextToken;
+      if (nextToken) params.set('nextPageToken', nextToken);
 
       let html = '';
 
@@ -326,11 +340,11 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         try {
           const res = await fetch(portalUrl, {
             method: 'POST', credentials: 'include', headers: portalHeaders,
-            body: new URLSearchParams(params),
+            body: params,
           });
 
           if (res.ok) html = parseAjaxChunks(await res.text());
-        } catch (_) {}
+        } catch {}
 
         portalFailed = !html;
       }
@@ -344,7 +358,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
           const res = await fetch(`/product-reviews/${productSIN}/?${qs}`, { credentials: 'include' });
 
           if (res.ok) html = await res.text();
-        } catch (_) {}
+        } catch {}
       }
 
       if (!html) return false;
@@ -387,9 +401,9 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
           const shown = byId.get(m[1]) ?? { title: '', body: '' };
           shown[m[2] === 'text' ? 'body' : 'title'] = parser.parseFromString(html, 'text/html').body.textContent!.trim();
           byId.set(m[1], shown);
-        } catch (_) {}
+        } catch {}
       }
-    } catch (_) {}
+    } catch {}
 
     return [...byId];
   };
@@ -465,7 +479,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   let walked: Promise<void> = Promise.resolve();
 
   if (!usedCache) {
-    const starRatingsToLikeDislikeMapping: Record<number, number> = { 5: 1, 1: -1 };
+    const starRatingsToLikeDislikeMapping = { 5: 1, 1: -1 };
     let totalRatingPercentages: { fiveStars: number; oneStars: number } | undefined;
 
     try {
@@ -480,7 +494,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
         scores.total = { calculated: calculatedScore, percentage: totalScorePercentage };
       }
-    } catch (_) {}
+    } catch {}
 
     // Build live gauge + stats so counts update in real-time
     const gauge = document.createElement('a');
@@ -503,10 +517,11 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
     elementToAppendTo!.appendChild(wrapper);
 
-    const pctEl = gauge.querySelector('.ars-gauge-pct') as HTMLElement;
-    const fillEl = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
-    const adjustedEl = wrapper.querySelector('[data-ars="adjusted"]') as HTMLElement;
-    const analyzedEl = wrapper.querySelector('[data-ars="analyzed"]') as HTMLElement;
+    // SAFETY: each selector matches an HTML element of the gauge and stats markup set just above.
+    const pctEl = gauge.querySelector('.ars-gauge-pct') as HTMLElement,
+      fillEl = gauge.querySelector('.ars-gauge-fill') as HTMLElement,
+      adjustedEl = wrapper.querySelector('[data-ars="adjusted"]') as HTMLElement,
+      analyzedEl = wrapper.querySelector('[data-ars="analyzed"]') as HTMLElement;
 
     const bumpEl = (el: Element) => {
       el.classList.remove('ars-bump');
@@ -571,7 +586,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         numberOfParsedReviews++;
         const format = review.querySelector('a[data-hook="format-strip"]');
 
-        const ratingText = (ratingElement as HTMLElement).textContent || '';
+        const ratingText = ratingElement.textContent || '';
         const ratingMatch = ratingText.match(/(\d)(?:\.\d)?/);
 
         if (!ratingMatch) continue;
