@@ -7,7 +7,7 @@ import {
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, standoutNames, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, receiptReviews, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   answersOf, bySupport, countAnswers, mountBullets, smoothDrafts, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
-  type Chip, type DayHours, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
+  type Chip, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Quote, type Review, type SearchEvent, type SearchResult,
   type SortStats, type Summary, type SummaryDraft, type SummaryHighlight,
@@ -19,40 +19,42 @@ type UiChip = Chip & { state?: ChipState; error?: string; pooled?: boolean };
 
 const $ = (id: string) => document.getElementById(id)!;
 
-const form = $('form') as HTMLFormElement;
-const urlInput = $('url') as HTMLInputElement;
-const goBtn = $('go') as HTMLButtonElement;
-const result = $('result') as HTMLElement;
-const status = $('status') as HTMLElement;
-const askForm = $('askForm') as HTMLFormElement;
-const questionInput = $('question') as HTMLInputElement;
-const askBtn = $('askBtn') as HTMLButtonElement;
-const answerEl = $('answer') as HTMLElement;
-const resummarizeBtn = $('resummarize') as HTMLButtonElement;
-const highlightsRow = $('highlightsRow') as HTMLElement;
-const highlightsList = $('highlightsList') as HTMLElement;
-const highlightsRefreshBtn = $('highlightsRefresh') as HTMLButtonElement;
-const alternativesRow = $('alternativesRow') as HTMLElement;
-const alternativesList = $('alternativesList') as HTMLElement;
-const searchForm = $('searchForm') as HTMLFormElement;
-const searchInput = $('searchInput') as HTMLInputElement;
-const searchBtn = $('searchBtn') as HTMLButtonElement;
-const searchRefreshBtn = $('searchRefreshBtn') as HTMLButtonElement;
-const chipPanel = $('chipPanel') as HTMLElement;
-const chipPanelTitle = $('chipPanelTitle') as HTMLElement;
-const chipPanelFigure = $('chipPanelFigure') as HTMLElement;
-const chipBody = $('chipBody') as HTMLElement;
-const chipSummarizeBtn = $('chipSummarize') as HTMLButtonElement;
-const chipCloseBtn = $('chipClose') as HTMLButtonElement;
-const chipAskForm = $('chipAskForm') as HTMLFormElement;
-const chipQuestionInput = $('chipQuestion') as HTMLInputElement;
-const chipAskBtn = $('chipAskBtn') as HTMLButtonElement;
-const verdictRow = document.querySelector('.verdict-row') as HTMLElement;
-const highlightsListEl = $('highlights') as HTMLElement;
-const placesSection = $('places') as HTMLElement;
-const placesList = $('placesList') as HTMLElement;
-const placesToggle = $('placesToggle') as HTMLButtonElement;
-const explainerEl = $('explainer') as HTMLElement;
+// SAFETY: index.html, which loads this bundle, gives each id below the element
+// type it's asserted as, and has a <div class="verdict-row">.
+const form = $('form') as HTMLFormElement,
+  urlInput = $('url') as HTMLInputElement,
+  goBtn = $('go') as HTMLButtonElement,
+  result = $('result'),
+  status = $('status'),
+  askForm = $('askForm') as HTMLFormElement,
+  questionInput = $('question') as HTMLInputElement,
+  askBtn = $('askBtn') as HTMLButtonElement,
+  answerEl = $('answer'),
+  resummarizeBtn = $('resummarize') as HTMLButtonElement,
+  highlightsRow = $('highlightsRow'),
+  highlightsList = $('highlightsList'),
+  highlightsRefreshBtn = $('highlightsRefresh') as HTMLButtonElement,
+  alternativesRow = $('alternativesRow'),
+  alternativesList = $('alternativesList'),
+  searchForm = $('searchForm') as HTMLFormElement,
+  searchInput = $('searchInput') as HTMLInputElement,
+  searchBtn = $('searchBtn') as HTMLButtonElement,
+  searchRefreshBtn = $('searchRefreshBtn') as HTMLButtonElement,
+  chipPanel = $('chipPanel'),
+  chipPanelTitle = $('chipPanelTitle'),
+  chipPanelFigure = $('chipPanelFigure'),
+  chipBody = $('chipBody'),
+  chipSummarizeBtn = $('chipSummarize') as HTMLButtonElement,
+  chipCloseBtn = $('chipClose') as HTMLButtonElement,
+  chipAskForm = $('chipAskForm') as HTMLFormElement,
+  chipQuestionInput = $('chipQuestion') as HTMLInputElement,
+  chipAskBtn = $('chipAskBtn') as HTMLButtonElement,
+  verdictRow = document.querySelector('.verdict-row') as HTMLElement,
+  highlightsListEl = $('highlights'),
+  placesSection = $('places'),
+  placesList = $('placesList'),
+  placesToggle = $('placesToggle') as HTMLButtonElement,
+  explainerEl = $('explainer');
 
 const PLACES_TOP_N = 8;
 let placesCache: PlaceItem[] = [];
@@ -83,9 +85,14 @@ let currentHighlights: UiChip[] = [];
 // `names`: what its search looks for (standoutNames).
 type ScoredChip = { item: string; names: string[]; state: ChipState; result?: SearchResult };
 
-const scoredGroups = {
-  standouts: { chips: [] as ScoredChip[] },
-  alternatives: { chips: [] as ScoredChip[], row: alternativesRow, list: alternativesList, chipClass: 'alternative-chip' },
+type ScoredGroups = {
+  standouts: { chips: ScoredChip[] };
+  alternatives: { chips: ScoredChip[]; row: HTMLElement; list: HTMLElement; chipClass: string };
+};
+
+const scoredGroups: ScoredGroups = {
+  standouts: { chips: [] },
+  alternatives: { chips: [], row: alternativesRow, list: alternativesList, chipClass: 'alternative-chip' },
 };
 
 type ScoredKind = keyof typeof scoredGroups;
@@ -102,7 +109,7 @@ function setStatus(msg: string, isErr = false) {
 // Session-health banner: the server can only fetch reviews while it holds a live
 // Google Maps session. When it's stale/credless every lookup reads empty, so say so
 // instead of showing silent zeros.
-const sessionBanner = $('sessionBanner') as HTMLElement;
+const sessionBanner = $('sessionBanner');
 
 async function refreshSessionHealth() {
   try {
@@ -112,6 +119,7 @@ async function refreshSessionHealth() {
     if (r.status === 401) location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
 
     if (!r.ok) return;
+    // SAFETY: server.ts answers a 2xx /api/session-health with json({ healthy }).
     const { healthy } = (await r.json()) as { healthy: boolean };
     sessionBanner.hidden = healthy;
   } catch { /* transient network issue — leave the banner as-is */ }
@@ -411,7 +419,7 @@ function applyAliases(aliases: Record<string, string[]>, featureId: string) {
 
 function showScored(kind: ScoredKind, items: string[] | undefined, featureId: string, aliases?: Record<string, string[]>) {
   const g = scoredGroups[kind];
-  g.chips = (items ?? []).map((item) => ({ item, names: standoutNames(item, aliases), state: 'loading' as ChipState }));
+  g.chips = (items ?? []).map((item): ScoredChip => ({ item, names: standoutNames(item, aliases), state: 'loading' }));
   renderScored(kind);
 
   for (const d of g.chips) scoreChip(kind, featureId, d);
@@ -468,8 +476,10 @@ const FILTERS: { stance: Stance; cls: string; word: string }[] = [
 ];
 
 function opinionFilters(c: StanceCounts): HTMLButtonElement[] {
-  return FILTERS.filter((f) => c[f.stance] || f.cls === 'pos' || f.cls === 'neg').map(({ stance, cls, word }) => {
+  return FILTERS.flatMap(({ stance, cls, word }) => {
     const n = c[stance];
+
+    if (!n && cls !== 'pos' && cls !== 'neg') return [];
     const btn = el('button', `op-filter ${cls}`, `${STANCE_MARKS[stance].text}${n}`);
     btn.type = 'button';
     btn.dataset.stance = stance;
@@ -906,12 +916,11 @@ async function summarizeActiveChip() {
 
   try {
     let draw: ReturnType<typeof mountChipSummary> | undefined;
+    const body: HighlightSummaryRequest = { featureId: epoch.featureId, token: h.token, stream: true };
 
-    const data = await streamSummary('/api/highlight-summary', {
-      featureId: epoch.featureId, token: h.token, stream: true,
-      // A pooled chip's summary reads both review sets, as its list shows them.
-      ...(h.pooled ? { reviewTexts: textReviewsFor(h.reviews ?? []) } : {}),
-    } satisfies HighlightSummaryRequest, (draft) => { if (epoch.alive) (draw ??= mountChipSummary())(draft); });
+    // A pooled chip's summary reads both review sets, as its list shows them.
+    if (h.pooled) body.reviewTexts = textReviewsFor(h.reviews ?? []);
+    const data = await streamSummary('/api/highlight-summary', body, (draft) => { if (epoch.alive) (draw ??= mountChipSummary())(draft); });
 
     if (!epoch.alive) return;
 
@@ -1072,6 +1081,8 @@ async function loadHighlights(force = false) {
       }
 
       if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
+      // SAFETY: /api/highlights answers anything but its ndjson stream with a
+      // json() HighlightsResponse (server.ts).
       const data = await resp.json() as HighlightsResponse;
 
       if (data.pending) {
@@ -1142,6 +1153,7 @@ async function ensureHighlightReviews(h: UiChip): Promise<void> {
     const ct = resp.headers.get('content-type') ?? '';
 
     if (!resp.ok || !ct.includes('json')) return;
+    // SAFETY: /api/highlights answers a token request with a json() HighlightsResponse (server.ts).
     const data = await resp.json() as HighlightsResponse;
 
     if (!epoch.alive) return;
@@ -1232,6 +1244,7 @@ function paintScore(data: PaintData) {
     removedReviews: data.meta?.removedReviews,
   });
 
+  // SAFETY: #name is an <a> in index.html.
   const nameEl = $('name') as HTMLAnchorElement;
   nameEl.textContent = displayName;
 
@@ -1513,7 +1526,7 @@ function renderHoursToday(meta: PlaceMeta | undefined) {
   }
 
   const { day, hour } = localHourInTz(meta?.timezone);
-  const on = (d: number) => week.find((h) => WEEKDAYS.indexOf(h.day as typeof WEEKDAYS[number]) === d);
+  const on = (d: number) => week.find((h) => WEEKDAYS.findIndex((w) => w === h.day) === d);
   const today = on(day) ?? week[0];
   const open = isOpenNow(today, hour, on((day + 6) % 7));
   const status = open === true ? 'open' : open === false ? 'closed' : null;
@@ -1529,6 +1542,7 @@ function renderHoursToday(meta: PlaceMeta | undefined) {
 }
 
 function renderPlaceMeta(meta: PlaceMeta | undefined) {
+  // SAFETY: #placePhoto is an <img> in index.html.
   const photoEl = $('placePhoto') as HTMLImageElement;
   const metaRow = $('placeMetaRow');
   const googleEl = $('placeGoogle');
@@ -1572,6 +1586,7 @@ function renderPlaceMeta(meta: PlaceMeta | undefined) {
 // every score below is computed on the reviews that survived. Rendered above the
 // score so it can't be missed, and linked to Google's explainer when it has one.
 function renderRemovedReviews(meta: PlaceMeta | undefined) {
+  // SAFETY: #placeRemoved is an <a> in index.html.
   const banner = $('placeRemoved') as HTMLAnchorElement;
   const removed = meta?.removedReviews;
 
@@ -1739,6 +1754,7 @@ const resetGoBtn = () => { goBtn.disabled = false; goBtn.textContent = 'SCORE'; 
 // index.html starts a shared ?url= link's lookup before this bundle has loaded;
 // the first submit of that same link adopts it rather than asking again. One the
 // network dropped is asked again the usual way.
+// SAFETY: index.html's inline script sets window.earlyLookup to just this shape, or not at all.
 let earlyLookup = (window as { earlyLookup?: { url: string; response: Promise<Response> } }).earlyLookup;
 
 const lookupResponse = (url: string): Promise<Response> => {
