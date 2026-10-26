@@ -1,4 +1,4 @@
-import { addCommas, el, npsColor, npsStats, toneColor } from './utils';
+import { addCommas, el, isComputed, npsColor, npsStats, toneColor } from './utils';
 import { llmSummarize, renderFreeFormAnswer, type RenderQuote } from './review-summary';
 import type { SearchAsk } from './review-ask';
 import { countStances, opinionsOf, opinionTone, parseOrQuery, type SearchReviews, type Stance } from '@truescore/gmaps-shared';
@@ -197,7 +197,7 @@ export const buildSearchSection = <T,>({
   reviews, fields, toText, summaryPrompt, exampleQuery,
   total, search, mountSummarize,
 }: ReviewSearchOpts<T>) => {
-  const promptFor = (query: string) => (typeof summaryPrompt === 'function' ? summaryPrompt(query) : summaryPrompt);
+  const promptFor = (query: string) => (isComputed(summaryPrompt) ? summaryPrompt(query) : summaryPrompt);
   const corpusSize = total ?? reviews.length;
   const findLocal = localSearch(reviews, fields);
 

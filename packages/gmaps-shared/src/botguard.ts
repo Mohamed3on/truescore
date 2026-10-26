@@ -54,17 +54,21 @@ export function installMapsSigner(): void {
     }, ...rest);
   };
 
+  // Maps assigns its BotGuard object; anything else passes through unwrapped.
+  const isBotguard = (v: Botguard | undefined): v is Botguard => !!v && typeof v === 'object';
+  const isFunction = (v: unknown): v is Function => typeof v === 'function';
+
   let botguard: unknown;
   Object.defineProperty(window, 'botguard', {
     configurable: true,
     enumerable: true,
     get: () => botguard,
-    set: (v: unknown) => {
-      botguard = v && typeof v === 'object' ? new Proxy(v, {
+    set: (v: Botguard | undefined) => {
+      botguard = isBotguard(v) ? new Proxy(v, {
         get: (t: any, k) => {
           const val = t[k];
 
-          if (k !== 'a' || typeof val !== 'function') return val;
+          if (k !== 'a' || !isFunction(val)) return val;
 
           if (!wrappedA.has(val)) wrappedA.set(val, wrapA(val));
 

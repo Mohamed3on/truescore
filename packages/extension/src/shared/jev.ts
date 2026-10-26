@@ -1,7 +1,7 @@
 import { MAX_JUDGED, opinionTone, signedNet, mentionsText, reviewMark, trustedStance, type Answer, type Opinions, type ReceiptsRequest, type ReceiptsResponse, type Review, type Stance, type StanceRequest, type StanceResponse, type StanceResult, type Tone } from '@truescore/gmaps-shared';
 import { TRUESCORE_API_BASE } from './api-base';
 import { cacheGet, cacheSet } from './cache';
-import { el } from './utils';
+import { el, isComputed } from './utils';
 
 // What reviews say about a topic or a question, and which of them make a
 // summary's points — read by Jev on the truescore server, which holds its key
@@ -235,6 +235,8 @@ export const stanceMark = (stance: Stance | undefined, authorReviews?: number): 
 // fetch the reviews to find it among first), or as its text when none holds it.
 // `quotes` may be read only then, when their order waits on reviews still
 // arriving. `title` says what was checked when it wasn't every review.
+const isText = (q: string | { text: string }): q is string => typeof q === 'string';
+
 export const receiptButton = <Q extends string | { text: string }>(
   item: HTMLElement,
   n: number,
@@ -260,8 +262,8 @@ export const receiptButton = <Q extends string | { text: string }>(
 
     // Open at once, so a second press closes it while the cards are found.
     const box = item.appendChild(el('div', 'ars-receipt-quotes'));
-    const shown = typeof quotes === 'function' ? quotes() : quotes;
-    box.append(...await Promise.all(shown.map(async (q) => (await renderQuote(q)) ?? el('p', 'ars-receipt-quote', typeof q === 'string' ? q : q.text))));
+    const shown = isComputed(quotes) ? quotes() : quotes;
+    box.append(...await Promise.all(shown.map(async (q) => (await renderQuote(q)) ?? el('p', 'ars-receipt-quote', isText(q) ? q : q.text))));
 
     if (n > shown.length) box.appendChild(el('span', 'ars-receipt-more', `+${n - shown.length} more`));
   });

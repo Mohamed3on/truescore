@@ -95,7 +95,7 @@ const buildIsland = async (id: string): Promise<HTMLElement | null> => {
 // The buy box is client-rendered, so the anchor routinely arrives after
 // `document_end`; the injector re-inserts once it appears.
 setupSpaInjector<HTMLElement>({
-  match: () => productId(),
+  match: () => !!productId(),
   load: async () => {
     const id = productId();
 

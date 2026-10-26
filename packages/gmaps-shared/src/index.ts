@@ -7,7 +7,8 @@
 // it shares.
 
 import { STANCE_MARKS, type Stance } from './stance';
-import type { Quote } from './wire';
+import { isQuoteText, type Quote } from './wire';
+import type { JSONValue } from 'ai';
 
 export type Review = {
   reviewId: string;
@@ -97,9 +98,9 @@ export const textReviewsFor = (reviews: Review[]): string[] =>
 // Texts none of them holds go last.
 export const receiptReviews = (quotes: Quote[], reviews: Review[] = []): Quote[] => {
   const byText = new Map(reviews.map((r) => [r.text, r]));
-  const ts = (q: Quote) => (typeof q === 'string' ? 0 : q.timestamp ?? 0);
+  const ts = (q: Quote) => (isQuoteText(q) ? 0 : q.timestamp ?? 0);
 
-  return quotes.map((q) => (typeof q === 'string' ? byText.get(q) ?? q : q)).sort((a, b) => ts(b) - ts(a));
+  return quotes.map((q) => (isQuoteText(q) ? byText.get(q) ?? q : q)).sort((a, b) => ts(b) - ts(a));
 };
 
 // Reviews for the label-search and highlight panels: drop ones too short to be
@@ -329,8 +330,10 @@ export const buildSearchReq = (featureId: string, query: string, creds: MapsCred
 
 // Readers for the string and number leaves of Google's payloads: a slot holding
 // anything else, or missing, reads as absent.
-const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asNumber = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+const isText = (v: JSONValue | undefined): v is string => typeof v === 'string';
+const isNumber = (v: JSONValue | undefined): v is number => typeof v === 'number';
+const asString = (v: JSONValue | undefined): string | undefined => (isText(v) ? v : undefined);
+const asNumber = (v: JSONValue | undefined): number | undefined => (isNumber(v) ? v : undefined);
 
 // Review text lives at r[2][15]: an array of [text, mentions, range] tuples.
 // [0] is the original-language text; [1] (if present) is the translation in the
@@ -803,8 +806,11 @@ export type DisplayScore = {
   placeTotal: number;
 };
 
+// A raw score, rather than the stats it comes from.
+const isRawScore = (score: DisplayScoreInput['score']): score is number => typeof score === 'number';
+
 export const displayScore = ({ score, histogram, googleReviewCount, removedReviews }: DisplayScoreInput): DisplayScore => {
-  const raw = typeof score === 'number' ? score : score.ratio ?? score.scorePct / 100;
+  const raw = isRawScore(score) ? score : score.ratio ?? score.scorePct / 100;
   const rawPct = Math.round(raw * 100);
   const removedCount = removedCountEstimate(removedReviews);
   const placeTotal = (histogram?.length ? histogramTotal(histogram) : 0) || googleReviewCount || 0;

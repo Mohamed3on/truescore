@@ -15,8 +15,9 @@ const CHIP_NUMBERS: NumberStyle = { share: (t) => `rc-chip-pct ${t}`, net: 'rc-c
 const TITLE_NUMBERS: NumberStyle = { share: () => 'ts-op-share', sparse: 'dash' };
 const HEADER_NUMBERS: NumberStyle = { ...TITLE_NUMBERS, color: (o) => TONE_HEX[opinionTone(o)] };
 
-import { DefaultChatTransport } from 'ai';
+import { DefaultChatTransport, type JSONValue } from 'ai';
 import {
+  isQuoteText,
   type SummarizeRequest,
   type AskMessage,
   type AskSearch,
@@ -935,8 +936,8 @@ const renderRemovedNotice = (): void => {
 
 declare global {
   interface Window {
-    // Maps' own inlined page state, in whatever shape Google gives it.
-    APP_INITIALIZATION_STATE?: unknown;
+    // Maps' own inlined page state: JSON, in whatever shape Google gives it.
+    APP_INITIALIZATION_STATE?: JSONValue;
   }
 }
 
@@ -953,13 +954,18 @@ declare global {
 // That id check is also what keeps an SPA nav honest — the inlined state keeps
 // describing the page that first loaded, and must never paint its notice onto
 // the place the user has since clicked through to.
+// APP_INITIALIZATION_STATE is parsed JSON: the payloads sit in its strings, nested
+// in arrays and objects.
+const isAppStateText = (v: JSONValue | undefined): v is string => typeof v === 'string';
+const isAppStateObject = (v: JSONValue | undefined): v is { [key: string]: JSONValue | undefined } => !!v && typeof v === 'object' && !Array.isArray(v);
+
 const previewFromAppState = (featureId: string): any | null => {
   let found: any = null;
 
-  const walk = (v: any, depth: number): void => {
+  const walk = (v: JSONValue | undefined, depth: number): void => {
     if (found || depth > 6) return;
 
-    if (typeof v === 'string') {
+    if (isAppStateText(v)) {
       if (v.length < 5000 || !v.startsWith(")]}'")) return;
 
       try {
@@ -977,7 +983,7 @@ const previewFromAppState = (featureId: string): any | null => {
       return;
     }
 
-    if (v && typeof v === 'object') { for (const k in v) walk(v[k], depth + 1); }
+    if (isAppStateObject(v)) { for (const k in v) walk(v[k], depth + 1); }
   };
 
   walk(window.APP_INITIALIZATION_STATE, 0);
@@ -2902,7 +2908,7 @@ const mountSummary = (panel: HTMLElement) => {
     row.replaceChildren(text);
 
     // How many reviews make the point (checked on the server), opened below.
-    if (h.support != null) row.appendChild(receiptButton(row, h.support, receiptOf(h), (q) => (typeof q === 'string' ? null : reviewCardEl(q))));
+    if (h.support != null) row.appendChild(receiptButton(row, h.support, receiptOf(h), (q) => (isQuoteText(q) ? null : reviewCardEl(q))));
   });
 
   return (result: SummaryResult, checked = true) => {

@@ -146,9 +146,11 @@ import { credsFromBatchExecute, installMapsSigner } from '@truescore/gmaps-share
     settleCapture(creds);
   };
 
+  // fetch's input as Maps passes it: a URL, as a string or object, or a Request.
+  const isRequest = (input: RequestInfo | URL): input is Request => typeof input !== 'string' && !(input instanceof URL);
   const origFetch = window.fetch;
   window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
-    const url = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+    const url = isRequest(input) ? input.url : String(input);
 
     // Maps sends its review request as a bare Request (2026-10), headers and body on
     // it rather than in init; one Request reads any call shape. Cloned, so the body

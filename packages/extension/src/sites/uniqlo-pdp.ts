@@ -320,7 +320,7 @@ const addSummarizeUI = (
 };
 
 setupSpaInjector({
-  match: extractProductId,
+  match: () => !!extractProductId(),
   load: async () => {
     const locale = getLocale();
     const productId = extractProductId();

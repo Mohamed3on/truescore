@@ -1,5 +1,5 @@
 import { getActiveLLM } from './config';
-import { addCommas, el, renderMarkdown, renderMarkdownInline } from './utils';
+import { addCommas, el, isComputed, renderMarkdown, renderMarkdownInline } from './utils';
 import { cacheGet, cacheSet } from './cache';
 import { askTransport, bumpRateLimit, checkRateLimit, RL_MAX, summarize } from './llm';
 import { loadQAs, removeQA } from './qa-history';
@@ -809,7 +809,7 @@ export const buildMediaSummary = ({
         points: (Array.isArray(target?.points) ? target.points : []).map((point: any, i: number) => ({ ...point, text: grow(shown?.points?.[i]?.text, String(point?.text ?? '')) })),
       }));
 
-      const data = await llmSummarize(texts, typeof summaryPrompt === 'string' ? summaryPrompt : summaryPrompt(texts), MEDIA_SUMMARY_SCHEMA, drafts.push)
+      const data = await llmSummarize(texts, isComputed(summaryPrompt) ? summaryPrompt(texts) : summaryPrompt, MEDIA_SUMMARY_SCHEMA, drafts.push)
         .finally(drafts.stop);
 
       bumpRateLimit();

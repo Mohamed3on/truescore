@@ -1,4 +1,4 @@
-import { addCommas, el } from './utils';
+import { addCommas, el, isComputed } from './utils';
 import { appendStat, buildRecentGauge, fillRecentGauge } from './score-island';
 import { adjust, RECENT_REVIEWS, recentRatio } from './recency';
 import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from './review-summary';
@@ -46,7 +46,7 @@ const MIN_REVIEWS = 5;
 export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>) => {
   const { key, total, allMax = SEARCH_MAX, recent, score, text, card, searchTerm, date = () => '', summaryPrompt = PRODUCT_SUMMARY_PROMPT, context, autoSummarize } = reviews;
   let loaded: Promise<T[]> | undefined;
-  const all = () => (loaded ??= Promise.resolve(typeof reviews.all === 'function' ? reviews.all() : reviews.all));
+  const all = () => (loaded ??= Promise.resolve(isComputed(reviews.all) ? reviews.all() : reviews.all));
   const sample = () => all().then((rs) => [...new Set(rs.slice(0, SAMPLE_MAX).map(text).filter(Boolean))]);
 
   const remote = searchTerm && total > allMax ? orSearch(searchTerm, { text, date }) : null;

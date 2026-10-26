@@ -4,6 +4,8 @@
 // entry per candidate book) never has to be evicted. Reads degrade to null and
 // writes to no-ops if IndexedDB is unavailable, so callers just re-fetch.
 
+import { isComputed } from './utils';
+
 const DB_NAME = 'truescore';
 const STORE = 'cache';
 
@@ -37,7 +39,7 @@ export const idbGet = async (key: string, ttl: CacheTtl): Promise<any> => {
     const entry = await run<{ data: any; ts: number } | undefined>('readonly', (s) => s.get(key));
 
     if (!entry) return null;
-    const entryTtl = typeof ttl === 'function' ? ttl(entry.data) : ttl;
+    const entryTtl = isComputed(ttl) ? ttl(entry.data) : ttl;
 
     if (Date.now() - entry.ts > entryTtl) {
       idbDel(key);

@@ -193,7 +193,7 @@ const cleanup = () => {
 };
 
 setupSpaInjector({
-  match: () => getLocale() && extractItemNo(),
+  match: () => !!(getLocale() && extractItemNo()),
   load: async () => {
     const locale = getLocale();
     const itemNo = extractItemNo();

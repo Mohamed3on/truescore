@@ -417,8 +417,10 @@ const hideGlobalBadge = (table: HTMLTableElement) => {
 // ============================================================
 // Sorting
 // ============================================================
+const isNumber = (v: any): v is number => typeof v === 'number';
+
 const compareValues = (a: any, b: any, dir: number) => {
-  if (typeof a === 'number' && typeof b === 'number') return (a - b) * dir;
+  if (isNumber(a) && isNumber(b)) return (a - b) * dir;
 
   return String(a ?? '').localeCompare(String(b ?? '')) * dir;
 };

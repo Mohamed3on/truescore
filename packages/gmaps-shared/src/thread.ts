@@ -33,6 +33,11 @@ type Listing<T> = { kind: 'Listing'; data: { children: T[] } };
 // What Reddit leaves of a deleted or removed comment: nothing to read.
 const GONE = new Set(['[deleted]', '[removed]']);
 
+// Fields as Reddit sent them: a parent that isn't text, or replies that aren't a
+// listing, are skipped rather than read.
+const isText = (v: string | undefined): v is string => typeof v === 'string';
+const isListing = (replies: Comment['data']['replies']): replies is Listing<Thing> => !!replies && typeof replies === 'object';
+
 export const threadFromListing = ([post, comments]: [Listing<Post>, Listing<Thing>]): Thread => {
   const p = post.data.children[0]!.data;
   const out: ThreadComment[] = [];
@@ -44,7 +49,7 @@ export const threadFromListing = ([post, comments]: [Listing<Post>, Listing<Thin
       if (!GONE.has(d.body)) {
         const comment: ThreadComment = {
           id: d.id,
-          parentId: typeof d.parent_id === 'string' && d.parent_id.startsWith('t1_') ? d.parent_id.slice(3) : null,
+          parentId: isText(d.parent_id) && d.parent_id.startsWith('t1_') ? d.parent_id.slice(3) : null,
           author: d.author,
           score: d.score ?? 0,
           body: d.body,
@@ -54,7 +59,7 @@ export const threadFromListing = ([post, comments]: [Listing<Post>, Listing<Thin
         out.push(comment);
       }
 
-      if (d.replies && typeof d.replies === 'object') walk(d.replies.data.children);
+      if (isListing(d.replies)) walk(d.replies.data.children);
     }
   };
 

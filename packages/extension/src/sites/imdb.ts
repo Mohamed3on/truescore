@@ -7,6 +7,9 @@ import { addCommas, el, npsColor, npsStats } from '../shared/utils';
 // and the picks panel has to judge the titles the user can see.
 type Similar = { id: string; name: string; type: string; year: number | null; poster: string | null; rating: number | null };
 
+// A title in IMDb's page data needs its id as text to be looked up.
+const isText = (v: string | undefined): v is string => typeof v === 'string';
+
 const similarFromPage = (): Similar[] => {
   try {
     const edges = JSON.parse(document.querySelector('#__NEXT_DATA__')?.textContent || '')
@@ -23,7 +26,7 @@ const similarFromPage = (): Similar[] => {
         poster: node?.primaryImage?.url ?? null,
         rating: node?.ratingsSummary?.aggregateRating ?? null,
       }))
-      .filter((s: Similar) => typeof s.id === 'string');
+      .filter((s: Similar) => isText(s.id));
   } catch {
     return [];
   }

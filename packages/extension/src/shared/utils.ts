@@ -1,5 +1,8 @@
 import { mdInline, mdToHtml, netScore, type Tone } from '@truescore/gmaps-shared';
 
+// Options that take a value or a function computing it: whether this one is the function.
+export const isComputed = <V>(v: V): v is Extract<V, (...args: never[]) => void> => typeof v === 'function';
+
 export const addCommas = (x: number | string): string =>
   String(x).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 

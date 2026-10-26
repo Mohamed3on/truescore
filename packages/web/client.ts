@@ -5,7 +5,7 @@ import { DefaultChatTransport } from 'ai';
 import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
-  chipPolarity, compileMatchRegex, displayScore, standoutNames, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, receiptReviews, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
+  chipPolarity, compileMatchRegex, displayScore, standoutNames, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, receiptReviews, isQuoteText, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
   answersOf, bySupport, countAnswers, mountBullets, smoothDrafts, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
@@ -854,7 +854,7 @@ function receipt(li: HTMLElement, support: number, quotes: Quote[]): HTMLButtonE
     const box = el('ul', 'receipt-quotes review-list');
 
     for (const q of receiptReviews(quotes, panelReviews())) {
-      box.appendChild(typeof q === 'string' ? el('li', 'receipt-quote', q) : reviewCard(q, undefined, 'it', []));
+      box.appendChild(isQuoteText(q) ? el('li', 'receipt-quote', q) : reviewCard(q, undefined, 'it', []));
     }
 
     if (support > quotes.length) box.appendChild(el('li', 'micro', `+${support - quotes.length} more`));

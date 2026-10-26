@@ -413,7 +413,7 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
 // Etsy hydrates the buy box after `document_end`, so the anchor arrives late; the
 // injector re-inserts the island once it appears.
 setupSpaInjector<HTMLElement>({
-  match: () => listingMeta(),
+  match: () => !!listingMeta(),
   load: async () => {
     const meta = listingMeta();
 

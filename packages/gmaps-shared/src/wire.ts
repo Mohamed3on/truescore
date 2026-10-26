@@ -23,6 +23,9 @@ export type SummaryHighlight = { text: string; sentiment: string; support?: numb
 // reviews it holds (receiptReviews).
 export type Quote = Review | string;
 
+// A quote that came as bare text: no Review held it on the server.
+export const isQuoteText = (q: Quote): q is string => typeof q === 'string';
+
 // `items`: specific things reviewers single out (dishes, animals, exhibits…),
 // as short label-search terms (e.g. "alfajores", "gorilla"). Rendered as their
 // own clickable chips below the topic chips, each auto-scored by a label search.

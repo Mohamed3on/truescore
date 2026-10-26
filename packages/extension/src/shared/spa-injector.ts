@@ -1,5 +1,5 @@
 interface SpaInjectorOpts<T> {
-  match: () => unknown;
+  match: () => boolean;
   load: () => Promise<T | null>;
   inject: (data: T) => void;
   cleanup: () => void;
