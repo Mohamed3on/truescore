@@ -96,12 +96,16 @@ export const orderByAppend = (container: Element, scored: Element[], rest: Eleme
   for (const child of desired) container.appendChild(child);
 };
 
+// SAFETY: a ranked child is one of the host's card elements, HTML markup, so it
+// carries an inline style.
+const styleOf = (child: Element): CSSStyleDeclaration => (child as HTMLElement).style;
+
 // For flex/grid rows whose children the host pins with `order` utility classes:
 // win them with an `!important` order. Style-only — the tab-order drift from
 // not moving nodes is the price of never fighting a host re-render.
 export const orderByCssImportant = (_container: Element, scored: Element[], rest: Element[], sunk: Element[] = []): void => {
   [...scored, ...rest, ...sunk].forEach((child, i) => {
-    (child as HTMLElement).style.setProperty('order', String(i), 'important');
+    styleOf(child).setProperty('order', String(i), 'important');
   });
 };
 
@@ -117,15 +121,15 @@ const banded = new WeakSet<Element>();
 
 export const orderByCssBand = (_container: Element, scored: Element[], rest: Element[] = [], sunk: Element[] = []): void => {
   scored.forEach((child, i) => {
-    (child as HTMLElement).style.order = String(i - scored.length);
+    styleOf(child).order = String(i - scored.length);
     banded.add(child);
   });
   sunk.forEach((child, i) => {
-    (child as HTMLElement).style.order = String(i + 1);
+    styleOf(child).order = String(i + 1);
     banded.add(child);
   });
 
-  for (const child of rest) if (banded.delete(child)) (child as HTMLElement).style.order = '';
+  for (const child of rest) if (banded.delete(child)) styleOf(child).order = '';
 };
 
 // The module owns `data-nps`, so a container's scored child is whichever element
@@ -138,11 +142,11 @@ const bearer = (child: Element): Element | null =>
 // order, and the sunk — cards scored below 0, known hated, which belong under
 // anything still unknown rather than above it. This is the ranking the grid
 // applies each frame — exposed so the selection can be tested without a live grid.
-export const rankChildren = (container: Element, rankableChild: (child: Element) => boolean = () => true): { scored: Element[]; rest: Element[]; sunk: Element[] } => {
+export const rankChildren = (container: Element, rankableChild: (child: Element) => boolean = () => true) => {
   const ranked: { child: Element; score: number }[] = [];
   const rest: Element[] = [];
 
-  for (const child of [...container.children]) {
+  for (const child of container.children) {
     if (!rankableChild(child)) {
       rest.push(child);
       continue;
@@ -157,9 +161,9 @@ export const rankChildren = (container: Element, rankableChild: (child: Element)
   ranked.sort((a, b) => b.score - a.score);
 
   return {
-    scored: ranked.filter((r) => r.score >= 0).map((r) => r.child),
+    scored: ranked.flatMap((r) => (r.score >= 0 ? [r.child] : [])),
     rest,
-    sunk: ranked.filter((r) => r.score < 0).map((r) => r.child),
+    sunk: ranked.flatMap((r) => (r.score < 0 ? [r.child] : [])),
   };
 };
 
@@ -201,9 +205,9 @@ export const cycleBestRatios = (picks: () => (Element | null)[]): void => {
   let current: HTMLElement | null = null;
   document.addEventListener('keydown', (e) => {
     if ((e.key !== ']' && e.key !== '[') || e.metaKey || e.ctrlKey || e.altKey) return;
-    const target = e.target as HTMLElement;
+    const target = e.target;
 
-    if (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+    if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
     const at = (el: Element) => el.getBoundingClientRect();
 
     const cards = picks()

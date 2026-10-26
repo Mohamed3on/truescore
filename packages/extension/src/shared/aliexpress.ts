@@ -5,7 +5,7 @@
 // reviews, no cookies and no request signing.
 
 import { npsStats } from './utils';
-import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
+import { cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
 
 const ENDPOINT = 'https://feedback.aliexpress.com/pc/searchEvaluation.do';
 

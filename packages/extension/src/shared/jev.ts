@@ -1,7 +1,7 @@
-import { MAX_JUDGED, opinionTone, signedNet, mentionsText, reviewMark, trustedStance, type Answer, type Opinions, type ReceiptsResponse, type Review, type Stance, type StanceResponse, type StanceResult, type Tone } from '@truescore/gmaps-shared';
+import { MAX_JUDGED, opinionTone, signedNet, mentionsText, reviewMark, trustedStance, type Answer, type Opinions, type ReceiptsRequest, type ReceiptsResponse, type Review, type Stance, type StanceRequest, type StanceResponse, type StanceResult, type Tone } from '@truescore/gmaps-shared';
 import { TRUESCORE_API_BASE } from './api-base';
 import { cacheGet, cacheSet } from './cache';
-import { el, npsColor } from './utils';
+import { el } from './utils';
 
 // What reviews say about a topic or a question, and which of them make a
 // summary's points — read by Jev on the truescore server, which holds its key
@@ -25,7 +25,10 @@ let offUntil = 0;
 // Whether Jev can be asked right now.
 const reachable = () => Date.now() >= offUntil && (viaWorker || inPage);
 
-const post = async <T,>(route: 'stance' | 'receipts', body: unknown): Promise<T | null> => {
+// Each of the server's Jev routes, with the body it takes and the reply it gives.
+type JevRoutes = { stance: [StanceRequest, StanceResponse]; receipts: [ReceiptsRequest, ReceiptsResponse] };
+
+const post = async <R extends keyof JevRoutes>(route: R, body: JevRoutes[R][0]): Promise<JevRoutes[R][1] | null> => {
   if (!reachable()) return null;
 
   try {
@@ -36,7 +39,9 @@ const post = async <T,>(route: 'stance' | 'receipts', body: unknown): Promise<T 
 
     if (!r || r.error) offUntil = Date.now() + OFF_MS;
 
-    return r?.error ? null : (r as T | null);
+    // SAFETY: r is the JSON /api/<route> answers, relayed as-is by the worker,
+    // and the server builds each route's reply as its wire type.
+    return r?.error ? null : (r as JevRoutes[R][1] | null);
   } catch {
     offUntil = Date.now() + OFF_MS;
 
@@ -56,9 +61,13 @@ const hash = (s: string) => {
   return (h >>> 0).toString(36);
 };
 
-const kept = async <T,>(kind: string, parts: unknown[], read: () => Promise<T | null>): Promise<T | null> => {
+// Each kind of read, as it's kept.
+type Kept = { stance: Stance[]; answer: Answer[]; support: number[][] };
+
+const kept = async <K extends keyof Kept>(kind: K, parts: unknown[], read: () => Promise<Kept[K] | null>): Promise<Kept[K] | null> => {
   const key = `ts_jev_${kind}_${hash(JSON.stringify(parts))}`;
-  const hit = cacheGet(key, KEEP_MS) as T | null;
+  // SAFETY: only this function writes ts_jev_<kind>_ keys, each with a read of that kind.
+  const hit = cacheGet(key, KEEP_MS) as Kept[K] | null;
 
   if (hit) return hit;
   const fresh = await read();
@@ -74,7 +83,11 @@ export const readStances = (topic: string, texts: string[]): Promise<Stance[] | 
 
   if (!read.length) return Promise.resolve(null);
 
-  return kept('stance', [topic, read], () => post<StanceResponse>('stance', { topic, texts: read }).then((r) => (r?.stances?.every(Boolean) ? (r.stances as Stance[]) : null)));
+  return kept('stance', [topic, read], () => post('stance', { topic, texts: read }).then((r) => {
+    const stances = r?.stances;
+
+    return stances?.every((s) => !!s) ? stances : null;
+  }));
 };
 
 // Each text's answer to an Ask's `question`.
@@ -83,7 +96,11 @@ export const readAnswers = (question: string, texts: string[]): Promise<Answer[]
 
   if (!read.length) return Promise.resolve(null);
 
-  return kept('answer', [question, read], () => post<StanceResponse>('stance', { question, texts: read }).then((r) => (r?.answers?.every(Boolean) ? (r.answers as Answer[]) : null)));
+  return kept('answer', [question, read], () => post('stance', { question, texts: read }).then((r) => {
+    const answers = r?.answers;
+
+    return answers?.every((a) => !!a) ? answers : null;
+  }));
 };
 
 // A Maps chip's or Search's reviews read for their stance on `topic` (trustedStance).
@@ -92,7 +109,7 @@ export const readStanceOf = (topic: string, reviews: Review[]): Promise<StanceRe
 
 // Per point, the indices of `texts` that make it.
 export const readSupport = (points: string[], texts: string[]): Promise<number[][] | null> =>
-  kept('support', [points, texts], () => post<ReceiptsResponse>('receipts', { points, texts }).then((r) => r?.support ?? null));
+  kept('support', [points, texts], () => post('receipts', { points, texts }).then((r) => r?.support ?? null));
 
 // One small sheet for every host skin (daylight, Goodreads paper, Letterboxd and
 // Maps at night): colours come from the text around them (currentColor) and the
@@ -180,6 +197,7 @@ export const opinionsLabel = (o: Opinions) => (o.sparse ? mentionsText(o.mention
 // subject; pressing the pressed one again clears it. Instant: a frequent action.
 export const opinionFilters = (o: Opinions, current: () => Stance | null, set: (s: Stance | null) => void): HTMLButtonElement[] => {
   const press = (stance: Stance, glyph: string, n: number, word: string) => {
+    // SAFETY: el('button') creates a <button>.
     const btn = el('button', `ts-op-filter ${stance === 'praise' ? 'pos' : 'neg'}`, `${glyph}${n}`) as HTMLButtonElement;
     btn.type = 'button';
     btn.disabled = !n;
@@ -225,6 +243,7 @@ export const receiptButton = <Q extends string | { text: string }>(
   title = 'Show the reviews that say this',
 ): HTMLButtonElement => {
   ensureJevStyles();
+  // SAFETY: el('button') creates a <button>.
   const btn = el('button', 'ars-receipt', `${n} reviews`) as HTMLButtonElement;
   btn.type = 'button';
   btn.title = title;

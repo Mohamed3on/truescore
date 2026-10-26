@@ -67,10 +67,12 @@ const FIELDS = [
 ];
 
 for (const { id, storageKey } of FIELDS) {
+  // SAFETY: popup.html renders each of FIELDS' ids as an <input>.
   const input = document.getElementById(id) as HTMLInputElement;
 
   // Load saved key
   chrome.storage.sync.get(storageKey, (items) => {
+    // SAFETY: the popup is sync storage's only writer, and it saves every value as a string.
     const v = (items as Record<string, string>)[storageKey];
 
     if (v) input.value = v;

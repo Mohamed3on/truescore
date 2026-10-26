@@ -111,7 +111,7 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
   // Navigation API covers pushState/replaceState/popstate/hash; falls back to
   // popstate+hashchange on browsers without it. Replaces a body-subtree
   // MutationObserver that ran JS on every DOM mutation just to compare hrefs.
-  const nav = (window as any).navigation;
+  const nav = window.navigation;
 
   if (nav?.addEventListener) {
     nav.addEventListener('navigatesuccess', onUrlChange);

@@ -53,18 +53,16 @@ export const tallyVariationDims = <T>(
     }
   });
 
-  return [...dims.entries()]
-    .filter(([, values]) => values.size >= 2)
-    .map(([dim, values]) => ({
-      label: dim,
-      rows: [...values.entries()]
-        .map(([label, { score, count }]) => ({
-          label,
-          score,
-          meta: `${count} review${count === 1 ? '' : 's'}`,
-        }))
-        .sort((a, b) => b.score - a.score),
-    }));
+  return [...dims.entries()].flatMap(([dim, values]) => (values.size < 2 ? [] : [{
+    label: dim,
+    rows: [...values.entries()]
+      .map(([label, { score, count }]) => ({
+        label,
+        score,
+        meta: `${count} review${count === 1 ? '' : 's'}`,
+      }))
+      .sort((a, b) => b.score - a.score),
+  }]));
 };
 
 const STYLE_ID = 'ts-var-styles';

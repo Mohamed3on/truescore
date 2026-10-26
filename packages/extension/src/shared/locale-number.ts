@@ -25,7 +25,7 @@ export const parseRatingAndCount = (text: string) => {
 export const parseLocaleNumber = (text: string, decimal: '.' | ','): number =>
   parseFloat(decimal === ',' ? text.replace(/\./g, '').replace(',', '.') : text.replace(/,/g, ''));
 
-const MAGNITUDES: Record<string, number> = { k: 1e3, th: 1e3, tsd: 1e3, m: 1e6, mio: 1e6, bn: 1e9, mrd: 1e9 };
+const MAGNITUDES = new Map([['k', 1e3], ['th', 1e3], ['tsd', 1e3], ['m', 1e6], ['mio', 1e6], ['bn', 1e9], ['mrd', 1e9]]);
 
 // An amount with a magnitude suffix as either locale abbreviates it — "€1.43bn",
 // "€56.04m", "€928k" / "1,43 Mrd. €", "56,04 Mio. €", "928 Tsd. €". NaN when
@@ -33,5 +33,5 @@ const MAGNITUDES: Record<string, number> = { k: 1e3, th: 1e3, tsd: 1e3, m: 1e6, 
 export const parseAbbreviated = (text: string, decimal: '.' | ','): number => {
   const [, num = '', unit = ''] = text.replace(/[\p{Sc}\s]/gu, '').match(/(-?\d[\d.,]*)([a-z]*)/i) ?? [];
 
-  return parseLocaleNumber(num, decimal) * (MAGNITUDES[unit.toLowerCase()] ?? 1);
+  return parseLocaleNumber(num, decimal) * (MAGNITUDES.get(unit.toLowerCase()) ?? 1);
 };

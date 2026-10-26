@@ -45,6 +45,8 @@ const withReviews = (prompt: string, reviewTexts: string[]) =>
 
 // A structured reply cut off at the token cap isn't valid JSON: keep every
 // field that made it rather than lose the whole summary.
+// SAFETY: the summary schemas (SUMMARY_SCHEMA, MEDIA_SUMMARY_SCHEMA) give every
+// property an object schema, never a boolean one.
 export const salvageObject = (text: string, schema: JSONSchema7) =>
   Object.fromEntries(Object.entries(schema.properties ?? {}).map(([field, p]) =>
     [field, (p as JSONSchema7).type === 'array' ? salvageStringArray(text, field) : salvageString(text, field) ?? '']));
@@ -80,11 +82,11 @@ const SEARCH_DESCRIPTION = 'Search every review, not just the sample, for any of
 // An Ask's model for runAsk, in-process: the site's `prompt` and the `sample`
 // reviews as its instructions, and — when the page can Search — the
 // searchReviews tool it answers; without one it answers in a single pass.
-export const askTransport = async (prompt: string, sample: string[], canSearch: boolean) => new DirectChatTransport({
+export const askTransport = async (prompt: string, sample: string[], canSearch: boolean): Promise<ChatTransport<AskMessage>> => new DirectChatTransport({
   agent: new ToolLoopAgent({
     ...await activeModel(),
     instructions: withReviews(canSearch ? `${prompt}\n\n${SEARCH_NOTE}` : prompt, sample),
     tools: canSearch ? { searchReviews: searchReviewsTool(sample, SEARCH_DESCRIPTION) } : {},
     prepareStep: ({ messages }) => (searchesLeft(messages) ? {} : { toolChoice: 'none' }),
   }),
-}) as ChatTransport<AskMessage>;
+});

@@ -34,13 +34,16 @@ async function api(url: string, init: RequestInit = {}): Promise<any> {
   return JSON.parse(text);
 }
 
+// The two signed parts of the service account's JWT: its header and its claims.
+type JwtPart = { alg: string; typ: string } | { iss: string; scope: string; aud: string; iat: number; exp: number };
+
 async function accessToken(): Promise<string> {
   const key = JSON.parse(
     process.env.CWS_SERVICE_ACCOUNT_KEY ||
       (await Bun.file(`${homedir()}/.config/chrome-web-store/service-account.json`).text()),
   );
 
-  const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const b64 = (part: JwtPart) => Buffer.from(JSON.stringify(part)).toString('base64url');
   const now = Math.floor(Date.now() / 1000);
 
   const jwt = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({

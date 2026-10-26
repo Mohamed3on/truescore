@@ -45,9 +45,11 @@ export const buildGauge = ({ score, nps, total }: IslandScore, recent?: number |
     <div class="ars-gauge-track"><div class="ars-gauge-fill"></div></div>
   `; // safe: no user content in template
   const tone = npsColor(nps);
+  // SAFETY: the template above renders the percent as a <span>.
   const pct = gauge.querySelector('.ars-gauge-pct') as HTMLElement;
   pct.textContent = `${Math.round(nps)}%`;
   pct.style.color = tone;
+  // SAFETY: the template above renders the fill as a <div>.
   const fill = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
   fill.style.cssText = `width:100%;background:${tone};transform:scaleX(${Math.max(0, nps) / 100})`;
 
@@ -117,9 +119,11 @@ export const fillRecentGauge = (gauge: HTMLElement, ratio: number | null): void 
   if (ratio == null) return gauge.remove();
   const pct = Math.round(ratio * 100);
   const tone = npsColor(pct);
+  // SAFETY: the gauge comes from buildRecentGauge, whose template renders the percent as a <span>.
   const pctEl = gauge.querySelector('.ars-gauge-pct') as HTMLElement;
   pctEl.textContent = `${pct}%`;
   pctEl.style.color = tone;
+  // SAFETY: buildRecentGauge's template renders the fill as a <div>.
   const fill = gauge.querySelector('.ars-gauge-fill') as HTMLElement;
   fill.style.background = tone;
   fill.style.transform = `scaleX(${Math.max(0, Math.min(1, ratio))})`;

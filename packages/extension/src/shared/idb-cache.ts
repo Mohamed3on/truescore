@@ -23,6 +23,8 @@ const run = <T>(mode: IDBTransactionMode, op: (store: IDBObjectStore) => IDBRequ
     (db) =>
       new Promise<T>((resolve, reject) => {
         const req = op(db.transaction(STORE, mode).objectStore(STORE));
+        // SAFETY: the store holds only idbSet's and idbEdit's { data, ts } entries,
+        // the T a get names; a put or delete reads nothing back.
         req.onsuccess = () => resolve(req.result as T);
         req.onerror = () => reject(req.error);
       }),

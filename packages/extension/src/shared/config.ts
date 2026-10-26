@@ -5,6 +5,7 @@ import { DEFAULT_PROVIDER, LLM_PROVIDERS, REASONING_EFFORTS, type ReasoningEffor
 // the extension is readable by anyone who unpacks it.
 const storedKey = async (name: string): Promise<string> => {
   try {
+    // SAFETY: the popup is sync storage's only writer, and it saves every value as a string.
     const items = await chrome.storage.sync.get(name) as Record<string, string>;
 
     return items[name] || '';
@@ -35,7 +36,7 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 export async function getReasoningEffort(): Promise<ReasoningEffort> {
   const effort = await storedKey('openaiReasoningEffort');
 
-  return (REASONING_EFFORTS as readonly string[]).includes(effort) ? (effort as ReasoningEffort) : DEFAULT_REASONING_EFFORT;
+  return REASONING_EFFORTS.find((e) => e === effort) ?? DEFAULT_REASONING_EFFORT;
 }
 
 export async function getActiveLLM(): Promise<{ provider: LLMProvider; key: string; reasoningEffort: ReasoningEffort }> {
@@ -57,5 +58,5 @@ export async function getActiveLLM(): Promise<{ provider: LLMProvider; key: stri
 export async function getProviderChoice(): Promise<LLMProvider | undefined> {
   const pref = await storedKey('llmProvider');
 
-  return (LLM_PROVIDERS as readonly string[]).includes(pref) ? (pref as LLMProvider) : undefined;
+  return LLM_PROVIDERS.find((p) => p === pref);
 }

@@ -136,7 +136,7 @@ export const localSearch = <T,>(reviews: T[], fields: (r: T) => SearchReviewFiel
     return { r, h: [f.title, f.body, f.meta].filter(Boolean).join(' ').toLowerCase() };
   });
 
-  return (terms: string[]) => projected.filter((p) => terms.some((t) => p.h.includes(t))).map((p) => p.r);
+  return (terms: string[]) => projected.flatMap((p) => (terms.some((t) => p.h.includes(t)) ? [p.r] : []));
 };
 
 // An Ask's Searches over every review in hand, for an item whose Sample holds only
@@ -212,6 +212,7 @@ export const buildSearchSection = <T,>({
   header.style.display = 'none';
   const scoreChip = el('span', 'ars-search-score');
   const summary = el('span', 'ars-search-summary');
+  // SAFETY: el('button') creates a <button>.
   const sumBtn = el('button', 'ars-summarize-btn ars-search-sum-btn', '✦ Summarize') as HTMLButtonElement;
   sumBtn.type = 'button';
   header.append(scoreChip, summary, sumBtn);
@@ -232,7 +233,7 @@ export const buildSearchSection = <T,>({
   if (mountSummarize) { sumBtn.style.display = 'none'; section.appendChild(sumHost); }
 
   const summaryCache = new Map<string, string>();
-  let timer: number | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let currentQuery = '';
 
   type Match = { r: T; f: SearchReviewFields };
@@ -465,7 +466,7 @@ export const buildSearchSection = <T,>({
 
   input.addEventListener('input', () => {
     if (timer != null) clearTimeout(timer);
-    timer = setTimeout(() => void render(), search ? REMOTE_DEBOUNCE_MS : SEARCH_DEBOUNCE_MS) as unknown as number;
+    timer = setTimeout(() => void render(), search ? REMOTE_DEBOUNCE_MS : SEARCH_DEBOUNCE_MS);
   });
 
   // Self-removing so SPA re-injections (which rebuild the section) don't stack

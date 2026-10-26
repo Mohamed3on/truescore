@@ -65,6 +65,7 @@ const fetchPage = async (code: string, id: string, page: number): Promise<Review
 // page fails the whole fetch, so no sample with a hole is ever cached.
 export const fetchReviews = async (code: string, id: string): Promise<ReviewBundle> => {
   const key = `helpfulcrowd-reviews-v1-${code}-${id}`;
+  // SAFETY: fetchReviews alone writes these keys, each with a ReviewBundle.
   const cached = cacheGet(key, REVIEWS_CACHE_MS) as ReviewBundle | null;
 
   if (cached) return cached;

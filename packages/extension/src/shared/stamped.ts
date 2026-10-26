@@ -47,7 +47,7 @@ const PAGE_SIZE = 100;
 const MAX_PAGES = 10;
 
 export const getProductInfo = (): ProductInfo | null => {
-  const widget = document.getElementById('stamped-main-widget') as HTMLElement | null;
+  const widget = document.getElementById('stamped-main-widget');
   const id = widget?.dataset.productId || widget?.getAttribute('data-product-id');
   const sku = widget?.dataset.productSku || widget?.getAttribute('data-product-sku');
   const name = widget?.dataset.name || widget?.getAttribute('data-name');
@@ -71,6 +71,8 @@ const fetchPage = async (store: StampedStore, page: number, info: ProductInfo) =
 
   if (!res.ok) return null;
 
+  // SAFETY: Stamped's widget API answers a page as its total and that page's
+  // reviews, and every field read off them here may be missing.
   return res.json() as Promise<{ total?: number; data?: StampedReview[] }>;
 };
 
@@ -103,6 +105,7 @@ const pageReviewCount = () => {
 
 const fetchAllReviews = async (store: StampedStore, info: ProductInfo): Promise<ReviewBundle> => {
   const cacheKey = store.cacheKey(info.id);
+  // SAFETY: fetchAllReviews alone writes a store's review keys, each with a ReviewBundle.
   const cached = cacheGet(cacheKey, REVIEWS_CACHE_MS) as ReviewBundle | null;
 
   // With a cache, page 1 goes alone — it gives the current `total` plus the
@@ -170,6 +173,7 @@ export const loadReviews = async (
   info: ProductInfo,
   render: (bundle: ReviewBundle, stays: boolean | Promise<boolean>) => void,
 ) => {
+  // SAFETY: fetchAllReviews alone writes a store's review keys, each with a ReviewBundle.
   const cached = cacheGet(store.cacheKey(info.id), REVIEWS_CACHE_MS) as ReviewBundle | null;
   const freshPromise = fetchAllReviews(store, info).catch(() => null);
   const moved = (fresh: ReviewBundle | null) => !!fresh && (!cached || fresh.total !== cached.total);
@@ -230,6 +234,8 @@ const storeReviews = async (store: StampedStore, rating: number, page: number) =
 
   if (!res.ok) throw new Error(`Stamped ${res.status}`);
 
+  // SAFETY: Stamped's widget API answers a page as its total and that page's
+  // reviews, each naming its product.
   return res.json() as Promise<{ total?: number; data?: { productId: number | string }[] }>;
 };
 
@@ -274,6 +280,7 @@ export const cardScores = (store: StampedStore) => {
 
   const loadCensus = () => (census ??= (async () => {
     const key = `stamped-census-${store.storeUrl}`;
+    // SAFETY: loadCensus alone writes a store's census key, with a Census.
     const cached = cacheGet(key, CENSUS_MS) as Census | null;
 
     if (cached) return cached;

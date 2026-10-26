@@ -17,6 +17,7 @@ export type Read = AnswerCounts | Promise<AnswerCounts | null> | null;
 // the question (or their % positive) and their count — pulsing while it runs; a
 // click opens those reviews.
 const searchRow = (s: AskSearch, open?: (query: string) => void, read?: Read) => {
+  // SAFETY: el('button') creates a <button>.
   const row = el('button', s.done ? 'ars-ask-search' : 'ars-ask-search live') as HTMLButtonElement;
   row.type = 'button';
   row.disabled = !open || !s.done || !s.found;

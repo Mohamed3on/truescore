@@ -44,9 +44,11 @@ export type MergedStats = { totalCount: number; totalAll: number; totalTrusted: 
 
 export type Reconcile = 'fresh' | 'stale' | 'unknown';
 
+// Where entries persist: a write answers true once done, null when the bridge
+// never answered.
 export type Storage = {
-  get: <T>(key: string) => Promise<T | null>;
-  set: (key: string, value: any) => Promise<unknown>;
+  get: (key: string) => Promise<ScoreCacheEntry | null>;
+  set: (key: string, value: ScoreCacheEntry) => Promise<true | null>;
 };
 
 export const makeReviewData = (): ReviewData => ({
@@ -105,7 +107,7 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
   const sortData = (sort: SortKey): ReviewData | undefined =>
     Object.keys(reviewMap[sort]).length ? tally(reviewMap[sort]) : cached?.[sort];
 
-  const merge = (): Record<string, Review> => {
+  const merge = () => {
     const m: Record<string, Review> = {};
 
     for (const key of SORT_KEYS) for (const id in reviewMap[key]) if (!m[id]) m[id] = reviewMap[key][id];
@@ -113,7 +115,7 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
     return m;
   };
 
-  const pickFrom = (reviews: Record<string, Review>, ids: string[]): Record<string, Review> => {
+  const pickFrom = (reviews: Record<string, Review>, ids: string[]) => {
     const out: Record<string, Review> = {};
 
     for (const id of ids) {
@@ -252,7 +254,7 @@ export const createScoreStore = ({ storage, now }: { storage: Storage; now: () =
     // already arrived, the cache is already set, or `stillValid` flipped while
     // the async read was in flight (an SPA nav to another place).
     async loadCache(key: string, stillValid: () => boolean = () => true): Promise<boolean> {
-      const entry = await storage.get<ScoreCacheEntry>(key);
+      const entry = await storage.get(key);
 
       if (!entry || !stillValid() || cached || store.hasLiveData()) return false;
       cached = entry;

@@ -5,7 +5,7 @@
 // labels (`listing_async_review_variations`).
 
 import { npsStats } from './utils';
-import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
+import { cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
 
 const DEEP_DIVE = '/api/v3/ajax/bespoke/member/neu/specs/deep_dive_reviews';
 const DEEP_DIVE_SPEC = 'Etsy\\Modules\\ListingPage\\Reviews\\DeepDive\\AsyncApiSpec';
