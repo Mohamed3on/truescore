@@ -136,14 +136,10 @@ const groupBy = (
     map.get(rawKey)!.push(review);
   }
 
-  return map.entries()
-    .filter(([, groupedReviews]) => groupedReviews.length >= MIN_REVIEWS_PER_GROUP)
-    .map(([label, groupedReviews]) => ({
-      label: format(label),
-      count: groupedReviews.length,
-      pct: scoreOf(groupedReviews),
-    }))
-    .toArray()
+  return [...map.entries()]
+    .flatMap(([label, groupedReviews]) => (groupedReviews.length >= MIN_REVIEWS_PER_GROUP
+      ? [{ label: format(label), count: groupedReviews.length, pct: scoreOf(groupedReviews) }]
+      : []))
     .sort((a, b) => b.count - a.count);
 };
 

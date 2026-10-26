@@ -1075,7 +1075,13 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
   };
 
   // A hidden film's check — a run of review-page fetches — waits until it's shown.
-  const checkShown = () => Promise.all(items.values().filter((e) => shown(e.film)).map((e) => (e.checking ??= check(e.film))));
+  // Two passes, so every film's shown verdict is read before any check starts.
+  const checkShown = () => {
+    const due = [...items.values()].filter((e) => shown(e.film));
+
+    return Promise.all(due.map((e) => (e.checking ??= check(e.film))));
+  };
+
   await checkShown();
 
   if (stats) similarSection.append(debugDetails(stats));

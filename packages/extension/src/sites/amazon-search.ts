@@ -231,7 +231,7 @@ const sortAmazonResults = async () => {
     // card that was emptied at the time blank for good.
     orderByCssBand(searchResults, itemsArr.map(([, item]) => item));
     const tinted = markBestRatios(itemsArr.map(([, item]) => ratingEls.get(item) ?? null));
-    picks = itemsArr.values().map(([, item]) => item).filter((item) => tinted.some((el) => el === ratingEls.get(item))).toArray();
+    picks = itemsArr.flatMap(([, item]) => (tinted.some((el) => el === ratingEls.get(item)) ? [item] : []));
   }
 };
 

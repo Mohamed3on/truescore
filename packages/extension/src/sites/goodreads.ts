@@ -827,7 +827,11 @@ const isEligible = (c: Candidate, avgGate: number) => !isRead(c) && parseFloat(c
 
 /** The shelf's own average, over the rows that show one. */
 const meanRating = (rows: Candidate[]): number | null => {
-  const ratings = rows.values().map((r) => parseFloat(r.bookRating || '')).filter(Number.isFinite).toArray();
+  const ratings = rows.flatMap((r) => {
+    const rating = parseFloat(r.bookRating || '');
+
+    return Number.isFinite(rating) ? [rating] : [];
+  });
 
   return ratings.length ? ratings.reduce((a, b) => a + b, 0) / ratings.length : null;
 };
