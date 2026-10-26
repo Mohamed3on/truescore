@@ -5,13 +5,17 @@ import { createThrottledFetcher } from './shared/throttled-fetch';
 import { SERVER_SCORE_PORT, type ServerScoreMessage } from './shared/gmaps-bridge-protocol';
 import { getProviderChoice, getReasoningEffort, getTruescorePassword } from './shared/config';
 import { TALLY_PORT, type TallyAsk } from './shared/tally';
-import { featureIdFromPlaceUrl, readNdjson, type HighlightEvent, type HighlightsRequest, type HighlightsResponse, type LookupEvent, type Score, type SearchEvent, type SearchRequest, type TallyEvent, type TallyRequest, type ThreadAskEvent, type ThreadAskRequest } from '@truescore/gmaps-shared';
+import { featureIdFromPlaceUrl, readNdjson, type HighlightEvent, type HighlightsRequest, type HighlightsResponse, type LookupEvent, type PartialScore, type Score, type SearchEvent, type SearchRequest, type TallyEvent, type TallyRequest, type ThreadAskEvent, type ThreadAskRequest } from '@truescore/gmaps-shared';
+import * as z from 'zod/mini';
 
 // Drop rc_score_* entries older than 30 days. Registered on install/update
 // only — top-level chrome.alarms.create on every SW wake would reset the
 // next-fire time and starve the alarm under heavy activity.
 const SWEEP_ALARM = 'truescore-sweep';
 const ENTRY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+// A score cache entry's write time, all the sweep reads of it.
+const SCORE_ENTRY = z.object({ ts: z.number() });
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(SWEEP_ALARM, { periodInMinutes: 24 * 60 });
@@ -29,9 +33,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (k.startsWith('rc_score_') && !k.startsWith(SCORE_CACHE_PREFIX)) return true;
 
     if (!k.startsWith(SCORE_CACHE_PREFIX)) return false;
-    const ts = (all[k] as { ts?: number } | null)?.ts;
+    const entry = SCORE_ENTRY.safeParse(all[k]);
 
-    return typeof ts === 'number' && ts < cutoff;
+    return entry.success && entry.data.ts < cutoff;
   });
 
   if (!stale.length) return;
@@ -48,6 +52,19 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // it's all zeros.
 const imdbFetch = createThrottledFetcher(10);
 
+// The query's answer: a title IMDb doesn't know comes back null, and one that
+// doesn't read as a title is left out like it.
+const IMDB_TITLE = z.object({
+  id: z.string(),
+  aggregateRatingsBreakdown: z.nullish(z.object({
+    histogram: z.nullish(z.object({
+      histogramValues: z.nullish(z.array(z.object({ rating: z.number(), voteCount: z.nullish(z.number()) }))),
+    })),
+  })),
+});
+
+const IMDB_TITLES = z.object({ data: z.object({ titles: z.array(z.catch(z.nullable(IMDB_TITLE), null)) }) });
+
 const imdbHistograms = async (ids: string[]): Promise<Record<string, number[]> | null> => {
   try {
     const r = await imdbFetch('https://caching.graphql.imdb.com/', {
@@ -60,13 +77,13 @@ const imdbHistograms = async (ids: string[]): Promise<Record<string, number[]> |
     });
 
     if (!r.ok) return null;
-    const titles = (await r.json())?.data?.titles;
+    const answer = IMDB_TITLES.safeParse(await r.json());
 
-    if (!Array.isArray(titles)) return null;
+    if (!answer.success) return null;
     const histograms: Record<string, number[]> = {};
 
-    for (const title of titles) {
-      if (typeof title?.id !== 'string') continue;
+    for (const title of answer.data.data.titles) {
+      if (!title) continue;
       const counts: number[] = Array(10).fill(0);
 
       for (const { rating, voteCount } of title.aggregateRatingsBreakdown?.histogram?.histogramValues ?? []) {
@@ -143,6 +160,7 @@ const serverHighlights = async (featureId: string, post: Post): Promise<void> =>
     if (!res.ok || !res.body) return;
 
     if (!res.headers.get('content-type')?.includes('ndjson')) {
+      // SAFETY: the server answers JSON only for chips it has kept, built as a HighlightsResponse.
       for (const chip of ((await res.json()) as HighlightsResponse).highlights ?? []) post({ kind: 'chip', chip });
 
       return;
@@ -190,7 +208,7 @@ const serverScore = async (url: string, post: Post): Promise<void> => {
 
       if (!score) continue;
       // The panel paints the aggregate; the review bodies run to megabytes.
-      const { reviews: _bodies, ...aggregate } = score as Score;
+      const { reviews: _bodies, ...aggregate }: PartialScore & Partial<Pick<Score, 'reviews'>> = score;
       post({ kind: 'score', score: aggregate });
 
       // Chips once the server has the place's row and isn't scraping it: at once for
@@ -233,15 +251,26 @@ const serverSearch = async (url: string, query: string, post: Post, asWritten: b
   }
 };
 
+// The bridge's ask, from a page any script can dispatch to: score the place at
+// `url`, or — given a `query` — search its reviews.
+const SERVER_SCORE_ASK = z.object({
+  url: z.string(),
+  query: z.catch(z.optional(z.string()), undefined),
+  asWritten: z.catch(z.optional(z.boolean()), undefined),
+});
+
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== SERVER_SCORE_PORT) return;
   let open = true;
   port.onDisconnect.addListener(() => { open = false; });
   port.onMessage.addListener((msg) => {
-    if (typeof msg?.url !== 'string') return;
+    const ask = SERVER_SCORE_ASK.safeParse(msg);
+
+    if (!ask.success) return;
+    const { url, query, asWritten } = ask.data;
     const post: Post = (m) => { if (open) port.postMessage(m); };
 
-    void (typeof msg.query === 'string' ? serverSearch(msg.url, msg.query, post, msg.asWritten === true) : serverScore(msg.url, post))
+    void (query !== undefined ? serverSearch(url, query, post, asWritten === true) : serverScore(url, post))
       .finally(() => { if (open) port.disconnect(); });
   });
 });
@@ -281,9 +310,14 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
+// A tab's ask for IMDb histograms; an id that isn't a string is dropped.
+const IMDB_HISTOGRAMS_ASK = z.object({ type: z.literal('imdbHistograms'), ids: z.array(z.catch(z.nullable(z.string()), null)) });
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === 'imdbHistograms' && Array.isArray(msg.ids)) {
-    imdbHistograms(msg.ids.filter((id: unknown) => typeof id === 'string')).then(sendResponse);
+  const imdbAsk = IMDB_HISTOGRAMS_ASK.safeParse(msg);
+
+  if (imdbAsk.success) {
+    imdbHistograms(imdbAsk.data.ids.filter((id) => id !== null)).then(sendResponse);
 
     return true; // answered asynchronously
   }

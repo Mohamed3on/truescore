@@ -7,6 +7,7 @@ import { buildReviewPanel } from './review-panel';
 import { setupSpaInjector } from './spa-injector';
 import { appendStat, createIslandShell } from './score-island';
 import { RECENT_REVIEWS } from './recency';
+import * as z from 'zod/mini';
 
 // The BazaarVoice review API behind dm's, DocMorris's and Rossmann's reviews, called the way
 // each site's own review widget calls it. Only the client and its display config
@@ -180,11 +181,11 @@ const fetchRatingLabels = async (site: BvSite): Promise<Record<string, RatingLab
     const js = await res.text();
     const ratings: any[] = Object.values(JSON.parse(objectAt(js, js.indexOf('"ratings":{') + '"ratings":'.length)));
 
-    const labels = Object.fromEntries(ratings.filter((r) => !r.hideDisplay).map((r) => [r.id, {
+    const labels = Object.fromEntries(ratings.flatMap((r) => (r.hideDisplay ? [] : [[r.id, {
       // DocMorris marks its retired dimensions "x - …".
       label: String(r.displayLabel).replace(/^x - /, ''),
       ends: r.type === 'SLIDER' ? [r.sliderDimension1Label, r.sliderDimension2Label] : undefined,
-    }]));
+    }]])));
 
     cacheSet(cacheKey, labels);
 
@@ -322,6 +323,9 @@ const searchTerm = async (site: BvSite, productId: string, term: string) => {
 
 // --- Product page ---
 
+// A secondary rating's average as the stats report it, on a 1–ValueRange scale.
+const SECONDARY_AVERAGE = z.object({ AverageRating: z.number(), ValueRange: z.optional(z.unknown()) });
+
 // The score, review and recommend stats as cells of `row`; the secondary
 // ratings as tables, returned for the caller to place.
 const insights = (row: HTMLElement, stats: any, scoreData: { score: number; nps: number } | null, labels: Record<string, RatingLabel> | null) => {
@@ -335,6 +339,7 @@ const insights = (row: HTMLElement, stats: any, scoreData: { score: number; nps:
 
   if (recommendTotal > 0) {
     appendStat(row, `${Math.round((recommended / recommendTotal) * 100)}%`, 'recommend');
+    // SAFETY: appendStat just appended its cell, a <div>, as the row's last child.
     (row.lastElementChild as HTMLElement).title = `${addCommas(recommended)} of ${addCommas(recommendTotal)} recommend it`;
   }
 
@@ -349,11 +354,12 @@ const insights = (row: HTMLElement, stats: any, scoreData: { score: number; nps:
   const overall = Number(stats.AverageOverallRating) || 0;
 
   const rows = (stats.SecondaryRatingsAveragesOrder || []).flatMap((id: string) => {
-    const metric = stats.SecondaryRatingsAverages?.[id];
+    const read = SECONDARY_AVERAGE.safeParse(stats.SecondaryRatingsAverages?.[id]);
     const named = labels?.[id];
-    const range = Number(metric?.ValueRange);
+    const range = Number(read.data?.ValueRange);
 
-    if (!named || typeof metric?.AverageRating !== 'number' || !(range > 1)) return [];
+    if (!named || !read.success || !(range > 1)) return [];
+    const metric = read.data;
     const centered = /passform/i.test(named.label);
     const lag = overall && !centered ? overall - metric.AverageRating : 0;
     const tone = lag >= 1 ? 'neg' : lag >= 0.3 ? 'mid' : null;

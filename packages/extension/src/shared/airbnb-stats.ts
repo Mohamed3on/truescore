@@ -1,24 +1,34 @@
+import * as z from 'zod/mini';
 import { netScore } from '@truescore/gmaps-shared';
 
-type Quality = {
-  ratingDistribution?: { label: string; percentage: number }[];
-  listingRatingStats?: { overallRatingStats?: { ratingCount?: string } };
-};
+// A listing's star shares, read only as far as they're used: a share per star
+// label, and a count Number() reads.
+const QUALITY = z.object({
+  ratingDistribution: z.array(z.object({ label: z.unknown(), percentage: z.unknown() })),
+  listingRatingStats: z.object({ overallRatingStats: z.nullish(z.object({ ratingCount: z.unknown() })) }),
+});
+
+type Quality = z.infer<typeof QUALITY>;
 
 export type AirbnbStats = { count: number; five: number; one: number; score: number; nps: number };
 
 // Airbnb keeps the listing's star shares in its deferred page data. The host's
 // headline review count can include other listings, so use this count instead.
-const findQuality = (value: unknown): Quality | null => {
-  if (!value || typeof value !== 'object') return null;
-  const object = value as Record<string, unknown>;
+// The parse collects every object holding a rating distribution; the first that
+// reads as one wins.
+const findQuality = (deferredState: string): Quality | null => {
+  const holders: unknown[] = [];
 
-  if (Array.isArray(object.ratingDistribution) && object.listingRatingStats) return value as Quality;
+  JSON.parse(deferredState, function (key, value) {
+    if (key === 'ratingDistribution') holders.push(this);
 
-  for (const child of Object.values(object)) {
-    const quality = findQuality(child);
+    return value;
+  });
 
-    if (quality) return quality;
+  for (const holder of holders) {
+    const quality = QUALITY.safeParse(holder);
+
+    if (quality.success) return quality.data;
   }
 
   return null;
@@ -27,12 +37,12 @@ const findQuality = (value: unknown): Quality | null => {
 export const airbnbStats = (deferredState: string): AirbnbStats | null => {
   let quality: Quality | null = null;
 
-  try { quality = findQuality(JSON.parse(deferredState)); } catch { return null; }
+  try { quality = findQuality(deferredState); } catch { return null; }
 
   const count = Number(quality?.listingRatingStats?.overallRatingStats?.ratingCount);
 
   if (!count || !quality?.ratingDistribution) return null;
-  const stars = (label: string) => Math.round((quality.ratingDistribution!.find((rating) => rating.label === label)?.percentage ?? 0) * count);
+  const stars = (label: string) => Math.round(Number(quality.ratingDistribution.find((rating) => rating.label === label)?.percentage ?? 0) * count);
   const five = stars('5');
   const one = stars('1');
 

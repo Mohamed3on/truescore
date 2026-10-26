@@ -6,6 +6,7 @@ import { loadQAs, removeQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
 import { bySupport, enter, fadeIn, foldAway, mountBullets, parseOrQuery, receiptsFor, smoothDrafts, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
 import type { JSONSchema7 } from 'ai';
+import * as z from 'zod/mini';
 import { readAnswers, readSupport, receiptButton } from './jev';
 
 // Rivals checked per summary, at a search and a Jev read each.
@@ -86,14 +87,17 @@ export const withReceipts = async (parsed: any, reviews: string[], search?: Sear
   if (best) receipts[line] = { n: best.support, quotes: best.quotes };
   const made = (p: string) => p in receipts;
 
-  return {
+  const withChecks = {
     ...parsed,
     praised: (parsed.praised ?? []).filter(made),
     complaints: (parsed.complaints ?? []).filter(made),
     betterAlternative: checked.alternatives ? line : parsed.betterAlternative,
     receipts,
-    ...(reviews.length > texts.length ? { receiptsOf: reviews.length } : {}),
   };
+
+  if (reviews.length > texts.length) withChecks.receiptsOf = reviews.length;
+
+  return withChecks;
 };
 
 // Draws one of the texts the model read as the site's review card (see
@@ -120,6 +124,10 @@ const sectionOf = (type: string, title: string) => {
 
   return section;
 };
+
+// A bullet list as a summary holds it, streaming or cached: its strings, with
+// whatever else (an entry still being written, no list yet) read as none.
+const BULLET_TEXTS = z.catch(z.array(z.catch(z.string(), '')), []);
 
 // A summary drawn into `container` and redrawn in place: its praise and
 // complaints are bullet lists drawn as they stream in (gmaps-shared
@@ -164,8 +172,7 @@ const mountStructuredSummary = (container: HTMLElement, renderQuote: RenderQuote
   };
 
   return (summary: any, phase: SummaryPhase = 'checked') => {
-    const texts = (list: unknown) => (Array.isArray(list) ? list.filter((t): t is string => typeof t === 'string' && !!t) : []);
-    const written = [texts(summary.praised), texts(summary.complaints)];
+    const written = [summary.praised, summary.complaints].map((list) => BULLET_TEXTS.parse(list).filter(Boolean));
     container.setAttribute('aria-busy', String(phase !== 'checked'));
     drawConclusion(summary.conclusion, phase);
     const { receipts, betterAlternative } = summary;
@@ -515,6 +522,7 @@ export const buildSummarizeWidget = ({
   // The reviews as the model reads them, under the page's title and URL, to
   // paste into another tool: a quiet icon closing the Ask row, a check once copied.
   const COPY_ICON = '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/>';
+  // SAFETY: el('button') creates a <button>.
   const copyBtn = el('button', 'ars-copy-btn') as HTMLButtonElement;
   copyBtn.type = 'button';
 
@@ -549,7 +557,7 @@ export const buildSummarizeWidget = ({
   let cached: any = null;
 
   if (rawCache) {
-    try { cached = JSON.parse(rawCache); } catch (_) {}
+    try { cached = JSON.parse(rawCache); } catch {}
   }
 
   if (cached?.parsed) {
@@ -621,13 +629,17 @@ export const MEDIA_SUMMARY_SCHEMA: JSONSchema7 = {
   additionalProperties: false,
 };
 
+// A point's sentiment as MEDIA_SUMMARY_SCHEMA allows it; one still streaming in
+// is none of these yet.
+const MEDIA_SENTIMENT = z.enum(['loved', 'disliked', 'divided']);
+
 // The stance marks reviews already carry (STANCE_MARKS' ▲ ▼ ●), drawn so the
 // three match in size and centre on a point's first line.
-const MEDIA_MARKS: Record<string, { label: string; shape: string }> = {
-  loved: { label: 'Loved', shape: '<path d="M4 .5 8 7.5H0z"/>' },
-  disliked: { label: 'Didn’t enjoy', shape: '<path d="M0 .5h8L4 7.5z"/>' },
-  divided: { label: 'Divided', shape: '<circle cx="4" cy="4" r="3"/>' },
-};
+const MEDIA_MARKS = {
+  loved: { label: 'Loved', glyph: '<path d="M4 .5 8 7.5H0z"/>' },
+  disliked: { label: 'Didn’t enjoy', glyph: '<path d="M0 .5h8L4 7.5z"/>' },
+  divided: { label: 'Divided', glyph: '<circle cx="4" cy="4" r="3"/>' },
+} satisfies Record<z.infer<typeof MEDIA_SENTIMENT>, { label: string; glyph: string }>;
 
 interface MediaSummaryOpts {
   anchor: Element;
@@ -683,6 +695,7 @@ export const buildMediaSummary = ({
     askRow.append(input);
   }
 
+  // SAFETY: el('button') creates a <button>.
   const btn = el('button', `${p}-btn`) as HTMLButtonElement;
   askRow.append(btn);
 
@@ -730,9 +743,10 @@ export const buildMediaSummary = ({
 
       writeMarkdown(verdict, value, renderMarkdownInline);
       points.forEach((point, i) => {
-        const mark = MEDIA_MARKS[point?.sentiment];
+        const sentiment = MEDIA_SENTIMENT.safeParse(point?.sentiment);
 
-        if (!mark) return;
+        if (!sentiment.success) return;
+        const mark = MEDIA_MARKS[sentiment.data];
 
         if (!texts.has(i)) {
           if (!kinds.includes(point.sentiment)) kinds.push(point.sentiment);
@@ -742,10 +756,10 @@ export const buildMediaSummary = ({
           m.setAttribute('role', 'img');
           m.setAttribute('aria-label', mark.label);
           m.title = mark.label;
-          m.innerHTML = `<svg viewBox="0 0 8 8" width="8" height="8" fill="currentColor" aria-hidden="true">${mark.shape}</svg>`;
+          m.innerHTML = `<svg viewBox="0 0 8 8" width="8" height="8" fill="currentColor" aria-hidden="true">${mark.glyph}</svg>`;
           texts.set(i, li.appendChild(el('span', `${p}-text`)));
           const kind = kinds.indexOf(point.sentiment);
-          list.insertBefore(li, [...list.children].find((c) => kinds.indexOf((c as HTMLElement).dataset.sentiment!) > kind) ?? null);
+          list.insertBefore(li, [...list.children].find((c) => kinds.indexOf(c.getAttribute('data-sentiment') ?? '') > kind) ?? null);
 
           if (animate) enter(li, '1');
         }
@@ -826,6 +840,7 @@ export const buildMediaSummary = ({
     qaRow.append(el('span', `${p}-qa-label`, 'Recent questions'));
 
     for (const item of items) {
+      // SAFETY: el('button') creates a <button>.
       const chip = el('button', `${p}-qa-chip`, item.q) as HTMLButtonElement;
       chip.title = item.q;
       chip.addEventListener('click', () => {

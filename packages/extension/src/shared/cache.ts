@@ -1,3 +1,5 @@
+import * as z from 'zod/mini';
+
 export const cacheGet = (key: string, ttl: number): any => {
   try {
     const raw = localStorage.getItem(key);
@@ -34,6 +36,9 @@ export const cacheGetMaybe = (key: string, ttl: number): { value: any } | null =
 export const cacheSetMaybe = (key: string, data: any): void =>
   cacheSet(key, data ?? { __none: true });
 
+// A stored value carrying when it was cached.
+const TIMED_ENTRY = z.object({ ts: z.number() });
+
 export const cacheSet = (key: string, data: any): void => {
   const raw = JSON.stringify({ data, ts: Date.now() });
 
@@ -54,9 +59,9 @@ export const cacheSet = (key: string, data: any): void => {
     if (!k) continue;
 
     try {
-      const ts = JSON.parse(localStorage.getItem(k) || '{}')?.ts;
+      const entry = TIMED_ENTRY.safeParse(JSON.parse(localStorage.getItem(k) || '{}'));
 
-      if (typeof ts === 'number') entries.push({ key: k, ts });
+      if (entry.success) entries.push({ key: k, ts: entry.data.ts });
     } catch {}
   }
 
