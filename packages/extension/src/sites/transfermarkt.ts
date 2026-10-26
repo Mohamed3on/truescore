@@ -62,6 +62,7 @@ const getColumnValue = (cell: Element): any => {
 const extractVereinId = (element: Element) => {
   const img = element.querySelector('img[src*="/verein/"]');
   const link = element.querySelector('a[href*="/verein/"]');
+  // SAFETY: the selectors only match <img> and <a> elements of Transfermarkt's HTML tables.
   const src = (img as HTMLImageElement)?.src || (link as HTMLAnchorElement)?.href || '';
 
   return src.match(/\/verein\/(\d+)\//)?.[1] || null;
@@ -183,8 +184,7 @@ const fetchAllPages = async (baseUrl: string, totalPages: number, onProgress?: (
 
 const detectPaginationInfo = () => {
   const pageNums = [...document.querySelectorAll('a[href*="page="]')]
-    .map(a => a.getAttribute('href')?.match(/page=(\d+)/)?.[1])
-    .filter(Boolean)
+    .flatMap(a => a.getAttribute('href')?.match(/page=(\d+)/)?.[1] || [])
     .map(Number);
 
   return {
@@ -236,7 +236,7 @@ const addRankingColumn = (table: HTMLTableElement) => {
   if (!thead || !tbody) return;
 
   const th = el('th', 'zentriert', '#');
-  (th as HTMLElement).style.cursor = 'default';
+  th.style.cursor = 'default';
   thead.insertBefore(th, thead.firstChild);
 
   tbody.querySelectorAll('tr.even, tr.odd').forEach((row, i) => {
@@ -292,14 +292,14 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
   });
 
   // Sort by market value descending to get ranks
-  const sorted = [...rowsWithMV].sort((a, b) => ((b.value as number) - (a.value as number)));
+  const sorted = [...rowsWithMV].sort((a, b) => b.value - a.value);
   const mvRankByVereinId = new Map<string, number>();
   sorted.forEach((item, i) => {
     if (item.vereinId) mvRankByVereinId.set(item.vereinId, i + 1);
   });
 
   const th = el('th', 'zentriert', 'Δ Pts');
-  (th as HTMLElement).title = 'Points difference vs expected position based on market value';
+  th.title = 'Points difference vs expected position based on market value';
   thead.appendChild(th);
 
   rows.forEach(row => {
@@ -307,16 +307,17 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
     const vereinId = extractVereinId(row);
     const teamData = vereinId && leagueData.get(vereinId);
     const mvRank = vereinId && mvRankByVereinId.get(vereinId);
-    const expectedPoints = mvRank && pointsByPosition[mvRank];
+    // Undefined when no league position matches the team's market value rank.
+    const expectedPoints = mvRank ? pointsByPosition[mvRank] : undefined;
 
-    if (teamData && typeof expectedPoints === 'number') {
+    if (teamData && expectedPoints !== undefined) {
       const diff = teamData.points - expectedPoints;
       td.textContent = diff > 0 ? `+${diff}` : String(diff);
-      (td as HTMLElement).style.color = diff > 0 ? '#2e7d32' : diff < 0 ? '#c62828' : '#666';
-      (td as HTMLElement).style.fontWeight = 'bold';
+      td.style.color = diff > 0 ? '#2e7d32' : diff < 0 ? '#c62828' : '#666';
+      td.style.fontWeight = 'bold';
     } else {
       td.textContent = '-';
-      (td as HTMLElement).style.color = '#999';
+      td.style.color = '#999';
     }
 
     row.appendChild(td);
@@ -364,10 +365,11 @@ const injectStyles = () => {
 };
 
 const showLoading = (table: HTMLTableElement, current?: number, total?: number) => {
+  // SAFETY: the only .global-sort-loading is the overlay <div> created below.
   let overlay = table.querySelector('.global-sort-loading') as HTMLElement | null;
 
   if (!overlay) {
-    overlay = el('div', 'global-sort-loading') as HTMLElement;
+    overlay = el('div', 'global-sort-loading');
     overlay.appendChild(el('div', 'loading-spinner'));
     overlay.appendChild(el('span'));
     table.style.position = 'relative';
@@ -381,17 +383,21 @@ const showLoading = (table: HTMLTableElement, current?: number, total?: number) 
 };
 
 const hideLoading = (table: HTMLTableElement) => {
+  // SAFETY: the only .global-sort-loading is showLoading's overlay <div>.
   const overlay = table.querySelector('.global-sort-loading') as HTMLElement | null;
 
   if (overlay) overlay.style.display = 'none';
 };
 
 const showGlobalBadge = (table: HTMLTableElement, count: number, failedPages: number) => {
+  // SAFETY: a table on the page sits in an element; if one is detached mid-fetch, the
+  // querySelector below throws into globalSortTableByColumn's catch.
   const parent = table.parentNode as Element;
+  // SAFETY: the only .global-sort-badge is the badge <div> created below.
   let badge = parent.querySelector('.global-sort-badge') as HTMLElement | null;
 
   if (!badge) {
-    badge = el('div', 'global-sort-badge') as HTMLElement;
+    badge = el('div', 'global-sort-badge');
     parent.insertBefore(badge, table);
   }
 
@@ -402,7 +408,8 @@ const showGlobalBadge = (table: HTMLTableElement, count: number, failedPages: nu
 };
 
 const hideGlobalBadge = (table: HTMLTableElement) => {
-  const badge = (table.parentNode as Element)?.querySelector('.global-sort-badge') as HTMLElement | null;
+  // SAFETY: the only .global-sort-badge is showGlobalBadge's badge <div>.
+  const badge = table.parentNode?.querySelector('.global-sort-badge') as HTMLElement | null | undefined;
 
   if (badge) badge.style.display = 'none';
 };
@@ -554,13 +561,19 @@ const makeTableSortable = (table: HTMLTableElement) => {
 };
 
 const initializeSortableTables = () => {
-  document.querySelectorAll('table').forEach(table => makeTableSortable(table as HTMLTableElement));
+  document.querySelectorAll('table').forEach(table => makeTableSortable(table));
 
   tableObs = new MutationObserver(mutations => {
     for (const { addedNodes } of mutations) {
       addedNodes.forEach(node => {
-        if (node.nodeName === 'TABLE') makeTableSortable(node as HTMLTableElement);
-        (node as Element).querySelectorAll?.('table').forEach(t => makeTableSortable(t as HTMLTableElement));
+        if (node.nodeName === 'TABLE') {
+          // SAFETY: an upper-case TABLE nodeName is an HTML <table> in an HTML document.
+          makeTableSortable(node as HTMLTableElement);
+        }
+
+        // SAFETY: only Elements among the added nodes have querySelectorAll; the
+        // optional call skips text and comment nodes.
+        (node as Element).querySelectorAll?.('table').forEach(t => makeTableSortable(t));
       });
     }
   });

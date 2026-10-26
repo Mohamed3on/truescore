@@ -114,9 +114,11 @@ const renderSimilar = (current: Score, all: Record<string, Score | null>, anchor
     panel.append(el('div', 'ts-similar-header', picks.length === 1 ? '1 similar title scores as well or better' : `${picks.length} similar titles score as well or better`));
 
     for (const pick of picks) {
-      const row = el('a', 'ts-similar-row') as HTMLAnchorElement;
+      const row = document.createElement('a');
+      row.className = 'ts-similar-row';
       row.href = `/title/${pick.id}/`;
-      const poster = el('img', 'ts-similar-poster') as HTMLImageElement;
+      const poster = document.createElement('img');
+      poster.className = 'ts-similar-poster';
 
       if (pick.poster) poster.src = posterThumb(pick.poster);
       poster.alt = '';

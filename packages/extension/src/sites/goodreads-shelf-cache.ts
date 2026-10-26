@@ -36,12 +36,12 @@ export type ShelfStatus = 'read' | 'to-read' | 'reading' | 'dnf' | 'other' | nul
 export type ViewerShelving = { status: ShelfStatus; myRating: number };
 
 /** Goodreads' own exclusive shelves, by the name its shelf button shows; any other is one the viewer made. */
-const SHELF_BY_NAME: Record<string, ShelfStatus> = {
-  'Read': 'read',
-  'Want to Read': 'to-read',
-  'Currently Reading': 'reading',
-  'Did Not Finish': 'dnf',
-};
+const SHELF_BY_NAME = new Map<string, ShelfStatus>([
+  ['Read', 'read'],
+  ['Want to Read', 'to-read'],
+  ['Currently Reading', 'reading'],
+  ['Did Not Finish', 'dnf'],
+]);
 
 /**
  * The viewer's shelf and stars for a book page's own book, as its shelf button ("Shelved
@@ -59,5 +59,5 @@ export const readViewerShelving = (root: ParentNode): ViewerShelving | null => {
   if (!shelf || !stars) return null;
   const name = shelf.match(/^Shelved as '(.+)'\./)?.[1];
 
-  return { status: name ? (SHELF_BY_NAME[name] ?? 'other') : null, myRating: Number(stars[1]) };
+  return { status: name ? (SHELF_BY_NAME.get(name) ?? 'other') : null, myRating: Number(stars[1]) };
 };

@@ -23,8 +23,11 @@ describe('shelfScoreCacheTtl', () => {
   });
 });
 
+// The Apollo ROOT_QUERY a Goodreads page embeds; getUser names the signed-in viewer.
+type RootQuery = { __typename: 'Query'; getUser?: { __ref: string } };
+
 describe('goodreadsViewerCacheScope', () => {
-  const page = (rootQuery: object) => {
+  const page = (rootQuery: RootQuery) => {
     document.body.innerHTML = `
       <article class="ReviewCard"><a class="Avatar Avatar--medium" href="/user/show/999-reviewer">Reviewer</a></article>
       <script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { apolloState: { ROOT_QUERY: rootQuery } } } })}</script>

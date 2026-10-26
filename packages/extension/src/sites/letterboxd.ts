@@ -7,6 +7,7 @@ import { buildMediaSummary } from '../shared/review-summary';
 import { buildSearchSection } from '../shared/review-search';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
+import { z } from 'zod';
 
 // =============================================================================
 // Configuration
@@ -150,6 +151,7 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
   winner.append(el('span', 'lbx-winner-text', message));
 
   if (listName && listLink) {
+    // SAFETY: el creates the tag it's given, here an <a>.
     const src = el('a', 'lbx-winner-source', listName) as HTMLAnchorElement;
     src.href = listLink;
     winner.append(' ', src);
@@ -196,7 +198,7 @@ const IGNORED_KEY = 'lbx_ignored';
 const MIN_YEAR_KEY = 'lbx_min_year';
 
 const loadMinYear = () =>
-  chrome.storage.local.get(MIN_YEAR_KEY).then(({ [MIN_YEAR_KEY]: year }) => (typeof year === 'number' ? year : null)).catch(() => null);
+  chrome.storage.local.get(MIN_YEAR_KEY).then(({ [MIN_YEAR_KEY]: year }) => z.number().safeParse(year).data ?? null).catch(() => null);
 
 const saveMinYear = (year: number | null) =>
   (year ? chrome.storage.local.set({ [MIN_YEAR_KEY]: year }) : chrome.storage.local.remove(MIN_YEAR_KEY)).catch(() => {});
@@ -806,6 +808,7 @@ function moveTo(element: HTMLElement, target: HTMLElement, after: Element | null
   // ignore/restore button stays keyboard-reachable after it flips or its list
   // re-sorts under a landing check. Without preventScroll, focus() scrolls the
   // row's new list into view, jumping the page.
+  // SAFETY: inside a row only its link and ignore button take focus, both HTML elements.
   const focused = element.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
 
   if (after) after.after(element);
@@ -876,13 +879,16 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
   }
 
   const banner = winnerBanner('', result.listName, result.listLink);
+  // SAFETY: winnerBanner always appends its .lbx-winner-text <span>.
   const bannerText = banner.querySelector('.lbx-winner-text') as HTMLElement;
   banner.hidden = true;
   const header = el('h3', 'lbx-similar-header', 'Similar Picks');
+  // SAFETY: el creates the tag it's given, here an <a>.
   const sourceLink = el('a', 'lbx-similar-source', `From: ${result.listName}`) as HTMLAnchorElement;
   sourceLink.href = result.listLink;
   // The minimum year shares the source's line: "since [1990] · 6 hidden".
-  const yearInput = el('input', 'lbx-year-input') as HTMLInputElement;
+  const yearInput = document.createElement('input');
+  yearInput.className = 'lbx-year-input';
   yearInput.type = 'number';
   yearInput.placeholder = 'any';
   yearInput.value = minYear ? String(minYear) : '';
@@ -942,6 +948,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
       last.set(target, entry.element);
     }
 
+    // SAFETY: list only ever holds the film <li> rows moveTo places in it.
     for (const row of list.children as HTMLCollectionOf<HTMLElement>) {
       if (!was.has(row)) continue;
 
@@ -1008,11 +1015,13 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
 
   films.forEach((film: any) => {
     const item = el('li', 'lbx-similar-item');
+    // SAFETY: el creates the tag it's given, here an <a>.
     const link = el('a', 'lbx-similar-link', film.name) as HTMLAnchorElement;
     link.href = film.link;
     const meta = el('span', 'lbx-similar-meta', filmMeta(film));
     item.title = filmTooltip(film);
-    const button = el('button', 'lbx-ignore') as HTMLButtonElement;
+    const button = document.createElement('button');
+    button.className = 'lbx-ignore';
     button.type = 'button';
     button.addEventListener('click', () => toggleIgnored(film.slug));
     item.append(link, meta, button);
@@ -1066,7 +1075,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
   };
 
   // A hidden film's check — a run of review-page fetches — waits until it's shown.
-  const checkShown = () => Promise.all([...items.values()].filter((e) => shown(e.film)).map((e) => (e.checking ??= check(e.film))));
+  const checkShown = () => Promise.all(items.values().filter((e) => shown(e.film)).map((e) => (e.checking ??= check(e.film))));
   await checkShown();
 
   if (stats) similarSection.append(debugDetails(stats));

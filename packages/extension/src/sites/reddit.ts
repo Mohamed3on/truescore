@@ -12,6 +12,7 @@ import { askThread, requestTally, tallyReady } from '../shared/tally';
 import { el } from '../shared/utils';
 
 const button = (className: string, text?: string) => {
+  // SAFETY: el creates the tag it's given, here a <button>.
   const b = el('button', className, text) as HTMLButtonElement;
   b.type = 'button';
 
@@ -387,7 +388,7 @@ const levelSwitch = segments<Level>(['makers', 'products'], (v) => { level = v; 
 levelSwitch.classList.add('ts-tally-level');
 
 const list = el('ol', 'ts-tally-list');
-const once = el('details', 'ts-tally-once') as HTMLDetailsElement;
+const once = el('details', 'ts-tally-once');
 const onceLabel = el('summary', 'ts-tally-label');
 const onceList = el('ol', 'ts-tally-list');
 
@@ -395,8 +396,10 @@ once.append(onceLabel, onceList);
 
 const failBox = el('div', 'ts-tally-error');
 const chatLog = el('div', 'ts-chat');
-const askForm = el('form', 'ts-ask') as HTMLFormElement;
-const askInput = el('input', 'ts-ask-input') as HTMLInputElement;
+const askForm = el('form', 'ts-ask');
+const askInput = document.createElement('input');
+
+askInput.className = 'ts-ask-input';
 
 askInput.placeholder = 'Ask the thread…';
 
@@ -632,9 +635,9 @@ askForm.addEventListener('submit', (e) => {
 // Single-key page shortcuts (RES's, Reddit's own) see a key typed in the
 // drawer as coming from its host, not an input: keys typed in the box stop at
 // the window. Esc still closes the drawer.
-for (const type of ['keydown', 'keypress', 'keyup']) {
+for (const type of ['keydown', 'keypress', 'keyup'] as const) {
   window.addEventListener(type, (e) => {
-    if (e.composedPath()[0] === askInput && (e as KeyboardEvent).key !== 'Escape') e.stopPropagation();
+    if (e.composedPath()[0] === askInput && e.key !== 'Escape') e.stopPropagation();
   }, true);
 }
 
@@ -691,6 +694,7 @@ const placeEntry = () => {
   const buttons = document.querySelector('#siteTable .thing.link .flat-list.buttons');
 
   if (buttons) {
+    // SAFETY: el creates the tag it's given, here an <a>.
     const a = el('a', LINK_CLASS, 'tally') as HTMLAnchorElement;
     a.href = '#';
     a.title = `Tally the options this thread recommends (${KEY})`;
@@ -741,6 +745,8 @@ void tallyReady().then((ready) => {
     pending = requestAnimationFrame(() => { pending = 0; sync(); });
   }).observe(document.body, { childList: true, subtree: true });
   document.addEventListener('keydown', (e) => {
+    // SAFETY: keydown targets an element (the focused one, else body); on a non-HTML
+    // one isContentEditable is merely undefined.
     const target = e.target as HTMLElement;
 
     if (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;

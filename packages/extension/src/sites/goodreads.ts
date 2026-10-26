@@ -723,6 +723,8 @@ const fetchReviewNodes = async (
   // genuinely empty result — an error body (429, GraphQL errors) would otherwise read as [].
   if (!ok || data?.errors || !getReviews) throw new Error(`getReviews failed on ${workId}`);
 
+  // SAFETY: Goodreads' getReviews edges wrap nodes holding just the fields the query
+  // asks for, and ReviewNode keeps every one of them optional.
   return {
     nodes: (getReviews.edges?.map((e: any) => e.node).filter(Boolean) as ReviewNode[]) || [],
     totalCount: getReviews.totalCount ?? 0,
@@ -735,7 +737,7 @@ const fetchReviewNodes = async (
 // The polarity and the null contract come from shared/recency so every site answers
 // "how recent-positive?" the same way.
 const recentRatioFromNodes = (nodes: ReviewNode[]): number | null =>
-  recentRatio(nodes.filter((n) => n.rating).map((n) => n.rating as number));
+  recentRatio(nodes.flatMap((n) => (n.rating ? [n.rating] : [])));
 
 /** `rated` is the sample the ratio stands on: the window's reviews that carry stars. */
 type RecentStats = { ratio: number | null; total: number; rated: number };
@@ -757,6 +759,8 @@ const fetchRecentStats = (workId: string): Promise<RecentStats> => {
     pending = (async () => {
       // v3: earlier entries carried no sample size.
       const cacheKey = `gr_recent_v3_${workId}`;
+      // SAFETY: this key only holds the RecentStats stored just below (v3 entries), or
+      // null when absent or expired.
       const cached = (await idbGet(cacheKey, CONFIG.RECENT_CACHE_MS)) as RecentStats | null;
 
       if (cached) return cached;
@@ -823,7 +827,7 @@ const isEligible = (c: Candidate, avgGate: number) => !isRead(c) && parseFloat(c
 
 /** The shelf's own average, over the rows that show one. */
 const meanRating = (rows: Candidate[]): number | null => {
-  const ratings = rows.map((r) => parseFloat(r.bookRating || '')).filter(Number.isFinite);
+  const ratings = rows.values().map((r) => parseFloat(r.bookRating || '')).filter(Number.isFinite).toArray();
 
   return ratings.length ? ratings.reduce((a, b) => a + b, 0) / ratings.length : null;
 };
@@ -835,7 +839,7 @@ const SHELF_STATUS: Array<[string, ShelfStatus]> = [
 
 const parseShelfPage = (doc: Document): Candidate[] =>
   Array.from(doc.querySelectorAll<HTMLElement>('.leftContainer > .elementList')).map(row => {
-    const titleEl = row.querySelector('.bookTitle') as HTMLAnchorElement | null;
+    const titleEl = row.querySelector('.bookTitle');
     const href = titleEl?.getAttribute('href');
 
     if (!href) return null;
@@ -889,6 +893,8 @@ const getShelfPage = (shelf: string, page: number, viewerScope: string): Promise
 
   if (!pending) {
     pending = (async () => {
+      // SAFETY: this key only holds the parsed rows stored just below (syncViewerShelving
+      // edits them in place), or null when absent or expired.
       const cached = (await idbGet(cacheKey, CONFIG.SHELF_PAGE_CACHE_MS)) as Candidate[] | null;
 
       if (cached) return cached;
@@ -1012,6 +1018,8 @@ const findSimilarPicks = async (params: {
   // A scan bounded by the all-time Score is narrower than one bounded by the threshold,
   // so it keeps its own entry — one throttled reviews call can't stand in for a week.
   const cacheKey = `${viewerKey.picks(viewerScope)}${originalId}_${shelf}${threshold === null ? '_alltime' : ''}`;
+  // SAFETY: this key only holds a SimilarResult stored below (the version in its prefix
+  // retires older shapes), or null when absent or expired.
   const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
 
   if (cached) return cached;
@@ -1051,7 +1059,7 @@ const findSimilarPicks = async (params: {
     const eligible = rowsWithPage.filter((c) => c.bookId !== originalId && isEligible(c, avgGate));
     totalEligible += eligible.length;
 
-    const scored = await Promise.all(eligible.map(async (c) => {
+    const scored = await Promise.all(eligible.map(async (c): Promise<ScoredCandidate | FailedCandidate> => {
       try {
         const stats = await getBookStatsFromURL(c.bookURL);
 
@@ -1059,7 +1067,7 @@ const findSimilarPicks = async (params: {
         // the bar — has its recent % started now rather than after the batch's slowest page.
         if (stats.workId !== refWorkId && couldReach(bar, stats.score)) fetchRecentStats(stats.workId).catch(() => {});
 
-        return { ...c, ...stats } as ScoredCandidate;
+        return { ...c, ...stats };
       } catch (e) {
         return { ...c, failed: true as const, permanent: e instanceof DeadBookError };
       }
@@ -1117,6 +1125,7 @@ const renderProgress = (container: HTMLElement, step: number, detail = '') => {
 };
 
 const anchorLink = (href: string, className: string | undefined, text: string) => {
+  // SAFETY: el creates the tag it's given, here an <a>.
   const a = el('a', className, text) as HTMLAnchorElement;
   a.href = href;
   a.target = '_blank';
@@ -1303,6 +1312,7 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   }
 
   const banner = winnerBanner('', shelf);
+  // SAFETY: winnerBanner always appends its .gr-winner-text <span>.
   const bannerText = banner.querySelector('.gr-winner-text') as HTMLElement;
   const list = el('ul', 'gr-similar-list');
   const drawerToggle = el('div', 'gr-fold-toggle');
@@ -1314,7 +1324,8 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   // score order buried the book that actually wins.
   const rows = ranking.ranked.map((ranked) => {
     const item = buildItem(ranked, refRecentRatio, threshold);
-    const button = el('button', 'gr-ignore') as HTMLButtonElement;
+    const button = document.createElement('button');
+    button.className = 'gr-ignore';
     button.type = 'button';
     item.append(button);
 
@@ -1325,6 +1336,7 @@ const renderPicksView = (section: HTMLElement, view: SimilarView, currentStats: 
   const paint = () => {
     // Re-inserting a row blurs the button inside it — hand focus back, without
     // scrolling to the row's new list.
+    // SAFETY: the section is built from HTML elements alone, so whatever has focus in it is one.
     const focused = section.contains(document.activeElement) ? (document.activeElement as HTMLElement) : null;
     let ignoredCount = 0;
     let passCount = 0;
@@ -1400,6 +1412,8 @@ const renderSimilarPicks = async (
   // v8: v7 views took the book's genres before its other shelves, not the shelves page's order.
   const viewerScope = goodreadsViewerCacheScope(document);
   const viewKey = `${viewerKey.picksView(viewerScope)}${getBookIdFromURL(currentBookURL)}`;
+  // SAFETY: this key only holds the SimilarView stored further down (the version in its
+  // prefix retires older shapes), or null when absent or expired.
   const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
 
   if (cachedView) {
@@ -1581,7 +1595,7 @@ A plot spoiler many readers discuss (who dies, a twist, how it ends) is fine: pu
 // popular book's newest reviews span days, and asked anyway the model reports the shift
 // it can't see ("all dated 2026, no change to report") or invents one.
 const summaryPromptFor = (texts: string[]) => {
-  const dates = texts.map((t) => t.match(/^\[(\d{4}-\d{2}-\d{2})/)?.[1]).filter((d): d is string => !!d).sort();
+  const dates = texts.flatMap((t) => t.match(/^\[(\d{4}-\d{2}-\d{2})/)?.[1] || []).sort();
   const [oldest, newest] = [dates[0], dates.at(-1)];
 
   if (!oldest || !newest || Date.parse(newest) - Date.parse(oldest) < 365 * DAY_MS) return SUMMARY_PROMPT;
