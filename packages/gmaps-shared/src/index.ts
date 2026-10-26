@@ -79,15 +79,15 @@ export const scoreWithRemovalPenalty = (scorePct: number, removedCount: number, 
 // timestamps come in microseconds; values past ~1e14 get normalized to ms.
 export const textReviewsFor = (reviews: Review[]): string[] =>
   reviews
-    .filter((r) => r.text.length > 1)
-    .map((r) => {
+    .flatMap((r) => {
+      if (r.text.length <= 1) return [];
       const t = r.timestamp;
 
-      if (t == null) return `[undated] ${r.text}`;
+      if (t == null) return [`[undated] ${r.text}`];
       const ms = t > 1e14 ? t / 1000 : t;
       const date = new Date(ms).toISOString().slice(0, 10);
 
-      return `[${date}] ${r.text}`;
+      return [`[${date}] ${r.text}`];
     })
     .sort((a, b) => b.length - a.length);
 
@@ -119,7 +119,9 @@ export const starString = (stars: number): string =>
 // sits along the rail (0–1). Shared so web and extension read the scale alike.
 const VALUE_WORDS = ['Overpriced', 'Pricey', 'Fair value', 'Good value', 'Bargain'];
 
-export const valueForMoneyScale = (rating: number): { label: string; tone: 'neg' | 'mid' | 'pos'; position: number } => {
+export type ValueScale = { label: string; tone: 'neg' | 'mid' | 'pos'; position: number };
+
+export const valueForMoneyScale = (rating: number): ValueScale => {
   const v = Math.max(1, Math.min(5, Math.round(rating)));
 
   return { label: VALUE_WORDS[v - 1]!, tone: v < 3 ? 'neg' : v > 3 ? 'pos' : 'mid', position: (v - 1) / 4 };
@@ -162,8 +164,11 @@ export const selectScoredChips = <T>(
   statsOf: (item: T) => { totalReviews: number } | null | undefined
 ): T[] =>
   items
-    .map((item) => ({ item, n: statsOf(item)?.totalReviews ?? 0 }))
-    .filter((x) => x.n >= SCORED_CHIP_MIN_REVIEWS)
+    .flatMap((item) => {
+      const n = statsOf(item)?.totalReviews ?? 0;
+
+      return n >= SCORED_CHIP_MIN_REVIEWS ? [{ item, n }] : [];
+    })
     .sort((a, b) => b.n - a.n)
     .map((x) => x.item);
 
@@ -322,15 +327,22 @@ export const buildTokenReq = (featureId: string, token: string, creds: MapsCreds
 export const buildSearchReq = (featureId: string, query: string, creds: MapsCreds, cursor = ''): MapsReq =>
   batchExecuteReq(featureId, 'relevant', null, query, cursor, creds);
 
+// Readers for the string and number leaves of Google's payloads: a slot holding
+// anything else, or missing, reads as absent.
+const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+const asNumber = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
+
 // Review text lives at r[2][15]: an array of [text, mentions, range] tuples.
 // [0] is the original-language text; [1] (if present) is the translation in the
 // requested locale (`hl=en` → English). Prefer the translation when both exist.
-const hasText = (entry: any): boolean => typeof entry?.[0] === 'string' && entry[0].length > 0;
+type TextEntry = [text: string, ...rest: unknown[]];
+
+const hasText = (entry: any): entry is TextEntry => !!asString(entry?.[0]);
 
 // The tuple we actually display — and whose [1] match offsets therefore line up
 // with the shown text. Google fills offsets only on the original, so a shown
 // translation carries none and highlighting falls back to the query term.
-const pickTextEntry = (r: any): any[] | null => {
+const pickTextEntry = (r: any): TextEntry | null => {
   const arr = r?.[2]?.[15];
 
   if (!Array.isArray(arr) || arr.length === 0) return null;
@@ -343,18 +355,18 @@ const pickTextEntry = (r: any): any[] | null => {
 // Exact matched words, sliced from the displayed text using the offsets in
 // entry[1]: [start, end] for a label search, [start, end, null, [[[token]]]] for
 // a highlight chip — both read via [0]/[1]. Empty when the entry has no offsets.
-const matchTermsFromEntry = (entry: any[] | null): string[] => {
-  const text = entry?.[0];
+const matchTermsFromEntry = (entry: TextEntry | null): string[] => {
   const spans = entry?.[1];
 
-  if (typeof text !== 'string' || !Array.isArray(spans)) return [];
+  if (!entry || !Array.isArray(spans)) return [];
+  const text = entry[0];
   const out: string[] = [];
 
   for (const m of spans) {
-    const s = m?.[0];
-    const e = m?.[1];
+    const s = asNumber(m?.[0]);
+    const e = asNumber(m?.[1]);
 
-    if (typeof s === 'number' && typeof e === 'number' && e > s) {
+    if (s !== undefined && e !== undefined && e > s) {
       const w = text.slice(s, e).trim();
 
       if (w) out.push(w);
@@ -401,7 +413,9 @@ const unwrapBatchPayload = (text: string): any[] | null => {
   return data;
 };
 
-export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCursor: string | null } => {
+export type ReviewsPage = { reviews: Review[]; nextCursor: string | null };
+
+export const parseReviewsResponse = (text: string): ReviewsPage => {
   const data = unwrapBatchPayload(text);
   const arr = data?.[2];
 
@@ -416,10 +430,14 @@ export const parseReviewsResponse = (text: string): { reviews: Review[]; nextCur
     const reviewerReviewCount = r[1]?.[4]?.[5]?.[5] || 1;
     const timestamp = r[1]?.[2] ?? null;
     const entry = pickTextEntry(r);
-    const text = typeof entry?.[0] === 'string' ? entry[0] : '';
+    const text = entry?.[0] ?? '';
     const matchTerms = matchTermsFromEntry(entry);
 
-    if (reviewId && stars) reviews.push({ reviewId, stars, reviewerReviewCount, timestamp, text, ...(matchTerms.length ? { matchTerms } : {}) });
+    if (!reviewId || !stars) continue;
+    const review: Review = { reviewId, stars, reviewerReviewCount, timestamp, text };
+
+    if (matchTerms.length) review.matchTerms = matchTerms;
+    reviews.push(review);
   }
 
   return { reviews, nextCursor: data[1] || null };
@@ -444,7 +462,11 @@ export const isStaleReviewsResponse = (text: string): boolean => {
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export const compileMatchRegex = (terms: string[]): RegExp | null => {
-  const uniq = [...new Set(terms.map((t) => t.trim().toLowerCase()).filter((t) => t.length >= 2))];
+  const uniq = [...new Set(terms.flatMap((t) => {
+    const term = t.trim().toLowerCase();
+
+    return term.length >= 2 ? [term] : [];
+  }))];
 
   if (!uniq.length) return null;
   uniq.sort((a, b) => b.length - a.length);
@@ -482,11 +504,11 @@ export const chipsFromPreview = (data: any): ChipMeta[] => {
   const seen = new Set<string>();
 
   for (const c of chips) {
-    const token = c?.[0]?.[0];
-    const label = c?.[1];
+    const token = asString(c?.[0]?.[0]);
+    const label = asString(c?.[1]);
     const count = c?.[3]?.[4] ?? 0;
 
-    if (typeof token !== 'string' || typeof label !== 'string') continue;
+    if (token === undefined || label === undefined) continue;
     const key = label.toLowerCase();
 
     if (seen.has(key)) continue;
@@ -547,11 +569,8 @@ export type PlaceMeta = {
   removedReviews?: RemovedReviews;
 };
 
-const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
-const asNumber = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined);
-
-const decodeCategory = (raw: unknown): string | undefined => {
-  if (typeof raw !== 'string') return undefined;
+const decodeCategory = (raw: string | undefined): string | undefined => {
+  if (raw === undefined) return undefined;
   const s = raw.replace(/^SearchResult\.TYPE_/, '').toLowerCase().replace(/_/g, ' ').trim();
 
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : undefined;
@@ -561,8 +580,9 @@ const decodeCategory = (raw: unknown): string | undefined => {
 // drifts between place types; deep-search is more robust than fixed indices.
 const findPhotoUrl = (v: any, depth = 0): string | undefined => {
   if (depth > 8 || v == null) return undefined;
+  const url = asString(v);
 
-  if (typeof v === 'string' && v.startsWith('https://lh3.googleusercontent.com/')) return v;
+  if (url?.startsWith('https://lh3.googleusercontent.com/')) return url;
 
   if (Array.isArray(v)) {
     for (const c of v) {
@@ -602,11 +622,17 @@ const parseHoursDay = (entry: any): DayHours | null => {
     return open != null && close != null ? [[open, close]] : [];
   });
 
-  return {
-    day,
-    label: raw.map((s) => asString(s?.[0])).filter(Boolean).join(', ') || '—',
-    ...(slots.length ? { slots } : {}),
-  };
+  const labels = raw.flatMap((s) => {
+    const label = asString(s?.[0]);
+
+    return label ? [label] : [];
+  });
+
+  const hours: DayHours = { day, label: labels.join(', ') || '—' };
+
+  if (slots.length) hours.slots = slots;
+
+  return hours;
 };
 
 // Place-level notices hang off [6][241][0], each shaped
@@ -621,19 +647,21 @@ const parseHoursDay = (entry: any): DayHours | null => {
 // small bucket — and with it the penalty that keys off `min`. Words are English
 // only: the notice is localised, and a locale we can't read just yields no
 // range, leaving Google's own sentence to speak for itself.
-const NUMBER_WORDS: Record<string, number> = {
+const NUMBER_WORDS = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
   eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
   seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40,
   fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100,
-};
+} satisfies Record<string, number>;
+
+const isNumberWord = (tok: string): tok is keyof typeof NUMBER_WORDS => tok in NUMBER_WORDS;
 
 const countsIn = (text: string): number[] => {
   const out: number[] = [];
 
   for (const tok of text.toLowerCase().match(/\d+|[a-z]+/g) ?? []) {
     if (tok[0]! >= '0' && tok[0]! <= '9') out.push(Number(tok));
-    else if (tok in NUMBER_WORDS) out.push(NUMBER_WORDS[tok]!);
+    else if (isNumberWord(tok)) out.push(NUMBER_WORDS[tok]);
   }
 
   return out;
@@ -656,12 +684,18 @@ export const removedReviewsFromPreview = (data: any): RemovedReviews | undefined
     const nums = countsIn(text);
     const url = asString(body?.[2]?.[0]?.[0]);
 
-    return {
-      text,
-      ...(detail && detail !== text ? { detail } : {}),
-      ...(nums.length ? { min: Math.min(...nums), max: Math.max(...nums) } : {}),
-      ...(url ? { url } : {}),
-    };
+    const removed: RemovedReviews = { text };
+
+    if (detail && detail !== text) removed.detail = detail;
+
+    if (nums.length) {
+      removed.min = Math.min(...nums);
+      removed.max = Math.max(...nums);
+    }
+
+    if (url) removed.url = url;
+
+    return removed;
   }
 
   return undefined;
@@ -698,7 +732,7 @@ export const metaFromPreview = (data: any): PlaceMeta => {
     googleRating: asNumber(ratingBlock?.[7]),
     googleReviewCount: asNumber(ratingBlock?.[8]),
     priceRange: asString(ratingBlock?.[2]),
-    category: decodeCategory(six[88]?.[1]),
+    category: decodeCategory(asString(six[88]?.[1])),
     photoUrl: photo ? resizePhoto(photo, 800, 320) : undefined,
     timezone: asString(six[30]),
     hoursWeek: hoursWeek?.length ? hoursWeek : undefined,
