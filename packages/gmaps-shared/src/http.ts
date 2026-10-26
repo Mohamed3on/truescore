@@ -4,7 +4,7 @@
 // reader used by /api/lookup, /api/search, /api/highlights, /api/ask.
 // DOM-free (bar the summary drafts' requestAnimationFrame) so it's unit-testable in bun without a browser (fetch /
 // ReadableStream / TextDecoder are all globals).
-import { DRAFT_MS, type SummaryDraft, type SummaryEvent } from './wire';
+import { DRAFT_MS, type ApiRequest, type SummaryDraft, type SummaryEvent } from './wire';
 
 const RETRY_STATUSES = new Set([502, 503, 504, 521, 522, 524]);
 
@@ -22,19 +22,22 @@ export async function fetchWithRetry(input: RequestInfo, init?: RequestInit, ret
   }
 }
 
-export async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+// T is the route's JSON response type (wire.ts), each of which carries the
+// `error` a failed request answers with.
+export async function fetchJson<T extends { error?: string }>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const resp = await fetchWithRetry(input, init);
   const ct = resp.headers.get('content-type') ?? '';
 
   if (!ct.includes('json')) throw new Error(`server returned ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
+  // SAFETY: the server answers each route with its wire.ts response type, the T its caller names.
   const data = await resp.json() as T;
 
-  if (!resp.ok) throw new Error((data as { error?: string }).error || `request failed (${resp.status})`);
+  if (!resp.ok) throw new Error(data.error || `request failed (${resp.status})`);
 
   return data;
 }
 
-export const postJson = <T>(url: string, body: unknown): Promise<T> =>
+export const postJson = <T extends { error?: string }>(url: string, body: ApiRequest): Promise<T> =>
   fetchJson<T>(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 // Stream NDJSON events from a fetch response body. Each JSON-line yields as
@@ -59,6 +62,7 @@ export async function* readNdjson<T>(body: ReadableStream<Uint8Array>): AsyncGen
         if (!line) continue;
 
         try {
+          // SAFETY: each line is one event of the stream's wire.ts event type, the T its caller names.
           yield JSON.parse(line) as T;
         } catch {
           console.warn('[readNdjson] skipping unparseable line');
@@ -70,7 +74,7 @@ export async function* readNdjson<T>(body: ReadableStream<Uint8Array>): AsyncGen
   }
 }
 
-export async function postNdjson(url: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+export async function postNdjson(url: string, body: ApiRequest, signal?: AbortSignal): Promise<Response> {
   return ndjsonResponse(await fetchWithRetry(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -98,11 +102,12 @@ export async function ndjsonResponse(resp: Response): Promise<Response> {
 
 // Open an NDJSON POST stream and yield its events, throwing on a server-sent
 // `error` event so callers only branch on their own event types.
-export async function* streamNdjson<T extends { type: string }>(url: string, body: unknown, signal?: AbortSignal): AsyncGenerator<T> {
+// `error`: the message an `error` event carries.
+export async function* streamNdjson<T extends { type: string; error?: string }>(url: string, body: ApiRequest, signal?: AbortSignal): AsyncGenerator<T> {
   const resp = await postNdjson(url, body, signal);
 
   for await (const evt of readNdjson<T>(resp.body!)) {
-    if (evt.type === 'error') throw new Error((evt as { error?: string }).error || 'request failed');
+    if (evt.type === 'error') throw new Error(evt.error || 'request failed');
     yield evt;
   }
 }
@@ -110,7 +115,7 @@ export async function* streamNdjson<T extends { type: string }>(url: string, bod
 // A summary route asked to `stream`: `onDraft` gets each draft as the model
 // writes it; resolves to the checked summary (or the cached one, alone), with
 // `later`: the aliases that follow it on the stream, if any.
-export async function streamSummary(url: string, body: unknown, onDraft: (draft: SummaryDraft) => void, signal?: AbortSignal) {
+export async function streamSummary(url: string, body: ApiRequest, onDraft: (draft: SummaryDraft) => void, signal?: AbortSignal) {
   const events = streamNdjson<SummaryEvent>(url, body, signal);
   const drafts = smoothDrafts(onDraft);
 
@@ -141,7 +146,15 @@ const stepSummary: DraftStep<SummaryDraft> = (shown, target, grow) => ({
   highlights: target.highlights.map((h, i) => ({ ...h, text: grow(shown?.highlights[i]?.text, h.text) })),
 });
 
-export const smoothDrafts = <T = SummaryDraft>(onDraft: (draft: T) => void, step = stepSummary as unknown as DraftStep<T>) => {
+type Drafts<T> = { push(draft: T): void; stop(): void };
+
+export function smoothDrafts(onDraft: (draft: SummaryDraft) => void): Drafts<SummaryDraft>;
+export function smoothDrafts<T>(onDraft: (draft: T) => void, step: DraftStep<T>): Drafts<T>;
+export function smoothDrafts<T>(...[onDraft, step]: [(draft: SummaryDraft) => void, undefined?] | [(draft: T) => void, DraftStep<T>]) {
+  return step === undefined ? smoothWith(onDraft, stepSummary) : smoothWith(onDraft, step);
+}
+
+const smoothWith = <T>(onDraft: (draft: T) => void, step: DraftStep<T>): Drafts<T> => {
   let target: T | undefined;
   let shown: T | undefined;
   let due = 0;

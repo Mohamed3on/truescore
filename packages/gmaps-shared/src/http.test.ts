@@ -1,5 +1,6 @@
 import { test, expect, describe, afterEach } from 'bun:test';
 import { readNdjson, streamNdjson, streamSummary } from './http';
+import type { SummaryEvent } from './wire';
 
 const streamOf = (...chunks: string[]): ReadableStream<Uint8Array> => {
   const enc = new TextEncoder();
@@ -11,6 +12,9 @@ const streamOf = (...chunks: string[]): ReadableStream<Uint8Array> => {
     },
   });
 };
+
+// A fetch that answers every request with `respond()`.
+const fakeFetch = (respond: () => Response): typeof fetch => Object.assign(async () => respond(), { preconnect: fetch.preconnect });
 
 const drain = async <T>(gen: AsyncGenerator<T>): Promise<T[]> => {
   const out: T[] = [];
@@ -48,8 +52,8 @@ describe('streamNdjson', () => {
   afterEach(() => { globalThis.fetch = origFetch; });
 
   const mockNdjson = (bodyText: string, status = 200) => {
-    globalThis.fetch = (async () =>
-      new Response(bodyText, { status, headers: { 'content-type': 'application/x-ndjson' } })) as unknown as typeof fetch;
+    globalThis.fetch = fakeFetch(() =>
+      new Response(bodyText, { status, headers: { 'content-type': 'application/x-ndjson' } }));
   };
 
   test('yields events until a server error event, then throws', async () => {
@@ -57,16 +61,16 @@ describe('streamNdjson', () => {
     const seen: unknown[] = [];
     await expect(
       (async () => {
-        for await (const e of streamNdjson('/api/x', {})) seen.push(e);
+        for await (const e of streamNdjson('/api/x', { url: 'x' })) seen.push(e);
       })()
     ).rejects.toThrow('boom');
     expect(seen).toEqual([{ type: 'data', v: 1 }]); // data before the error was delivered
   });
 
   test('rejects a non-NDJSON response', async () => {
-    globalThis.fetch = (async () =>
-      new Response('{"error":"nope"}', { status: 500, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
-    await expect(drain(streamNdjson('/api/x', {}))).rejects.toThrow('nope');
+    globalThis.fetch = fakeFetch(() =>
+      new Response('{"error":"nope"}', { status: 500, headers: { 'content-type': 'application/json' } }));
+    await expect(drain(streamNdjson('/api/x', { url: 'x' }))).rejects.toThrow('nope');
   });
 });
 
@@ -75,7 +79,7 @@ describe('streamSummary', () => {
   afterEach(() => { globalThis.fetch = origFetch; });
 
   test('grows the drafts frame by frame up to the newest, then resolves to the checked summary', async () => {
-    const line = (l: unknown) => new TextEncoder().encode(JSON.stringify(l) + '\n');
+    const line = (l: SummaryEvent) => new TextEncoder().encode(JSON.stringify(l) + '\n');
 
     const body = new ReadableStream<Uint8Array>({
       async start(c) {
@@ -87,9 +91,9 @@ describe('streamSummary', () => {
       },
     });
 
-    globalThis.fetch = (async () => new Response(body, { headers: { 'content-type': 'application/x-ndjson' } })) as unknown as typeof fetch;
+    globalThis.fetch = fakeFetch(() => new Response(body, { headers: { 'content-type': 'application/x-ndjson' } }));
     const drafts: string[] = [];
-    const done = await streamSummary('/api/summarize', {}, (d) => drafts.push(d.verdict));
+    const done = await streamSummary('/api/summarize', { featureId: 'p' }, (d) => drafts.push(d.verdict));
     expect(drafts.length).toBeGreaterThan(2);
     expect(drafts.every((v, i) => 'Good food, fair prices'.startsWith(v) && v.length >= (drafts[i - 1]?.length ?? 0))).toBe(true);
     expect(drafts.at(-1)).toBe('Good food, fair prices');
@@ -97,7 +101,7 @@ describe('streamSummary', () => {
   });
 
   test('throws when the stream closes without a summary', async () => {
-    globalThis.fetch = (async () => new Response('{"type":"summary-draft","summary":{"verdict":"Go","highlights":[]}}\n', { headers: { 'content-type': 'application/x-ndjson' } })) as unknown as typeof fetch;
-    await expect(streamSummary('/api/summarize', {}, () => {})).rejects.toThrow('without a summary');
+    globalThis.fetch = fakeFetch(() => new Response('{"type":"summary-draft","summary":{"verdict":"Go","highlights":[]}}\n', { headers: { 'content-type': 'application/x-ndjson' } }));
+    await expect(streamSummary('/api/summarize', { featureId: 'p' }, () => {})).rejects.toThrow('without a summary');
   });
 });

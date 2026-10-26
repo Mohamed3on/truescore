@@ -4,7 +4,10 @@
 // calls here, so a streamed one can't drift from the whole one it stands in for.
 import { generateText, NoObjectGeneratedError, Output, streamText, type DeepPartial, type FlexibleSchema, type LanguageModel, type LanguageModelUsage, type Prompt } from 'ai';
 
-type Call = { model: LanguageModel; providerOptions?: Record<string, Record<string, any>>; maxOutputTokens?: number; abortSignal?: AbortSignal } & Prompt;
+// A call's provider settings, as the AI SDK takes them.
+export type ProviderOptions = NonNullable<Parameters<typeof generateText>[0]['providerOptions']>;
+
+type Call = { model: LanguageModel; providerOptions?: ProviderOptions; maxOutputTokens?: number; abortSignal?: AbortSignal } & Prompt;
 
 export async function writeText(call: Call, onText?: (text: string) => void): Promise<{ text: string; usage: LanguageModelUsage }> {
   if (!onText) return generateText(call);

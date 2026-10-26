@@ -309,3 +309,18 @@ export type ThreadAskRequest = { thread: Thread; chat: ThreadTurn[] } & LlmOverr
 // removal penalty is applied by whoever renders, off their own preview meta, so
 // the penalty has exactly one implementation.
 export type ContributeRequest = { featureId: string; name: string; summary?: Summary; highlights?: Chip[]; highlightSummaries?: Record<string, Summary>; score?: PartialScore };
+
+// Any of the bodies above, as the client transport (http.ts) posts them.
+export type ApiRequest =
+  | LookupRequest
+  | SummarizeRequest
+  | HistogramRequest
+  | HighlightsRequest
+  | HighlightSummaryRequest
+  | SearchRequest
+  | AskRequest
+  | StanceRequest
+  | ReceiptsRequest
+  | TallyRequest
+  | ThreadAskRequest
+  | ContributeRequest;

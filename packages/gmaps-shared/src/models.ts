@@ -1,14 +1,15 @@
-import { createAnthropic } from '@ai-sdk/anthropic';
+import { createAnthropic, type AnthropicProviderSettings } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import type { LanguageModel } from 'ai';
 import { deepseekModel } from './deepseek';
 import { MODELS, type Provider, type ReasoningEffort } from './wire';
+import type { ProviderOptions } from './write';
 
 // Each Provider's settings, written once for the server and the extension:
 // a key in, the configured model call out. DEFAULT_PROVIDER and MODELS
 // (wire.ts) pick the active one and each one's model.
-export type ModelCall = { model: LanguageModel; providerOptions: Record<string, Record<string, any>>; maxOutputTokens: number };
+export type ModelCall = { model: LanguageModel; providerOptions: ProviderOptions; maxOutputTokens: number };
 
 export type ModelSetup = {
   apiKey: string | undefined;
@@ -41,13 +42,19 @@ export const modelCall = (provider: Provider, { apiKey, reasoningEffort = 'low',
     // Claude Sonnet 5.5 at low effort, the default since 2026-10-20 (Ask,
     // summaries and the Tally; web evals/candidates.ts has the results). Medium
     // scored no better.
-    case 'anthropic':
-      return {
-        model: createAnthropic({ apiKey, ...(browser ? { headers: { 'anthropic-dangerous-direct-browser-access': 'true' } } : {}) })(MODELS.anthropic),
-        // Sonnet 5.5 refuses thinking disabled; between_tools is its lowest setting.
-        providerOptions: { anthropic: { effort: 'low', ...(noReasoning ? { thinking: { type: 'between_tools' } } : {}) } },
-        maxOutputTokens: 32768,
-      };
+    case 'anthropic': {
+      const settings: AnthropicProviderSettings = { apiKey };
+
+      if (browser) settings.headers = { 'anthropic-dangerous-direct-browser-access': 'true' };
+      const model = createAnthropic(settings)(MODELS.anthropic);
+      const anthropic: ProviderOptions[string] = { effort: 'low' };
+
+      // Sonnet 5.5 refuses thinking disabled; between_tools is its lowest setting.
+      if (noReasoning) anthropic.thinking = { type: 'between_tools' };
+
+      return { model, providerOptions: { anthropic }, maxOutputTokens: 32768 };
+    }
+
     // GPT-6 Luna (the fast/cheap GPT-6 tier), low reasoning effort unless the
     // popup picks another. 2026-09-22 evals against GPT-5.6 Luna at low
     // (gpt-6-sol judge): its summaries are terser but beat 5.6's 26-6 once
@@ -56,11 +63,13 @@ export const modelCall = (provider: Provider, { apiKey, reasoningEffort = 'low',
     // Medium effort brought back 5.6's latency for no gain, and 5.6's ladder
     // showed high/xhigh burning 20-60x the reasoning tokens for no quality
     // gain — so keep the cheapest level.
-    case 'openai':
-      return {
-        model: createOpenAI({ apiKey })(MODELS.openai),
-        providerOptions: { openai: { reasoningEffort: noReasoning ? 'none' : reasoningEffort, ...(explicitCaching ? { promptCacheOptions: { mode: 'explicit' } } : {}) } },
-        maxOutputTokens: 32768,
-      };
+    case 'openai': {
+      const model = createOpenAI({ apiKey })(MODELS.openai);
+      const openai: ProviderOptions[string] = { reasoningEffort: noReasoning ? 'none' : reasoningEffort };
+
+      if (explicitCaching) openai.promptCacheOptions = { mode: 'explicit' };
+
+      return { model, providerOptions: { openai }, maxOutputTokens: 32768 };
+    }
   }
 };
