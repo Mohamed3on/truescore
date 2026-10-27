@@ -14,6 +14,8 @@ export interface PrintfulReview {
   rating: number;
   body: string;
   date: string;
+  color: string;
+  size: string;
 }
 
 const ID_TTL = 365 * 24 * 60 * 60 * 1000;
@@ -24,7 +26,7 @@ const PAGE = 50;
 // A category page asks for every card at once.
 const throttled = createThrottledFetcher(6);
 
-interface RpcItem { overallRating: number; review: string | null; createdAt: number }
+interface RpcItem { overallRating: number; review: string | null; createdAt: number; variantInfo?: { color?: string; size?: string } }
 
 interface RpcPage { total: number; totalCountBeforeFilters: number; items: RpcItem[] }
 
@@ -86,13 +88,15 @@ const fetchPage = async (productId: string, page: number): Promise<PrintfulRevie
     rating: r.overallRating,
     body: r.review?.trim() ?? '',
     date: new Date(r.createdAt * 1000).toISOString().slice(0, 10),
+    color: r.variantInfo?.color ?? '',
+    size: r.variantInfo?.size ?? '',
   }));
 
 // Every review up to the newest SAMPLE_MAX, all pages at once: `recent` settles
 // with the newest RECENT_REVIEWS for the gauge, `all` with the rest. Kept a week
 // in IndexedDB, and only whole, so a failed page's hole is never served.
 export const fetchReviews = (productId: string, total: number) => {
-  const key = `printful_reviews_v1_${productId}`;
+  const key = `printful_reviews_v2_${productId}`;
   const cached: Promise<PrintfulReview[] | null> = idbGet(key, REVIEWS_TTL);
   const pages = cached.then((hit) => (hit ? [] : Array.from({ length: Math.ceil(Math.min(total, SAMPLE_MAX) / PAGE) }, (_, i) => fetchPage(productId, i + 1))));
 
