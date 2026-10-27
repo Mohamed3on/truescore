@@ -528,6 +528,23 @@
 }
 .ars-search-input::placeholder { color: #A8A29E; }
 .ars-search-input:focus { border-color: #0F766E; }
+/* Pinned: injected CSS loses to a host's own text-input rules (Printful gives
+   every one 16px type, a 39px height, square corners, an inset shadow and an
+   !important border), so these out-rank them. */
+.ars-question-row .ars-question-input,
+.ars-search-section .ars-search-input {
+  height: auto !important;
+  padding: 7px 10px !important;
+  font-family: inherit !important;
+  font-size: 12px !important;
+  line-height: normal !important;
+  background: #fff !important;
+  border: 1px solid #E7E5E4 !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+.ars-question-row .ars-question-input:focus,
+.ars-search-section .ars-search-input:focus { border-color: #0F766E !important; }
 .ars-search-header {
   display: flex;
   align-items: center;

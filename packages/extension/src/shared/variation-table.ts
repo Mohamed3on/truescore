@@ -102,7 +102,7 @@ const ensureStyles = () => {
 .ts-var-row:last-child{border-bottom:none}
 .ts-var-row[role=button]{cursor:pointer;margin:0 -12px;padding:6px 12px}
 .ts-var-row[role=button]:hover,.ts-var-row.is-picked{background:#F0FDFA}
-.ts-var-summary{padding:4px 0 10px}
+.ts-var-summary{display:flex;flex-direction:column;gap:10px;padding:4px 0 10px}
 .ts-var.is-animated .ts-var-row{animation:ts-var-row-in .35s cubic-bezier(.16,1,.3,1) both}
 .ts-var-name{display:flex;flex-direction:column;gap:1px;min-width:0}
 .ts-var-val{font-size:12.5px;color:#44403C;overflow-wrap:anywhere}
