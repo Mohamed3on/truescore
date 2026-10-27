@@ -65,15 +65,17 @@ const buildIsland = async (id: string): Promise<HTMLElement | null> => {
 
   const fillReviews = ({ reviews }: Evaluation) => {
     const dims = buildDims(reviews);
+    const text = (r: AliReview) => r.text;
+    const card = (r: AliReview) => ({ rating: r.rating, body: r.text, meta: r.skuInfo });
 
     if (dims.length) {
-      const card = renderVariationCard(dims, { animate: true });
-      card.style.maxWidth = '100%';
-      card.style.margin = '2px 0 0';
-      wrapper.appendChild(card);
+      const variations = renderVariationCard(dims, { animate: true, summarize: { key: `ali-summary-${id}`, text, card } });
+      variations.style.maxWidth = '100%';
+      variations.style.margin = '2px 0 0';
+      wrapper.appendChild(variations);
     }
 
-    const texts = [...new Set(reviews.map((r) => r.text).filter(Boolean))];
+    const texts = [...new Set(reviews.map(text).filter(Boolean))];
 
     if (texts.length >= 5) {
       buildSummarizeWidget({
@@ -81,7 +83,7 @@ const buildIsland = async (id: string): Promise<HTMLElement | null> => {
         cacheKey: `ali-summary-${id}`,
         summaryPrompt: PRODUCT_SUMMARY_PROMPT,
         fetchReviews: async () => texts,
-        renderQuote: quoteCards(() => reviews, (r) => r.text, (r) => ({ rating: r.rating, body: r.text, meta: r.skuInfo })),
+        renderQuote: quoteCards(() => reviews, text, card),
       });
     }
   };

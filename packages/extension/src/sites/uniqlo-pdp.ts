@@ -130,7 +130,7 @@ const colorCode = (name: string) => {
 
 const fitText = (fit: number) => (fit < 2.4 ? 'runs small' : fit > 3.6 ? 'runs large' : 'true to size');
 
-interface DimStat { label: string; net: number; n: number; fit: number | null; }
+interface DimStat { label: string; net: number; n: number; fit: number | null; reviews: any[]; }
 
 // A review's fit rating; reviewers who skipped it count toward the row but not its fit.
 const ReviewFit = z.number();
@@ -140,7 +140,7 @@ const aggregate = (
   keyFn: (r: any) => string,
   labelFn: (r: any) => string
 ): DimStat[] => {
-  const groups = new Map<string, { net: number; n: number; fitSum: number; fitN: number; labels: Map<string, number> }>();
+  const groups = new Map<string, { net: number; n: number; fitSum: number; fitN: number; labels: Map<string, number>; reviews: any[] }>();
 
   for (const r of reviews) {
     const key = keyFn(r);
@@ -148,9 +148,10 @@ const aggregate = (
     if (!key) continue;
     let g = groups.get(key);
 
-    if (!g) groups.set(key, (g = { net: 0, n: 0, fitSum: 0, fitN: 0, labels: new Map() }));
+    if (!g) groups.set(key, (g = { net: 0, n: 0, fitSum: 0, fitN: 0, labels: new Map(), reviews: [] }));
     g.net += polarity(r.rate);
     g.n++;
+    g.reviews.push(r);
 
     const fit = ReviewFit.safeParse(r.fit);
 
@@ -168,11 +169,12 @@ const aggregate = (
       net: g.net,
       n: g.n,
       fit: g.fitN ? g.fitSum / g.fitN : null,
+      reviews: g.reviews,
     }))
     .sort((a, b) => b.net - a.net || b.n - a.n);
 };
 
-const buildVariations = (reviews: any[]): HTMLElement | null => {
+const buildVariations = (productId: string, reviews: any[]): HTMLElement | null => {
   if (!reviews?.length) return null;
 
   // Colour leads: side-by-side doesn't fit (the product column is a fixed 376px),
@@ -184,19 +186,20 @@ const buildVariations = (reviews: any[]): HTMLElement | null => {
 
   if (!dims.length) return null;
 
-  const varDims: VarDim[] = dims.map((d) => ({
+  const varDims: VarDim<any>[] = dims.map((d) => ({
     label: d.label,
     rows: d.rows.map((r) => ({
       label: r.label,
       score: r.net,
       meta: `${r.n} review${r.n === 1 ? '' : 's'}` + (r.fit != null && r.n >= 3 ? ` · ${fitText(r.fit)}` : ''),
+      reviews: r.reviews,
     })),
   }));
 
-  return renderVariationCard(varDims);
+  return renderVariationCard(varDims, { summarize: { key: `uniqlo-summary-${productId}`, text: reviewText, card: reviewCard, summaryPrompt: UNIQLO_SUMMARY_PROMPT } });
 };
 
-const renderInsights = (ratingEl: Element, rating: any, reviews: any[]) => {
+const renderInsights = (productId: string, ratingEl: Element, rating: any, reviews: any[]) => {
   if (document.querySelector('.nps-insights')) return;
   const rc = rating?.rateCount;
 
@@ -244,7 +247,7 @@ const renderInsights = (ratingEl: Element, rating: any, reviews: any[]) => {
   panel.style.cssText = 'margin:12px 0;padding:14px;border-radius:8px;background:#f5f5f5;line-height:1.5;color:#333;';
   panel.innerHTML = html; // safe: browser extension with controlled data
 
-  const variations = buildVariations(reviews);
+  const variations = buildVariations(productId, reviews);
 
   if (variations) {
     variations.style.marginTop = '0';
@@ -261,6 +264,7 @@ const renderInsights = (ratingEl: Element, rating: any, reviews: any[]) => {
 const bareText = (r: any) => [r.title, r.comment].filter(Boolean).join(': ').trim();
 
 // A review as the model reads it: after the size bought, when known.
+const reviewCard = (r: any) => ({ rating: r.rate, title: r.title, body: r.comment, meta: r.purchasedSize && `Bought size ${r.purchasedSize}` });
 const reviewText = (r: any) => (r.purchasedSize ? `[Bought size ${r.purchasedSize}] ${bareText(r)}` : bareText(r));
 
 const reviewTexts = (reviews: any[]): string[] => {
@@ -308,7 +312,7 @@ const addSummarizeUI = (
     cacheKey: `uniqlo-summary-${productId}`,
     summaryPrompt: UNIQLO_SUMMARY_PROMPT,
     fetchReviews: async () => texts,
-    renderQuote: quoteCards(() => reviews, reviewText, (r) => ({ rating: r.rate, title: r.title, body: r.comment, meta: r.purchasedSize && `Bought size ${r.purchasedSize}` })),
+    renderQuote: quoteCards(() => reviews, reviewText, reviewCard),
   });
 
   // Sit in the buy-box, directly under the rating row (above the fold) instead of
@@ -342,7 +346,7 @@ setupSpaInjector({
     }
 
     if (!document.querySelector('.nps-insights')) {
-      renderInsights(ratingEl, rating, reviews);
+      renderInsights(productId, ratingEl, rating, reviews);
     }
 
     const texts = reviewTexts(reviews);

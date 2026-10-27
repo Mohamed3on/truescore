@@ -84,11 +84,13 @@ const parseVariation = (text: string): [string, string][] => {
   return pairs;
 };
 
-const injectBestFormats = (formatRatings: Record<string, number>) => {
+// Each row carries the walked reviews behind it, for its own Summary and Ask.
+const injectBestFormats = (formatRatings: Record<string, number>, reviews: FilteredReview[], key: string) => {
   const combos = Object.entries(formatRatings).map(([raw, score]) => ({
     pairs: parseVariation(raw),
     label: raw.replaceAll(VAR_SEP, ' | '),
     score,
+    reviews: reviews.filter((r) => r.format === raw),
   }));
 
   if (!combos.length) return;
@@ -129,7 +131,12 @@ const injectBestFormats = (formatRatings: Record<string, number>) => {
   const showTabs = compareDims.length >= 2 || (compareDims.length === 1 && multiDim);
 
   const byScore = (a: [string, number], b: [string, number]) => b[1] - a[1];
-  const toRows = (entries: [string, number][]) => entries.map(([label, score]) => ({ label, score }));
+
+  const toRows = (dim: string, entries: [string, number][]) => entries.map(([label, score]) => ({
+    label,
+    score,
+    reviews: reviews.filter((r) => r.format && parseVariation(r.format).some(([d, v]) => d === dim && v === label)),
+  }));
 
   // Amazon's buy-box column is ~240px, where a spelled-out combination wraps to
   // three lines. The dimension you actually choose from — the one with the most
@@ -138,28 +145,29 @@ const injectBestFormats = (formatRatings: Record<string, number>) => {
   const lead = showTabs ? compareDims[0]?.[0] : undefined;
 
   const specific = combos
-    .map(({ pairs, label, score }) => {
+    .map(({ pairs, label, score, reviews }) => {
       const varying = pairs.filter(([dim]) => !fixedDims.has(dim));
       const head = lead && varying.find(([dim]) => dim === lead);
 
-      if (!head) return { label: varying.length ? varying.map(([d, v]) => `${d}: ${v}`).join(' | ') : label, score };
+      if (!head) return { label: varying.length ? varying.map(([d, v]) => `${d}: ${v}`).join(' | ') : label, score, reviews };
       const rest = varying.filter(([dim]) => dim !== lead);
 
-      return { label: head[1], score, meta: rest.map(([d, v]) => `${d} ${v}`).join(' \u00B7 ') || undefined };
+      return { label: head[1], score, meta: rest.map(([d, v]) => `${d} ${v}`).join(' \u00B7 ') || undefined, reviews };
     })
     .sort((a, b) => b.score - a.score);
 
   // Specific (exact combination) leads; per-dimension breakdowns follow as extra tabs.
-  const varDims: VarDim[] = showTabs
+  const varDims: VarDim<FilteredReview>[] = showTabs
     ? [
         { label: 'Specific', rows: specific },
-        ...compareDims.map(([dim, vals]) => ({ label: dim, rows: toRows([...vals.entries()].sort(byScore)) })),
+        ...compareDims.map(([dim, vals]) => ({ label: dim, rows: toRows(dim, [...vals.entries()].sort(byScore)) })),
       ]
     : [{ label: '', rows: specific }];
 
   const box = renderVariationCard(varDims, {
     animate: true,
     constants: fixed.map(([dim, vals]): [string, string] => [dim, [...vals.keys()][0]]),
+    summarize: { key, text: reviewText, card: cardFields },
   });
 
   const buyBox = document.querySelector('#desktop_buybox');
@@ -185,7 +193,7 @@ const THREE_DAYS = 3 * 86400000;
 // A review's text in the shopper's language, when Amazon translated it.
 type Shown = { title: string; body: string };
 
-type FilteredReview = { id: string; rating: number; title: string; body: string; verified: boolean; meta: string; shown?: Shown };
+type FilteredReview = { id: string; rating: number; title: string; body: string; verified: boolean; meta: string; format?: string; shown?: Shown };
 
 const pickText = (root: Element, sel: string) => {
   const node = root.querySelector(sel);
@@ -203,6 +211,7 @@ const reviewId = (review: Element) => review.id || review.querySelector('[data-h
 
 const parseFilteredReview = (review: Element): FilteredReview => {
   const ratingEl = review.querySelector('[data-hook="review-star-rating"], [data-hook="cmps-review-star-rating"]');
+  const format = review.querySelector('a[data-hook="format-strip"]');
 
   return {
     id: review.id,
@@ -211,11 +220,14 @@ const parseFilteredReview = (review: Element): FilteredReview => {
     body: pickText(review, '[data-hook="review-body"]'),
     verified: !!review.querySelector('[data-hook="avp-badge"]'),
     meta: review.querySelector('[data-hook="review-date"]')?.textContent?.trim() ?? '',
+    format: format ? cleanFormatStrip(format) : undefined,
   };
 };
 
 // A review as the search lists it, and as a summary point's reviews show it:
 // stars, date and title, in the shopper's language when Amazon translated it.
+const reviewText = (r: FilteredReview) => [r.title, r.body].filter(Boolean).join(': ');
+
 const cardFields = (r: FilteredReview): SearchReviewFields => ({
   rating: r.rating,
   title: r.shown?.title || r.title,
@@ -704,7 +716,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       // After the walk its reviews are cached, so this reads them, not a second walk.
       all: () => walked.then(fetchFreshReviews),
       allMax: WALK_MAX,
-      text: (r) => [r.title, r.body].filter(Boolean).join(': '),
+      text: reviewText,
       card: cardFields,
       searchTerm,
       exampleQuery: 'battery OR strap',
@@ -720,7 +732,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     scores.recent.percentage = scores.recent.percentage || (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
   }
 
-  injectBestFormats(formatRatings);
+  injectBestFormats(formatRatings, kept ?? cacheGet(reviewsKey, THREE_DAYS) ?? [], `review-summary-${cacheASIN}`);
 };
 
 const getProductSIN = () => {

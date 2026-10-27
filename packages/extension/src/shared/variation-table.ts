@@ -2,27 +2,34 @@
 // rows, each with a magnitude bar and a signed net score, the top positive row
 // flagged as best. Used by site scripts (Amazon, Uniqlo, …) that each supply
 // their own ranked dimensions — the data acquisition stays per-site, only this
-// presentation is shared.
+// presentation is shared, and with the reviews behind each row, its own Summary
+// and Ask.
 
 import { starScore } from '@truescore/gmaps-shared';
+import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from './review-summary';
+import { quoteCards, type SearchReviewFields } from './review-search';
 
-export interface VarRow {
+export interface VarRow<T = never> {
   label: string;
   score: number; // net sentiment: sign → colour, |value| → bar width
   meta?: string; // optional sub-line, e.g. "18 reviews · true to size"
+  reviews?: T[]; // the reviews behind it, for its own Summary and Ask
 }
 
-export interface VarDim {
+export interface VarDim<T = never> {
   label: string; // tab label ('' for a single untabbed list)
-  rows: VarRow[]; // pre-sorted best → worst
+  rows: VarRow<T>[]; // pre-sorted best → worst
 }
 
-export interface VariationCardOpts {
+export interface VariationCardOpts<T = never> {
   title?: string; // default 'Best by variation'
   animate?: boolean; // staggered row + card entrance
   // Dimensions every row shares, as [name, value]. They can't be ranked, so
   // they're stated once under the title instead of being silently dropped.
   constants?: [string, string][];
+  // How a row's reviews read: a row with enough of them opens a Summary and
+  // Ask over them alone, under itself.
+  summarize?: { key: string; text: (r: T) => string; card: (r: T) => SearchReviewFields; summaryPrompt?: string };
 }
 
 // Fold a product's reviews into ranked dimensions: one VarDim per variation axis
@@ -36,9 +43,9 @@ export const tallyVariationDims = <T>(
     variationsOf: (item: T, index: number) => [string, string][];
     ratingOf: (item: T) => number;
   }
-): VarDim[] => {
+): VarDim<T>[] => {
   const { variationsOf, ratingOf } = opts;
-  const dims = new Map<string, Map<string, { score: number; count: number }>>();
+  const dims = new Map<string, Map<string, { score: number; reviews: T[] }>>();
 
   items.forEach((item, i) => {
     for (const [dim, value] of variationsOf(item, i)) {
@@ -46,9 +53,9 @@ export const tallyVariationDims = <T>(
       let values = dims.get(dim);
 
       if (!values) dims.set(dim, (values = new Map()));
-      const tally = values.get(value) ?? { score: 0, count: 0 };
+      const tally = values.get(value) ?? { score: 0, reviews: [] };
       tally.score += starScore(ratingOf(item));
-      tally.count++;
+      tally.reviews.push(item);
       values.set(value, tally);
     }
   });
@@ -56,14 +63,18 @@ export const tallyVariationDims = <T>(
   return [...dims.entries()].flatMap(([dim, values]) => (values.size < 2 ? [] : [{
     label: dim,
     rows: [...values.entries()]
-      .map(([label, { score, count }]) => ({
+      .map(([label, { score, reviews }]) => ({
         label,
         score,
-        meta: `${count} review${count === 1 ? '' : 's'}`,
+        meta: `${reviews.length} review${reviews.length === 1 ? '' : 's'}`,
+        reviews,
       }))
       .sort((a, b) => b.score - a.score),
   }]));
 };
+
+// Fewer review texts than this make no Summary, as in the review panel.
+const MIN_SUMMARY_REVIEWS = 5;
 
 const STYLE_ID = 'ts-var-styles';
 
@@ -89,6 +100,9 @@ const ensureStyles = () => {
 .ts-var-panel{display:flex;flex-direction:column;padding:6px 12px 10px}
 .ts-var-row{display:grid;grid-template-columns:1fr 60px auto;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #F5F5F4}
 .ts-var-row:last-child{border-bottom:none}
+.ts-var-row[role=button]{cursor:pointer;margin:0 -12px;padding:6px 12px}
+.ts-var-row[role=button]:hover,.ts-var-row.is-picked{background:#F0FDFA}
+.ts-var-summary{padding:4px 0 10px}
 .ts-var.is-animated .ts-var-row{animation:ts-var-row-in .35s cubic-bezier(.16,1,.3,1) both}
 .ts-var-name{display:flex;flex-direction:column;gap:1px;min-width:0}
 .ts-var-val{font-size:12.5px;color:#44403C;overflow-wrap:anywhere}
@@ -106,9 +120,9 @@ const ensureStyles = () => {
   document.head.appendChild(s);
 };
 
-export const renderVariationCard = (dims: VarDim[], opts: VariationCardOpts = {}): HTMLElement => {
+export const renderVariationCard = <T = never>(dims: VarDim<T>[], opts: VariationCardOpts<T> = {}): HTMLElement => {
   ensureStyles();
-  const { title = 'Best by variation', animate = false, constants = [] } = opts;
+  const { title = 'Best by variation', animate = false, constants = [], summarize } = opts;
 
   const box = document.createElement('div');
   box.className = 'ts-var' + (animate ? ' is-animated' : '');
@@ -141,7 +155,7 @@ export const renderVariationCard = (dims: VarDim[], opts: VariationCardOpts = {}
   const panel = document.createElement('div');
   panel.className = 'ts-var-panel';
 
-  const renderPanel = (rows: VarRow[]) => {
+  const renderPanel = ({ label: dim, rows }: VarDim<T>) => {
     panel.replaceChildren();
     const maxAbs = rows.reduce((m, r) => Math.max(m, Math.abs(r.score)), 0) || 1;
     rows.forEach((r, i) => {
@@ -177,6 +191,36 @@ export const renderVariationCard = (dims: VarDim[], opts: VariationCardOpts = {}
       score.textContent = (r.score > 0 ? '+' : '') + r.score;
 
       row.append(name, track, score);
+
+      const reviews = r.reviews ?? [];
+      const texts = summarize ? [...new Set(reviews.map(summarize.text).filter(Boolean))] : [];
+
+      if (summarize && texts.length >= MIN_SUMMARY_REVIEWS) {
+        row.setAttribute('role', 'button');
+        row.tabIndex = 0;
+        row.title = `Summarize the ${r.label} reviews`;
+
+        const pick = () => {
+          box.querySelector('.is-picked')?.classList.remove('is-picked');
+          row.classList.add('is-picked');
+          summary.replaceChildren();
+          row.after(summary);
+          buildSummarizeWidget({
+            wrapper: summary,
+            cacheKey: `${summarize.key}-var-${dim}-${r.label}`.toLowerCase(),
+            summaryPrompt: summarize.summaryPrompt ?? PRODUCT_SUMMARY_PROMPT,
+            context: `Every review here is from a buyer of one variation: ${r.label}.`,
+            fetchReviews: async () => texts,
+            questionPlaceholder: `Ask about ${r.label}\u2026`,
+            autoSummarize: true,
+            renderQuote: quoteCards(() => reviews, summarize.text, summarize.card),
+          });
+        };
+
+        row.addEventListener('click', pick);
+        row.addEventListener('keydown', (e) => { if (e.key === 'Enter') pick(); });
+      }
+
       panel.appendChild(row);
     });
   };
@@ -194,15 +238,19 @@ export const renderVariationCard = (dims: VarDim[], opts: VariationCardOpts = {}
       btn.addEventListener('click', () => {
         tabs.querySelectorAll('.ts-var-tab').forEach((b) => b.classList.remove('is-active'));
         btn.classList.add('is-active');
-        renderPanel(dim.rows);
+        renderPanel(dim);
       });
       tabs.appendChild(btn);
     });
     head.appendChild(tabs);
   }
 
+  // A picked row's Summary and Ask, under it.
+  const summary = document.createElement('div');
+  summary.className = 'ts-var-summary';
+
   box.appendChild(panel);
-  renderPanel(dims[0].rows);
+  renderPanel(dims[0]!);
 
   return box;
 };

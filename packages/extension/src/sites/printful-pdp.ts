@@ -6,6 +6,9 @@ import { renderScoreBadge } from '../shared/score-grid';
 import { renderVariationCard, tallyVariationDims } from '../shared/variation-table';
 import { fetchReviews, pageProductId, productScore, type PrintfulReview } from '../shared/printful';
 
+const text = (r: PrintfulReview) => r.body;
+const card = (r: PrintfulReview) => ({ rating: r.rating, body: r.body, meta: r.date });
+
 (async function main() {
   const productId = pageProductId();
   const scored = productId ? await productScore(productId) : null;
@@ -24,8 +27,8 @@ import { fetchReviews, pageProductId, productScore, type PrintfulReview } from '
     ...reviews,
     allMax: SAMPLE_MAX,
     score,
-    text: (r: PrintfulReview) => r.body,
-    card: (r: PrintfulReview) => ({ rating: r.rating, body: r.body, meta: r.date }),
+    text,
+    card,
     date: (r) => r.date,
     exampleQuery: 'fit OR print',
   });
@@ -41,9 +44,9 @@ import { fetchReviews, pageProductId, productScore, type PrintfulReview } from '
     });
 
     if (!dims.length) return;
-    const card = renderVariationCard(dims, { animate: true });
-    card.style.maxWidth = '100%';
-    panel.append(card);
+    const variations = renderVariationCard(dims, { animate: true, summarize: { key: `printful-summary-${productId}`, text, card } });
+    variations.style.maxWidth = '100%';
+    panel.append(variations);
   });
 
   // The score joins the stars under the title; the panel goes under the
