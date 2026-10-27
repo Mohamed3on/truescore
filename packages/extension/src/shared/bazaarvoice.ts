@@ -7,6 +7,7 @@ import { buildReviewPanel } from './review-panel';
 import { setupSpaInjector } from './spa-injector';
 import { appendStat, createIslandShell } from './score-island';
 import { RECENT_REVIEWS } from './recency';
+import { renderVariationCard, tallyVariationDims } from './variation-table';
 import * as z from 'zod/mini';
 
 // The BazaarVoice review API behind dm's, DocMorris's, Rossmann's and MediaMarkt's reviews,
@@ -243,6 +244,8 @@ export const cardScores = (site: BvSite) => {
 };
 
 interface BvReview {
+  // The family member it reviews: a product's reviews include its variants'.
+  productId: string;
   rating: number;
   title: string;
   body: string;
@@ -261,6 +264,7 @@ const fetchPage = async (site: BvSite, productId: string, offset: number, search
   const response = (await res.json())?.response;
 
   const reviews: BvReview[] = (response?.Results ?? []).map((r: any) => ({
+    productId: String(r.ProductId ?? ''),
     rating: Number(r.Rating) || 0,
     title: r.Title || '',
     body: r.ReviewText || '',
@@ -290,7 +294,7 @@ const dedupe = (reviews: BvReview[]) => {
 // the search. Kept a week in IndexedDB, and only whole: a failed page's hole would
 // otherwise be served for the week.
 const fetchReviews = (site: BvSite, productId: string, total: Promise<number>) => {
-  const cacheKey = `${site.key}_reviews_v4_${productId}`;
+  const cacheKey = `${site.key}_reviews_v5_${productId}`;
   const cached: Promise<BvReview[] | null> = idbGet(cacheKey, REVIEWS_TTL);
 
   const pages = cached.then((hit) => {
@@ -430,6 +434,7 @@ interface PdpData {
 const buildCard = (
   site: BvSite,
   exampleQuery: string,
+  variants: BvPdp['variants'],
   { stats, labels, scoreData, productId, reviews }: PdpData,
 ): HTMLElement | null => {
   const total = Number(stats?.TotalReviewCount) || 0;
@@ -439,9 +444,11 @@ const buildCard = (
 
   const wrapper = createIslandShell();
 
+  // One summary per family, so another pack size of the product keeps it.
+  const key = `${site.key}-summary-${stats.FamilyIds?.[0] ?? productId}`;
+
   const { stats: row } = buildReviewPanel(wrapper, {
-    // One summary per family, so another pack size of the product keeps it.
-    key: `${site.key}-summary-${stats.FamilyIds?.[0] ?? productId}`,
+    key,
     total,
     ...reviews,
     allMax: SAMPLE_MAX,
@@ -457,6 +464,18 @@ const buildCard = (
 
   if (tables) row!.after(tables);
 
+  // Each review names the family member it reviews, so the variants rank.
+  const values = variants?.();
+
+  if (values?.size) reviews.all.then((all) => {
+    const dims = tallyVariationDims(all, { variationsOf: (r) => values.get(r.productId) ?? [], ratingOf: (r) => r.rating });
+
+    if (!dims.length) return;
+    const card = renderVariationCard(dims, { animate: true, summarize: { key, text: reviewToText, card: reviewFields } });
+    card.style.maxWidth = '100%';
+    wrapper.append(card);
+  });
+
   return wrapper;
 };
 
@@ -467,6 +486,8 @@ export interface BvPdp {
   ratingLine: () => Element | null;
   panelAnchor: () => { node: Element; position: 'before' | 'after' } | null;
   exampleQuery: string;
+  // The values each family member varies by, by product id ("Size": "65 Zoll").
+  variants?: () => Map<string, [string, string][]>;
   // Settles once the host page may be written to (a server-rendered host's
   // hydration); the requests start before it.
   ready?: Promise<void>;
@@ -475,7 +496,7 @@ export interface BvPdp {
 // The id is in the URL, so load() needs no page DOM — the URL-id single-entity
 // PDP shape ADR 0001 describes, same as ikea-pdp/decathlon-pdp. inject() re-runs
 // on body mutations until the host has rendered an anchor to attach to.
-export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl, ratingLine, panelAnchor, exampleQuery, ready }: BvPdp) => {
+export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl, ratingLine, panelAnchor, exampleQuery, variants, ready }: BvPdp) => {
   const injectScoreBadge = (scoreData: { score: number; nps: number }) => {
     const line = ratingLine();
 
@@ -516,7 +537,7 @@ export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl,
 
       if (!anchor) return;
 
-      const card = buildCard(site, exampleQuery, data);
+      const card = buildCard(site, exampleQuery, variants, data);
 
       if (card) {
         if (anchor.position === 'before') anchor.node.before(card);
