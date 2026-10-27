@@ -9,15 +9,17 @@ import { appendStat, createIslandShell } from './score-island';
 import { RECENT_REVIEWS } from './recency';
 import * as z from 'zod/mini';
 
-// The BazaarVoice review API behind dm's, DocMorris's and Rossmann's reviews, called the way
-// each site's own review widget calls it. Only the client and its display config
-// differ per site; `key` names the site's caches.
+// The BazaarVoice review API behind dm's, DocMorris's, Rossmann's and MediaMarkt's reviews,
+// called the way each site's own review widget calls it. Only the client and its display
+// config differ per site; `key` names the site's caches.
 export interface BvSite {
   key: string;
   client: string;
   token: string;
   displaycode: string;
   referrer: string;
+  // The token rides a declarativeNetRequest rule instead of the request.
+  tokenByRule?: boolean;
 }
 
 export const DM: BvSite = {
@@ -43,6 +45,21 @@ export const ROSSMANN: BvSite = {
   displaycode: '16671-de_de',
   referrer: 'https://www.rossmann.de/',
 };
+
+export const MEDIAMARKT: BvSite = {
+  key: 'mediamarkt',
+  client: 'mediamarkt',
+  token: '16376,main_site,de_DE',
+  displaycode: '16376-de_de',
+  referrer: 'https://www.mediamarkt.de/',
+};
+
+// Saturn's reviews are copies of MediaMarkt's, on the same product ids, and its own
+// BazaarVoice client is closed to the browser. MediaMarkt's answers mediamarkt.de
+// only, so saturn-bv-rules.json sends Saturn's calls as mediamarkt.de, token
+// included: a request with no custom header skips the CORS preflight, which a rule
+// can't rewrite.
+export const SATURN: BvSite = { ...MEDIAMARKT, key: 'saturn', referrer: 'https://www.saturn.de/', tokenByRule: true };
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -80,7 +97,7 @@ const requestInit = (site: BvSite): RequestInit => ({
   method: 'GET',
   mode: 'cors',
   credentials: 'omit',
-  headers: { accept: '*/*', 'bv-bfd-token': site.token },
+  headers: site.tokenByRule ? { accept: '*/*' } : { accept: '*/*', 'bv-bfd-token': site.token },
   referrer: site.referrer,
 });
 

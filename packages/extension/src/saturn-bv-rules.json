@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "condition": { "urlFilter": "|https://apps.bazaarvoice.com/bfd/v1/clients/mediamarkt/", "initiatorDomains": ["saturn.de"] },
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        { "header": "origin", "operation": "set", "value": "https://www.mediamarkt.de" },
+        { "header": "bv-bfd-token", "operation": "set", "value": "16376,main_site,de_DE" }
+      ],
+      "responseHeaders": [{ "header": "access-control-allow-origin", "operation": "set", "value": "https://www.saturn.de" }]
+    }
+  }
+]

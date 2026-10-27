@@ -45,6 +45,8 @@ await esbuild.build({
     'src/sites/otto-plp.ts',
     'src/sites/printful-pdp.ts',
     'src/sites/printful-plp.ts',
+    'src/sites/mediamarkt-pdp.ts',
+    'src/sites/mediamarkt-plp.ts',
     'src/sites/bjjfanatics-pdp.ts',
     'src/sites/progress-pdp.ts',
     'src/sites/progress-plp.ts',
@@ -101,6 +103,8 @@ if (API_BASE) {
   manifest.host_permissions = manifest.host_permissions.map((p: string) => (p === `${TRUESCORE_API_BASE}/*` ? `${API_BASE}/*` : p));
   writeFileSync(`${OUT}/manifest.json`, JSON.stringify(manifest, null, 2));
 } else cpSync('src/manifest.json', `${OUT}/manifest.json`);
+
+cpSync('src/saturn-bv-rules.json', `${OUT}/saturn-bv-rules.json`);
 
 cpSync('src/icons', `${OUT}/icons`, { recursive: true });
 

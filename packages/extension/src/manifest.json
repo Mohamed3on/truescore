@@ -14,8 +14,13 @@
   "host_permissions": [
     "https://truescore.mohamed3on.com/*",
     "https://caching.graphql.imdb.com/*",
-    "*://*.google.com/maps/*"
+    "*://*.google.com/maps/*",
+    "https://apps.bazaarvoice.com/*",
+    "*://www.saturn.de/*"
   ],
+  "declarative_net_request": {
+    "rule_resources": [{ "id": "saturn-bv", "enabled": true, "path": "saturn-bv-rules.json" }]
+  },
   "background": {
     "service_worker": "background.js"
   },
@@ -208,6 +213,17 @@
       "matches": ["*://www.printful.com/*"],
       "js": ["sites/printful-plp.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://www.mediamarkt.de/*", "*://www.saturn.de/*"],
+      "js": ["sites/mediamarkt-pdp.js"],
+      "css": ["sites/amazon-product.css"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://www.mediamarkt.de/*", "*://www.saturn.de/*"],
+      "js": ["sites/mediamarkt-plp.js"],
+      "run_at": "document_end"
     },
     {
       "matches": ["*://*.etsy.com/*"],
