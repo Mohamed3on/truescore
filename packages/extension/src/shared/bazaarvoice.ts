@@ -75,7 +75,6 @@ const reviewsUrl = (site: BvSite, productId: string, limit: number, offset: numb
   params.set('resource', 'reviews');
   params.set('action', 'REVIEWS_N_STATS');
   params.append('filter', `productid:eq:${productId}`);
-  params.append('filter', 'isratingsonly:eq:false');
   params.set('include', 'products');
   params.set('filteredstats', 'reviews');
   params.set('Stats', 'Reviews');
@@ -272,14 +271,17 @@ const fetchPage = async (site: BvSite, productId: string, offset: number, search
   return { reviews, total: Number(response?.TotalResults) || 0 };
 };
 
-// First of each review text: syndicated copies repeat it verbatim.
+// First of each review text: syndicated copies and double posts repeat it verbatim.
+// A rating with no text is its own.
 const dedupe = (reviews: BvReview[]) => {
   const seen = new Set<string>();
 
   return reviews.filter((r) => {
     const text = reviewToText(r);
 
-    if (!text || seen.has(text)) return false;
+    if (!text) return true;
+
+    if (seen.has(text)) return false;
     seen.add(text);
 
     return true;
@@ -292,7 +294,7 @@ const dedupe = (reviews: BvReview[]) => {
 // the search. Kept a week in IndexedDB, and only whole: a failed page's hole would
 // otherwise be served for the week.
 const fetchReviews = (site: BvSite, productId: string, total: Promise<number>) => {
-  const cacheKey = `${site.key}_reviews_v6_${productId}`;
+  const cacheKey = `${site.key}_reviews_v7_${productId}`;
   const cached: Promise<BvReview[] | null> = idbGet(cacheKey, REVIEWS_TTL);
 
   const pages = cached.then((hit) => {
