@@ -50,9 +50,10 @@ export const structuralContainers =
           // reject rather than rank (and reshuffle) whole page sections. A lone
           // card then simply stays unranked. Empty children — lazy-load
           // placeholders holding the places of cards not yet rendered (AliExpress
-          // ships 48 behind its first 12) — are neither card nor content, so
-          // they weigh on neither side.
-          const content = children.filter((child) => child.childElementCount || child.textContent!.trim()).length;
+          // ships 48 behind its first 12, MediaMarkt an empty <div> per card
+          // below its first 6) — are neither card nor content, so they weigh on
+          // neither side.
+          const content = children.filter((child) => isBearer(child) || child.textContent!.trim() || child.querySelector('img, picture, video, iframe')).length;
 
           return bearers * 2 >= content ? parent : null;
         }

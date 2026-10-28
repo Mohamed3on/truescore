@@ -141,9 +141,9 @@ describe('structuralContainers', () => {
     return el;
   };
 
-  test('empty lazy-load placeholders weigh on neither side', () => {
+  test('empty lazy-load placeholders weigh on neither side, bare or wrapped', () => {
     const cards = [card(), card(), card()];
-    const g = grid(...cards.map(wrap), ...Array.from({ length: 12 }, placeholder));
+    const g = grid(...cards.map(wrap), ...Array.from({ length: 12 }, (_, i) => (i % 2 ? placeholder() : wrap(placeholder()))));
     expect([...structuralContainers('.card')(cards)]).toEqual([g]);
   });
 
