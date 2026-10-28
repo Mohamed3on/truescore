@@ -75,9 +75,7 @@ const reviewsUrl = (site: BvSite, productId: string, limit: number, offset: numb
   params.set('resource', 'reviews');
   params.set('action', 'REVIEWS_N_STATS');
   params.append('filter', `productid:eq:${productId}`);
-  params.append('filter', 'contentlocale:eq:de*,de_DE,de_DE');
   params.append('filter', 'isratingsonly:eq:false');
-  params.set('filter_reviews', 'contentlocale:eq:de*,de_DE,de_DE');
   params.set('include', 'products');
   params.set('filteredstats', 'reviews');
   params.set('Stats', 'Reviews');
@@ -294,7 +292,7 @@ const dedupe = (reviews: BvReview[]) => {
 // the search. Kept a week in IndexedDB, and only whole: a failed page's hole would
 // otherwise be served for the week.
 const fetchReviews = (site: BvSite, productId: string, total: Promise<number>) => {
-  const cacheKey = `${site.key}_reviews_v5_${productId}`;
+  const cacheKey = `${site.key}_reviews_v6_${productId}`;
   const cached: Promise<BvReview[] | null> = idbGet(cacheKey, REVIEWS_TTL);
 
   const pages = cached.then((hit) => {
