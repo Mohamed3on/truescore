@@ -250,6 +250,7 @@ const ringCard = (card: HTMLElement): (() => void) => {
 export const cycleBestRatios = (picks: () => (Element | null)[], inRankOrder = false): void => {
   let current: HTMLElement | null = null;
   let unring = () => {};
+
   document.addEventListener('keydown', (e) => {
     if ((e.key !== ']' && e.key !== '[') || e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target;
