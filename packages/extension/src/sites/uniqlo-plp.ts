@@ -31,11 +31,9 @@ const scoreFromRateCount = (rc: any) => {
 
 const fetchScore = async (country: string, lang: string, productId: string) => {
   const cacheKey = `nps_uniqlo_score_v2_${productId}`; // v2: scores keep their sign (netScore)
-  const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
-
-  if (cached) return cached.value;
-  // Reuse the product page's cache when it has one: its aggregate rating carries
-  // the same star counts this would fetch.
+  // Prefer the product page's cache when it has one: its aggregate rating carries
+  // the same star counts this would fetch, and its 7-day TTL keeps them fresher
+  // than this cache's 30 days.
   const rateCount = cacheGet(`nps_uniqlo_v3_${productId}`, CACHE_TTL)?.rating?.rateCount;
 
   if (rateCount) {
@@ -47,6 +45,10 @@ const fetchScore = async (country: string, lang: string, productId: string) => {
       return result;
     }
   }
+
+  const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
+
+  if (cached) return cached.value;
 
   const res = await throttledFetch(
     `https://www.uniqlo.com/${country}/api/commerce/v5/${lang}/products/${productId}/reviews?limit=1&offset=0&sort=submission_time&httpFailure=true`,
