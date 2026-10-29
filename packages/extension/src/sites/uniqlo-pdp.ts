@@ -31,13 +31,13 @@ const extractProductId = () => {
   return match ? match[1] : null;
 };
 
-// The buy-box rating (aggregate stars up by the title/price) lives in the product
-// <main>; the per-review stars render in a separate section outside it. Scoping to
-// <main> keeps us off a review-card rating — "first ITORating in the document" is a
-// hydration race that binds to whichever rendered first. Returns null until the rating
-// has hydrated into <main>, letting the injector's mutation retry place it a beat later.
+// The buy-box rating (aggregate stars up by the title/price) shares the product
+// title's layout column. <main> also holds the reviews section's own aggregate
+// rating and the review cards' stars, so "first ITORating in <main>" is a hydration
+// race that binds to whichever rendered first. Returns null until the buy-box rating
+// has hydrated, letting the injector's mutation retry place it a beat later.
 const findBuyBoxRating = (): Element | null =>
-  document.querySelector('main')?.querySelector('[data-testid="ITORating"]') ?? null;
+  document.querySelector('main h1')?.closest('.fr-ec-layout')?.querySelector('[data-testid="ITORating"]') ?? null;
 
 // One round-trip: fetch all MAX_PAGES in parallel (the API caps `limit` at 25, so 4 pages =
 // 100 reviews). Page 0's response also carries the aggregate `rating`. Reviews are deduped by
@@ -254,9 +254,27 @@ const renderInsights = (productId: string, ratingEl: Element, rating: any, revie
     panel.prepend(variations);
   }
 
+  placeInsights(ratingEl, panel);
+};
+
+// Idempotent placements, re-run on every inject: they move a panel back under the
+// buy-box rating if the host re-rendered around it, and no-op (no mutation, so no
+// re-inject loop) when it's already there.
+const placeInsights = (ratingEl: Element, panel: Element) => {
   const gutter = ratingEl.closest('.gutter-container');
 
-  if (gutter) gutter.after(panel);
+  if (gutter && gutter.nextElementSibling !== panel) gutter.after(panel);
+};
+
+// Sit in the buy-box, directly under the rating row (above the fold) instead of
+// after the far-down insights panel. Anchor to the rating's top-level block in the
+// product-info column so the widget spans that column's width.
+const placeIsland = (ratingEl: Element, wrapper: Element) => {
+  const gutter = ratingEl.closest('.gutter-container');
+  const block = gutter ? [...gutter.children].find((c) => c.contains(ratingEl)) : null;
+  const anchor = block ?? ratingEl;
+
+  if (anchor.nextElementSibling !== wrapper) anchor.after(wrapper);
 };
 
 // === LLM review summary (praised / complaints / better alternative / verdict) ===
@@ -315,12 +333,7 @@ const addSummarizeUI = (
     renderQuote: quoteCards(() => reviews, reviewText, reviewCard),
   });
 
-  // Sit in the buy-box, directly under the rating row (above the fold) instead of
-  // after the far-down insights panel. Anchor to the rating's top-level block in the
-  // product-info column so the widget spans that column's width.
-  const gutter = ratingEl.closest('.gutter-container');
-  const block = gutter ? [...gutter.children].find((c) => c.contains(ratingEl)) : null;
-  (block ?? ratingEl).after(wrapper);
+  placeIsland(ratingEl, wrapper);
 };
 
 setupSpaInjector({
@@ -345,15 +358,16 @@ setupSpaInjector({
       appendScore(ratingEl, scoreData);
     }
 
-    if (!document.querySelector('.nps-insights')) {
-      renderInsights(productId, ratingEl, rating, reviews);
-    }
+    const insights = document.querySelector('.nps-insights');
 
+    if (insights) placeInsights(ratingEl, insights);
+    else renderInsights(productId, ratingEl, rating, reviews);
+
+    const island = document.querySelector('.ars-wrapper');
     const texts = reviewTexts(reviews);
 
-    if (texts.length >= 5 && !document.querySelector('.ars-wrapper')) {
-      addSummarizeUI(ratingEl, productId, texts, reviews, scoreData);
-    }
+    if (island) placeIsland(ratingEl, island);
+    else if (texts.length >= 5) addSummarizeUI(ratingEl, productId, texts, reviews, scoreData);
   },
   cleanup: () => {
     document.querySelectorAll('.nps-insights').forEach(el => el.remove());
