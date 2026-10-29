@@ -203,8 +203,52 @@ export const markBestRatios = (badges: (Element | null)[]): HTMLElement[] => {
 // cards (badge and all) while the card itself stays put. Order is read off the
 // layout, since CSS `order` ranking leaves the DOM order stale — unless the
 // layout isn't ranked (`inRankOrder`), where the picks keep the ranking's order.
+const RING = '3px solid rgb(74, 222, 128)';
+
+// A clipping wrapper flush with the card (Uniqlo's carousel slides) cuts an
+// outside ring away entirely.
+const ringClipped = (card: HTMLElement) => {
+  const r = card.getBoundingClientRect();
+
+  for (let e = card.parentElement; e && e !== document.body; e = e.parentElement) {
+    const s = getComputedStyle(e);
+
+    if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
+    const c = e.getBoundingClientRect();
+
+    if (c.left > r.left - 3 || c.top > r.top - 3 || c.right < r.right + 3 || c.bottom < r.bottom + 3) return true;
+  }
+
+  return false;
+};
+
+// Outside the card: an inset ring loses to cards whose image paints over it.
+// Where that ring would be clipped, an overlay on top of the card's content
+// draws it inside instead. Returns the undo.
+const ringCard = (card: HTMLElement): (() => void) => {
+  if (!ringClipped(card)) {
+    card.style.outline = RING;
+
+    return () => card.style.removeProperty('outline');
+  }
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = `position:absolute;inset:0;border:${RING};box-sizing:border-box;pointer-events:none;z-index:1;`;
+  const anchor = getComputedStyle(card).position === 'static';
+
+  if (anchor) card.style.position = 'relative';
+  card.append(overlay);
+
+  return () => {
+    overlay.remove();
+
+    if (anchor) card.style.removeProperty('position');
+  };
+};
+
 export const cycleBestRatios = (picks: () => (Element | null)[], inRankOrder = false): void => {
   let current: HTMLElement | null = null;
+  let unring = () => {};
   document.addEventListener('keydown', (e) => {
     if ((e.key !== ']' && e.key !== '[') || e.metaKey || e.ctrlKey || e.altKey) return;
     const target = e.target;
@@ -220,9 +264,8 @@ export const cycleBestRatios = (picks: () => (Element | null)[], inRankOrder = f
     e.preventDefault();
     const i = current ? cards.indexOf(current) : -1;
     const next = cards[e.key === ']' ? Math.min(i + 1, cards.length - 1) : Math.max(i - 1, 0)];
-    // Outside the card: an inset ring loses to cards whose image paints over it.
-    current?.style.removeProperty('outline');
-    next.style.outline = '3px solid rgb(74, 222, 128)';
+    unring();
+    unring = ringCard(next);
     next.scrollIntoView({ behavior: 'smooth', block: 'center' });
     current = next;
   });
