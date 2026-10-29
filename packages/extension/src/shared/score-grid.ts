@@ -201,8 +201,9 @@ export const markBestRatios = (badges: (Element | null)[]): HTMLElement[] => {
 // ring it, clamped at both ends. `picks` hands over the cards as of the last
 // ranking rather than re-querying badges, since Amazon empties far-off result
 // cards (badge and all) while the card itself stays put. Order is read off the
-// layout, since CSS `order` ranking leaves the DOM order stale.
-export const cycleBestRatios = (picks: () => (Element | null)[]): void => {
+// layout, since CSS `order` ranking leaves the DOM order stale — unless the
+// layout isn't ranked (`inRankOrder`), where the picks keep the ranking's order.
+export const cycleBestRatios = (picks: () => (Element | null)[], inRankOrder = false): void => {
   let current: HTMLElement | null = null;
   document.addEventListener('keydown', (e) => {
     if ((e.key !== ']' && e.key !== '[') || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -211,9 +212,9 @@ export const cycleBestRatios = (picks: () => (Element | null)[]): void => {
     if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
     const at = (el: Element) => el.getBoundingClientRect();
 
-    const cards = picks()
-      .filter((card): card is HTMLElement => card instanceof HTMLElement && card.isConnected)
-      .sort((a, b) => at(a).top - at(b).top || at(a).left - at(b).left);
+    const cards = picks().filter((card): card is HTMLElement => card instanceof HTMLElement && card.isConnected);
+
+    if (!inRankOrder) cards.sort((a, b) => at(a).top - at(b).top || at(a).left - at(b).left);
 
     if (!cards.length) return;
     e.preventDefault();
@@ -250,6 +251,9 @@ export interface ScoreGridOpts {
   // wrapper recreation, which would feed a node-moving strategy into a
   // re-render↔re-sort loop).
   applyOrder?: (container: Element, scored: Element[], rest: Element[], sunk: Element[]) => void;
+  // The grid's layout ignores `applyOrder` (tiles the host places absolutely), so
+  // ] / [ step through the picks by score rather than by where they sit.
+  unrankedLayout?: boolean;
 }
 
 // A null score or a failed fetch is retried a few times, backing off (2s, 8s,
@@ -267,6 +271,7 @@ export const setupScoreGrid = ({
   discover,
   rankableChild,
   applyOrder = orderByCssBand,
+  unrankedLayout = false,
 }: ScoreGridOpts): void => {
   const discoverContainers = discover ?? structuralContainers(cardSelector);
   const identity = (card: Element) => idOf?.(card) ?? '';
@@ -370,5 +375,5 @@ export const setupScoreGrid = ({
 
   processCards();
   new MutationObserver(debouncedProcess).observe(document.body, { childList: true, subtree: true });
-  cycleBestRatios(() => picks);
+  cycleBestRatios(() => picks, unrankedLayout);
 };

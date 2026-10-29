@@ -13,7 +13,8 @@ if (!site) throw new Error('unsupported locale');
 const CONTAINERS = 'ul.product-grid, ul.carousel-slides-wrapper';
 
 // The Asia-Pacific shops' tiles that show a rating. Their grid places each one
-// absolutely, where CSS `order` can't rank it, so there they keep the host's order.
+// absolutely, where CSS `order` can't rank it, so there they keep the host's order
+// and ] / [ walk them by score instead.
 const CARD = site.apac ? `[data-testid="producthit-tile-box"]:has(${APAC_RATING})` : `:is(${CONTAINERS}) .product-card`;
 const LINK = 'a[href*="/p/"]';
 
@@ -99,6 +100,7 @@ const startGrid = () => setupScoreGrid({
   // grid`; the default CSS-band ranking is the only kind it doesn't fight, and
   // it also can't corrupt the carousel tracks the way node moves could.
   discover: site.apac ? undefined : containersBySelector(CONTAINERS),
+  unrankedLayout: site.apac,
 });
 
 afterHydration().then(() => {

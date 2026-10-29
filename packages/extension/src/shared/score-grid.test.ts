@@ -6,6 +6,7 @@ import {
   orderByCssBand,
   renderScoreBadge,
   markBestRatios,
+  cycleBestRatios,
 } from './score-grid';
 
 // --- DOM builders ----------------------------------------------------------
@@ -253,6 +254,44 @@ describe('markBestRatios', () => {
     markBestRatios([a, b]);
     expect(markBestRatios([b, a])).toEqual([b]);
     expect(a.style.background).toBe('');
+  });
+});
+
+describe('cycleBestRatios', () => {
+  // The top-ranked pick sits lower on the page than the runner-up.
+  const picksAt = () => {
+    const [top, second] = [card(), card()];
+
+    const place = (el: HTMLElement, y: number) => {
+      // SAFETY: cycleBestRatios reads only `top` and `left` off the rect.
+      el.getBoundingClientRect = () => ({ top: y, left: 0 }) as DOMRect;
+      el.scrollIntoView = () => {};
+
+      document.body.appendChild(el);
+    };
+
+    place(top, 500);
+    place(second, 0);
+
+    return [top, second];
+  };
+
+  const press = (key: string) => document.dispatchEvent(new KeyboardEvent('keydown', { key }));
+
+  test('steps in reading order where the layout is ranked', () => {
+    const [top, second] = picksAt();
+    cycleBestRatios(() => [top, second]);
+    press(']');
+    expect(second.style.outline).not.toBe('');
+    expect(top.style.outline).toBe('');
+  });
+
+  test('steps in rank order where the layout is not', () => {
+    const [top, second] = picksAt();
+    cycleBestRatios(() => [top, second], true);
+    press(']');
+    expect(top.style.outline).not.toBe('');
+    expect(second.style.outline).toBe('');
   });
 });
 
