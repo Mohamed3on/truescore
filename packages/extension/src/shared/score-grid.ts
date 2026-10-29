@@ -234,6 +234,7 @@ const ringCard = (card: HTMLElement): (() => void) => {
 
   const overlay = document.createElement('div');
   overlay.style.cssText = `position:absolute;inset:0;border:${RING};box-sizing:border-box;pointer-events:none;z-index:1;`;
+
   const anchor = getComputedStyle(card).position === 'static';
 
   if (anchor) card.style.position = 'relative';
