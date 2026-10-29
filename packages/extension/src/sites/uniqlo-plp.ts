@@ -78,9 +78,9 @@ setupScoreGrid({
   placeBadge: (tile, badge) => {
     tile.querySelector('.fr-ec-rating-static__count-product-tile')?.after(badge);
   },
-  // React-managed `display: grid` collections — the default CSS-band ranking
-  // is the only kind they don't fight.
+  // React-managed `display: grid` collections and flex carousel tracks — the
+  // default CSS-band ranking is the only kind they don't fight.
   discover: containersBySelector(
-    '.fr-ec-product-collection--ecrenewal-grid, .fr-ec-product-collection--type-grid'
+    '.fr-ec-product-collection--ecrenewal-grid, .fr-ec-product-collection--type-grid, .fr-ec-carousel__frame'
   ),
 });
