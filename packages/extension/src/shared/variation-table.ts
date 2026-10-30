@@ -118,6 +118,7 @@ const ensureStyles = () => {
 .ts-var-score{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;color:#78716C}
 .ts-var-score.is-pos{color:#15803D}
 .ts-var-score.is-neg{color:#DC2626}
+.ts-var-pct{margin-left:6px;font-size:11px;font-weight:500;opacity:.7}
 @media (prefers-reduced-motion:reduce){.ts-var.is-animated,.ts-var.is-animated .ts-var-row{animation:none}}`;
   document.head.appendChild(s);
 };
@@ -190,9 +191,17 @@ export const renderVariationCard = <T = never>(dims: VarDim<T>[], opts: Variatio
 
       const score = document.createElement('span');
       score.className = 'ts-var-score ' + sign;
-      score.textContent = (r.score > 0 ? '+' : '') + (r.n ? `${Math.round((r.score / r.n) * 100)}%` : r.score);
+      const net = (r.score > 0 ? '+' : '') + r.score;
+      score.textContent = net;
 
-      if (r.n) score.title = `5★ minus 1★: ${r.score > 0 ? '+' : ''}${r.score} of ${r.n} review${r.n === 1 ? '' : 's'}`;
+      // The net count ranks the rows; the % says how lopsided that variation's own reviews are.
+      if (r.n) {
+        const pct = document.createElement('span');
+        pct.className = 'ts-var-pct';
+        pct.textContent = `${r.score > 0 ? '+' : ''}${Math.round((r.score / r.n) * 100)}%`;
+        score.appendChild(pct);
+        score.title = `5★ minus 1★: ${net} of ${r.n} review${r.n === 1 ? '' : 's'}`;
+      }
 
       row.append(name, track, score);
 
