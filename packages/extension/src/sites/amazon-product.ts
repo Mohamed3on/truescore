@@ -85,11 +85,12 @@ const parseVariation = (text: string): [string, string][] => {
 };
 
 // Each row carries the walked reviews behind it, for its own Summary and Ask.
-const injectBestFormats = (formatRatings: Record<string, number>, reviews: FilteredReview[], key: string) => {
+const injectBestFormats = (formatRatings: Record<string, number>, formatCounts: Record<string, number>, reviews: FilteredReview[], key: string) => {
   const combos = Object.entries(formatRatings).map(([raw, score]) => ({
     pairs: parseVariation(raw),
     label: raw.replaceAll(VAR_SEP, ' | '),
     score,
+    n: formatCounts[raw],
     reviews: reviews.filter((r) => r.format === raw),
   }));
 
@@ -115,6 +116,13 @@ const injectBestFormats = (formatRatings: Record<string, number>, reviews: Filte
     for (const dim of new Set(pairs.map(([d]) => d))) seenIn.set(dim, (seenIn.get(dim) ?? 0) + 1);
   }
 
+  // Each dimension value's % base: every rated review of a format carrying it.
+  const dimCounts = new Map<string, number>();
+
+  for (const [raw, n] of Object.entries(formatCounts)) {
+    for (const [dim, val] of parseVariation(raw)) dimCounts.set(`${dim}\0${val}`, (dimCounts.get(`${dim}\0${val}`) ?? 0) + n);
+  }
+
   // A dimension every combination shares has nothing to rank — it's the fixed
   // context the whole card sits in. The card names it once above the tabs, and we
   // strip it from the row labels so each row reads as only what actually differs.
@@ -135,6 +143,7 @@ const injectBestFormats = (formatRatings: Record<string, number>, reviews: Filte
   const toRows = (dim: string, entries: [string, number][]) => entries.map(([label, score]) => ({
     label,
     score,
+    n: dimCounts.get(`${dim}\0${label}`),
     reviews: reviews.filter((r) => r.format && parseVariation(r.format).some(([d, v]) => d === dim && v === label)),
   }));
 
@@ -145,14 +154,14 @@ const injectBestFormats = (formatRatings: Record<string, number>, reviews: Filte
   const lead = showTabs ? compareDims[0]?.[0] : undefined;
 
   const specific = combos
-    .map(({ pairs, label, score, reviews }) => {
+    .map(({ pairs, label, score, n, reviews }) => {
       const varying = pairs.filter(([dim]) => !fixedDims.has(dim));
       const head = lead && varying.find(([dim]) => dim === lead);
 
-      if (!head) return { label: varying.length ? varying.map(([d, v]) => `${d}: ${v}`).join(' | ') : label, score, reviews };
+      if (!head) return { label: varying.length ? varying.map(([d, v]) => `${d}: ${v}`).join(' | ') : label, score, n, reviews };
       const rest = varying.filter(([dim]) => dim !== lead);
 
-      return { label: head[1], score, meta: rest.map(([d, v]) => `${d} ${v}`).join(' \u00B7 ') || undefined, reviews };
+      return { label: head[1], score, n, meta: rest.map(([d, v]) => `${d} ${v}`).join(' \u00B7 ') || undefined, reviews };
     })
     .sort((a, b) => b.score - a.score);
 
@@ -265,6 +274,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   };
 
   const formatRatings: Record<string, number> = {};
+  const formatCounts: Record<string, number> = {}; // every rated review per format, the % base
 
   // v4: v3 cached the total score before it kept its sign.
   const scoresCacheKey = `ars-scores-v4-${cacheASIN}`;
@@ -279,6 +289,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     scores.recent = cachedScores.scores.recent;
     scores.total = cachedScores.scores.total;
     Object.assign(formatRatings, cachedScores.formatRatings);
+    Object.assign(formatCounts, cachedScores.formatCounts);
     numOfRatingsElement.textContent = ` ${addCommas(scores.total.calculated)} ratio: (${Math.round(scores.total.percentage * 100)}%)`;
     usedCache = true;
   }
@@ -603,13 +614,12 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
         if (!ratingMatch) continue;
         const rating = parseInt(ratingMatch[1]);
+        const cleanedFormat = format && cleanFormatStrip(format);
+
+        if (cleanedFormat) formatCounts[cleanedFormat] = (formatCounts[cleanedFormat] ?? 0) + 1;
 
         if (rating === 5 || rating === 1) {
-          if (format) {
-            const cleanedFormat = cleanFormatStrip(format);
-
-            if (cleanedFormat) formatRatings[cleanedFormat] = (formatRatings[cleanedFormat] ?? 0) + starRatingsToLikeDislikeMapping[rating];
-          }
+          if (cleanedFormat) formatRatings[cleanedFormat] = (formatRatings[cleanedFormat] ?? 0) + starRatingsToLikeDislikeMapping[rating];
 
           scores.recent.absolute += starRatingsToLikeDislikeMapping[rating];
         }
@@ -625,7 +635,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     }).then((complete) => {
       // A walk cut short still shows what it read, but isn't pinned for days.
       if (complete && numberOfParsedReviews > 0) {
-        cacheSet(scoresCacheKey, { numberOfParsedReviews, scores, formatRatings });
+        cacheSet(scoresCacheKey, { numberOfParsedReviews, scores, formatRatings, formatCounts });
       }
 
       void keepReviews(walkedReviews, pages);
@@ -732,7 +742,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     scores.recent.percentage = scores.recent.percentage || (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
   }
 
-  injectBestFormats(formatRatings, kept ?? cacheGet(reviewsKey, THREE_DAYS) ?? [], `review-summary-${cacheASIN}`);
+  injectBestFormats(formatRatings, formatCounts, kept ?? cacheGet(reviewsKey, THREE_DAYS) ?? [], `review-summary-${cacheASIN}`);
 };
 
 const getProductSIN = () => {

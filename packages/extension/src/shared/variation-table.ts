@@ -12,6 +12,7 @@ import { quoteCards, type SearchReviewFields } from './review-search';
 export interface VarRow<T = never> {
   label: string;
   score: number; // net sentiment: sign → colour, |value| → bar width
+  n?: number; // every rated review behind it: shows the score as a net % of them
   meta?: string; // optional sub-line, e.g. "18 reviews · true to size"
   reviews?: T[]; // the reviews behind it, for its own Summary and Ask
 }
@@ -66,6 +67,7 @@ export const tallyVariationDims = <T>(
       .map(([label, { score, reviews }]) => ({
         label,
         score,
+        n: reviews.length,
         meta: `${reviews.length} review${reviews.length === 1 ? '' : 's'}`,
         reviews,
       }))
@@ -188,7 +190,9 @@ export const renderVariationCard = <T = never>(dims: VarDim<T>[], opts: Variatio
 
       const score = document.createElement('span');
       score.className = 'ts-var-score ' + sign;
-      score.textContent = (r.score > 0 ? '+' : '') + r.score;
+      score.textContent = (r.score > 0 ? '+' : '') + (r.n ? `${Math.round((r.score / r.n) * 100)}%` : r.score);
+
+      if (r.n) score.title = `5★ minus 1★: ${r.score > 0 ? '+' : ''}${r.score} of ${r.n} review${r.n === 1 ? '' : 's'}`;
 
       row.append(name, track, score);
 

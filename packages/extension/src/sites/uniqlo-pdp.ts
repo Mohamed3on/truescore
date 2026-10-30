@@ -191,6 +191,7 @@ const buildVariations = (productId: string, reviews: any[]): HTMLElement | null 
     rows: d.rows.map((r) => ({
       label: r.label,
       score: r.net,
+      n: r.n,
       meta: `${r.n} review${r.n === 1 ? '' : 's'}` + (r.fit != null && r.n >= 3 ? ` · ${fitText(r.fit)}` : ''),
       reviews: r.reviews,
     })),
