@@ -113,7 +113,7 @@
         "*://*.decathlon.co.th/*", "*://*.decathlon.sg/*", "*://*.decathlon.my/*",
         "*://*.decathlon.ph/*", "*://*.decathlon.co.id/*", "*://*.decathlon.vn/*",
         "*://*.decathlon.com.hk/*", "*://*.decathlon.tw/*", "*://*.decathlon.co.kr/*",
-        "*://*.decathlon.co.jp/*", "*://*.decathlon.com.au/*", "*://*.decathlon.com.kh/*"
+        "*://*.decathlon.co.jp/*", "*://*.decathlon.com.au/*", "*://*.decathlon.com.kh/*", "*://*.decathlon.mt/*"
       ],
       "js": ["sites/decathlon-pdp.js"],
       "css": ["sites/amazon-product.css"],

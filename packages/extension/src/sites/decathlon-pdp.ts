@@ -3,7 +3,7 @@ import { cacheGet, cacheSet, NEG_TTL } from '../shared/cache';
 import { idbGet, idbSet } from '../shared/idb-cache';
 import { SEARCH_MAX } from '../shared/review-search';
 import { buildReviewPanel } from '../shared/review-panel';
-import { APAC_RATING, type DecathlonSite, extractDecathlonIds, getDecathlonSite } from '../shared/decathlon';
+import { APAC_RATING, type DecathlonSite, getDecathlonSite, pageDecathlonIds } from '../shared/decathlon';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { createIslandShell } from '../shared/score-island';
 import { renderScoreBadge } from '../shared/score-grid';
@@ -30,7 +30,7 @@ const fetchStats = async (site: DecathlonSite, sku: string, productId: string) =
 
   if (!res.ok) return null;
   const json = await res.json();
-  const stats = json?.stats ?? null;
+  const stats = (json?.data ?? json)?.stats ?? null;
 
   if (stats) cacheSet(cacheKey, stats);
 
@@ -56,12 +56,23 @@ const getScoreFromStats = (stats: any) => {
   return npsStats(five, one, total);
 };
 
-const appendScore = (productInfo: Element, apac: boolean, { score, nps }: { score: number; nps: number }) => {
-  const reviewDiv = productInfo.querySelector(apac ? APAC_RATING : '.review');
+// Where each storefront's product page takes the score, the panels (before `before`)
+// and the chip. The Asia-Pacific summary column has no description: there the panels
+// go right under the buy box, above the delivery block, as on oneshop.
+const LAYOUTS = {
+  eu: { info: '.product-info', rating: '.review', before: '.product-info__description', chip: false },
+  apac: { info: '#product-summary-container', rating: APAC_RATING, before: `:scope > :has(${APAC_RATING}) + *`, chip: true },
+  oneshop: { info: '.product-info_aside', rating: '.product-info_reviews .rating', before: ':scope > os-delivery-options', chip: true },
+};
+
+type Layout = (typeof LAYOUTS)[keyof typeof LAYOUTS];
+
+const appendScore = (productInfo: Element, layout: Layout, { score, nps }: { score: number; nps: number }) => {
+  const reviewDiv = productInfo.querySelector(layout.rating);
 
   if (!reviewDiv || reviewDiv.querySelector('.nps-score-badge')) return;
 
-  if (apac) {
+  if (layout.chip) {
     // The Asia-Pacific page reuses its listing tiles' rating line, so it gets their chip.
     const badge = renderScoreBadge({ score, nps });
     badge.classList.add('nps-pdp-badge');
@@ -205,7 +216,7 @@ const fetchJson = async (url: string, tries = 3): Promise<any> => {
   for (let attempt = 1; ; attempt++) {
     const res = await fetch(url).catch(() => null);
 
-    if (res?.ok) return res.json();
+    if (res?.ok) return res.json().then((json) => json?.data ?? json);
 
     if (attempt >= tries) throw new Error(`Decathlon reviews ${res?.status ?? 'unreachable'}`);
     await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
@@ -272,10 +283,10 @@ const fetchReviews = (site: DecathlonSite, sku: string, productId: string, total
 };
 
 setupSpaInjector({
-  match: () => !!extractDecathlonIds(),
+  match: () => !!pageDecathlonIds(),
   load: async () => {
     const site = getDecathlonSite();
-    const ids = extractDecathlonIds();
+    const ids = pageDecathlonIds();
 
     if (!site || !ids) return null;
     const statsPromise = fetchStats(site, ids.sku, ids.productId);
@@ -286,17 +297,17 @@ setupSpaInjector({
 
     if (!stats) return null;
 
-    return { apac: site.apac, ids, stats, scoreData: getScoreFromStats(stats), reviews: stats.count >= 5 ? reviews : null };
+    const layout = site.apac ? LAYOUTS.apac : site.oneshop ? LAYOUTS.oneshop : LAYOUTS.eu;
+
+    return { layout, ids, stats, scoreData: getScoreFromStats(stats), reviews: stats.count >= 5 ? reviews : null };
   },
-  inject: ({ apac, ids, stats, scoreData, reviews }) => {
-    const productInfo = document.querySelector(apac ? '#product-summary-container' : '.product-info');
+  inject: ({ layout, ids, stats, scoreData, reviews }) => {
+    const productInfo = document.querySelector(layout.info);
 
     if (!productInfo) return;
-    // The panels go before the description. The Asia-Pacific summary column has
-    // none: there they go right under the buy box, above the delivery block.
-    const before = apac ? `:scope > :has(${APAC_RATING}) + *` : '.product-info__description';
+    const { before } = layout;
 
-    if (scoreData) appendScore(productInfo, apac, scoreData);
+    if (scoreData) appendScore(productInfo, layout, scoreData);
     renderInsights(productInfo, stats, before);
     replaceSizometer(stats);
 

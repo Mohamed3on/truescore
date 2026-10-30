@@ -3,6 +3,11 @@
 // stats come with one review.
 const APAC = new Set(['co.th', 'sg', 'my', 'ph', 'co.id', 'vn', 'com.hk', 'tw', 'co.kr', 'co.jp', 'com.au', 'com.kh']);
 
+// Malta runs Decathlon's PrestaShop storefront ("oneshop"). Its review route
+// answers in the EU routes' shapes, wrapped in `data`, but counts pages from 1, and
+// `page=1` redirects into a failed fetch, so the first page leaves it out.
+const ONESHOP = new Set(['mt']);
+
 // Their rating line, the same on listing tiles and product pages.
 export const APAC_RATING = '[data-testid="productHitReviewStarBox"]';
 
@@ -19,15 +24,24 @@ export const getDecathlonSite = () => {
 
     return {
       apac: true,
+      oneshop: false,
       statsUrl: (sku: string) => reviews(sku, 0, 0),
       reviewsUrl: (sku: string, size: number, page: number) => reviews(sku, page * size, (page + 1) * size - 1),
     };
+  }
+
+  if (ONESHOP.has(m[1])) {
+    const reviews = (sku: string, size: number, page: number) =>
+      `https://www.decathlon.${m[1]}/module/oneshop_reviews/api?action=load&modelCode=${sku}&nbItemsPerPage=${size}${page ? `&page=${page + 1}` : ''}`;
+
+    return { apac: false, oneshop: true, statsUrl: (sku: string) => reviews(sku, 1, 0), reviewsUrl: reviews };
   }
 
   const reviews = (sku: string) => `${api}/reviews/${locale}/reviews-stats/${sku}/product`;
 
   return {
     apac: false,
+    oneshop: false,
     statsUrl: (sku: string) => `${reviews(sku)}?nbItemsPerPage=0&page=0`,
     reviewsUrl: (sku: string, size: number, page: number) => `${reviews(sku)}?nbItemsPerPage=${size}&page=${page}&sortBy=DATE`,
   };
@@ -63,4 +77,12 @@ export const extractDecathlonIds = (
   const productId = /^\d{5,}$/.test(prev) ? prev : sku;
 
   return { productId, sku };
+};
+
+// The product page's ids. A oneshop URL (/p/{supermodel}-{attribute}-{slug}.html)
+// doesn't carry the model code its reviews are filed under; its variant picker does.
+export const pageDecathlonIds = () => {
+  const model = document.querySelector('os-product-variants')?.getAttribute('model-id');
+
+  return model ? { productId: model, sku: model } : extractDecathlonIds();
 };
