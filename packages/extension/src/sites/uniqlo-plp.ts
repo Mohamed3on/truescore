@@ -3,7 +3,9 @@ import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cach
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { setupScoreGrid, containersBySelector } from '../shared/score-grid';
 
-const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
+// New products gain reviews fast, so a month-old score can be badly stale
+// (a 2-review hat that has since passed 50): match the product page's week.
+const CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const throttledFetch = createThrottledFetcher(8);
 
 const getLocale = () => {
@@ -32,8 +34,7 @@ const scoreFromRateCount = (rc: any) => {
 const fetchScore = async (country: string, lang: string, productId: string) => {
   const cacheKey = `nps_uniqlo_score_v2_${productId}`; // v2: scores keep their sign (netScore)
   // Prefer the product page's cache when it has one: its aggregate rating carries
-  // the same star counts this would fetch, and its 7-day TTL keeps them fresher
-  // than this cache's 30 days.
+  // the same star counts this would fetch.
   const rateCount = cacheGet(`nps_uniqlo_v3_${productId}`, CACHE_TTL)?.rating?.rateCount;
 
   if (rateCount) {
