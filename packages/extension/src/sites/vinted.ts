@@ -1,4 +1,4 @@
-import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from '../shared/cache';
+import { cacheGet, cacheSet } from '../shared/cache';
 import { orderByCssBand } from '../shared/score-grid';
 import type * as z from 'zod/mini';
 import { compareKeys, parseItemSellers, postageFromApi, rankKey, SHIPPING, sellerFromApi, USER, type Postage, type Seller } from '../shared/vinted';
@@ -19,7 +19,10 @@ const STORE_KEY = 'truescore-vinted-best-nearby';
 const SELLER_TTL = 7 * 24 * 60 * 60 * 1000;
 const POSTAGE_TTL = 24 * 60 * 60 * 1000;
 
-// Gap between API calls: a burst of 24 got this browser blocked for most of an hour.
+// Vinted's ceiling is about 2 calls a second: one call at a time 300 ms apart
+// ran 50+ calls clean, while 3 in flight 120 ms apart drew 429s after 14 calls
+// and then a 403 block on every API call for most of an hour.
+const CONCURRENCY = 1;
 const CALL_GAP_MS = 300;
 
 let on = localStorage.getItem(STORE_KEY) !== '0';
@@ -32,12 +35,18 @@ const itemSeller = new Map<string, string>();
 // Fetched records; null once the API answered with nothing usable.
 const sellers = new Map<string, Seller | null>();
 
-// Postage: null for a pickup-only item, undefined when the API gave nothing usable.
-const postages = new Map<string, Postage | null | undefined>();
+// Postage is the same for every item from one country (Vinted quotes the
+// cheapest option: free within Germany, €4.85 from Italy, €5.39 from France to
+// a Berlin buyer), so one item's answer stands for its whole country. An item
+// whose seller is unreadable, or that is pickup-only (null), keeps its own.
+const countryPostage = new Map<string, Postage | undefined>();
+const itemPostage = new Map<string, Postage | null | undefined>();
 const scannedPages = new Set<string>();
 const headers = { accept: 'application/json', 'x-csrf-token': '', 'x-anon-id': '' };
 let blocked = false;
-let fetching = false;
+const inflight = new Set<string>();
+let workers = 0;
+let nextStart = 0;
 
 const scan = (html: string) => {
   for (const [item, seller] of parseItemSellers(html)) itemSeller.set(item, seller);
@@ -57,6 +66,16 @@ for (const script of document.scripts) {
 
 const itemOf = (card: Element) => card.querySelector('[data-testid^="product-item-id-"]')?.getAttribute('data-testid')?.match(/^product-item-id-(\d+)/)?.[1] ?? '';
 const sellerOf = (card: Element) => itemSeller.get(itemOf(card)) ?? '';
+
+const postageOf = (card: Element) => {
+  const item = itemOf(card);
+
+  if (itemPostage.has(item)) return itemPostage.get(item);
+  const country = sellers.get(sellerOf(card))?.country;
+
+  return country ? countryPostage.get(country) : undefined;
+};
+
 const likes = (card: Element) => parseInt(card.querySelector('[data-testid="favourite-count-text"]')?.textContent || '', 10) || 0;
 
 const api = async <S extends z.ZodMiniType>(path: string, schema: S): Promise<z.infer<S> | undefined> => {
@@ -95,7 +114,7 @@ const describe = (seller: Seller | null | undefined, postage: Postage | null | u
 
 // One line under the card's price: the seller's country, postage and record.
 const labelCard = (card: Element) => {
-  const text = describe(sellers.get(sellerOf(card)), postages.get(itemOf(card)));
+  const text = describe(sellers.get(sellerOf(card)), postageOf(card));
   let line = card.querySelector<HTMLElement>('.ts-vinted-seller');
 
   if (!text) return line?.remove();
@@ -121,7 +140,7 @@ const resort = () => {
       continue;
     }
 
-    const keyed = cards.map((card) => ({ card, key: rankKey(sellers.get(sellerOf(card)), postages.get(itemOf(card)), likes(card)) }));
+    const keyed = cards.map((card) => ({ card, key: rankKey(sellers.get(sellerOf(card)), postageOf(card), likes(card)) }));
 
     // Array sort is stable, so equal keys keep Vinted's order.
     orderByCssBand(container, keyed.sort((a, b) => compareKeys(a.key, b.key)).map((k) => k.card));
@@ -131,64 +150,90 @@ const resort = () => {
 // --- fetching, cards on screen first -------------------------------------------
 
 const fromCache = (card: Element) => {
-  const seller = sellerOf(card);
-  const item = itemOf(card);
+  const id = sellerOf(card);
 
-  if (seller && !sellers.has(seller)) {
-    const cached = cacheGet(`truescore-vinted-seller-${seller}`, SELLER_TTL);
+  if (id && !sellers.has(id)) {
+    const cached = cacheGet(`truescore-vinted-seller-${id}`, SELLER_TTL);
 
-    if (cached) sellers.set(seller, cached);
+    if (cached) sellers.set(id, cached);
   }
 
-  if (item && !postages.has(item)) {
-    const cached = cacheGetMaybe(`truescore-vinted-postage-${item}`, POSTAGE_TTL);
+  const country = sellers.get(id)?.country;
 
-    if (cached) postages.set(item, cached.value);
+  if (country && !countryPostage.has(country)) {
+    const cached = cacheGet(`truescore-vinted-postage-${country}`, POSTAGE_TTL);
+
+    if (cached) countryPostage.set(country, cached);
   }
 };
 
-const missing = (card: Element) => (!!sellerOf(card) && !sellers.has(sellerOf(card))) || (!!itemOf(card) && !postages.has(itemOf(card)));
+const fetchSeller = async (id: string) => {
+  const json = await api(`/api/v2/users/${id}`, USER);
+  const record = json ? sellerFromApi(json) : null;
 
-const nextCard = () => {
+  sellers.set(id, record);
+
+  if (record) cacheSet(`truescore-vinted-seller-${id}`, record);
+};
+
+const fetchPostage = async (item: string, country: string | undefined) => {
+  const json = await api(`/api/v2/items/${item}/shipping_details`, SHIPPING);
+  const postage = json ? postageFromApi(json) : undefined;
+
+  if (country && postage) {
+    countryPostage.set(country, postage);
+    cacheSet(`truescore-vinted-postage-${country}`, postage);
+  } else itemPostage.set(item, postage);
+};
+
+// The call a card still needs, keyed so two cards never fetch the same thing.
+const taskFor = (card: Element): { key: string; run: () => Promise<void> } | null => {
+  const id = sellerOf(card);
+  const item = itemOf(card);
+
+  if (!id || !item) return null;
+
+  if (!sellers.has(id)) return { key: `u${id}`, run: () => fetchSeller(id) };
+  const country = sellers.get(id)?.country;
+
+  if (itemPostage.has(item) || (country && countryPostage.has(country))) return null;
+
+  return { key: country ? `c${country}` : `i${item}`, run: () => fetchPostage(item, country) };
+};
+
+// Cards on screen first, then down the page.
+const nextTask = () => {
   const distance = (card: Element) => {
     const r = card.getBoundingClientRect();
 
     return r.bottom < 0 ? Infinity : Math.max(r.top, 0);
   };
 
-  return [...document.querySelectorAll(CARD)]
-    .flatMap((card) => (missing(card) ? [{ card, d: distance(card) }] : []))
-    .sort((a, b) => a.d - b.d)[0]?.card;
+  for (const { card } of [...document.querySelectorAll(CARD)].map((c) => ({ card: c, d: distance(c) })).sort((a, b) => a.d - b.d)) {
+    const task = taskFor(card);
+
+    if (task && !inflight.has(task.key)) return task;
+  }
+
+  return null;
 };
 
 const work = async () => {
-  fetching = true;
+  workers++;
 
-  for (let card = nextCard(); card && !blocked; card = nextCard()) {
-    const seller = sellerOf(card);
-    const item = itemOf(card);
+  for (let task = nextTask(); task && !blocked; task = nextTask()) {
+    inflight.add(task.key);
+    const wait = nextStart - Date.now();
 
-    if (seller && !sellers.has(seller)) {
-      const json = await api(`/api/v2/users/${seller}`, USER);
-      const record = json ? sellerFromApi(json) : null;
+    nextStart = Math.max(Date.now(), nextStart) + CALL_GAP_MS;
 
-      sellers.set(seller, record);
-
-      if (record) cacheSet(`truescore-vinted-seller-${seller}`, record);
-    } else {
-      const json = await api(`/api/v2/items/${item}/shipping_details`, SHIPPING);
-      const postage = json ? postageFromApi(json) : undefined;
-
-      postages.set(item, postage);
-
-      if (postage !== undefined) cacheSetMaybe(`truescore-vinted-postage-${item}`, postage);
-    }
-
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    await task.run();
+    inflight.delete(task.key);
     sync();
-    await new Promise((r) => setTimeout(r, CALL_GAP_MS));
   }
 
-  fetching = false;
+  workers--;
 };
 
 // --- the Sort by option ----------------------------------------------------------
@@ -299,9 +344,9 @@ const sync = () => {
   }
 
   // Labels show under any sort; only the order is Best nearby's alone.
-  const waiting = blocked ? 0 : cards.filter(missing).length;
+  const waiting = blocked ? 0 : cards.filter((card) => taskFor(card)).length;
 
-  if (waiting && !fetching) void work();
+  for (let i = workers; i < CONCURRENCY && waiting; i++) void work();
 
   if (active()) showInTrigger(waiting ? `Best nearby · ${cards.length - waiting}/${cards.length}` : 'Best nearby');
   else showInTrigger(null);
