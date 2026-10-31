@@ -2,13 +2,14 @@ import { orderByCssBand } from '../shared/score-grid';
 
 // Vinted sorts by relevance, price or newest, never by likes. A "Most liked" chip
 // beside its "Sort by" chip re-ranks the loaded catalog page by each card's
-// favourite count. CSS order only (orderByCssBand): the React grid is never moved.
+// favourite count. On by default; the chip turns it off. CSS order only
+// (orderByCssBand): the React grid is never moved.
 
 const CARD = '[data-testid="grid-item"]';
 const SORT_TRIGGER = '[data-testid="catalog--sort-filter--trigger"]';
 const STORE_KEY = 'truescore-vinted-most-liked';
 
-let on = localStorage.getItem(STORE_KEY) === '1';
+let on = localStorage.getItem(STORE_KEY) !== '0';
 
 const likes = (card: Element) => parseInt(card.querySelector('[data-testid="favourite-count-text"]')?.textContent || '', 10) || 0;
 
