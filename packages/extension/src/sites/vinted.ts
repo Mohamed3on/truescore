@@ -6,8 +6,8 @@ import { compareKeys, parseItemSellers, postageFromApi, rankKey, SHIPPING, selle
 // Vinted sorts by relevance, price or newest. TrueScore adds "Best nearby" to its
 // Sort by menu: good sellers first, cheaper postage (nearer) before dearer, more
 // good reviews first, likes as the tiebreak (see rankKey). Sellers and postage
-// come from Vinted's API one call at a time, cards on screen first, so the grid
-// settles card by card; a 403/429 stops the calls for the session. On by
+// come from Vinted's API as fast as it allows, cards on screen first, so the grid
+// settles card by card; a 429 slows the calls, a 403 stops them for the session. On by
 // default; picking any of Vinted's own sorts turns the order off, while the
 // card labels (country, postage, reviews) stay under every sort. CSS order only
 // (orderByCssBand): the React grid is never moved.
@@ -19,11 +19,13 @@ const STORE_KEY = 'truescore-vinted-best-nearby';
 const SELLER_TTL = 7 * 24 * 60 * 60 * 1000;
 const POSTAGE_TTL = 24 * 60 * 60 * 1000;
 
-// Vinted's ceiling is about 2 calls a second: one call at a time 300 ms apart
-// ran 50+ calls clean, while 3 in flight 120 ms apart drew 429s after 14 calls
-// and then a 403 block on every API call for most of an hour.
-const CONCURRENCY = 1;
-const CALL_GAP_MS = 300;
+// As fast as Vinted allows: 4 calls in flight until its first 429, then a
+// 10 s pause and one call at a time, 300 ms apart (which ran 50+ calls clean
+// in a headless browser that drew 429s at 3 in flight). A 403 is a block for
+// this browser (most of an hour; pages still load): stop for the session.
+const FAST_CONCURRENCY = 4;
+const SLOW_GAP_MS = 300;
+const RATE_LIMIT_PAUSE_MS = 10_000;
 
 let on = localStorage.getItem(STORE_KEY) !== '0';
 
@@ -44,6 +46,7 @@ const itemPostage = new Map<string, Postage | null | undefined>();
 const scannedPages = new Set<string>();
 const headers = { accept: 'application/json', 'x-csrf-token': '', 'x-anon-id': '' };
 let blocked = false;
+let slow = false;
 const inflight = new Set<string>();
 let workers = 0;
 let nextStart = 0;
@@ -78,11 +81,21 @@ const postageOf = (card: Element) => {
 
 const likes = (card: Element) => parseInt(card.querySelector('[data-testid="favourite-count-text"]')?.textContent || '', 10) || 0;
 
-const api = async <S extends z.ZodMiniType>(path: string, schema: S): Promise<z.infer<S> | undefined> => {
+// Rate-limited: leave the data unset so the call comes round again.
+const RETRY = Symbol('retry');
+
+const api = async <S extends z.ZodMiniType>(path: string, schema: S): Promise<z.infer<S> | undefined | typeof RETRY> => {
   try {
     const res = await fetch(path, { headers });
 
-    if (res.status === 403 || res.status === 429) blocked = true;
+    if (res.status === 403) blocked = true;
+
+    if (res.status === 429) {
+      slow = true;
+      nextStart = Date.now() + RATE_LIMIT_PAUSE_MS;
+
+      return RETRY;
+    }
 
     if (!res.ok) return undefined;
     const read = schema.safeParse(await res.json());
@@ -169,6 +182,8 @@ const fromCache = (card: Element) => {
 
 const fetchSeller = async (id: string) => {
   const json = await api(`/api/v2/users/${id}`, USER);
+
+  if (json === RETRY) return;
   const record = json ? sellerFromApi(json) : null;
 
   sellers.set(id, record);
@@ -178,6 +193,8 @@ const fetchSeller = async (id: string) => {
 
 const fetchPostage = async (item: string, country: string | undefined) => {
   const json = await api(`/api/v2/items/${item}/shipping_details`, SHIPPING);
+
+  if (json === RETRY) return;
   const postage = json ? postageFromApi(json) : undefined;
 
   if (country && postage) {
@@ -221,11 +238,12 @@ const nextTask = () => {
 const work = async () => {
   workers++;
 
-  for (let task = nextTask(); task && !blocked; task = nextTask()) {
+  // Once slowed, workers retire until one is left.
+  for (let task = nextTask(); task && !blocked && (!slow || workers === 1); task = nextTask()) {
     inflight.add(task.key);
     const wait = nextStart - Date.now();
 
-    nextStart = Math.max(Date.now(), nextStart) + CALL_GAP_MS;
+    nextStart = Math.max(Date.now(), nextStart) + (slow ? SLOW_GAP_MS : 0);
 
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     await task.run();
@@ -346,7 +364,7 @@ const sync = () => {
   // Labels show under any sort; only the order is Best nearby's alone.
   const waiting = blocked ? 0 : cards.filter((card) => taskFor(card)).length;
 
-  for (let i = workers; i < CONCURRENCY && waiting; i++) void work();
+  for (let i = workers; i < (slow ? 1 : FAST_CONCURRENCY) && waiting; i++) void work();
 
   if (active()) showInTrigger(waiting ? `Best nearby · ${cards.length - waiting}/${cards.length}` : 'Best nearby');
   else showInTrigger(null);
