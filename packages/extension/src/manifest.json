@@ -325,6 +325,18 @@
       "js": ["sites/reddit.js"],
       "css": ["sites/reddit.css"],
       "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "*://www.vinted.at/*", "*://www.vinted.be/*", "*://www.vinted.co.uk/*", "*://www.vinted.com/*", "*://www.vinted.cz/*",
+        "*://www.vinted.de/*", "*://www.vinted.dk/*", "*://www.vinted.ee/*", "*://www.vinted.es/*", "*://www.vinted.fi/*",
+        "*://www.vinted.fr/*", "*://www.vinted.gr/*", "*://www.vinted.hr/*", "*://www.vinted.hu/*", "*://www.vinted.ie/*",
+        "*://www.vinted.it/*", "*://www.vinted.lt/*", "*://www.vinted.lu/*", "*://www.vinted.lv/*", "*://www.vinted.nl/*",
+        "*://www.vinted.pl/*", "*://www.vinted.pt/*", "*://www.vinted.ro/*", "*://www.vinted.se/*", "*://www.vinted.si/*",
+        "*://www.vinted.sk/*"
+      ],
+      "js": ["sites/vinted.js"],
+      "run_at": "document_idle"
     }
   ],
   "action": {

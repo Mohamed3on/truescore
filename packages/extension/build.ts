@@ -66,6 +66,7 @@ await esbuild.build({
     'src/sites/letterboxd.ts',
     'src/sites/reddit.ts',
     'src/sites/transfermarkt.ts',
+    'src/sites/vinted.ts',
   ],
   bundle: true,
   outdir: `${OUT}/sites`,
