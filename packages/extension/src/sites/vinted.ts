@@ -7,8 +7,8 @@ import { compareKeys, parseItemSellers, postageFromApi, rankKey, SHIPPING, selle
 // Sort by menu: good sellers first, cheaper postage (nearer) before dearer, more
 // good reviews first, likes as the tiebreak (see rankKey). Sellers and postage
 // come from Vinted's API as fast as it allows, cards on screen first, so the grid
-// settles card by card; a 429 slows the calls, a 403 stops them for the session. On by
-// default; picking any of Vinted's own sorts turns the order off, while the
+// settles card by card; a 429 slows the calls, a 403 stops them for the session. Off until
+// picked; picking any of Vinted's own sorts turns the order off again, while the
 // card labels (country, postage, reviews) stay under every sort. CSS order only
 // (orderByCssBand): the React grid is never moved.
 
@@ -27,7 +27,7 @@ const FAST_CONCURRENCY = 4;
 const SLOW_GAP_MS = 300;
 const RATE_LIMIT_PAUSE_MS = 10_000;
 
-let on = localStorage.getItem(STORE_KEY) !== '0';
+let on = localStorage.getItem(STORE_KEY) === '1';
 
 // A link straight to one of Vinted's own sorts wins over the stored choice.
 const active = () => on && [null, 'relevance'].includes(new URLSearchParams(location.search).get('order'));
