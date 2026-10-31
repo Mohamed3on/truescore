@@ -8,7 +8,8 @@ import { compareKeys, parseItemSellers, postageFromApi, rankKey, SHIPPING, selle
 // good reviews first, likes as the tiebreak (see rankKey). Sellers and postage
 // come from Vinted's API one call at a time, cards on screen first, so the grid
 // settles card by card; a 403/429 stops the calls for the session. On by
-// default; picking any of Vinted's own sorts turns it off. CSS order only
+// default; picking any of Vinted's own sorts turns the order off, while the
+// card labels (country, postage, reviews) stay under every sort. CSS order only
 // (orderByCssBand): the React grid is never moved.
 
 const CARD = '[data-testid="grid-item"]';
@@ -163,7 +164,7 @@ const nextCard = () => {
 const work = async () => {
   fetching = true;
 
-  for (let card = nextCard(); card && active() && !blocked; card = nextCard()) {
+  for (let card = nextCard(); card && !blocked; card = nextCard()) {
     const seller = sellerOf(card);
     const item = itemOf(card);
 
@@ -272,6 +273,8 @@ const addOption = () => {
 // --- the loop --------------------------------------------------------------------
 
 const sync = () => {
+  // Catalog and search results only: the home feed and closets keep Vinted's order and stay label-free.
+  if (!location.pathname.startsWith('/catalog')) return;
   addOption();
   const cards = [...document.querySelectorAll(CARD)];
 
@@ -286,7 +289,7 @@ const sync = () => {
 
   // Client-side navigation brings cards the first page load never named:
   // read their sellers off the current page's HTML, once per URL.
-  if (unmapped && active() && !scannedPages.has(location.href)) {
+  if (unmapped && !scannedPages.has(location.href)) {
     scannedPages.add(location.href);
     fetch(location.href)
       .then((res) => res.text())
@@ -295,13 +298,13 @@ const sync = () => {
       .finally(sync);
   }
 
-  if (active()) {
-    const waiting = blocked ? 0 : cards.filter(missing).length;
+  // Labels show under any sort; only the order is Best nearby's alone.
+  const waiting = blocked ? 0 : cards.filter(missing).length;
 
-    showInTrigger(waiting ? `Best nearby · ${cards.length - waiting}/${cards.length}` : 'Best nearby');
+  if (waiting && !fetching) void work();
 
-    if (waiting && !fetching) void work();
-  } else showInTrigger(null);
+  if (active()) showInTrigger(waiting ? `Best nearby · ${cards.length - waiting}/${cards.length}` : 'Best nearby');
+  else showInTrigger(null);
 
   resort();
 };

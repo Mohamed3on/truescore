@@ -28,7 +28,7 @@ Each site adapts this formula to what data is available (star histograms, like/d
 - **Amazon** — Sorts search results by score. On product pages: an adjusted score (the score scaled by how positive the newest reviews are), AI-powered review summary (via Gemini or OpenAI — keys set in the popup), and sentiment breakdown by product variation (color, size, etc).
 - **Booking.com** — Sorts hotel results by score. On hotel pages: analyzes the last 100 reviews with filters by guest type and room type.
 - **Decathlon / Uniqlo / IKEA / dm.de / DocMorris / Rossmann / MediaMarkt / Saturn / OTTO / Printful** — NPS-style score on product pages with attribute breakdowns (quality, fit, durability, etc). Product list pages auto-sort by score.
-- **Vinted** — Adds "Best nearby" to Sort by (on by default): sellers with a 4★+ record first, then unreviewed ones, badly reviewed last; within each, your actual postage less €1 per 10× better seller TrueScore, likes as the tiebreak. Each card shows the seller's country, your postage and their reviews. Picking any Vinted sort turns it off.
+- **Vinted** — Adds "Best nearby" to Sort by (on by default): sellers with a 4★+ record first, then unreviewed ones, badly reviewed last; within each, your actual postage less €1 per 10× better seller TrueScore, likes as the tiebreak. Each card shows the seller's country, your postage and their reviews. Picking any Vinted sort turns the ranking off; the card line stays under every sort (catalog and search pages only).
 - **Sorted lists** (Amazon search and every product grid above, plus Etsy and AliExpress) — a result whose % beats everything ranked above it gets a green tint: less volume, better hit rate. Press `]` / `[` to jump between them.
 
 **Entertainment**
