@@ -1,7 +1,8 @@
 import { cacheGet, cacheSet } from '../shared/cache';
 import { orderByCssBand } from '../shared/score-grid';
+import { afterHydration } from '../shared/utils';
 import type * as z from 'zod/mini';
-import { compareKeys, parseItemSellers, postageFromApi, rankKey, SHIPPING, sellerFromApi, USER, type Postage, type Seller } from '../shared/vinted';
+import { compareKeys, parseListings, postageFromApi, rankKey, SHIPPING, sellerFromApi, USER, type Listing, type Money, type Seller } from '../shared/vinted';
 
 // Vinted sorts by relevance, price or newest. TrueScore adds "Best nearby" to its
 // Sort by menu: good sellers first, cheaper postage (nearer) before dearer, more
@@ -32,7 +33,7 @@ let on = localStorage.getItem(STORE_KEY) === '1';
 // A link straight to one of Vinted's own sorts wins over the stored choice.
 const active = () => on && [null, 'relevance'].includes(new URLSearchParams(location.search).get('order'));
 
-const itemSeller = new Map<string, string>();
+const listings = new Map<string, Listing>();
 
 // Fetched records; null once the API answered with nothing usable.
 const sellers = new Map<string, Seller | null>();
@@ -41,8 +42,8 @@ const sellers = new Map<string, Seller | null>();
 // cheapest option: free within Germany, €4.85 from Italy, €5.39 from France to
 // a Berlin buyer), so one item's answer stands for its whole country. An item
 // whose seller is unreadable, or that is pickup-only (null), keeps its own.
-const countryPostage = new Map<string, Postage | undefined>();
-const itemPostage = new Map<string, Postage | null | undefined>();
+const countryPostage = new Map<string, Money | undefined>();
+const itemPostage = new Map<string, Money | null | undefined>();
 const scannedPages = new Set<string>();
 const headers = { accept: 'application/json', 'x-csrf-token': '', 'x-anon-id': '' };
 let blocked = false;
@@ -52,7 +53,7 @@ let workers = 0;
 let nextStart = 0;
 
 const scan = (html: string) => {
-  for (const [item, seller] of parseItemSellers(html)) itemSeller.set(item, seller);
+  for (const [item, listing] of parseListings(html)) listings.set(item, listing);
 };
 
 for (const script of document.scripts) {
@@ -68,7 +69,7 @@ for (const script of document.scripts) {
 }
 
 const itemOf = (card: Element) => card.querySelector('[data-testid^="product-item-id-"]')?.getAttribute('data-testid')?.match(/^product-item-id-(\d+)/)?.[1] ?? '';
-const sellerOf = (card: Element) => itemSeller.get(itemOf(card)) ?? '';
+const sellerOf = (card: Element) => listings.get(itemOf(card))?.seller ?? '';
 
 const postageOf = (card: Element) => {
   const item = itemOf(card);
@@ -108,38 +109,170 @@ const api = async <S extends z.ZodMiniType>(path: string, schema: S): Promise<z.
 
 // --- card labels -------------------------------------------------------------
 
+// The buyer's country, from the storefront's domain.
+const tld = location.hostname.replace(/^www\.vinted\./, '');
+const BUYER = tld === 'co.uk' ? 'GB' : tld === 'com' ? 'US' : tld.toUpperCase();
+
+// Vinted's locale, read before Chrome Translate rewrites the page's lang, so
+// our figures match the host's ("84,30 €" on vinted.de) and translate with it.
+const LANG = new Intl.Locale(document.documentElement.lang || 'en').language;
+const LOCALE = `${LANG}-${BUYER}`;
+const money = (m: Money) => new Intl.NumberFormat(LOCALE, { style: 'currency', currency: m.currency }).format(m.amount);
+const countryName = (code: string) => new Intl.DisplayNames([LANG], { type: 'region' }).of(code) ?? code;
 const flag = (country: string) => String.fromCodePoint(...[...country].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
 
-// The browser's locale: Chrome Translate rewrites the page's lang.
-const money = (p: Postage) => new Intl.NumberFormat(undefined, { style: 'currency', currency: p.currency }).format(p.amount);
+const VINTED_TEAL = 'rgb(0, 119, 130)';
+const VINTED_GREY = 'rgb(90, 101, 102)';
 
-const describe = (seller: Seller | null | undefined, postage: Postage | null | undefined) => {
-  const parts: string[] = [];
+// Host-native: Vinted's own text classes for the figures, and a hover card in
+// the Goodreads recipe (white, hairline ring, soft shadow, 160 ms settle).
+const style = document.createElement('style');
 
-  if (postage) parts.push(postage.amount ? `${money(postage)} postage` : 'free postage');
-  else if (postage === null) parts.push('pickup only');
+style.textContent = `
+  .ts-vt { position: relative; display: inline-flex; align-items: baseline; gap: 4px; cursor: default; font-variant-numeric: tabular-nums; outline: none; }
+  .ts-vt-note { text-decoration: underline dotted rgba(90, 101, 102, .5); text-underline-offset: 3px; }
+  .ts-vt-card {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+    display: grid; grid-template-columns: auto auto; column-gap: 16px; row-gap: 2px;
+    width: max-content; padding: 10px 12px; background: #fff; border-radius: 8px;
+    box-shadow: 0 0 0 1px rgba(17, 17, 17, .08), 0 8px 24px rgba(17, 17, 17, .12);
+    font-size: 12px; line-height: 16px; color: ${VINTED_GREY}; font-variant-numeric: tabular-nums;
+    opacity: 0; transform: translateY(-4px) scale(.97); transform-origin: top left; pointer-events: none;
+    transition: opacity 100ms ease-out, transform 100ms ease-out;
+  }
+  .ts-vt:hover .ts-vt-card, .ts-vt:focus-visible .ts-vt-card {
+    opacity: 1; transform: none;
+    transition: opacity 160ms cubic-bezier(.23, 1, .32, 1) 80ms, transform 160ms cubic-bezier(.23, 1, .32, 1) 80ms;
+  }
+  .ts-vt:focus-visible .ts-vt-note { outline: 2px solid ${VINTED_TEAL}; outline-offset: 2px; border-radius: 2px; }
+  .ts-vt-card > .-v { text-align: right; }
+  .ts-vt-card > .-rule { grid-column: 1 / -1; height: 1px; margin: 4px 0 2px; background: rgba(17, 17, 17, .08); }
+  .ts-vt-card > .-sum { color: #111; font-weight: 500; }
+  .ts-vt-card > .-foot { grid-column: 1 / -1; margin-top: 6px; max-width: 220px; text-align: left; }
+  .ts-vinted-seller { margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .ts-vinted-seller.-pending { opacity: .6; }
+  .ts-vinted-status { margin: 0 0 12px; color: ${VINTED_GREY}; font-variant-numeric: tabular-nums; }
+  @media (prefers-reduced-motion: reduce) { .ts-vt-card { transform: none !important; } }
+`;
 
-  if (seller) parts.push(seller.total ? `${seller.total} review${seller.total === 1 ? '' : 's'} · ${(seller.rating * 5).toFixed(1)}★` : 'no reviews');
-  const text = parts.join(' · ');
 
-  return seller ? `${flag(seller.country)} ${text}` : text;
+const el = (tag: string, className: string, text = '') => {
+  const node = document.createElement(tag);
+
+  node.className = className;
+  node.textContent = text;
+
+  return node;
 };
 
-// One line under the card's price: the seller's country, postage and record.
-const labelCard = (card: Element) => {
-  const text = describe(sellers.get(sellerOf(card)), postageOf(card));
+// One total with postage, replacing Vinted's item + fee total; hovering it
+// breaks the figure down. Null while the postage isn't known: Vinted's own
+// total stays.
+const totalFor = (card: Element): HTMLElement | null => {
+  const listing = listings.get(itemOf(card));
+  const postage = postageOf(card);
+  const seller = sellers.get(sellerOf(card));
+
+  if (!listing?.total || !postage || postage.currency !== listing.total.currency) return null;
+  const sum = { amount: Math.round((listing.total.amount + postage.amount) * 100) / 100, currency: postage.currency };
+  const node = el('span', 'ts-vt');
+
+  node.tabIndex = 0;
+  node.append(
+    el('span', 'web_ui__Text__text web_ui__Text__subtitle web_ui__Text__left web_ui__Text__primary', money(sum)),
+    el('span', 'ts-vt-note web_ui__Text__text web_ui__Text__caption web_ui__Text__left web_ui__Text__primary', postage.amount ? 'incl. postage' : 'incl. free postage'),
+  );
+  const card_ = el('span', 'ts-vt-card');
+  const fee = listing.fee ?? { amount: 0, currency: sum.currency };
+  const from = seller ? ` from ${countryName(seller.country)}` : '';
+
+  card_.append(
+    el('span', '', 'Item'),
+    el('span', '-v', money({ amount: Math.round((listing.total.amount - fee.amount) * 100) / 100, currency: sum.currency })),
+    el('span', '', 'Buyer protection'),
+    el('span', '-v', money(fee)),
+    el('span', '', `Postage${from}`),
+    el('span', '-v', postage.amount ? money(postage) : 'free'),
+    el('span', '-rule'),
+    el('span', '-sum', 'Total'),
+    el('span', '-sum -v', money(sum)),
+    el('span', '-foot', 'Cheapest postage option to your address. Vinted adds it at checkout.'),
+  );
+  node.append(card_);
+
+  return node;
+};
+
+const sellerLine = (card: Element) => {
+  const id = sellerOf(card);
+  const seller = sellers.get(id);
+  const postage = postageOf(card);
+
+  if (!id || seller === null) return { text: '', pending: false };
+
+  if (!seller) return { text: blocked ? '' : 'Checking seller…', pending: true };
+  const record = seller.total ? `${seller.total} review${seller.total === 1 ? '' : 's'} · ${(seller.rating * 5).toFixed(1)}★` : 'no reviews yet';
+  const pickup = postage === null ? ' · pickup only' : '';
+
+  return { text: `${flag(seller.country)} ${record}${pickup}`, pending: false };
+};
+
+const renderCard = (card: Element) => {
+  const breakdown = card.querySelector<HTMLElement>('[data-testid$="--breakdown"]');
+
+  if (!breakdown) return;
+  const key = `${itemOf(card)}|${JSON.stringify(postageOf(card))}|${sellers.get(sellerOf(card))?.country ?? ''}`;
+  let total = card.querySelector<HTMLElement>('.ts-vt');
+
+  if (total?.dataset.key !== key) {
+    total?.remove();
+    total = totalFor(card);
+
+    if (total) {
+      total.dataset.key = key;
+      breakdown.after(total);
+    }
+  }
+
+  // Ours replaces Vinted's item + fee total; theirs returns when ours can't be built.
+  breakdown.style.display = total ? 'none' : '';
+
+  const { text, pending } = sellerLine(card);
   let line = card.querySelector<HTMLElement>('.ts-vinted-seller');
 
   if (!text) return line?.remove();
 
   if (!line) {
-    line = document.createElement('div');
-    line.className = 'ts-vinted-seller web_ui__Text__text web_ui__Text__caption web_ui__Text__left';
-    line.style.cssText = 'margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-    card.querySelector('[data-testid$="--breakdown"]')?.after(line);
+    line = el('div', 'ts-vinted-seller web_ui__Text__text web_ui__Text__caption web_ui__Text__left');
+    (total ?? breakdown).after(line);
   }
 
+  if (line.previousElementSibling !== (total ?? breakdown)) (total ?? breakdown).after(line);
+
   if (line.textContent !== text) line.textContent = text;
+  line.classList.toggle('-pending', pending);
+};
+
+// One line above the grid saying what TrueScore is still doing, under every sort.
+const status = el('div', 'ts-vinted-status web_ui__Text__text web_ui__Text__caption web_ui__Text__left');
+
+const showStatus = (cards: Element[], waiting: number) => {
+  const grid = cards[0]?.parentElement;
+  const done = cards.length - waiting;
+
+  const text = blocked && waiting
+    ? 'TrueScore: Vinted paused postage and seller lookups for this browser. Totals show without postage until it lifts, usually within the hour.'
+    : !waiting
+      ? ''
+      : slow && nextStart > Date.now()
+        ? `TrueScore: Vinted asked us to slow down. Adding postage and seller reviews resumes in a few seconds · ${done} of ${cards.length}`
+        : `TrueScore: adding postage and seller reviews${slow ? ' (slowly, at Vinted\'s limit)' : ''} · ${done} of ${cards.length}`;
+
+  if (!text || !grid) return status.remove();
+
+  if (status.nextElementSibling !== grid) grid.before(status);
+
+  if (status.textContent !== text) status.textContent = text;
 };
 
 // --- ranking -----------------------------------------------------------------
@@ -348,7 +481,7 @@ const sync = () => {
   for (const card of cards) {
     if (!sellerOf(card)) unmapped = true;
     fromCache(card);
-    labelCard(card);
+    renderCard(card);
   }
 
   // Client-side navigation brings cards the first page load never named:
@@ -362,22 +495,24 @@ const sync = () => {
       .finally(sync);
   }
 
-  // Labels show under any sort; only the order is Best nearby's alone.
-  const waiting = blocked ? 0 : cards.filter((card) => taskFor(card)).length;
+  // Totals and seller lines show under any sort; only the order is Best nearby's alone.
+  const waiting = cards.filter((card) => taskFor(card)).length;
 
-  for (let i = workers; i < (slow ? 1 : FAST_CONCURRENCY) && waiting; i++) void work();
-
-  if (active()) showInTrigger(waiting ? `Best nearby · ${cards.length - waiting}/${cards.length}` : 'Best nearby');
-  else showInTrigger(null);
+  if (!blocked) for (let i = workers; i < (slow ? 1 : FAST_CONCURRENCY) && waiting; i++) void work();
+  showStatus(cards, waiting);
+  showInTrigger(active() ? 'Best nearby' : null);
 
   resort();
 };
 
-sync();
-
 let timer: ReturnType<typeof setTimeout>;
 
-new MutationObserver(() => {
-  clearTimeout(timer);
-  timer = setTimeout(sync, 200);
-}).observe(document.body, { childList: true, subtree: true });
+// Touch the cards only once React has hydrated them (see afterHydration).
+void afterHydration().then(() => {
+  document.head.append(style);
+  sync();
+  new MutationObserver(() => {
+    clearTimeout(timer);
+    timer = setTimeout(sync, 200);
+  }).observe(document.body, { childList: true, subtree: true });
+});

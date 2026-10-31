@@ -14,20 +14,33 @@ export interface Seller {
   rating: number;
 }
 
-export interface Postage {
+export interface Money {
   amount: number;
   currency: string;
 }
 
-// Item id → seller id, for every product card in a catalog page.
-export const parseItemSellers = (html: string): Map<string, string> => {
-  const map = new Map<string, string>();
+export interface Listing {
+  seller: string;
+  // What Vinted shows as the card's total: the item plus its buyer-protection fee.
+  total?: Money;
+  fee?: Money;
+}
+
+const money = (chunk: string, key: string): Money | undefined => {
+  const m = chunk.match(new RegExp(`"${key}":\\{"amount":"([\\d.]+)","currencyCode":"(\\w+)"`));
+
+  return m ? { amount: Number(m[1]), currency: m[2] } : undefined;
+};
+
+// Item id → its seller and prices, for every product card in a catalog page.
+export const parseListings = (html: string): Map<string, Listing> => {
+  const map = new Map<string, Listing>();
 
   for (const chunk of html.replace(/\\"/g, '"').split('"productItem":{"id":').slice(1)) {
     const item = chunk.match(/^\d+/)?.[0];
     const seller = chunk.match(/"user":\{"id":(\d+)/)?.[1];
 
-    if (item && seller) map.set(item, seller);
+    if (item && seller) map.set(item, { seller, total: money(chunk, 'totalItemPrice'), fee: money(chunk, 'serviceFee') });
   }
 
   return map;
@@ -55,7 +68,7 @@ export const SHIPPING = z.object({
 });
 
 // null for a pickup-only item, which can't be posted at all.
-export const postageFromApi = ({ shipping_details: { pickup_only, price } }: z.infer<typeof SHIPPING>): Postage | null => pickup_only || !price ? null : { amount: price.amount, currency: price.currency_code };
+export const postageFromApi = ({ shipping_details: { pickup_only, price } }: z.infer<typeof SHIPPING>): Money | null => pickup_only || !price ? null : { amount: price.amount, currency: price.currency_code };
 
 // 0: has sold before and buyers were happy (a 4★ average or better).
 // 1: no reviews yet, an unknown. 2: reviewed and found wanting, worse than unknown.
@@ -73,7 +86,7 @@ const PLACES_PER_UNIT = 3;
 // Missing data (not fetched yet, unreadable, pickup-only) costs Infinity, so
 // those cards wait at the end of their tier; a seller not yet read waits at the
 // end of the good tier.
-export const rankKey = (seller: Seller | null | undefined, postage: Postage | null | undefined, likes: number, place: number): number[] => {
+export const rankKey = (seller: Seller | null | undefined, postage: Money | null | undefined, likes: number, place: number): number[] => {
   if (!seller) return [0, Infinity, -likes];
   const cost = postage ? postage.amount - Math.log10(Math.max(sellerScore(seller), 0) + 1) + place / PLACES_PER_UNIT : Infinity;
 
