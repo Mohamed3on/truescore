@@ -63,14 +63,19 @@ export const sellerTier = (s: Seller) => (s.total === 0 ? 1 : s.rating >= 0.8 ? 
 
 export const sellerScore = (s: Seller) => netScore(s.positive - s.negative, s.total);
 
-// Lexicographic: seller tier, then a cost — postage, less one unit of postage
-// per 10× of seller TrueScore, so a far better seller can outrank a slightly
-// cheaper parcel — then likes as the tiebreak. Missing data (not fetched yet,
-// unreadable, pickup-only) costs Infinity, so those cards wait at the end of
-// their tier; a seller not yet read waits at the end of the good tier.
-export const rankKey = (seller: Seller | null | undefined, postage: Postage | null | undefined, likes: number): number[] => {
+// Vinted's relevance order still matters most: one unit of postage is worth
+// only this many places in it.
+const PLACES_PER_UNIT = 3;
+
+// Lexicographic: seller tier, then a cost — postage, less one unit per 10× of
+// seller TrueScore, plus the card's place in Vinted's relevance order — then
+// likes as the tiebreak. `place` is the card's 0-based index in Vinted's order.
+// Missing data (not fetched yet, unreadable, pickup-only) costs Infinity, so
+// those cards wait at the end of their tier; a seller not yet read waits at the
+// end of the good tier.
+export const rankKey = (seller: Seller | null | undefined, postage: Postage | null | undefined, likes: number, place: number): number[] => {
   if (!seller) return [0, Infinity, -likes];
-  const cost = postage ? postage.amount - Math.log10(Math.max(sellerScore(seller), 0) + 1) : Infinity;
+  const cost = postage ? postage.amount - Math.log10(Math.max(sellerScore(seller), 0) + 1) + place / PLACES_PER_UNIT : Infinity;
 
   return [sellerTier(seller), cost, -likes];
 };

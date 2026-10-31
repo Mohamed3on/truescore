@@ -153,7 +153,8 @@ const resort = () => {
       continue;
     }
 
-    const keyed = cards.map((card) => ({ card, key: rankKey(sellers.get(sellerOf(card)), postageOf(card), likes(card)) }));
+    // DOM order is Vinted's order: the ranking never moves nodes.
+    const keyed = cards.map((card, place) => ({ card, key: rankKey(sellers.get(sellerOf(card)), postageOf(card), likes(card), place) }));
 
     // Array sort is stable, so equal keys keep Vinted's order.
     orderByCssBand(container, keyed.sort((a, b) => compareKeys(a.key, b.key)).map((k) => k.card));
