@@ -1,6 +1,6 @@
 import { convertToModelMessages, streamText, type DeepPartial, type LanguageModel, type ModelMessage } from 'ai';
 import { z } from 'zod';
-import { DEFAULT_PROVIDER, LLM_PROVIDERS, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
+import { DEFAULT_PROVIDER, LLM_PROVIDERS, PLAIN_PROSE, questionOf, REASONING_EFFORTS, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage, type Summary, type SummaryDraft, type SummaryHighlight, type Provider, type ReasoningEffort, type Thread, type ThreadTurn } from '@truescore/gmaps-shared';
 import { modelCall, type ModelSetup } from '@truescore/gmaps-shared/models';
 import { aliasesOf, capItems, MAX_ALIASES, MAX_SCORED_ITEMS, salvageStructured } from './summary-parse';
 import { removalNote, type Subject } from './summary-subject';
@@ -137,7 +137,7 @@ export async function summarize({ placeName, reviewTexts, removedReviews }: Subj
   const block = reviewBlock(reviewTexts);
   const removal = removalNote(removedReviews);
 
-  const verdictPrompt = `${block}\n\n---\n\nWrite a concise verdict on ${subject}: what stands out and whether it's worth it. Keep it about this place: only point to another place when many reviewers repeatedly name the same one as better — never a place they say is worse or that this place beats — and a one-off mention stays out, since alternatives are surfaced separately. Mention caveats only if the reviews raise real ones — don't invent them. **Bold** specifics. Markdown prose, no headings or bullets. Max 120 words.
+  const verdictPrompt = `${block}\n\n---\n\nSum up ${subject} in a few sentences: what stands out and whether it's worth it. Keep it about this place: only point to another place when many reviewers repeatedly name the same one as better — never a place they say is worse or that this place beats — and a one-off mention stays out, since alternatives are surfaced separately. Include a downside only if the reviews raise it — don't invent one. **Bold** specifics. Markdown prose, no headings or bullets. Max 120 words. ${PLAIN_PROSE}
 
 ${NOTES}${removal ? `\n\n${removal}` : ''}`;
 

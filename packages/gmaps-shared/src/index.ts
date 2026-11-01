@@ -878,3 +878,8 @@ export * from './write';
 // Reading fields out of JSON a model didn't finish writing — both packages hit
 // the same truncation against the same providers.
 export * from './json-salvage';
+
+// The register every review summary's prose shares (Maps verdict, product
+// conclusion, keyword and Etsy topic summaries). Without it the model echoes
+// its instructions back as labels ("The caveats are real", "Verdict: …").
+export const PLAIN_PROSE = `Write plainly, the way someone who read every review would tell a friend: state things about what's reviewed itself. Don't name or comment on the parts of your answer ("the verdict", "the caveats", "the catch", "the bottom line"), and don't vouch for a point ("is real", "genuinely").`;
