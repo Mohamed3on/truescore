@@ -4,7 +4,9 @@
 // (fixtures/reddit/*.json) holds the page's raw `.json` listing, what each
 // comment says of each Option (`labels`), and every way the thread writes each
 // Option (`aliases`); the expected Tally is counted from the labels by the same
-// countOf the server uses, for each Option and each of its titles.
+// countOf the server uses, for each Option and each of its titles. An Option the
+// listing misses counts in full: every person behind it is count error, and
+// every labelled read of it is a read wrong.
 //
 //   bun evals/tally.ts                     # every fixture, on the production model
 //   bun evals/tally.ts --fixture=1p54awz   # just fixtures whose name contains it
@@ -13,13 +15,13 @@
 //   bun evals/tally.ts --db=/tmp/ab.sqlite # reuse a run's listings and reads: a
 //                                          # second run re-reads only what changed
 //
-// Needs OPENAI_API_KEY (or the provider's key) and TYPESAFE_API_KEY. Runs on a
+// Needs the provider's key (ANTHROPIC_API_KEY for the production model) and TYPESAFE_API_KEY. Runs on a
 // fresh sqlite file unless --db names one, so nothing listed or read before is
 // reused.
 import { readdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { stripAccents, threadFromListing, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type TitleTally } from '@truescore/gmaps-shared';
+import { DEFAULT_PROVIDER, stripAccents, threadFromListing, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type TitleTally } from '@truescore/gmaps-shared';
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 
@@ -32,7 +34,7 @@ const { setOnUsage } = await import('../llm');
 type Provider = import('../llm').Provider;
 
 // SAFETY: the operator passes --provider a Provider name, as the usage above lists.
-const provider = (arg('provider') ?? 'openai') as Provider;
+const provider = (arg('provider') ?? DEFAULT_PROVIDER) as Provider;
 const DIR = join(import.meta.dir, 'fixtures/reddit');
 
 type Label = { option: string; title: string | null; stance: Exclude<Stance, 'off'> };
@@ -69,11 +71,15 @@ const expectedOf = (thread: Thread, labels: Record<string, Label[]>, subject: (l
 
 // A listed Option is the labelled one when their names, or a name and one of
 // the thread's ways of writing it, are the same words, or one holds the other
-// whole ("Rafael Lovato Jr." and "Rafael Lovato").
+// whole ("Rafael Lovato Jr." and "Rafael Lovato"). A shorter listed name held
+// by a labelled one must carry at least half its words, so a generic "Choke"
+// isn't graded as "Rear naked choke".
+const wordCount = (s: string) => s.split(' ').length;
+
 const sameThing = (produced: string, names: string[]) => {
   const p = ` ${words(produced)} `;
 
-  return names.values().map(words).filter((n) => n.length > 2).some((n) => p.trim() === n || p.includes(` ${n} `) || ` ${n} `.includes(p));
+  return names.values().map(words).filter((n) => n.length > 2).some((n) => p.trim() === n || p.includes(` ${n} `) || (` ${n} `.includes(p) && 2 * wordCount(p.trim()) >= wordCount(n)));
 };
 
 // Produced titles read as one: what each comment says of any of them, together.
@@ -138,10 +144,11 @@ for (const file of files) {
   const found = rows.filter((r) => r.match);
   const titlesFound = titles.filter((r) => r.match);
 
+  // Every labelled Option and title, a missed one as produced 0-0.
   const errOf = (rs: { o: { count: TallyCount }; match?: { count: TallyCount } }[]) =>
-    rs.reduce((s, { o, match }) => s + Math.abs(o.count.for - match!.count.for) + Math.abs(o.count.against - match!.count.against), 0);
+    rs.reduce((s, { o, match }) => s + Math.abs(o.count.for - (match?.count.for ?? 0)) + Math.abs(o.count.against - (match?.count.against ?? 0)), 0);
 
-  const countErr = errOf(found), titleErr = errOf(titlesFound);
+  const countErr = errOf(rows), titleErr = errOf(titles);
   const top5 = rows.slice(0, 5).filter((r) => r.match && top(5).has(r.match)).length;
   const top1 = rows[0]?.match && ranked[0] === rows[0].match ? 1 : 0;
 
@@ -156,14 +163,14 @@ for (const file of files) {
   }
 
   for (const p of extra) console.log(`  ${pad('(not labelled)', 44)}${pad('', 10)}${pad(fmt(p.count), 12)}${p.name}`);
-  // Every read the labels disagree with, among the Options and titles found:
-  // in a count, a wrong read for and another against cancel out.
+  // Every read the labels disagree with, a missed Option or title read off
+  // throughout: in a count, a wrong read for and another against cancel out.
   const byId = new Map(thread.comments.map((c) => [c.id, c]));
   let readErr = 0;
 
-  for (const { o, match } of [...found, ...titlesFound]) {
-    for (const id of new Set([...Object.keys(o.reads), ...Object.keys(match!.reads)])) {
-      const want = o.reads[id], got = match!.reads[id];
+  for (const { o, match } of [...rows, ...titles]) {
+    for (const id of new Set([...Object.keys(o.reads), ...Object.keys(match?.reads ?? {})])) {
+      const want = o.reads[id], got = match?.reads[id];
 
       if (want === got) continue;
       readErr++;
