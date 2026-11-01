@@ -289,7 +289,7 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => abort.abort());
   const post = (e: TallyEvent | ThreadAskEvent) => { if (!abort.signal.aborted) port.postMessage(e); };
 
-  port.onMessage.addListener(async ({ thread, chat }: TallyAsk) => {
+  port.onMessage.addListener(async ({ thread, chat, question }: TallyAsk) => {
     try {
       const [headers, provider, reasoningEffort] = await Promise.all([authHeaders(), getProviderChoice(), getReasoningEffort()]);
 
@@ -297,7 +297,7 @@ chrome.runtime.onConnect.addListener((port) => {
         method: 'POST',
         signal: abort.signal,
         headers: { 'content-type': 'application/json', ...headers },
-        body: JSON.stringify(chat ? { thread, chat, provider, reasoningEffort } satisfies ThreadAskRequest : { thread, provider, reasoningEffort } satisfies TallyRequest),
+        body: JSON.stringify(chat ? { thread, chat, provider, reasoningEffort } satisfies ThreadAskRequest : { thread, question, provider, reasoningEffort } satisfies TallyRequest),
       });
 
       if (!res.ok || !res.body) post({ type: 'error', error: tallyError(res.status) });

@@ -5,8 +5,9 @@ import type { TallyEvent, Thread, ThreadAskEvent, ThreadTurn } from '@truescore/
 // (background.ts); the page's script never sees it.
 export const TALLY_PORT = 'truescore-tally';
 
-// `chat`: a question asked of the Thread (ThreadAskRequest) rather than its Tally.
-export type TallyAsk = { thread: Thread; chat?: ThreadTurn[] };
+// `chat`: a question asked of the Thread (ThreadAskRequest) rather than its Tally;
+// `question`: the user's own Tally question (TallyRequest).
+export type TallyAsk = { thread: Thread; chat?: ThreadTurn[]; question?: string };
 
 type Failed = { type: 'error'; error: string };
 
@@ -24,7 +25,7 @@ const request = <E extends { type: string }>(ask: TallyAsk, onEvent: (e: E | Fai
   return () => { over = true; port.disconnect(); };
 };
 
-export const requestTally = (thread: Thread, onEvent: (e: TallyEvent) => void) => request({ thread }, onEvent);
+export const requestTally = (thread: Thread, onEvent: (e: TallyEvent) => void, question?: string) => request({ thread, question }, onEvent);
 
 // The answer to the last question in `chat`, as it's written.
 export const askThread = (thread: Thread, chat: ThreadTurn[], onEvent: (e: ThreadAskEvent) => void) => request({ thread, chat }, onEvent);

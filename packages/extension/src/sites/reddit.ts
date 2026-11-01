@@ -5,7 +5,8 @@
 // the post's buttons and marks the counted comments in the thread; new Reddit a
 // pill under the post and the drawer alone. At the drawer's foot, a box to ask
 // the thread anything: answered from the same comments, citing the ones each
-// answer rests on, and kept for the thread's next visit.
+// answer rests on, and kept for the thread's next visit. Under the drawer's head,
+// the question it tallies: the post's, or one of the user's own.
 import { countsInTally, mdToHtml, MIN_TALLY_PEOPLE, replaceChips, signedNet, speakersOf, STANCE_MARKS, threadFromListing, type ListedOption, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type TitleTally } from '@truescore/gmaps-shared';
 import { loadQAs, saveQA } from '../shared/qa-history';
 import { askThread, requestTally, tallyReady } from '../shared/tally';
@@ -36,6 +37,9 @@ const onThread = () => THREAD_PATH.test(location.pathname);
 
 // Where the questions asked of this thread are kept (qa-history).
 const qaKey = () => `ts-tally-${location.pathname.match(THREAD_PATH)?.[1]}`;
+
+// Where the user's own Tally questions for it are kept, the last ten (qa-history).
+const questionsKey = () => `${qaKey()}-question`;
 const isOld = () => !!document.querySelector('.commentarea');
 
 // The page's own comments: its `.json`, with its sort and count.
@@ -59,6 +63,9 @@ let openKey: string | null = null;
 let leadKey: string | null = null;
 let openTitle: string | null = null;
 let stop: (() => void) | null = null;
+
+// The user's own Tally question; empty tallies the post's.
+let tallyQuestion = '';
 
 // A question asked of the thread, with its answer as far as it's written, or
 // why it couldn't be.
@@ -227,7 +234,8 @@ const DRAWER_CSS = `:host { all: initial !important; }
 }
 .ts-tally-view { display: inline-flex; justify-self: end; border: 1px solid var(--ts-line); border-radius: 6px; overflow: hidden; }
 .ts-tally-view[hidden] { display: none; }
-.ts-tally-level { grid-row: 2; grid-column: 2; }
+.ts-tq { grid-row: 2; grid-column: 1 / -1; display: flex; }
+.ts-tally-level { grid-row: 3; grid-column: 2; }
 .ts-tally button { font: inherit; color: inherit; }
 .ts-tally-seg,
 .ts-tally-close,
@@ -415,6 +423,50 @@ askButton.type = 'submit';
 
 askForm.append(askInput, askButton);
 
+// The question the Tally counts answers to: the post's (its title, shown as
+// the placeholder) until the user asks their own. Their recent ones are
+// offered under it, the post's first; picking one tallies it.
+const questionForm = el('form', 'ts-tq');
+const questionInput = document.createElement('input');
+
+questionInput.className = 'ts-ask-input';
+
+questionInput.setAttribute('aria-label', 'The question to tally');
+
+questionInput.setAttribute('list', 'ts-tq-recent');
+
+const recentQuestions = el('datalist');
+
+recentQuestions.id = 'ts-tq-recent';
+
+questionForm.append(questionInput, recentQuestions);
+
+const showQuestions = () => {
+  const title = thread?.title.trim() ?? '';
+  questionInput.placeholder = title;
+  questionInput.value = tallyQuestion;
+  recentQuestions.replaceChildren(...[title, ...loadQAs(questionsKey()).map((e) => e.q)].flatMap((q) => {
+    const option = document.createElement('option');
+    option.value = q;
+
+    return q ? [option] : [];
+  }));
+};
+
+const tallyAsked = () => {
+  const q = questionInput.value.trim();
+  tallyQuestion = q === thread?.title.trim() ? '' : q;
+
+  if (tallyQuestion) saveQA(questionsKey(), { q: tallyQuestion, a: '', ts: Date.now() });
+  void start();
+};
+
+questionForm.addEventListener('submit', (e) => { e.preventDefault(); tallyAsked(); });
+
+questionInput.addEventListener('input', (e) => {
+  if (!(e instanceof InputEvent) || e.inputType === 'insertReplacementText') tallyAsked();
+});
+
 {
   const head = el('div', 'ts-tally-head');
   const close = button('ts-tally-close', '×');
@@ -424,7 +476,7 @@ askForm.append(askInput, askButton);
   keys.title = `${KEY} opens and closes the tally, Esc closes it`;
   head.append(el('span', 'ts-tally-label', 'Tally'), keys);
   const top = el('div', 'ts-tally-top');
-  top.append(head, viewSwitch, close, levelSwitch, status, failBox);
+  top.append(head, viewSwitch, close, questionForm, levelSwitch, status, failBox);
   drawer.append(top, list, once, chatLog, askForm);
   shadow.append(el('style', '', DRAWER_CSS), drawer);
 }
@@ -645,7 +697,9 @@ askForm.addEventListener('submit', (e) => {
 // the window. Esc still closes the drawer.
 for (const type of ['keydown', 'keypress', 'keyup'] as const) {
   window.addEventListener(type, (e) => {
-    if (e.composedPath()[0] === askInput && e.key !== 'Escape') e.stopPropagation();
+    const typed = e.composedPath()[0];
+
+    if ((typed === askInput || typed === questionInput) && e.key !== 'Escape') e.stopPropagation();
   }, true);
 }
 
@@ -673,11 +727,12 @@ async function start() {
   }
 
   render();
+  showQuestions();
 
   // The questions asked of it on earlier visits, oldest first.
   if (!turns.length) turns = loadQAs(qaKey()).reverse().map((e) => ({ q: e.q, a: e.a, done: true }));
   renderChat();
-  stop = requestTally(thread, onEvent);
+  stop = requestTally(thread, onEvent, tallyQuestion || undefined);
 }
 
 function toggleDrawer(show = drawer.hidden || !host.isConnected) {
@@ -735,6 +790,7 @@ const sync = () => {
     stopAsk = null;
     turns = [];
     renderChat();
+    tallyQuestion = '';
     phase = 'idle';
     rows = [];
     drawer.hidden = true;
