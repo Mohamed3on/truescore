@@ -58,7 +58,7 @@ import index from './index.html';
 import login from './login.html';
 import { errStatus, NoReviews, resolveSubject } from './summary-subject';
 import { answersFor, hasReceipts, jevAvailable, quotingReviews, stanceOfReviews, stancesFor, supportFor } from './jev';
-import { SENT_CHAT, SENT_THREAD, STRINGS, tallyThread } from './tally';
+import { SENT_CHAT, SENT_QUESTION, SENT_THREAD, STRINGS, tallyThread } from './tally';
 
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -1071,7 +1071,7 @@ Bun.serve({
           if (!jevAvailable()) return corsJson({ error: 'unavailable' }, 503);
           const overrides = { provider: parseProvider(body.provider), reasoningEffort: parseReasoningEffort(body.reasoningEffort) };
 
-          return ndjsonStream<TallyEvent>((write) => tallyThread(thread, write, overrides), { 'Access-Control-Allow-Origin': '*' });
+          return ndjsonStream<TallyEvent>((write) => tallyThread(thread, write, overrides, SENT_QUESTION.parse(body.question)), { 'Access-Control-Allow-Origin': '*' });
         } catch (e) {
           console.error('[tally]', e);
 

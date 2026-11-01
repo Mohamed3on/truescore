@@ -301,7 +301,8 @@ export type SearchMatches = { texts: string[]; scorePct: number; trustedReviews:
 export type AskRequest = { messages: AskMessage[]; featureId?: string; name?: string; reviewTexts?: string[]; filter?: string; removedReviews?: RemovedReviews | null; force?: boolean } & LlmOverrides;
 
 // The Thread as the page loaded it (threadFromListing).
-export type TallyRequest = { thread: Thread } & LlmOverrides;
+// `question`: one the user asks of the Thread, tallied in place of the post's.
+export type TallyRequest = { thread: Thread; question?: string } & LlmOverrides;
 
 // `chat`: the questions asked of the Thread so far, each with its answer, then
 // the one to answer.

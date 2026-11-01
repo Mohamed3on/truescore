@@ -70,6 +70,9 @@ export const SENT_CHAT = z.array(SENT_TURN.nullable().catch(null)).catch([]).tra
   ];
 });
 
+// The user's own Tally question (TallyRequest), if a string.
+export const SENT_QUESTION = z.string().optional().catch(undefined);
+
 // The question every comment answers: the post's title and text.
 const questionOf = ({ title, text }: Thread) => `${title}\n\n${text.slice(0, MAX_QUESTION)}`.trim();
 
@@ -235,7 +238,7 @@ async function readsOf(thread: Thread, question: string, name: string, names: st
   const comments = naming(thread, names, rivals, group, asked, picked);
 
   const stances = await optionStancesFor(question, name, description, others,
-    comments.map((c) => ({ text: c.body, parent: c.parentId ? byId.get(c.parentId)?.body : group?.has(c.id) ? question : undefined })));
+    comments.map((c) => ({ text: c.body, parent: c.parentId ? byId.get(c.parentId)?.body : group?.has(c.id) ? questionOf(thread) : undefined })));
 
   return stances && Object.fromEntries(comments.flatMap((c, i) => (stances[i] === 'off' ? [] : [[c.id, stances[i]!]])));
 }
@@ -322,7 +325,9 @@ const LISTING = Bun.hash(optionsRequest('', []).prompt).toString(36);
 
 async function listOptionsOf(thread: Thread, question: string, { provider, reasoningEffort }: LlmOverrides, onOption: (o: StreamedOption) => void): Promise<void> {
   const counted = thread.comments.filter(countsInTally);
-  const k = `${thread.id}:${provider ?? ''}:${LISTING}:${Bun.hash(counted.map((c) => c.id).sort().join(',')).toString(36)}`;
+  // A question of the user's own lists apart from the post's.
+  const asked = question === questionOf(thread) ? '' : `:${Bun.hash(question).toString(36)}`;
+  const k = `${thread.id}:${provider ?? ''}:${LISTING}:${Bun.hash(counted.map((c) => c.id).sort().join(',')).toString(36)}${asked}`;
   const hit = getOptions.get(k);
 
   if (hit) {
@@ -425,9 +430,12 @@ async function pickedOf(thread: Thread, question: string, o: ThreadOption): Prom
 // each count once Jev has read it, and alongside, why each is rated as it is.
 // Counting waits for the whole list, since a name only picks comments once it's
 // known no other Option shares it. Throws when Jev couldn't read every comment,
-// after streaming what it could.
-export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void, overrides: LlmOverrides = {}): Promise<void> {
-  const question = questionOf(thread);
+// after streaming what it could. `tallyQuestion`: one the user asks of the
+// Thread in place of the post's own; the post still holds what its answers
+// answer (its list, what it asks about).
+export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void, overrides: LlmOverrides = {}, tallyQuestion?: string): Promise<void> {
+  const own = questionOf(thread);
+  const question = tallyQuestion?.trim().slice(0, MAX_QUESTION) || own;
   const options: ThreadOption[] = [];
   const post = postOf(thread);
   // Asked once the post names two Options, while the rest are listed: which
@@ -443,10 +451,10 @@ export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void
     if (!key || options.some((x) => keyOf(x.name) === key)) return;
     options.push(o);
     write({ type: 'listed', option: listedOf(o) });
-    asking.push(askedOf(question, post, o));
+    asking.push(askedOf(own, post, o));
     picking.push(pickedOf(thread, question, o));
 
-    if (!group && options.filter((x) => sayer(needles(namesOf(x)))(post)).length >= 2) group = groupAnswersOf(thread, question);
+    if (!group && options.filter((x) => sayer(needles(namesOf(x)))(post)).length >= 2) group = groupAnswersOf(thread, own);
   });
   const answers = await group;
   const asked = new Set((await Promise.all(asking)).flat());

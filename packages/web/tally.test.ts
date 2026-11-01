@@ -214,7 +214,7 @@ describe('tallyOption', () => {
   });
 
   test("an answer to the post's list as a whole is read as a reply to the post", async () => {
-    const thread = { ...threadWith([comment('a', 'all of them are bad')]), text: 'Toe hold or knee bar?' };
+    const thread = threadWith([comment('a', 'all of them are bad')], 'Most taboo? Toe hold or knee bar?');
     const knee = { name: 'Knee bar', aliases: [], titles: [] }, toe = { name: 'Toe hold', aliases: [], titles: [] };
     const t = await tallyOption(thread, 'Most taboo? Toe hold or knee bar?', knee, [knee, toe], new Set(['a']));
     const asked = requests.flatMap((r) => Object.values(r.questions).map((q) => q.instructions));
@@ -302,5 +302,25 @@ describe('tallyThread', () => {
     });
     expect(events.filter((e) => e.type === 'why')).toEqual([{ type: 'why', key: 'sony', text: 'why sony' }, { type: 'why', key: 'bose', text: 'why bose' }]);
     expect(events.at(-1)).toEqual({ type: 'done' });
+  });
+
+  test("a question of the user's own is listed afresh, not served the post's listing", async () => {
+    // The model lists Sony for the post's question and Bose for the user's.
+    setModel(fakeModel((fields, call) => JSON.stringify(fields.includes('options')
+      ? { options: [{ name: JSON.stringify(call.prompt).includes('Which is the worst?') ? 'Bose' : 'Sony', aliases: [], titles: [] }] }
+      : {})));
+
+    const thread = threadWith([comment('a', 'Sony is great'), comment('b', 'Bose is awful')]);
+
+    const listed = async (question?: string) => {
+      const events: TallyEvent[] = [];
+
+      await tallyThread(thread, (e) => events.push(e), {}, question);
+
+      return events.flatMap((e) => (e.type === 'listed' ? [e.option.name] : []));
+    };
+
+    expect(await listed()).toEqual(['Sony']);
+    expect(await listed('Which is the worst?')).toEqual(['Bose']);
   });
 });
