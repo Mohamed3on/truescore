@@ -1,6 +1,6 @@
 // The blind pairwise judge the summary evals share (compare.ts, ab.ts), and the
 // bounded pool they run it in.
-import { createOpenAI } from '@ai-sdk/openai';
+import { createAnthropic } from '@ai-sdk/anthropic';
 import { writeObject } from '@truescore/gmaps-shared';
 import { z } from 'zod';
 import type { Summary } from '../llm';
@@ -32,21 +32,21 @@ const judgeSchema = z.object({
   reason: z.string(),
 });
 
-// GPT-6 Sol at medium reasoning effort — a proper thinking
-// model as the blind judge. Effort is set on the writeObject call below.
+// Claude Opus 5.5 at medium effort as the blind judge (GPT-6 Sol until
+// 2026-11-01). Effort is set on the writeObject call below.
 //
 // Accuracy-first rubric: grounding counts the weight of evidence and length
 // earns nothing. The grounded/specific/useful rubric it replaced (2026-09-22)
 // rewarded detail: it picked GPT-5.6 Luna's fuller summaries over GPT-6
 // Luna's 22-2, yet under this one GPT-6 won 18-6 on the same outputs, since
 // 5.6's extra detail was where it overstated consensus.
-const judgeModel = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-6-sol');
+const judgeModel = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY })('claude-opus-5-5');
 
 // Scores two summaries of one fixture's reviews, shown as anonymous outputs A and B.
 export const judge = async (f: Fixture, a: Summary, b: Summary) => {
   const { object } = await writeObject({
     model: judgeModel,
-    providerOptions: { openai: { reasoningEffort: 'medium' } },
+    providerOptions: { anthropic: { effort: 'medium' } },
     schema: judgeSchema,
     prompt: `${f.reviewTexts.join('\n\n')}\n\n---\n\nTwo anonymous models summarized the reviews above for ${f.place}${f.filter ? ` (topic: "${f.filter}")` : ''}. Score each output 1-5 on: grounded (every claim traceable to the reviews and given the weight the reviews give it — inventing detail, overstating how many reviewers said something, or presenting a one-off as a pattern are grounding errors), coverage (conveys what matters most for deciding: the points many reviewers raise and any major caveat — leaving out minor or one-off points is not a flaw), concise (no padding or repetition; length is not a virtue). Then pick the overall winner: the output a careful reader should rely on to decide, where a grounding error weighs more than a missed minor detail.\n\nOutput A:\n${JSON.stringify(a, null, 1)}\n\nOutput B:\n${JSON.stringify(b, null, 1)}`,
   });

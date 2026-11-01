@@ -1,6 +1,6 @@
 // Side-by-side eval of summarize() across providers on real cached review sets.
 //   bun evals/compare.ts            # outputs + latency + tokens
-//   bun evals/compare.ts --judge    # adds blind LLM-judge scoring (gpt-6-sol)
+//   bun evals/compare.ts --judge    # adds blind LLM-judge scoring (opus-5.5)
 //   bun evals/compare.ts --judge --luna   # compare gpt-6-luna effort ladder
 //   bun evals/compare.ts --judge --candidates [--only=a,b]   # shipped models vs newer ones (candidates.ts)
 import { summarize, setOnUsage, type Provider, type ReasoningEffort, type Summary } from '../llm';
@@ -107,7 +107,7 @@ for (const [i, f] of RUN_FIXTURES.entries()) {
       .map(([p, s]) => `${p}: grounded ${s.grounded}, coverage ${s.coverage}, concise ${s.concise}`)
       .join(' | ');
 
-    console.log(`### judge: ${r0.label} vs ${r1.label} (gpt-6-sol thinking, blind)\n\n${line}\n\n**Winner:** ${winner} — ${reason}\n`);
+    console.log(`### judge: ${r0.label} vs ${r1.label} (opus-5.5, blind)\n\n${line}\n\n**Winner:** ${winner} — ${reason}\n`);
 
     for (const [p, s] of Object.entries(scores)) {
       const x = acc(p);
@@ -128,7 +128,7 @@ for (const [i, f] of RUN_FIXTURES.entries()) {
 }
 
 if (JUDGE) {
-  console.log(`\n${'='.repeat(72)}\n## standings — gpt-6-sol thinking, blind, all pairs across ${RUN_FIXTURES.length} review sets\n`);
+  console.log(`\n${'='.repeat(72)}\n## standings — opus-5.5, blind, all pairs across ${RUN_FIXTURES.length} review sets\n`);
 
   const ranked = CONTESTANTS.map((c) => {
     const x = acc(c.label);

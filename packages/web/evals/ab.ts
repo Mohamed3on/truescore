@@ -140,7 +140,7 @@ const versus = async (set: string) => {
 };
 
 if (process.argv.includes('--judge')) {
-  console.log(`\njudge (gpt-6-sol, blind), each run against base:`);
+  console.log(`\njudge (opus-5.5, blind), each run against base:`);
   console.log(`  ${NAME}: ${await versus(NAME)}`);
   console.log(`  base2 (noise band): ${await versus('base2')}`);
 }
