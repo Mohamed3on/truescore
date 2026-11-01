@@ -6,6 +6,7 @@ import { appendStat, buildGauge, buildRecentGauge, createIslandShell } from '../
 import { adjust, recentRatio } from '../shared/recency';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { buildSummarizeWidget } from '../shared/review-summary';
+import { PLAIN_PROSE } from '@truescore/gmaps-shared';
 import { buildReviewCard, quoteCards } from '../shared/review-search';
 import { buildReviewPanel } from '../shared/review-panel';
 import {
@@ -188,7 +189,7 @@ const TOPIC_SUMMARY_PAGES = 10; // ~80 recent aspect reviews — enough to summa
 const topicNps = (t: Topic) => (t.total ? ((t.pos - t.neg) / t.total) * 100 : 0);
 
 const topicSummaryPrompt = (topic: string) =>
-  `These are Etsy reviews that mention ${topic} for this product. Focus ONLY on what buyers say about ${topic} — ignore unrelated praise or issues. List what they praise and what they complain about regarding ${topic}, most-common first; include a point only if 2+ reviewers make it. If reviewers disagree, surface the tension. End with a one-line verdict on ${topic}.`;
+  `These are Etsy reviews that mention ${topic} for this product. Focus ONLY on what buyers say about ${topic} — ignore unrelated praise or issues. List what they praise and what they complain about regarding ${topic}, most-common first; include a point only if 2+ reviewers make it. Where reviewers disagree, give both sides. End with one line on how the product does on ${topic}. ${PLAIN_PROSE}`;
 
 // One fetch per topic page for the visit: the topic's row loads pages 1–2 and its
 // summary pages 1–TOPIC_SUMMARY_PAGES, so a summary reuses what the row has.

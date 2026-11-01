@@ -4,7 +4,7 @@ import { cacheGet, cacheSet } from './cache';
 import { askTransport, bumpRateLimit, checkRateLimit, RL_MAX, summarize } from './llm';
 import { loadQAs, removeQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
-import { bySupport, enter, fadeIn, foldAway, mountBullets, parseOrQuery, receiptsFor, smoothDrafts, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
+import { bySupport, PLAIN_PROSE, enter, fadeIn, foldAway, mountBullets, parseOrQuery, receiptsFor, smoothDrafts, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
 import type { JSONSchema7 } from 'ai';
 import * as z from 'zod/mini';
 import { readAnswers, readSupport, receiptButton } from './jev';
@@ -29,14 +29,14 @@ Cover the recurring themes mentioned by 2+ reviewers, ranked by how often they c
 
 ${betterAlternativeRule('competing product')}
 
-conclusion: 2–4 sentences — the overall verdict: what owners consistently say, who it suits best or the main thing to watch out for, and whether it's good value when reviewers mention price. Don't just restate the bullets, and don't mention what reviewers didn't say.`;
+conclusion: 2–4 sentences: what most owners agree on, who it suits best or what to watch out for, and whether it's good value when reviewers mention price. Don't just restate the bullets, and don't mention what reviewers didn't say. ${PLAIN_PROSE}`;
 
 // The prompt for the summarize widget under a search's
 // matches (see summarizeMatches). The searched term is only a lens: without this
 // framing a brand-name search ("Durex") on a competitor page came back as a
 // review of Durex.
 export const keywordSummaryPrompt = (kw: string) =>
-  `These are reviews of the product on this page that mention "${kw}". This product is always the subject, never ${kw}: do not review, rate, or give a verdict on ${kw} itself. Cover what reviewers praise and complain about regarding this product where ${kw} comes up, most-mentioned first; include a point only if 2+ reviewers make it. If ${kw} is a competing product or brand, frame each point as how reviewers say this product compares to it. Ignore shipping, delivery, packaging, and seller issues. If reviewers disagree, surface the tension. End with a short verdict on this product in relation to ${kw}.`;
+  `These are reviews of the product on this page that mention "${kw}". This product is always the subject, never ${kw}: do not review, rate, or give a verdict on ${kw} itself. Cover what reviewers praise and complain about regarding this product where ${kw} comes up, most-mentioned first; include a point only if 2+ reviewers make it. If ${kw} is a competing product or brand, frame each point as how reviewers say this product compares to it. Ignore shipping, delivery, packaging, and seller issues. Where reviewers disagree, give both sides. End with one sentence on how this product does on ${kw}. ${PLAIN_PROSE}`;
 
 // A product's Summary and Ask read every review up to the newest this many: more
 // would put hundreds of thousands of tokens into each one. An Ask on an item with
