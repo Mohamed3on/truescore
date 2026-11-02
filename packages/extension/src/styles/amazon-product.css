@@ -33,8 +33,14 @@
   border: 1px solid #E7E5E4;
   border-radius: 8px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
   animation: ars-enter 0.4s cubic-bezier(0.25, 1, 0.5, 1);
 }
+/* Amazon's redesigned page: score card and variant ranking stacked in one slot */
+#ts-panel-slot { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 16px; }
+#ts-panel-slot > .ars-wrapper,
+#ts-panel-slot > .ts-var { margin: 0; max-width: none; }
+#ts-panel-slot > .ts-var { order: 1; }
 /* Staggered entrance for children */
 .ars-wrapper > .ars-header  { animation: ars-enter 0.35s cubic-bezier(0.25, 1, 0.5, 1) both; }
 .ars-wrapper > .ars-gauge    { animation: ars-enter 0.35s cubic-bezier(0.25, 1, 0.5, 1) 0.08s both; }
@@ -238,8 +244,11 @@
   border: 1px solid #99F6E4;
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition-property: background-color, border-color, box-shadow, transform;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
 }
+.ars-summarize-btn:active:not(:disabled) { transform: scale(0.96); }
 .ars-summarize-btn:hover {
   background: #CCFBF1;
   border-color: #5EEAD4;
@@ -262,9 +271,11 @@
   background: none;
   border: none;
   border-radius: 6px;
+  position: relative;
   cursor: pointer;
-  transition: color 0.15s;
+  transition: color 150ms ease-out;
 }
+.ars-copy-btn::before { content: ""; position: absolute; inset: 0 -3px; }
 .ars-copy-btn:hover,
 .ars-copy-btn[data-state="copied"] { color: #0F766E; }
 .ars-copy-btn[data-state="failed"] { color: #C2410C; }
@@ -297,9 +308,14 @@
   border: 1px solid #D6D3D1;
   border-radius: 4px;
   padding: 2px 8px;
+  position: relative;
   cursor: pointer;
-  transition: all 0.15s;
+  transition-property: color, border-color, transform;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
 }
+.ars-resummarize-btn::before { content: ""; position: absolute; inset: -8px -4px; }
+.ars-resummarize-btn:active:not(:disabled) { transform: scale(0.96); }
 .ars-resummarize-btn:hover {
   color: #0F766E;
   border-color: #0F766E;
@@ -581,6 +597,8 @@
   max-height: 360px;
   overflow-y: auto;
   padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #D6D3D1 transparent;
 }
 /* The summarize widget mounted under the matches (Ask box, summary caption,
    summary, recent questions). Dashed rules with 12px on each side bracket it:
@@ -771,4 +789,5 @@
   .ars-scan-spinner { animation: none; }
   .ars-scan-spinner.ars-scan-done { animation: none; opacity: 0; }
   .ars-conclusion-wait > span, .ars-arrive { animation: none; }
+  .ars-summarize-btn:active, .ars-resummarize-btn:active { transform: none; }
 }

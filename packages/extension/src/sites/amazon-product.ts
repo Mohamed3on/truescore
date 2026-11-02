@@ -179,9 +179,7 @@ const injectBestFormats = (formatRatings: Record<string, number>, formatCounts: 
     summarize: { key, text: reviewText, card: cardFields },
   });
 
-  const buyBox = document.querySelector('#desktop_buybox');
-
-  if (buyBox) buyBox.parentNode!.insertBefore(box, buyBox);
+  placeVariations(box);
 };
 
 const setTotalRatingsScore = (totalRatingPercentages: { fiveStars: number; oneStars: number }, elementToReplace: HTMLElement, numOfRatings: any) => {
@@ -266,11 +264,33 @@ const AjaxChunk = z.tuple([z.unknown(), z.unknown(), z.string()], z.unknown());
 
 // Amazon's redesigned page puts the rating line in a bottom-aligned flex row beside
 // the brand logo, above the title: the panel there drags logo, title and images down.
-// That layout leaves an empty slot atop the center column, where the panel sits above the price.
-const getPanelHost = () =>
-  document.querySelector('#byline_ratings_container #averageCustomerReviews')
-    ? document.getElementById('title_elements_redesigned_center')
-    : document.getElementById('averageCustomerReviews');
+// There both panels share one slot under the variant picker, after price and buy
+// buttons: the score card, then the variant ranking, at the column's full width.
+const getPanelHost = () => {
+  if (!document.querySelector('#byline_ratings_container #averageCustomerReviews')) return document.getElementById('averageCustomerReviews');
+  const buyBox = document.getElementById('desktop_buybox');
+
+  if (!buyBox) return null;
+  let slot = document.getElementById('ts-panel-slot');
+
+  if (!slot) {
+    slot = document.createElement('div');
+    slot.id = 'ts-panel-slot';
+    buyBox.before(slot);
+  }
+
+  return slot;
+};
+
+// The variant ranking: in the shared slot on the redesigned page, else above the buy box.
+const placeVariations = (box: Element) => {
+  const slot = document.getElementById('ts-panel-slot');
+
+  if (slot) return slot.appendChild(box);
+  const buyBox = document.getElementById('desktop_buybox');
+
+  if (buyBox) buyBox.before(box);
+};
 
 const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLElement, numOfRatings: any, cacheASIN: string) => {
   const recentRatingsURL = `/product-reviews/${productSIN}/?sortBy=recent`;
@@ -811,11 +831,7 @@ const getParentASIN = () => {
         if (link && link.textContent !== scoreText) link.textContent = scoreText;
       }
 
-      if (variations && !document.contains(variations)) {
-        const buyBox = document.querySelector('#desktop_buybox');
-
-        if (buyBox) buyBox.parentNode!.insertBefore(variations, buyBox);
-      }
+      if (variations && !document.contains(variations)) placeVariations(variations);
     }
   });
 

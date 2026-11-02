@@ -205,7 +205,7 @@ export const buildSearchSection = <T,>({
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'ars-search-input';
-  input.placeholder = `Search ${addCommas(corpusSize)} reviews… (e.g. "${exampleQuery}")`;
+  input.placeholder = `Search ${addCommas(corpusSize)} reviews… (e.g. “${exampleQuery}”)`;
   section.appendChild(input);
 
   const header = el('div', 'ars-search-header');
