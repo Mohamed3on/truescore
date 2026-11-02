@@ -264,6 +264,14 @@ type PortalHeaders = { 'x-requested-with': string; 'content-type': string; 'anti
 // One chunk of Amazon's review AJAX: [action, selector, html, …].
 const AjaxChunk = z.tuple([z.unknown(), z.unknown(), z.string()], z.unknown());
 
+// Amazon's redesigned page puts the rating line in a bottom-aligned flex row beside
+// the brand logo, above the title: the panel there drags logo, title and images down.
+// That layout leaves an empty slot atop the center column, where the panel sits above the price.
+const getPanelHost = () =>
+  document.querySelector('#byline_ratings_container #averageCustomerReviews')
+    ? document.getElementById('title_elements_redesigned_center')
+    : document.getElementById('averageCustomerReviews');
+
 const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLElement, numOfRatings: any, cacheASIN: string) => {
   const recentRatingsURL = `/product-reviews/${productSIN}/?sortBy=recent`;
   let numberOfParsedReviews = 0;
@@ -281,7 +289,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   const cachedScores = cacheGet(scoresCacheKey, THREE_DAYS);
   let usedCache = false;
 
-  const elementToAppendTo = document.querySelector('#averageCustomerReviews');
+  const elementToAppendTo = getPanelHost();
   const wrapper = createIslandShell();
 
   if (cachedScores) {
@@ -793,7 +801,7 @@ const getParentASIN = () => {
 
   const observer = new MutationObserver(() => {
     if (!document.contains(wrapper)) {
-      const target = document.getElementById('averageCustomerReviews');
+      const target = getPanelHost();
 
       if (target) target.appendChild(wrapper);
 
