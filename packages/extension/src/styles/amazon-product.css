@@ -1,4 +1,4 @@
-/* === Amazon Review Scores — Review Intelligence === */
+/* === Amazon Review Scores — the score island === */
 
 @keyframes ars-enter {
   from { opacity: 0; transform: translateY(8px); }
@@ -42,22 +42,8 @@
 #ts-panel-slot > .ts-var { margin: 0; max-width: none; }
 #ts-panel-slot > .ts-var { order: 1; }
 /* Staggered entrance for children */
-.ars-wrapper > .ars-header  { animation: ars-enter 0.35s cubic-bezier(0.25, 1, 0.5, 1) both; }
 .ars-wrapper > .ars-gauge    { animation: ars-enter 0.35s cubic-bezier(0.25, 1, 0.5, 1) 0.08s both; }
 .ars-wrapper > .ars-stats    { animation: ars-enter 0.35s cubic-bezier(0.25, 1, 0.5, 1) 0.16s both; }
-
-/* Header */
-.ars-header {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #78716C;
-}
-.ars-header-accent {
-  color: #0F766E;
-  margin-right: 2px;
-}
 
 /* Gauge */
 .ars-gauge {
@@ -780,7 +766,7 @@
 
 /* Accessibility: respect reduced motion */
 @media (prefers-reduced-motion: reduce) {
-  .ars-wrapper, .ars-wrapper > .ars-header, .ars-wrapper > .ars-gauge, .ars-wrapper > .ars-stats {
+  .ars-wrapper, .ars-wrapper > .ars-gauge, .ars-wrapper > .ars-stats {
     animation: none;
   }
   .ars-gauge-fill { transition: none; }

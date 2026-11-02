@@ -14,15 +14,11 @@ export interface IslandScore {
   total: number;
 }
 
-// The wrapper and its branded "Review Intelligence" header. The caller appends
-// the gauge and its own sections, then inserts it at its anchor.
+// The bare wrapper: the gauge leads it, no label above. The caller appends the
+// gauge and its own sections, then inserts it at its anchor.
 export const createIslandShell = (): HTMLElement => {
   const wrapper = document.createElement('div');
   wrapper.className = 'ars-wrapper';
-  const header = document.createElement('div');
-  header.className = 'ars-header';
-  header.innerHTML = '<span class="ars-header-accent">&#x25C8;</span> Review Intelligence'; // safe: static
-  wrapper.appendChild(header);
 
   return wrapper;
 };

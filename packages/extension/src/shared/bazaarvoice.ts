@@ -428,7 +428,7 @@ interface PdpData {
   reviews: ReturnType<typeof fetchReviews>;
 }
 
-// One unified "Review Intelligence" card: the review panel — its recent-positive
+// One unified score card: the review panel — its recent-positive
 // gauge leading — with the score/review/recommend stats in its row and the
 // secondary ratings under them.
 const buildCard = (

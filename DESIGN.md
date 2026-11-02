@@ -215,7 +215,7 @@ Two grounds, one signature pair, three sentiment hues, and an opacity ladder for
 ### Hierarchy
 - **Display** (600, 56px, 1.0): the web app's place score. Nothing on that page is larger.
 - **Headline** (600, 26px, 1.0): the panel figure on Maps cards; dimmed to `ink-4` while it counts up.
-- **Title** (600, 12px, 0.04em): the panel title ("Review Intelligence", the place name row). On the daylight skin the island header is `label-daylight` at 10.5px 700 uppercase in `stone-3`, not a title.
+- **Title** (600, 12px, 0.04em): the panel title (the place name row). The daylight island and its variation card carry no label above their figures: the gauge leads.
 - **Body** (300–400, 11–13px, 1.5): verdicts, review text, answers. 11px in panels, 13px in the web lede and daylight summary, 15px only for the web hero lede. Prose blocks stop at 60ch.
 - **Label** (500–600, 9–10px, 0.10–0.16em, uppercase): section introductions, chip counts, "Reading reviews…" states. In Plex Mono at 500 on the night skin; the popup's eyebrow goes to 0.16em.
 

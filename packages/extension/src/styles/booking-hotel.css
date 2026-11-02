@@ -399,23 +399,10 @@
   font-family: var(--ts-sans);
 }
 
-.ts-bp .ars-wrapper > .ars-header,
 .ts-bp .ars-wrapper > .ars-question-row,
 .ts-bp .ars-wrapper > .ars-summary-meta,
 .ts-bp .ars-wrapper > .ars-summary-panel {
   animation: none;
-}
-
-.ts-bp .ars-header {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ts-ink-3);
-}
-
-.ts-bp .ars-header-accent {
-  color: #6DD3CE;
 }
 
 .ts-bp .ars-question-row {

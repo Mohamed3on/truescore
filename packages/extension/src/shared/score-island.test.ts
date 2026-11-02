@@ -3,7 +3,6 @@ import {
   appendStat,
   buildGauge,
   buildRecentGauge,
-  createIslandShell,
   fillRecentGauge,
 } from './score-island';
 
@@ -15,14 +14,6 @@ const part = (gauge: HTMLElement, selector: string): HTMLElement => {
 
   return found;
 };
-
-describe('createIslandShell', () => {
-  test('is an .ars-wrapper carrying the Review Intelligence header', () => {
-    const shell = createIslandShell();
-    expect(shell.className).toBe('ars-wrapper');
-    expect(shell.querySelector('.ars-header')?.textContent).toContain('Review Intelligence');
-  });
-});
 
 describe('buildGauge', () => {
   test('renders rounded percent, sentiment colour, and comma-grouped stats', () => {

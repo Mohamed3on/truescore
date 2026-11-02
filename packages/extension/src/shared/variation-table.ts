@@ -1,4 +1,4 @@
-// Shared "Best by variation" card: a titled, optionally-tabbed list of ranked
+// Shared variation card: an optionally-tabbed list of ranked
 // rows, each with a magnitude bar and a signed net score, the top positive row
 // flagged as best. Used by site scripts (Amazon, Uniqlo, …) that each supply
 // their own ranked dimensions — the data acquisition stays per-site, only this
@@ -23,10 +23,9 @@ export interface VarDim<T = never> {
 }
 
 export interface VariationCardOpts<T = never> {
-  title?: string; // default 'Best by variation'
   animate?: boolean; // staggered row + card entrance
   // Dimensions every row shares, as [name, value]. They can't be ranked, so
-  // they're stated once under the title instead of being silently dropped.
+  // they're stated once above the rows instead of being silently dropped.
   constants?: [string, string][];
   // How a row's reviews read: a row with enough of them opens a Summary and
   // Ask over them alone, under itself.
@@ -90,10 +89,10 @@ const ensureStyles = () => {
 .ts-var{margin:12px 0;width:100%;max-width:360px;background:#FAFAF9;border:1px solid #E7E5E4;border-radius:8px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 .ts-var.is-animated{animation:ts-var-enter .4s cubic-bezier(.25,1,.5,1)}
 .ts-var-head{padding:10px 12px 0}
-.ts-var-title{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#A8A29E}
-.ts-var-note{display:block;margin-top:4px;font-size:11px;line-height:1.4;color:#78716C}
+.ts-var-head:empty{display:none}
+.ts-var-note{display:block;font-size:11px;line-height:1.4;color:#78716C}
 .ts-var-note b{font-weight:600;color:#44403C}
-.ts-var-tabs{display:flex;gap:2px;margin-top:8px;border-bottom:1px solid #E7E5E4;overflow-x:auto;scrollbar-width:none}
+.ts-var-tabs{display:flex;gap:2px;border-bottom:1px solid #E7E5E4;overflow-x:auto;scrollbar-width:none}
 .ts-var-note+.ts-var-tabs{margin-top:10px}
 .ts-var-tabs::-webkit-scrollbar{display:none}
 .ts-var-tab{appearance:none;background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-1px;padding:6px 10px;font-family:inherit;font-size:12px;font-weight:600;color:#A8A29E;white-space:nowrap;cursor:pointer;transition:color .15s,border-color .15s}
@@ -125,17 +124,13 @@ const ensureStyles = () => {
 
 export const renderVariationCard = <T = never>(dims: VarDim<T>[], opts: VariationCardOpts<T> = {}): HTMLElement => {
   ensureStyles();
-  const { title = 'Best by variation', animate = false, constants = [], summarize } = opts;
+  const { animate = false, constants = [], summarize } = opts;
 
   const box = document.createElement('div');
   box.className = 'ts-var' + (animate ? ' is-animated' : '');
 
   const head = document.createElement('div');
   head.className = 'ts-var-head';
-  const titleEl = document.createElement('span');
-  titleEl.className = 'ts-var-title';
-  titleEl.textContent = title;
-  head.appendChild(titleEl);
 
   // Held constant across every row: named once, above the tabs, so it stays true
   // whichever tab is open — and so the rows below carry only what differs.
