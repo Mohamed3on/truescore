@@ -111,7 +111,7 @@ async function backfillShared() {
   for (const [key, cached] of await idbEntries('lbx_film_v')) {
     const [, version, slug] = key.match(/^lbx_film_v(\d+)_(.+)$/) ?? [];
 
-    if (slug && Number(version) >= 5) shareFilm(slug, { h: cached?.ratings, ...scoreOf(cached) });
+    if (slug && Number(version) >= 5) shareFilm(slug, { h: cached?.ratings, tmdb: cached?.tmdb, ...scoreOf(cached) });
   }
 
   flushShared();
@@ -381,11 +381,12 @@ async function getFilmBasicData(slug: string) {
   const statsHtml = await statsResponse.text();
   const ratings = parseRatings(new DOMParser().parseFromString(statsHtml, 'text/html'));
   const parseEmpty = ratings.length === 0 && statsHtml.length > 500;
-  shareFilm(slug, { h: ratings, tmdb: tmdbOf(doc) });
+  const tmdb = tmdbOf(doc);
+  shareFilm(slug, { h: ratings, tmdb });
 
   debug(`${slug}: runtime=${runtime}, year=${year}, ratings=${ratings.join(',') || 'none'}`);
 
-  return { runtime, year, filmName, imdbLink, ratings, parseEmpty };
+  return { runtime, year, filmName, imdbLink, ratings, parseEmpty, tmdb };
 }
 
 // =============================================================================
@@ -751,7 +752,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
           const cached = await getCachedFilmData(slug);
 
           if (cached) {
-            shareFilm(slug, { h: cached.ratings, ...scoreOf(cached) });
+            shareFilm(slug, { h: cached.ratings, tmdb: cached.tmdb, ...scoreOf(cached) });
 
             return { slug, link, uid, ...cached, fromCache: true };
           }
@@ -770,7 +771,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     allBasicData.forEach((f: any) => {
       if (!f.fromCache && !f.fetchFailed && f.runtime) {
         // Carry what scoring needs, so a later runtime match scores from here — not from nothing.
-        setCachedFilmData(f.slug, { score: 0, ratio: 0, scored: false, runtime: f.runtime, year: f.year, filmName: f.filmName, ratings: f.ratings, imdbLink: f.imdbLink });
+        setCachedFilmData(f.slug, { score: 0, ratio: 0, scored: false, runtime: f.runtime, year: f.year, filmName: f.filmName, ratings: f.ratings, imdbLink: f.imdbLink, tmdb: f.tmdb });
       }
     });
 
@@ -802,8 +803,8 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
       if (!imdb) return { ...film, score: 0, ratio: 0, fetchFailed: true };
       const { score, ratio } = calculateCombinedScore(film.ratings, imdb.imdbScore, imdb.imdbTotal);
 
-      setCachedFilmData(film.slug, { score, ratio, scored: true, runtime: film.runtime, year: film.year, filmName: film.filmName, ratings: film.ratings });
-      shareFilm(film.slug, { score, ratio });
+      setCachedFilmData(film.slug, { score, ratio, scored: true, runtime: film.runtime, year: film.year, filmName: film.filmName, ratings: film.ratings, tmdb: film.tmdb });
+      shareFilm(film.slug, { score, ratio, tmdb: film.tmdb });
 
       return { ...film, score, ratio };
     });
@@ -1220,7 +1221,7 @@ async function run(histogram: Promise<number[]>) {
       // A failed IMDb fetch leaves a Letterboxd-only score: shown, but never cached,
       // so the next visit retries.
       if (imdb && currentSlug && currentRuntime) {
-        setCachedFilmData(currentSlug, { score, ratio, scored: true, runtime: currentRuntime, year: currentYear, filmName: currentFilmName });
+        setCachedFilmData(currentSlug, { score, ratio, scored: true, runtime: currentRuntime, year: currentYear, filmName: currentFilmName, tmdb: tmdbOf(document) });
       }
 
       return { score, ratio, imdbFailed: !imdb };
@@ -1229,7 +1230,7 @@ async function run(histogram: Promise<number[]>) {
 
   // A Letterboxd-only score is on another scale: not shared.
   scorePromise.then(({ score, ratio, imdbFailed }) => {
-    if (!imdbFailed && currentSlug) shareFilm(currentSlug, { score, ratio });
+    if (!imdbFailed && currentSlug) shareFilm(currentSlug, { score, ratio, tmdb: tmdbOf(document) });
   });
 
   const currentPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score, ratio: allTime, imdbFailed }, recentRatings]) => {
