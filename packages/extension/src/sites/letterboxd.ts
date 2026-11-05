@@ -730,8 +730,10 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 
           if (cached) {
             if (cached.ratings) shareHistogram(slug, cached.ratings);
+
             return { slug, link, uid, ...cached, fromCache: true };
           }
+
           const basic = await getFilmBasicData(slug);
 
           return { slug, link, uid, ...basic, fromCache: false };
