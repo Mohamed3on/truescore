@@ -196,8 +196,9 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
 // v3: v2 scores lost their sign (see netScore), so hated films read positive.
 // v4: v3 placeholders lacked ratings, so a later runtime match was scored — and cached — as 0.
 // v5: v4 cached a Letterboxd-only score whenever the IMDb fetch failed (see fetchImdbRatings).
-const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v5_${slug}`, CONFIG.CACHE_EXPIRY_MS);
-const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v5_${slug}`, data);
+// v6: keeps the rating histogram, so a cached film is still shared with the IPTV app.
+const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v6_${slug}`, CONFIG.CACHE_EXPIRY_MS);
+const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v6_${slug}`, data);
 
 // v3: v2 tallies counted the review pages' icon sprite as ratings (see tallyRatings).
 const getCachedRecentRatings = (slug: string): Promise<RecentTally | null> => idbGet(`lbx_recent_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
@@ -213,8 +214,9 @@ const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number
 // v4: candidate scores keep their sign. v5: drops candidates v4 scored as 0 from placeholders.
 // v6: candidates carry their uid for the watched re-check; v5's re-check read only list
 // page 1, so it dropped — and saved without — every candidate found on a later page.
-const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v6_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
-const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v6_${slug}`, data);
+// v7: recomputed once so its films' histograms reach the IPTV app (v6 picks were cached before sharing existed).
+const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v7_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
+const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v7_${slug}`, data);
 
 // Films the user has muted from Similar Picks, by slug (see shared/ignored-picks).
 const IGNORED_KEY = 'lbx_ignored';
@@ -726,7 +728,10 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
         try {
           const cached = await getCachedFilmData(slug);
 
-          if (cached) return { slug, link, uid, ...cached, fromCache: true };
+          if (cached) {
+            if (cached.ratings) shareHistogram(slug, cached.ratings);
+            return { slug, link, uid, ...cached, fromCache: true };
+          }
           const basic = await getFilmBasicData(slug);
 
           return { slug, link, uid, ...basic, fromCache: false };
@@ -773,7 +778,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
       if (!imdb) return { ...film, score: 0, ratio: 0, fetchFailed: true };
       const { score, ratio } = calculateCombinedScore(film.ratings, imdb.imdbScore, imdb.imdbTotal);
 
-      setCachedFilmData(film.slug, { score, ratio, scored: true, runtime: film.runtime, year: film.year, filmName: film.filmName });
+      setCachedFilmData(film.slug, { score, ratio, scored: true, runtime: film.runtime, year: film.year, filmName: film.filmName, ratings: film.ratings });
 
       return { ...film, score, ratio };
     });
