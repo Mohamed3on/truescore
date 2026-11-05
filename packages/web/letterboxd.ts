@@ -3,21 +3,24 @@ import { dirname } from 'node:path';
 import { z } from 'zod';
 import { DB_PATH } from './db';
 
-// Letterboxd rating histograms the extension parses on letterboxd.com, kept by slug
-// for the IPTV app on this box, which reads the file directly (no API hop): ten
-// half-star counts (½★ to 5★), the film's TMDB id (null once looked up and absent,
-// or not a movie) and when it was last sent. A JSON file, written whole and renamed
-// into place so a reader never sees half of one.
+// Letterboxd films the extension sees on letterboxd.com, kept by slug for the IPTV
+// app on this box, which reads the file directly (no API hop): ten half-star counts
+// (½★ to 5★) and the film's TrueScore (score, net-loved ratio), either possibly absent,
+// the film's TMDB id (null once looked up and absent, or not a movie) and when it was
+// last sent. A JSON file, written whole and renamed into place so a reader never sees
+// half of one.
 const PATH = process.env.TRUESCORE_LETTERBOXD_PATH || `${dirname(DB_PATH)}/letterboxd.json`;
 
-type Film = { h: number[]; tmdb?: number | null; at: number };
+type Film = { h?: number[]; score?: number; ratio?: number; tmdb?: number | null; at: number };
 
 const films: Record<string, Film> = await Bun.file(PATH).json().catch(() => ({}));
 
 export const LETTERBOXD_BATCH = z.object({
   films: z.array(z.object({
     slug: z.string().regex(/^[a-z0-9-]+$/).max(200),
-    h: z.array(z.number().int().nonnegative()).length(10),
+    h: z.array(z.number().int().nonnegative()).length(10).optional(),
+    score: z.number().finite().optional(),
+    ratio: z.number().min(-1).max(1).optional(),
     tmdb: z.number().int().positive().optional(),
   })).max(500),
 });
@@ -32,8 +35,8 @@ const save = () => {
     .finally(() => { saving = null; });
 };
 
-export function putHistograms(batch: z.infer<typeof LETTERBOXD_BATCH>['films'], at = Date.now()) {
-  for (const { slug, h, tmdb } of batch) films[slug] = { h, tmdb: tmdb ?? films[slug]?.tmdb, at };
+export function putFilms(batch: z.infer<typeof LETTERBOXD_BATCH>['films'], at = Date.now()) {
+  for (const { slug, ...film } of batch) films[slug] = { ...films[slug], ...film, tmdb: film.tmdb ?? films[slug]?.tmdb, at };
   save();
 }
 

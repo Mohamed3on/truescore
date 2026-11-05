@@ -1,5 +1,5 @@
 import { animates, netScore } from '@truescore/gmaps-shared';
-import { idbGet, idbSet } from '../shared/idb-cache';
+import { idbEntries, idbGet, idbSet } from '../shared/idb-cache';
 import { couldReach, rankPicks } from '../shared/better-picks';
 import { loadIgnored, saveIgnored } from '../shared/ignored-picks';
 import { adjust, ratioFromTally, TEN_POINT, THIN_SAMPLE, trendClass } from '../shared/recency';
@@ -74,9 +74,11 @@ function parseRatings(root: Document | Element): number[] {
 const tmdbOf = (doc: Document) =>
   doc.body?.dataset.tmdbType === 'movie' ? Number(doc.body.dataset.tmdbId) || undefined : undefined;
 
-// Every histogram parsed goes to the truescore server for the owner's IPTV app,
-// a few seconds' worth at a time, through the background (which holds the password).
-const shared = new Map<string, { slug: string; h: number[]; tmdb?: number }>();
+type SharedFilm = { h?: number[]; score?: number; ratio?: number; tmdb?: number };
+
+// Every histogram parsed and TrueScore had goes to the truescore server for the owner's
+// IPTV app, a few seconds' worth at a time, through the background (which holds the password).
+const shared = new Map<string, SharedFilm & { slug: string }>();
 let shareTimer: ReturnType<typeof setTimeout> | undefined;
 
 const flushShared = () => {
@@ -88,12 +90,32 @@ const flushShared = () => {
   for (let i = 0; i < films.length; i += 200) chrome.runtime.sendMessage({ type: 'lbxHistograms', films: films.slice(i, i + 200) }).catch(() => {});
 };
 
-function shareHistogram(slug: string, h: number[], tmdb?: number) {
-  if (h.length !== 10) return;
-  shared.set(slug, { slug, h, tmdb });
+function shareFilm(slug: string, { h, score, ratio, tmdb }: SharedFilm) {
+  const film = { ...shared.get(slug), slug, ...(h?.length === 10 && { h }), ...(score !== undefined && { score, ratio }), ...(tmdb && { tmdb }) };
+
+  if (!film.h && film.score === undefined) return;
+  shared.set(slug, film);
 
   if (shared.size >= 200) flushShared();
   else shareTimer ??= setTimeout(flushShared, 3000);
+}
+
+/** A cached film's TrueScore to share; none for an unscored placeholder. */
+const scoreOf = (cached: any) => (cached?.scored ? { score: cached.score, ratio: cached.ratio } : {});
+
+// Once per install: every film already in the cache (v5 on; older scores were on
+// another scale), so the IPTV app has the films seen before sharing scores began.
+async function backfillShared() {
+  if (await idbGet('lbx_shared_backfill_v1', Infinity)) return;
+
+  for (const [key, cached] of await idbEntries('lbx_film_v')) {
+    const [, version, slug] = key.match(/^lbx_film_v(\d+)_(.+)$/) ?? [];
+
+    if (slug && Number(version) >= 5) shareFilm(slug, { h: cached?.ratings, ...scoreOf(cached) });
+  }
+
+  flushShared();
+  idbSet('lbx_shared_backfill_v1', true);
 }
 
 /**
@@ -359,7 +381,7 @@ async function getFilmBasicData(slug: string) {
   const statsHtml = await statsResponse.text();
   const ratings = parseRatings(new DOMParser().parseFromString(statsHtml, 'text/html'));
   const parseEmpty = ratings.length === 0 && statsHtml.length > 500;
-  shareHistogram(slug, ratings, tmdbOf(doc));
+  shareFilm(slug, { h: ratings, tmdb: tmdbOf(doc) });
 
   debug(`${slug}: runtime=${runtime}, year=${year}, ratings=${ratings.join(',') || 'none'}`);
 
@@ -729,7 +751,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
           const cached = await getCachedFilmData(slug);
 
           if (cached) {
-            if (cached.ratings) shareHistogram(slug, cached.ratings);
+            shareFilm(slug, { h: cached.ratings, ...scoreOf(cached) });
 
             return { slug, link, uid, ...cached, fromCache: true };
           }
@@ -781,6 +803,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
       const { score, ratio } = calculateCombinedScore(film.ratings, imdb.imdbScore, imdb.imdbTotal);
 
       setCachedFilmData(film.slug, { score, ratio, scored: true, runtime: film.runtime, year: film.year, filmName: film.filmName, ratings: film.ratings });
+      shareFilm(film.slug, { score, ratio });
 
       return { ...film, score, ratio };
     });
@@ -1204,6 +1227,11 @@ async function run(histogram: Promise<number[]>) {
     });
   }
 
+  // A Letterboxd-only score is on another scale: not shared.
+  scorePromise.then(({ score, ratio, imdbFailed }) => {
+    if (!imdbFailed && currentSlug) shareFilm(currentSlug, { score, ratio });
+  });
+
   const currentPromise = Promise.all([scorePromise, recentRatingsRaw]).then(([{ score, ratio: allTime, imdbFailed }, recentRatings]) => {
     const ratio = recentRatings?.ratio ?? null;
     const adjusted = adjust(score, ratio);
@@ -1280,7 +1308,7 @@ function initObserver() {
       if (!ratings.length) return;
       observer?.disconnect();
 
-      if (pageSlug) shareHistogram(pageSlug, ratings, tmdbOf(document));
+      if (pageSlug) shareFilm(pageSlug, { h: ratings, tmdb: tmdbOf(document) });
       resolve(ratings);
     };
 
@@ -1298,3 +1326,5 @@ function initObserver() {
 }
 
 initObserver();
+
+void backfillShared();

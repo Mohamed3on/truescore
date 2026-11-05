@@ -100,3 +100,11 @@ export const idbEdit = async (prefix: string, edit: (data: any, key: string) => 
     await done(write);
   } catch {}
 };
+
+/** Every entry under a key prefix, as [key, data], whatever its age. */
+export const idbEntries = async (prefix: string): Promise<Array<[string, any]>> => {
+  const out: Array<[string, any]> = [];
+  await idbEdit(prefix, (data, key) => { out.push([key, data]); });
+
+  return out;
+};
