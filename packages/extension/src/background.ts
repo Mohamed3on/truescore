@@ -338,6 +338,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     return true;
   }
+
+  // Letterboxd histograms the page parsed, passed on for the IPTV app; nothing waits on it.
+  if (msg?.type === 'lbxHistograms') {
+    authHeaders()
+      .then((headers) => headers['x-truescore-key'] ? fetch(`${TRUESCORE_API_BASE}/api/letterboxd`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ films: msg.films }) }) : null)
+      .catch(() => {});
+  }
 });
 
 // Booking.com: notify content script on tab update

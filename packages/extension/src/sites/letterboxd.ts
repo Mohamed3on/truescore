@@ -70,6 +70,32 @@ function parseRatings(root: Document | Element): number[] {
   });
 }
 
+/** A film page's TMDB id, when it is a movie (a show's id would collide with a movie's) */
+const tmdbOf = (doc: Document) =>
+  doc.body?.dataset.tmdbType === 'movie' ? Number(doc.body.dataset.tmdbId) || undefined : undefined;
+
+// Every histogram parsed goes to the truescore server for the owner's IPTV app,
+// a few seconds' worth at a time, through the background (which holds the password).
+const shared = new Map<string, { slug: string; h: number[]; tmdb?: number }>();
+let shareTimer: ReturnType<typeof setTimeout> | undefined;
+
+const flushShared = () => {
+  clearTimeout(shareTimer);
+  shareTimer = undefined;
+  const films = [...shared.values()];
+  shared.clear();
+
+  for (let i = 0; i < films.length; i += 200) chrome.runtime.sendMessage({ type: 'lbxHistograms', films: films.slice(i, i + 200) }).catch(() => {});
+};
+
+function shareHistogram(slug: string, h: number[], tmdb?: number) {
+  if (h.length !== 10) return;
+  shared.set(slug, { slug, h, tmdb });
+
+  if (shared.size >= 200) flushShared();
+  else shareTimer ??= setTimeout(flushShared, 3000);
+}
+
 /**
  * A running tally of recent ratings on Letterboxd's 10-point half-star scale.
  * `ratio` is the shared −1..1 unit from shared/recency; null means we have no
@@ -331,6 +357,7 @@ async function getFilmBasicData(slug: string) {
   const statsHtml = await statsResponse.text();
   const ratings = parseRatings(new DOMParser().parseFromString(statsHtml, 'text/html'));
   const parseEmpty = ratings.length === 0 && statsHtml.length > 500;
+  shareHistogram(slug, ratings, tmdbOf(doc));
 
   debug(`${slug}: runtime=${runtime}, year=${year}, ratings=${ratings.join(',') || 'none'}`);
 
@@ -1245,6 +1272,8 @@ function initObserver() {
 
       if (!ratings.length) return;
       observer?.disconnect();
+
+      if (pageSlug) shareHistogram(pageSlug, ratings, tmdbOf(document));
       resolve(ratings);
     };
 
