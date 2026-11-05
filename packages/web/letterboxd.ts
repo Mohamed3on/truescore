@@ -5,13 +5,14 @@ import { DB_PATH } from './db';
 
 // Letterboxd films the extension sees on letterboxd.com, kept by slug for the IPTV
 // app on this box, which reads the file directly (no API hop): ten half-star counts
-// (½★ to 5★) and the film's TrueScore (score, net-loved ratio), either possibly absent,
+// (½★ to 5★) and the film's TrueScore (score, net-loved ratio; adjusted, that score on
+// its newest recentTotal reviews), any possibly absent,
 // the film's TMDB id (null once looked up and absent, or not a movie) and when it was
 // last sent. A JSON file, written whole and renamed into place so a reader never sees
 // half of one.
 const PATH = process.env.TRUESCORE_LETTERBOXD_PATH || `${dirname(DB_PATH)}/letterboxd.json`;
 
-type Film = { h?: number[]; score?: number; ratio?: number; tmdb?: number | null; at: number };
+type Film = { h?: number[]; score?: number; ratio?: number; adjusted?: number; recentTotal?: number; tmdb?: number | null; at: number };
 
 const films: Record<string, Film> = await Bun.file(PATH).json().catch(() => ({}));
 
@@ -21,6 +22,8 @@ export const LETTERBOXD_BATCH = z.object({
     h: z.array(z.number().int().nonnegative()).length(10).optional(),
     score: z.number().finite().optional(),
     ratio: z.number().min(-1).max(1).optional(),
+    adjusted: z.number().finite().optional(),
+    recentTotal: z.number().int().nonnegative().optional(),
     tmdb: z.number().int().positive().optional(),
   })).max(500),
 });

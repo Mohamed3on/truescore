@@ -74,7 +74,8 @@ function parseRatings(root: Document | Element): number[] {
 const tmdbOf = (doc: Document) =>
   doc.body?.dataset.tmdbType === 'movie' ? Number(doc.body.dataset.tmdbId) || undefined : undefined;
 
-type SharedFilm = { h?: number[]; score?: number; ratio?: number; tmdb?: number };
+// adjusted: the score on the newest reviews (shared/recency's adjust), over recentTotal of them.
+type SharedFilm = { h?: number[]; score?: number; ratio?: number; adjusted?: number; recentTotal?: number; tmdb?: number };
 
 // Every histogram parsed and TrueScore had goes to the truescore server for the owner's
 // IPTV app, a few seconds' worth at a time, through the background (which holds the password).
@@ -90,32 +91,39 @@ const flushShared = () => {
   for (let i = 0; i < films.length; i += 200) chrome.runtime.sendMessage({ type: 'lbxHistograms', films: films.slice(i, i + 200) }).catch(() => {});
 };
 
-function shareFilm(slug: string, { h, score, ratio, tmdb }: SharedFilm) {
-  const film = { ...shared.get(slug), slug, ...(h?.length === 10 && { h }), ...(score !== undefined && { score, ratio }), ...(tmdb && { tmdb }) };
+function shareFilm(slug: string, { h, score, ratio, adjusted, recentTotal, tmdb }: SharedFilm) {
+  const film = { ...shared.get(slug), slug, ...(h?.length === 10 && { h }), ...(score !== undefined && { score, ratio }), ...(adjusted !== undefined && { adjusted, recentTotal }), ...(tmdb && { tmdb }) };
 
-  if (!film.h && film.score === undefined) return;
+  if (!film.h && film.score === undefined && film.adjusted === undefined) return;
   shared.set(slug, film);
 
   if (shared.size >= 200) flushShared();
   else shareTimer ??= setTimeout(flushShared, 3000);
 }
 
-/** A cached film's TrueScore to share; none for an unscored placeholder. */
-const scoreOf = (cached: any) => (cached?.scored ? { score: cached.score, ratio: cached.ratio } : {});
+/** A cached film's TrueScore to share, adjusted by its cached recent tally if any; none for an unscored placeholder. */
+const scoreOf = (cached: any, recent?: RecentTally) => (cached?.scored
+  ? { score: cached.score, ratio: cached.ratio, ...(recent && { adjusted: adjust(cached.score, recent.ratio!), recentTotal: recent.total }) }
+  : {});
 
 // Once per install: every film already in the cache (v5 on; older scores were on
 // another scale), so the IPTV app has the films seen before sharing scores began.
 async function backfillShared() {
-  if (await idbGet('lbx_shared_backfill_v1', Infinity)) return;
+  if (await idbGet('lbx_shared_backfill_v2', Infinity)) return;
+  const recent = new Map<string, RecentTally>(); // a full tally over a partial one
+
+  for (const prefix of ['lbx_recent_part_v3_', 'lbx_recent_v3_']) {
+    for (const [key, tally] of await idbEntries(prefix)) if (tally?.ratio != null) recent.set(key.slice(prefix.length), tally);
+  }
 
   for (const [key, cached] of await idbEntries('lbx_film_v')) {
     const [, version, slug] = key.match(/^lbx_film_v(\d+)_(.+)$/) ?? [];
 
-    if (slug && Number(version) >= 5) shareFilm(slug, { h: cached?.ratings, tmdb: cached?.tmdb, ...scoreOf(cached) });
+    if (slug && Number(version) >= 5) shareFilm(slug, { h: cached?.ratings, tmdb: cached?.tmdb, ...scoreOf(cached, recent.get(slug)) });
   }
 
   flushShared();
-  idbSet('lbx_shared_backfill_v1', true);
+  idbSet('lbx_shared_backfill_v2', true);
 }
 
 /**
@@ -1114,6 +1122,8 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     // it never crosses the threshold, so this can't disagree with the verdict.
     const observed = recent?.tally.ratio ?? null;
     entry.adjusted = observed == null ? pick.adjusted : adjust(film.score, observed);
+
+    if (observed != null) shareFilm(film.slug, { adjusted: entry.adjusted!, recentTotal: recent!.tally.total });
     entry.passes = pick.passes;
     entry.settled = true;
     entry.meta.textContent = filmMeta(film, entry.adjusted == null || pick.unresolved ? '?' : addCommas(entry.adjusted));
@@ -1244,6 +1254,8 @@ async function run(histogram: Promise<number[]>) {
 
       if (recentRatings!.total < THIN_SAMPLE) loved.append(` (${recentRatings!.total} reviews)`);
     }
+
+    if (!imdbFailed && currentSlug && adjusted != null) shareFilm(currentSlug, { adjusted, recentTotal: recentRatings!.total });
 
     // Nor is a Letterboxd-only score a reference for picks scored with IMDb votes.
     return imdbFailed ? { score, ratio: null, adjusted: null } : { score, ratio, adjusted };
