@@ -265,6 +265,17 @@
       "run_at": "document_end"
     },
     {
+      "matches": ["*://*.tatamifightwear.com/products/*", "*://*.tatamifightwear.com/*/products/*"],
+      "js": ["sites/tatami-pdp.js"],
+      "css": ["sites/amazon-product.css"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": ["*://*.tatamifightwear.com/*"],
+      "js": ["sites/tatami-plp.js"],
+      "run_at": "document_end"
+    },
+    {
       "matches": ["*://wearthepeace.com/products/*", "*://wearthepeace.com/*/products/*"],
       "js": ["sites/helpfulcrowd-pdp.js"],
       "css": ["sites/amazon-product.css"],

@@ -50,6 +50,8 @@ await esbuild.build({
     'src/sites/bjjfanatics-pdp.ts',
     'src/sites/progress-pdp.ts',
     'src/sites/progress-plp.ts',
+    'src/sites/tatami-pdp.ts',
+    'src/sites/tatami-plp.ts',
     'src/sites/bjjfanatics-plp.ts',
     'src/sites/helpfulcrowd-pdp.ts',
     'src/sites/helpfulcrowd-plp.ts',

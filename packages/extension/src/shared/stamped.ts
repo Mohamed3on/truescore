@@ -9,6 +9,9 @@ export interface StampedStore {
   apiKey: string;
   storeUrl: string;
   cacheKey: (productId: string) => string;
+  // Pools each product's reviews with its family's (Stamped product groups),
+  // which only the widget's HTML endpoint and title-keyed badges see.
+  grouped?: boolean;
 }
 
 export const BJJ_FANATICS: StampedStore = {
@@ -24,10 +27,32 @@ export const PROGRESS: StampedStore = {
   cacheKey: (id) => `progress-reviews-v1-${id}`,
 };
 
+// Tatami Fightwear: one Stamped account behind four Shopify stores, each with
+// its own store id. A gi's reviews pool across its colours, cuts and stores.
+const TATAMI_STORES = new Map([
+  ['www.tatamifightwear.com', '242633'],
+  ['eu.tatamifightwear.com', '242634'],
+  ['au.tatamifightwear.com', '242635'],
+  ['us.tatamifightwear.com', '242636'],
+]);
+
+export const tatamiStore = (host: string): StampedStore | null => {
+  const storeUrl = TATAMI_STORES.get(host);
+
+  return storeUrl ? {
+    apiKey: 'pubkey-CJIODi0J59Xd2u8KG596pEf5Ra93No',
+    storeUrl,
+    cacheKey: (id) => `tatami-reviews-v1-${id}`,
+    grouped: true,
+  } : null;
+};
+
 export interface ProductInfo {
   id: string;
   sku: string;
   name: string;
+  // The review count the page shows, when it shows one: how many pages to ask for at once.
+  count?: number;
 }
 
 export interface StampedReview {
@@ -40,7 +65,8 @@ export interface StampedReview {
   productVariantName?: string | null;
 }
 
-export interface ReviewBundle { total: number; reviews: StampedReview[] }
+// `stars`: the exact 1★…5★ counts, which a grouped store's widget reports.
+export interface ReviewBundle { total: number; reviews: StampedReview[]; stars?: number[] }
 
 const REVIEWS_CACHE_MS = 14 * 24 * 60 * 60 * 1000;
 const PAGE_SIZE = 100;
@@ -66,7 +92,41 @@ const stampedUrl = (store: StampedStore, page: number, info: ProductInfo) =>
   `&apiKey=${store.apiKey}&storeUrl=${store.storeUrl}` +
   `&take=${PAGE_SIZE}&page=${page}&sort=recent&minRating=1`;
 
-const fetchPage = async (store: StampedStore, page: number, info: ProductInfo) => {
+const widgetUrl = (store: StampedStore, page: number, info: ProductInfo, take: number) =>
+  `https://stamped.io/api/widget?productId=${encodeURIComponent(info.id)}` +
+  `&productSKU=${encodeURIComponent(info.sku)}` +
+  `&productName=${encodeURIComponent(info.name)}` +
+  `&apiKey=${store.apiKey}&storeUrl=${store.storeUrl}` +
+  `&take=${take}&page=${page}&sort=recent`;
+
+const textOf = (root: Element, selector: string) => root.querySelector(selector)?.textContent?.trim() || undefined;
+
+// The widget answers as HTML: the product's star histogram and a page of
+// reviews, where a review without stars (rating 0) is one Stamped doesn't count.
+const fetchWidgetPage = async (store: StampedStore, page: number, info: ProductInfo, take = PAGE_SIZE) => {
+  const res = await fetch(widgetUrl(store, page, info, take));
+
+  if (!res.ok) return null;
+  // SAFETY: Stamped's widget API answers with the pooled count and the
+  // summary and review list as HTML, each of which may be missing.
+  const { count, product = '', widget = '' } = await res.json() as { count?: number; product?: string; widget?: string };
+  const doc = new DOMParser().parseFromString(product + widget, 'text/html');
+  const stars = [1, 2, 3, 4, 5].map((r) => Number(doc.querySelector(`.summary-rating-bar[data-rating="${r}"]`)?.closest('.summary-rating')?.getAttribute('data-count') ?? 0));
+
+  const data = [...doc.querySelectorAll<HTMLElement>('.stamped-review[data-rating]:not([data-rating="0"])')].map((r): StampedReview => ({
+    id: Number(r.id.replace('stamped-review-', '')) || undefined,
+    reviewRating: Number(r.dataset.rating),
+    reviewTitle: textOf(r, '.stamped-review-header-title'),
+    reviewMessage: textOf(r, '.stamped-review-content-body'),
+    productName: textOf(r, '.stamped-review-product'),
+    productVariantName: textOf(r, '.stamped-review-variant'),
+  }));
+
+  return { total: Number(count) || 0, data, stars: stars.some(Boolean) ? stars : undefined };
+};
+
+const fetchPage = async (store: StampedStore, page: number, info: ProductInfo): Promise<{ total?: number; data?: StampedReview[]; stars?: number[] } | null> => {
+  if (store.grouped) return fetchWidgetPage(store, page, info);
   const res = await fetch(stampedUrl(store, page, info));
 
   if (!res.ok) return null;
@@ -111,7 +171,7 @@ const fetchAllReviews = async (store: StampedStore, info: ProductInfo): Promise<
   // With a cache, page 1 goes alone — it gives the current `total` plus the
   // newest reviews, so we can detect new ones and incrementally refresh. Cold,
   // the pages the page's own review count calls for go out with it.
-  const upfront = cached ? 1 : Math.min(MAX_PAGES, Math.max(1, Math.ceil(pageReviewCount() / PAGE_SIZE)));
+  const upfront = cached ? 1 : Math.min(MAX_PAGES, Math.max(1, Math.ceil((info.count ?? pageReviewCount()) / PAGE_SIZE)));
   const early = Array.from({ length: upfront }, (_, i) => fetchPage(store, i + 1, info).catch(() => null));
   const first = await early[0];
 
@@ -122,6 +182,7 @@ const fetchAllReviews = async (store: StampedStore, info: ProductInfo): Promise<
 
   const total = first.total ?? 0;
   const firstData = first.data || [];
+  const { stars } = first;
 
   if (cached && cached.total === total && cached.reviews.length) return cached;
 
@@ -131,7 +192,7 @@ const fetchAllReviews = async (store: StampedStore, info: ProductInfo): Promise<
   if (cached && total > cached.total && total - cached.total <= PAGE_SIZE) {
     merged.push(...cached.reviews);
     const deduped = dedupeById(merged);
-    const bundle = { total, reviews: deduped };
+    const bundle = { total, reviews: deduped, stars };
     cacheSet(cacheKey, bundle);
 
     return bundle;
@@ -153,7 +214,7 @@ const fetchAllReviews = async (store: StampedStore, info: ProductInfo): Promise<
   }
 
   const deduped = dedupeById(merged);
-  const bundle = { total, reviews: deduped };
+  const bundle = { total, reviews: deduped, stars };
 
   // A sample with a failed page is shown but never cached, so the next visit
   // refetches it whole — a cached hole was served (and merged into) for good.
@@ -185,11 +246,18 @@ export const loadReviews = async (
   if (moved(fresh)) render(fresh!, true);
 };
 
-// The 5★/1★ tallies cover only the fetched sample (≤ MAX_PAGES pages, minus any
+// A grouped store's widget gives exact star counts. Otherwise the 5★/1★ tallies cover only the fetched sample (≤ MAX_PAGES pages, minus any
 // that failed), so they're shares of the sample scaled to Stamped's full count —
 // never sample counts over `total`, which read 1,000 of 2,500 5★ reviews as 40%.
-export const computeScore = ({ total, reviews }: ReviewBundle) => {
+export const computeScore = ({ total, reviews, stars }: ReviewBundle) => {
   if (!reviews.length) return null;
+
+  if (stars) {
+    const n = stars.reduce((a, b) => a + b, 0);
+
+    return { ...npsStats(stars[4], stars[0], n), total: n };
+  }
+
   let five = 0, one = 0;
 
   for (const r of reviews) {
@@ -272,10 +340,27 @@ const fetchBadges = async (store: StampedStore, ids: string[]): Promise<Badge[]>
   return res.json();
 };
 
+// A grouped store's badges pool a family only when asked by title, and its
+// members' pooled counts drift apart by a review or two, so no census lines up
+// with them. Each card asks the widget for its exact histogram instead: one
+// small request, all of a page's at once, kept for a day.
+const groupedCardScore = (store: StampedStore) => async (id: string, title?: string) => {
+  const key = `${store.cacheKey(id)}-stars`;
+  // SAFETY: groupedCardScore alone writes these keys, each with a star histogram.
+  const stars = (cacheGet(key, CENSUS_MS) as number[] | null) ?? (await fetchWidgetPage(store, 1, { id, sku: '', name: title ?? '' }, 1))?.stars;
+
+  if (!stars) return null;
+  cacheSet(key, stars);
+  const n = stars.reduce((a, b) => a + b, 0);
+
+  return { ...npsStats(stars[4], stars[0], n), total: n };
+};
+
 // List cards' scores without a request per card: the badges give each product's
 // count and exact average, the census its 1★–3★ counts, and the rest are 4★ or
 // 5★ — so the 5★ count is whatever their stars add up to beyond 4 each.
 export const cardScores = (store: StampedStore) => {
+  if (store.grouped) return groupedCardScore(store);
   let census: Promise<Census> | undefined;
 
   const loadCensus = () => (census ??= (async () => {
@@ -320,7 +405,7 @@ export const cardScores = (store: StampedStore) => {
     });
   };
 
-  return async (id: string) => {
+  return async (id: string, _title?: string) => {
     const [badge, tally] = await Promise.all([badgeOf(id), loadCensus()]);
 
     if (!badge?.count) return null;
