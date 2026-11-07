@@ -1,7 +1,7 @@
 // Logs on Letterboxd the films Sofa (the owner's TV app) was asked to log. Letterboxd has no API for personal
 // projects and Cloudflare lets only a real browser write to it, so a mark or a film finished on the TV waits on the box
-// until a Letterboxd page is open here. Each goes in as the site's own diary entry (its log form's request), on the day
-// it was watched and with its rating, and the box is told which went in. The queue names the Letterboxd account it is
+// until a Letterboxd page is open here. Each goes in as a diary entry through the site's own API, on the day it was
+// watched and with its rating, and the box is told which went in. The queue names the Letterboxd account it is
 // for: anyone else signed in here (the TrueScore password is shared) logs nothing and takes nothing off it. With
 // nothing waiting (anyone without the owner's server), nothing happens.
 
@@ -18,23 +18,31 @@ const day = (at: number) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-/** Logs [l] as a diary entry; true once Letterboxd took it. */
+/** The film's Letterboxd id ("ipoi"), from its page: letterboxd.com/tmdb/<id>/ redirects there. */
+async function filmId(tmdb: number): Promise<string | undefined> {
+  const page = await fetch(`/tmdb/${tmdb}/`, { credentials: 'include' });
+
+  return page.ok ? (await page.text()).replace(/&quot;/g, '"').match(/"lid":"(\w+)","uid":"film:/)?.[1] : undefined;
+}
+
+/**
+ * Logs [l] as a diary entry through the API Letterboxd's own pages call (/api/v0, signed in by the session, the page's
+ * token in X-CSRF-TOKEN); the rating in stars. True once Letterboxd answered with the entry. A Cloudflare check
+ * (which the site's pages would show) fails it, and the next page tries again.
+ */
 async function log(l: Log, token: string): Promise<boolean> {
-  // letterboxd.com/tmdb/<id>/ redirects to the film's page, which names its Letterboxd id.
-  const page = await fetch(`/tmdb/${l.tmdb}/`, { credentials: 'include' });
-  const film = page.ok ? (await page.text()).match(/data-production-uid="(film:\d+)"/)?.[1] : undefined;
+  const productionId = await filmId(l.tmdb);
 
-  if (!film) return false;
+  if (!productionId) return false;
 
-  const body = new URLSearchParams({
-    __csrf: token, viewingableUid: film, specifiedDate: 'true', viewingDateStr: day(l.at), rating: String(l.rating ?? 0), review: '', tags: '',
+  const r = await fetch('/api/v0/production-log-entries', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8', Accept: 'application/json', 'X-CSRF-TOKEN': token },
+    body: JSON.stringify({ productionId, diaryDetails: { diaryDate: day(l.at), rewatch: false }, tags: [], like: false, ...(l.rating && { rating: l.rating / 2 }) }),
   });
 
-  const r = await fetch('/s/save-diary-entry', { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body });
-  // The form's answer is JSON; Cloudflare's check or a signed-out page is HTML, and a refusal says result: false.
-  const answer = r.ok && r.headers.get('content-type')?.includes('json') ? await r.json().catch(() => null) : null;
-
-  return !!answer && answer.result !== false;
+  return r.ok && !!(await r.json().catch(() => null))?.logEntry;
 }
 
 // One tab at a time logs (a lock every Letterboxd tab shares), so two pages opening together never log a film twice.
