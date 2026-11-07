@@ -18,11 +18,16 @@ const day = (at: number) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-/** The film's Letterboxd id ("ipoi"), from its page: letterboxd.com/tmdb/<id>/ redirects there. */
+/** The film's Letterboxd id ("ipoi"), from its page's own production:identifier tag: letterboxd.com/tmdb/<id>/ redirects there. */
 async function filmId(tmdb: number): Promise<string | undefined> {
   const page = await fetch(`/tmdb/${tmdb}/`, { credentials: 'include' });
 
-  return page.ok ? (await page.text()).replace(/&quot;/g, '"').match(/"lid":"(\w+)","uid":"film:/)?.[1] : undefined;
+  if (!page.ok) return undefined;
+
+  const tag = new DOMParser().parseFromString(await page.text(), 'text/html').head.querySelector('meta[name="production:identifier"]');
+
+  // Its content is the film's ids as JSON, the Letterboxd id first: {"lid":"ipoi","uid":"film:438751",…}.
+  return tag?.getAttribute('content')?.match(/^\{"lid":"(\w+)","uid":"film:\d+"/)?.[1];
 }
 
 /**
