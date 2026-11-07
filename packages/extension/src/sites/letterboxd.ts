@@ -101,6 +101,10 @@ function shareFilm(slug: string, { h, score, ratio, adjusted, recentTotal, tmdb 
   else shareTimer ??= setTimeout(flushShared, 3000);
 }
 
+/** A list the picks were read from (its films in the order read), for the IPTV app's list rows. */
+const shareList = (link: string, name: string, slugs: string[]) =>
+  chrome.runtime.sendMessage({ type: 'lbxList', list: { link, name, slugs: slugs.slice(0, 500) } }).catch(() => {});
+
 /** A cached film's TrueScore to share, adjusted by its cached recent tally if any; none for an unscored placeholder. */
 const scoreOf = (cached: any, recent?: RecentTally) => (cached?.scored
   ? { score: cached.score, ratio: cached.ratio, ...(recent && { adjusted: adjust(cached.score, recent.ratio!), recentTotal: recent.total }) }
@@ -746,6 +750,8 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 
       if (foundCurrentFilm) break;
     }
+
+    shareList(listLink, listName, [...listed.map((f) => f.slug), ...(foundCurrentFilm ? [currentSlug] : [])]);
 
     const allFilmSlugs = await unseen(listed);
 

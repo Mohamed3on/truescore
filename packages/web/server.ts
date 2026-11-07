@@ -53,7 +53,7 @@ import { fetchPreviewBundle, histogramTotal, overallPctFromHistogram, type Previ
 import { harvestTokens, harvestQuick, scoreHighlight, type Harvest } from './highlights';
 import { answerKey, cache, type CachedAnswer, type CacheEntry } from './cache';
 import { logEvent } from './events';
-import { LETTERBOXD_BATCH, putFilms } from './letterboxd';
+import { LETTERBOXD_BATCH, putFilms, putList } from './letterboxd';
 import { createInflight } from './inflight';
 import index from './index.html';
 import login from './login.html';
@@ -754,13 +754,16 @@ Bun.serve({
       },
       OPTIONS: corsOptions,
     },
-    // Letterboxd histograms and TrueScores the extension saw, for the IPTV app's ordering (see letterboxd.ts).
+    // Letterboxd histograms and TrueScores the extension saw, and the lists its picks came from, for the IPTV app's rows (see letterboxd.ts).
     '/api/letterboxd': {
       POST: async (req) => {
         const batch = LETTERBOXD_BATCH.safeParse(await req.json().catch(() => null));
 
         if (!batch.success) return corsJson({ error: 'bad batch' }, 400);
-        putFilms(batch.data.films);
+
+        if (batch.data.films.length) putFilms(batch.data.films);
+
+        if (batch.data.list) putList(batch.data.list);
 
         return corsJson({ ok: true, n: batch.data.films.length });
       },

@@ -339,10 +339,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
-  // Letterboxd histograms and TrueScores the page had, passed on for the IPTV app; nothing waits on it.
-  if (msg?.type === 'lbxHistograms') {
+  // Letterboxd histograms and TrueScores the page had, and the lists its picks came from, passed on for the IPTV app; nothing waits on it.
+  if (msg?.type === 'lbxHistograms' || msg?.type === 'lbxList') {
+    const body = msg.type === 'lbxList' ? { films: [], list: msg.list } : { films: msg.films };
+
     authHeaders()
-      .then((headers) => headers['x-truescore-key'] ? fetch(`${TRUESCORE_API_BASE}/api/letterboxd`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ films: msg.films }) }) : null)
+      .then((headers) => headers['x-truescore-key'] ? fetch(`${TRUESCORE_API_BASE}/api/letterboxd`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) }) : null)
       .catch(() => {});
   }
 });

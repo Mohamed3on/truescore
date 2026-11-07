@@ -26,21 +26,47 @@ export const LETTERBOXD_BATCH = z.object({
     recentTotal: z.number().int().nonnegative().optional(),
     tmdb: z.number().int().positive().optional(),
   })).max(500),
+  list: z.object({
+    link: z.string().regex(/^\/[\w-]+\/list\/[\w-]+\/$/).max(300),
+    name: z.string().min(1).max(300),
+    slugs: z.array(z.string().regex(/^[a-z0-9-]+$/).max(200)).max(500),
+  }).optional(),
 });
 
-let saving: Promise<void> | null = null;
+// The Letterboxd lists the extension's picks were read from, by link ("/user/list/name/"):
+// its name, its films' slugs in the order read (the top of the list down to the film the
+// picks were for) and when it was last sent. The IPTV app makes rows of the newest; kept
+// beside the films the same way.
+const LISTS_PATH = `${dirname(PATH)}/letterboxd-lists.json`;
 
-const save = () => {
-  saving ??= Bun.sleep(5000)
-    .then(() => Bun.write(`${PATH}.tmp`, JSON.stringify(films)))
-    .then(() => rename(`${PATH}.tmp`, PATH))
-    .catch((e) => console.error('[letterboxd] save', e))
-    .finally(() => { saving = null; });
+type List = { name: string; slugs: string[]; at: number };
+
+const lists: Record<string, List> = await Bun.file(LISTS_PATH).json().catch(() => ({}));
+
+/** Writes [data] to [path] 5 s after the first change, whole and renamed into place. */
+const saver = (path: string, data: Record<string, Film | List>) => {
+  let saving: Promise<void> | null = null;
+
+  return () => {
+    saving ??= Bun.sleep(5000)
+      .then(() => Bun.write(`${path}.tmp`, JSON.stringify(data)))
+      .then(() => rename(`${path}.tmp`, path))
+      .catch((e) => console.error('[letterboxd] save', e))
+      .finally(() => { saving = null; });
+  };
 };
+
+const save = saver(PATH, films);
+const saveLists = saver(LISTS_PATH, lists);
 
 export function putFilms(batch: z.infer<typeof LETTERBOXD_BATCH>['films'], at = Date.now()) {
   for (const { slug, ...film } of batch) films[slug] = { ...films[slug], ...film, tmdb: film.tmdb ?? films[slug]?.tmdb, at };
   save();
+}
+
+export function putList({ link, name, slugs }: NonNullable<z.infer<typeof LETTERBOXD_BATCH>['list']>, at = Date.now()) {
+  lists[link] = { name, slugs, at };
+  saveLists();
 }
 
 // Films sent without a TMDB id get it from their Letterboxd page, one every few
