@@ -68,7 +68,7 @@ let stop: (() => void) | null = null;
 let tallyQuestion = '';
 
 // The questions the comments answer, for the thread under `suggestedFor`:
-// asked the first time its question box is opened, and kept while a picked one
+// asked when Suggest is pressed, and kept while a picked one
 // re-tallies, so the others stay on offer.
 let suggestedFor = '';
 let suggested: string[] = [];
@@ -240,7 +240,7 @@ const DRAWER_CSS = `:host { all: initial !important; }
 }
 .ts-tally-view { display: inline-flex; justify-self: end; border: 1px solid var(--ts-line); border-radius: 6px; overflow: hidden; }
 .ts-tally-view[hidden] { display: none; }
-.ts-tq { grid-row: 2; grid-column: 1 / -1; display: flex; }
+.ts-tq { grid-row: 2; grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 6px; }
 .ts-tally-level { grid-row: 3; grid-column: 2; }
 .ts-tally button { font: inherit; color: inherit; }
 .ts-tally-seg,
@@ -250,6 +250,8 @@ const DRAWER_CSS = `:host { all: initial !important; }
 .ts-tally-receipt,
 .ts-tally-retry,
 .ts-cite,
+.ts-sug-q,
+.ts-suggest,
 .ts-ask-send {
   all: unset;
   box-sizing: border-box;
@@ -285,6 +287,8 @@ const DRAWER_CSS = `:host { all: initial !important; }
 .ts-tally-receipt:focus-visible,
 .ts-tally-retry:focus-visible,
 .ts-cite:focus-visible,
+.ts-sug-q:focus-visible,
+.ts-suggest:focus-visible,
 .ts-ask-send:focus-visible { outline: 2px solid var(--ts-accent); outline-offset: -2px; }
 .ts-tally-name { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
 .ts-tally-opt[aria-expanded='true'] .ts-tally-name { color: var(--ts-accent); }
@@ -325,7 +329,7 @@ const DRAWER_CSS = `:host { all: initial !important; }
 .ts-chat-a strong { color: var(--ts-ink); }
 .ts-chat-reading { color: var(--ts-ink-3); font-style: italic; animation: ts-pulse 1.4s ease-in-out infinite; }
 @keyframes ts-pulse { 50% { opacity: 0.45; } }
-@media (prefers-reduced-motion: reduce) { .ts-chat-reading { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .ts-chat-reading, .ts-ghost { animation: none; } }
 .ts-chat-error { color: #b91c1c; }
 .ts-cite {
   display: inline;
@@ -368,6 +372,21 @@ const DRAWER_CSS = `:host { all: initial !important; }
 .ts-ask-send { padding: 6px 10px; border-radius: 6px; font-weight: 700; color: var(--ts-accent); }
 .ts-ask-send:hover:not(:disabled) { background: var(--ts-hover); }
 .ts-ask-send:disabled { cursor: default; color: var(--ts-ink-3); }
+.ts-sug { flex-basis: 100%; display: grid; gap: 4px; }
+.ts-sug:empty { display: none; }
+.ts-sug-by { color: var(--ts-ink-3); font-size: 11px; }
+.ts-sug-by b { color: var(--ts-ink-2); }
+.ts-sug-q { padding: 5px 9px; border: 1px solid var(--ts-line); border-radius: 6px; overflow-wrap: anywhere; }
+.ts-sug-q:hover,
+.ts-sug-q[aria-pressed='true'] { background: var(--ts-hover); border-color: var(--ts-accent); }
+.ts-sug-q[aria-pressed='true'] { color: var(--ts-accent); font-weight: 700; }
+.ts-ghost { height: 26px; border-radius: 6px; background: var(--ts-hover); animation: ts-pulse 1.4s ease-in-out infinite; }
+.ts-ghost:nth-child(3) { width: 80%; }
+.ts-ghost:nth-child(4) { width: 62%; }
+.ts-suggest { padding: 6px 9px; border-radius: 6px; font-weight: 700; color: var(--ts-accent); white-space: nowrap; }
+.ts-suggest[hidden] { display: none; }
+.ts-suggest:hover:not(:disabled) { background: var(--ts-hover); }
+.ts-suggest:disabled { cursor: default; color: var(--ts-ink-3); font-weight: 400; }
 `;
 
 const host = el('div', 'ts-tally-host');
@@ -430,9 +449,9 @@ askButton.type = 'submit';
 askForm.append(askInput, askButton);
 
 // The question the Tally counts answers to: the post's (its title, shown as
-// the placeholder) until the user asks their own. Offered under it: the
-// questions the comments answer, the post's, then the user's recent ones;
-// picking one tallies it.
+// the placeholder) until the user asks their own. Offered in it: the post's,
+// then the user's recent ones; under it, once Suggest is pressed, Sonnet's
+// questions the comments answer. Picking one tallies it.
 const questionForm = el('form', 'ts-tq');
 const questionInput = document.createElement('input');
 
@@ -446,11 +465,41 @@ const recentQuestions = el('datalist');
 
 recentQuestions.id = 'ts-tq-recent';
 
-questionForm.append(questionInput, recentQuestions);
+const suggestButton = button('ts-suggest', '✦ Suggest');
+
+suggestButton.title = 'Sonnet suggests questions the top comments answer';
+
+const suggestions = el('div', 'ts-sug');
+
+suggestions.setAttribute('aria-live', 'polite');
+
+questionForm.append(questionInput, recentQuestions, suggestButton, suggestions);
 
 const offerQuestions = () => {
-  const offered = suggestedFor === questionsKey() ? suggested : [];
-  recentQuestions.replaceChildren(...[...new Set([...offered, thread?.title.trim() ?? '', ...loadQAs(questionsKey()).map((e) => e.q)])].flatMap((q) => {
+  const key = questionsKey();
+  const asked = !!thread && suggestedFor === key;
+  const asking = asked && !suggested.length;
+  suggestButton.hidden = asked && !asking;
+  suggestButton.disabled = asking;
+  suggestButton.textContent = asking ? 'Asking Sonnet…' : '✦ Suggest';
+
+  if (asking) {
+    suggestions.replaceChildren(el('span', 'ts-sug-by ts-chat-reading', 'Sonnet is reading the top comments…'), el('div', 'ts-ghost'), el('div', 'ts-ghost'), el('div', 'ts-ghost'));
+  } else if (asked) {
+    const by = el('span', 'ts-sug-by', ' suggests, from the top comments:');
+    by.prepend(el('b', '', 'Sonnet'));
+    suggestions.replaceChildren(by, ...suggested.map((q) => {
+      const b = button('ts-sug-q', q);
+      b.setAttribute('aria-pressed', String(q === tallyQuestion));
+      b.addEventListener('click', () => { questionInput.value = q; tallyAsked(); });
+
+      return b;
+    }));
+  } else {
+    suggestions.replaceChildren();
+  }
+
+  recentQuestions.replaceChildren(...[...new Set([thread?.title.trim() ?? '', ...loadQAs(questionsKey()).map((e) => e.q)])].flatMap((q) => {
     const option = document.createElement('option');
     option.value = q;
 
@@ -472,22 +521,24 @@ const tallyAsked = () => {
   void start();
 };
 
-// Asked once a thread, when the box is first opened: they cost a model call, so
-// a Tally read as it is costs none. A failure is asked again on the next open.
-questionInput.addEventListener('focus', () => {
+// Asked only when pressed, once a thread: they cost a model call, so a Tally
+// read as it is costs none. A failure brings the button back.
+suggestButton.addEventListener('click', () => {
   const key = questionsKey();
 
   if (!thread || suggestedFor === key) return;
   [suggestedFor, suggested] = [key, []];
+  offerQuestions();
   suggestQuestions(thread, (e) => {
     if (suggestedFor !== key) return;
 
     if (e.type === 'questions') {
       suggested = e.questions;
-      offerQuestions();
-    } else if (e.type === 'error') {
-      suggestedFor = '';
     }
+
+    if (e.type === 'error' || (e.type === 'questions' && !suggested.length)) suggestedFor = '';
+
+    offerQuestions();
   });
 });
 
