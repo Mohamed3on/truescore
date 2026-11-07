@@ -2,6 +2,7 @@ import { addCommas, el } from '../shared/utils';
 import { PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { buildReviewPanel } from '../shared/review-panel';
 import { buildGauge, createIslandShell, type IslandScore } from '../shared/score-island';
+import { renderVariationCard, tallyVariationDims } from '../shared/variation-table';
 import { computeScore, loadReviews, reviewToText, tatamiStore, type ProductInfo, type ReviewBundle, type StampedReview } from '../shared/stamped';
 
 // Tatami's reviews pool across a product's family — its colours, its men's,
@@ -13,7 +14,7 @@ This is BJJ apparel. Treat fit and sizing as first-class: when reviewers agree o
 // A review's variant is the size bought, unless it only names a product.
 const sizeOf = (r: StampedReview) => (r.productVariantName !== r.productName && !r.productVariantName?.includes(' - ') && r.productVariantName) || '';
 
-const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: IslandScore, autoSummarize: boolean | Promise<boolean>) => {
+const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: IslandScore) => {
   const otherProduct = (r: StampedReview) => (r.productName !== info.name && r.productName) || '';
 
   const toText = (r: StampedReview) => {
@@ -23,19 +24,41 @@ const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: IslandScore
     return text && tags.length ? `[${tags.join(' | ')}] ${text}` : text;
   };
 
+  const card = (r: StampedReview) => ({ rating: r.reviewRating, title: r.reviewTitle, body: r.reviewMessage, meta: [otherProduct(r), sizeOf(r) && `Size ${sizeOf(r)}`].filter(Boolean).join(' · ') });
+  // Every colour of a family shows the same pool, so summaries are kept per
+  // pool, named by its oldest review, not per colour. No auto-summary: the
+  // button is there for whoever wants one.
+  const oldest = Math.min(...bundle.reviews.map((r) => r.id ?? Infinity));
+  const key = `tatami-summary-${Number.isFinite(oldest) ? oldest : info.id}`;
   const wrapper = createIslandShell();
   wrapper.append(...buildGauge(scored));
   // The fetched sample is all a Search reaches.
   buildReviewPanel(wrapper, {
-    key: `tatami-summary-${info.id}`,
+    key,
     total: bundle.reviews.length,
     all: bundle.reviews,
     text: toText,
-    card: (r) => ({ rating: r.reviewRating, title: r.reviewTitle, body: r.reviewMessage, meta: [otherProduct(r), sizeOf(r) && `Size ${sizeOf(r)}`].filter(Boolean).join(' · ') }),
+    card,
     exampleQuery: 'shrink OR size',
     summaryPrompt: SUMMARY_PROMPT,
-    autoSummarize,
   });
+
+  // Each review names the product (colour and cut) and the size bought.
+  const dims = tallyVariationDims(bundle.reviews, {
+    variationsOf: (r) => [['Colour & cut', r.productName ?? ''], ['Size', sizeOf(r)]],
+    ratingOf: (r) => r.reviewRating,
+  });
+
+  if (dims.length) {
+    const variations = renderVariationCard(dims, { animate: true, summarize: { key, text: toText, card, summaryPrompt: SUMMARY_PROMPT } });
+    // A big family runs to dozens of colours and cuts: past about seven rows the list scrolls.
+    const rows = variations.querySelector<HTMLElement>('.ts-var-panel');
+    rows?.style.setProperty('max-height', '440px');
+    rows?.style.setProperty('overflow-y', 'auto');
+    rows?.style.setProperty('scrollbar-width', 'thin');
+    rows?.style.setProperty('scrollbar-color', '#0F766E transparent');
+    wrapper.append(variations);
+  }
 
   return wrapper;
 };
@@ -69,13 +92,13 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
   const count = document.querySelector('.product-view__rating-stars')?.getAttribute('title')?.match(/out of (\d+)/)?.[1];
   const info: ProductInfo = { id: String(product.id), sku: product.handle, name: product.title, count: count ? Number(count) : undefined };
 
-  loadReviews(store, info, (bundle, autoSummarize) => {
+  loadReviews(store, info, (bundle) => {
     const scored = computeScore(bundle);
 
     if (!scored || scored.total < 5) return;
     document.querySelector('.ars-wrapper')?.remove();
     document.querySelector('.ts-tatami-line')?.remove();
-    const panel = buildPanel(info, bundle, scored, autoSummarize);
+    const panel = buildPanel(info, bundle, scored);
     top.prepend(panel);
     const line = buildLineScore(scored, panel);
     line.classList.add('ts-tatami-line');
