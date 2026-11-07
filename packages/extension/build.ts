@@ -135,10 +135,12 @@ if (process.argv.includes('--watch')) {
   const args = process.argv.slice(2).filter((a) => a !== '--watch');
   let timer: Timer;
   let queue = Promise.resolve();
+
   for (const dir of ['src', '../gmaps-shared/src'])
     watch(dir, { recursive: true }, (_, name) => {
       // cpSync of src/icons fires an event on that directory; only file changes count
       if (name && statSync(`${dir}/${name}`, { throwIfNoEntry: false })?.isDirectory()) return;
+
       clearTimeout(timer);
       timer = setTimeout(() => (queue = queue.then(() => Bun.spawn(['bun', 'build.ts', ...args], { stdio: ['inherit', 'inherit', 'inherit'] }).exited.then(() => {}))), 200);
     });
