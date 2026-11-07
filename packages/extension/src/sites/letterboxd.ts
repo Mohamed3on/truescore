@@ -259,8 +259,9 @@ const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number
 // v6: candidates carry their uid for the watched re-check; v5's re-check read only list
 // page 1, so it dropped — and saved without — every candidate found on a later page.
 // v7: recomputed once so its films' histograms reach the IPTV app (v6 picks were cached before sharing existed).
-const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v7_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
-const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v7_${slug}`, data);
+// v8: keeps the list's films and likes, so a cached film shares its list with the IPTV app too.
+const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v8_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
+const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v8_${slug}`, data);
 
 // Films the user has muted from Similar Picks, by slug (see shared/ignored-picks).
 const IGNORED_KEY = 'lbx_ignored';
@@ -691,7 +692,11 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     const cached = await getCachedSimilarPicks(currentSlug);
 
     // Checked by uid, so a film watched since drops out whichever list page it came from.
-    if (cached) return { ...cached, films: await unseen(cached.films) };
+    if (cached) {
+      if (cached.listLink && cached.listSlugs) shareList(cached.listLink, cached.listName, cached.listSlugs, cached.listLikes);
+
+      return { ...cached, films: await unseen(cached.films) };
+    }
 
     updateProgress(statusElement, 0);
     const listsUrl = `/film/${currentSlug}/lists/by/popular/`;
@@ -761,7 +766,10 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
       if (foundCurrentFilm) break;
     }
 
-    shareList(listLink, listName, [...listed.map((f) => f.slug), ...(foundCurrentFilm ? [currentSlug] : [])], listLikes(firstList));
+    const listSlugs = [...listed.map((f) => f.slug), ...(foundCurrentFilm ? [currentSlug] : [])];
+    const likes = listLikes(firstList);
+
+    shareList(listLink, listName, listSlugs, likes);
 
     const allFilmSlugs = await unseen(listed);
 
@@ -862,7 +870,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     // Only a fully resolved crawl is worth a week: caching the survivors of a
     // partial one would drop every film that failed from the picks until expiry.
     if (candidates.length && !candidates.some((f: any) => f.fetchFailed)) {
-      setCachedSimilarPicks(currentSlug, { films: candidates, listName, listLink, stats });
+      setCachedSimilarPicks(currentSlug, { films: candidates, listName, listLink, listSlugs, listLikes: likes, stats });
     }
 
     return result;
