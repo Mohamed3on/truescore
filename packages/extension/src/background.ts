@@ -289,11 +289,11 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => abort.abort());
   const post = (e: TallyEvent | ThreadAskEvent) => { if (!abort.signal.aborted) port.postMessage(e); };
 
-  port.onMessage.addListener(async ({ thread, chat, question }: TallyAsk) => {
+  port.onMessage.addListener(async ({ thread, chat, question, suggest }: TallyAsk) => {
     try {
       const [headers, provider, reasoningEffort] = await Promise.all([authHeaders(), getProviderChoice(), getReasoningEffort()]);
 
-      const res = await fetch(`${TRUESCORE_API_BASE}/api/${chat ? 'thread-ask' : 'tally'}`, {
+      const res = await fetch(`${TRUESCORE_API_BASE}/api/${chat ? 'thread-ask' : suggest ? 'tally-questions' : 'tally'}`, {
         method: 'POST',
         signal: abort.signal,
         headers: { 'content-type': 'application/json', ...headers },

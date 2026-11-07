@@ -9,7 +9,7 @@
 // the question it tallies: the post's, or one of the user's own.
 import { countsInTally, mdToHtml, MIN_TALLY_PEOPLE, replaceChips, signedNet, speakersOf, STANCE_MARKS, threadFromListing, type ListedOption, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type TitleTally } from '@truescore/gmaps-shared';
 import { loadQAs, saveQA } from '../shared/qa-history';
-import { askThread, requestTally, tallyReady } from '../shared/tally';
+import { askThread, requestTally, suggestQuestions, tallyReady } from '../shared/tally';
 import { el } from '../shared/utils';
 
 const button = (className: string, text?: string) => {
@@ -66,6 +66,12 @@ let stop: (() => void) | null = null;
 
 // The user's own Tally question; empty tallies the post's.
 let tallyQuestion = '';
+
+// The questions the comments answer, for the thread under `suggestedFor`:
+// asked the first time its question box is opened, and kept while a picked one
+// re-tallies, so the others stay on offer.
+let suggestedFor = '';
+let suggested: string[] = [];
 
 // A question asked of the thread, with its answer as far as it's written, or
 // why it couldn't be.
@@ -424,8 +430,9 @@ askButton.type = 'submit';
 askForm.append(askInput, askButton);
 
 // The question the Tally counts answers to: the post's (its title, shown as
-// the placeholder) until the user asks their own. Their recent ones are
-// offered under it, the post's first; picking one tallies it.
+// the placeholder) until the user asks their own. Offered under it: the
+// questions the comments answer, the post's, then the user's recent ones;
+// picking one tallies it.
 const questionForm = el('form', 'ts-tq');
 const questionInput = document.createElement('input');
 
@@ -441,16 +448,20 @@ recentQuestions.id = 'ts-tq-recent';
 
 questionForm.append(questionInput, recentQuestions);
 
-const showQuestions = () => {
-  const title = thread?.title.trim() ?? '';
-  questionInput.placeholder = title;
-  questionInput.value = tallyQuestion;
-  recentQuestions.replaceChildren(...[title, ...loadQAs(questionsKey()).map((e) => e.q)].flatMap((q) => {
+const offerQuestions = () => {
+  const offered = suggestedFor === questionsKey() ? suggested : [];
+  recentQuestions.replaceChildren(...[...new Set([...offered, thread?.title.trim() ?? '', ...loadQAs(questionsKey()).map((e) => e.q)])].flatMap((q) => {
     const option = document.createElement('option');
     option.value = q;
 
     return q ? [option] : [];
   }));
+};
+
+const showQuestions = () => {
+  questionInput.placeholder = thread?.title.trim() ?? '';
+  questionInput.value = tallyQuestion;
+  offerQuestions();
 };
 
 const tallyAsked = () => {
@@ -460,6 +471,25 @@ const tallyAsked = () => {
   if (tallyQuestion) saveQA(questionsKey(), { q: tallyQuestion, a: '', ts: Date.now() });
   void start();
 };
+
+// Asked once a thread, when the box is first opened: they cost a model call, so
+// a Tally read as it is costs none. A failure is asked again on the next open.
+questionInput.addEventListener('focus', () => {
+  const key = questionsKey();
+
+  if (!thread || suggestedFor === key) return;
+  [suggestedFor, suggested] = [key, []];
+  suggestQuestions(thread, (e) => {
+    if (suggestedFor !== key) return;
+
+    if (e.type === 'questions') {
+      suggested = e.questions;
+      offerQuestions();
+    } else if (e.type === 'error') {
+      suggestedFor = '';
+    }
+  });
+});
 
 questionForm.addEventListener('submit', (e) => { e.preventDefault(); tallyAsked(); });
 
@@ -602,7 +632,7 @@ const onEvent = (e: TallyEvent) => {
     if (row) row.why = e.text;
   } else if (e.type === 'done') {
     phase = 'done';
-  } else {
+  } else if (e.type === 'error') {
     phase = 'error';
     failure = e.error;
   }

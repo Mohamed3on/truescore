@@ -59,7 +59,7 @@ import index from './index.html';
 import login from './login.html';
 import { errStatus, NoReviews, resolveSubject } from './summary-subject';
 import { answersFor, hasReceipts, jevAvailable, quotingReviews, stanceOfReviews, stancesFor, supportFor } from './jev';
-import { SENT_CHAT, SENT_QUESTION, SENT_THREAD, STRINGS, tallyThread } from './tally';
+import { questionsOf, SENT_CHAT, SENT_QUESTION, SENT_THREAD, STRINGS, tallyThread } from './tally';
 
 const json = (v: any, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -1087,6 +1087,30 @@ Bun.serve({
           return ndjsonStream<TallyEvent>((write) => tallyThread(thread, write, overrides, SENT_QUESTION.parse(body.question)), { 'Access-Control-Allow-Origin': '*' });
         } catch (e) {
           console.error('[tally]', e);
+
+          return corsJson(errBody(e), 400);
+        }
+      },
+      OPTIONS: corsOptions,
+    },
+    // The questions to offer in place of a Thread's own (questionsOf), asked
+    // when the user opens the Tally's question box.
+    '/api/tally-questions': {
+      POST: async (req) => {
+        try {
+          // SAFETY: lockApi admits only the web client and extension, which send a TallyRequest.
+          const body = await req.json() as TallyRequest;
+          const thread = SENT_THREAD.parse(body.thread);
+
+          if (!thread) return corsJson({ error: 'missing thread' }, 400);
+          const overrides = { provider: parseProvider(body.provider), reasoningEffort: parseReasoningEffort(body.reasoningEffort) };
+
+          return ndjsonStream<TallyEvent>(async (write) => {
+            write({ type: 'questions', questions: await questionsOf(thread, overrides) });
+            write({ type: 'done' });
+          }, { 'Access-Control-Allow-Origin': '*' });
+        } catch (e) {
+          console.error('[tally-questions]', e);
 
           return corsJson(errBody(e), 400);
         }

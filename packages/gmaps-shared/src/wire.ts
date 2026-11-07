@@ -180,6 +180,9 @@ export type TallyEvent =
   // Why people back or warn against an Option, in a line, written from the
   // comments behind its count once every Option is counted.
   | { type: 'why'; key: string; text: string }
+  // Questions the comments answer, offered to tally in place of the post's
+  // (/api/tally-questions).
+  | { type: 'questions'; questions: string[] }
   | { type: 'done' }
   | { type: 'error'; error: string };
 

@@ -6,8 +6,9 @@ import type { TallyEvent, Thread, ThreadAskEvent, ThreadTurn } from '@truescore/
 export const TALLY_PORT = 'truescore-tally';
 
 // `chat`: a question asked of the Thread (ThreadAskRequest) rather than its Tally;
-// `question`: the user's own Tally question (TallyRequest).
-export type TallyAsk = { thread: Thread; chat?: ThreadTurn[]; question?: string };
+// `question`: the user's own Tally question (TallyRequest); `suggest`: the
+// questions to offer in its place, rather than the Tally.
+export type TallyAsk = { thread: Thread; chat?: ThreadTurn[]; question?: string; suggest?: boolean };
 
 type Failed = { type: 'error'; error: string };
 
@@ -26,6 +27,9 @@ const request = <E extends { type: string }>(ask: TallyAsk, onEvent: (e: E | Fai
 };
 
 export const requestTally = (thread: Thread, onEvent: (e: TallyEvent) => void, question?: string) => request({ thread, question }, onEvent);
+
+// The questions the comments answer, as a `questions` event.
+export const suggestQuestions = (thread: Thread, onEvent: (e: TallyEvent) => void) => request({ thread, suggest: true }, onEvent);
 
 // The answer to the last question in `chat`, as it's written.
 export const askThread = (thread: Thread, chat: ThreadTurn[], onEvent: (e: ThreadAskEvent) => void) => request({ thread, chat }, onEvent);

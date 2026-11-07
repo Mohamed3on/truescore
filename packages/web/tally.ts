@@ -2,7 +2,7 @@ import { countsInTally, MIN_TALLY_PEOPLE, stripAccents, type ListedOption, type 
 import { z } from 'zod';
 import { db } from './db';
 import { askedAboutFor, describedFor, groupAnswersFor, optionStancesFor, putsForwardFor } from './jev';
-import { explainOptions, listOptions, optionsRequest, reasonsRequest, type StreamedOption, type ThreadOption } from './llm';
+import { explainOptions, listOptions, optionsRequest, questionsRequest, reasonsRequest, suggestQuestions, type StreamedOption, type ThreadOption } from './llm';
 
 // A Reddit Thread's Tally (CONTEXT.md). The model lists the Options and how the
 // thread writes them; Jev reads what each comment naming one says of it; the
@@ -382,6 +382,38 @@ async function reasonsOf(thread: Thread, question: string, options: ThreadOption
   } catch (e) {
     console.warn('[tally] reasons failed:', e instanceof Error ? e.message : e);
   }
+}
+
+// The questions the comments answer, offered to tally in place of the post's.
+// Asked only when the user opens the question box, of the post and a sample:
+// its most upvoted comments, since what they answer doesn't need every one.
+// Kept for the same sample.
+db.run('CREATE TABLE IF NOT EXISTS tally_questions (k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER NOT NULL)');
+
+const getQuestions = db.prepare<{ v: string }, [string]>('SELECT v FROM tally_questions WHERE k = ?');
+const putQuestions = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO tally_questions (k, v, ts) VALUES (?, ?, ?)');
+const SAMPLE_COMMENTS = 40;
+const SAMPLE_CHARS = 20_000;
+const SUGGESTING = Bun.hash(questionsRequest('', []).prompt).toString(36);
+
+export async function questionsOf(thread: Thread, { provider, reasoningEffort }: LlmOverrides = {}): Promise<string[]> {
+  let chars = 0;
+
+  const sample = thread.comments.filter(countsInTally).toSorted((a, b) => b.score - a.score).slice(0, SAMPLE_COMMENTS)
+    .filter((c) => (chars += c.body.length) <= SAMPLE_CHARS);
+
+  const k = `${thread.id}:${provider ?? ''}:${SUGGESTING}:${Bun.hash(sample.map((c) => c.id).sort().join(',')).toString(36)}`;
+  const hit = getQuestions.get(k);
+
+  if (hit) {
+    // SAFETY: a row holds only what suggestQuestions returned, which its schema checked.
+    return JSON.parse(hit.v) as string[];
+  }
+
+  const questions = await suggestQuestions(questionOf(thread), sample.map((c) => c.body), provider, reasoningEffort);
+  putQuestions.run(k, JSON.stringify(questions), Date.now());
+
+  return questions;
 }
 
 // The answers that give one verdict on the things a post lists, as a group

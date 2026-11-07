@@ -265,6 +265,18 @@ export type ThreadOption = z.infer<typeof OPTIONS_SCHEMA>['options'][number];
 // list ends.
 export type StreamedOption = DeepPartial<ThreadOption> | undefined;
 
+// The question and its answers, as both calls on them read them (the listing,
+// the suggested questions).
+const answersOf = (question: string, comments: string[]) => `Question:\n${question}\n\n---\n\nAnswers:\n\n${comments.join('\n\n')}\n\n---\n\n`;
+
+const LIST_OPTIONS = `List the Options: the things these answers put forward, or argue against, as answers to the question, whatever kind of thing it asks for: a product, a course, a technique, a store, a place, a dish, a way of doing it. Where it asks for more than one thing ("which… and how much"), list only the answers to which. An answer covering everything or nothing ("anything savory", "everything", "none") is an Option too, unless the question asks for a particular one (the best, the most dangerous) or gives a list it answers; such answers that mean the same are one. Include one even if a single answer names it, and one they only argue against. An answer naming several puts forward each: list them apart, never two joined in one Option ("soups and stews").
+
+Use two levels when the answers name makers: each Option is the maker (a brand, a creator, a company) and its titles are the specific products, courses or models named under it. A thing with no maker named in the thread is an Option of its own, with no titles. Name a title only when the answers give the product a name of its own ("WH-1000XM5", "QuietComfort Ultra"); a description ("their wireless pair", "the double one") is not a title. Give each name in its usual full form ("Sony"; "WH-1000XM5").
+
+aliases: every other way the answers write it, exactly as written: first names, surnames, nicknames, abbreviations, misspellings, partial titles ("Sonys", "Soni"; "XM5", "1000xm5"), so that searching for any of them finds every answer speaking of it. Skip variants that differ only in capital letters or punctuation ("sony", "Sony's", "WH 1000XM5"): the search already matches those. A title's aliases never include its maker's name alone, and an alias that could just as well mean another Option or title (a first name two of them share, a title two makers both use) is left out.
+
+Not Options: answers to another question than this one (the store a product came from, where it asks which product to get), general advice ("try before you buy"), kinds of thing where it asks for a particular one ("wireless ones", "an open-back pair", where it asks which headphones), or the asker's own situation. Each Option and title once.`;
+
 // The listing call's exact prompt, schema and output cap. The model only names
 // the Options and how the thread writes them; it never counts. Jev reads every
 // comment naming one (web/tally.ts), so a title's aliases must not repeat its
@@ -272,13 +284,7 @@ export type StreamedOption = DeepPartial<ThreadOption> | undefined;
 export const optionsRequest = (question: string, comments: string[]) => ({
   maxOutputTokens: 8192,
   schema: OPTIONS_SCHEMA,
-  prompt: `Question:\n${question}\n\n---\n\nAnswers:\n\n${comments.join('\n\n')}\n\n---\n\nList the Options: the things these answers put forward, or argue against, as answers to the question, whatever kind of thing it asks for: a product, a course, a technique, a store, a place, a dish, a way of doing it. Where it asks for more than one thing ("which… and how much"), list only the answers to which. An answer covering everything or nothing ("anything savory", "everything", "none") is an Option too, unless the question asks for a particular one (the best, the most dangerous) or gives a list it answers; such answers that mean the same are one. Include one even if a single answer names it, and one they only argue against. An answer naming several puts forward each: list them apart, never two joined in one Option ("soups and stews").
-
-Use two levels when the answers name makers: each Option is the maker (a brand, a creator, a company) and its titles are the specific products, courses or models named under it. A thing with no maker named in the thread is an Option of its own, with no titles. Name a title only when the answers give the product a name of its own ("WH-1000XM5", "QuietComfort Ultra"); a description ("their wireless pair", "the double one") is not a title. Give each name in its usual full form ("Sony"; "WH-1000XM5").
-
-aliases: every other way the answers write it, exactly as written: first names, surnames, nicknames, abbreviations, misspellings, partial titles ("Sonys", "Soni"; "XM5", "1000xm5"), so that searching for any of them finds every answer speaking of it. Skip variants that differ only in capital letters or punctuation ("sony", "Sony's", "WH 1000XM5"): the search already matches those. A title's aliases never include its maker's name alone, and an alias that could just as well mean another Option or title (a first name two of them share, a title two makers both use) is left out.
-
-Not Options: answers to another question than this one (the store a product came from, where it asks which product to get), general advice ("try before you buy"), kinds of thing where it asks for a particular one ("wireless ones", "an open-back pair", where it asks which headphones), or the asker's own situation. Each Option and title once.`,
+  prompt: answersOf(question, comments) + LIST_OPTIONS,
 });
 
 // Streams the listing: each Option goes to `onOption` once the model has moved
@@ -301,6 +307,25 @@ export async function listOptions(question: string, comments: string[], onOption
   if (listing.usage) report(provider, 'options', listing.usage);
 
   return options;
+}
+
+// Questions the answers answer, offered to tally in place of the post's (a
+// thread that asks "X vs Y, opinions?" is answered by "which do you prefer?").
+// A call of its own: asked of the listing call too, they cost it Options; and
+// the two calls can't share a prompt cache, since their schemas lead the prompt.
+export const questionsRequest = (question: string, comments: string[]) => ({
+  maxOutputTokens: 4096,
+  schema: z.object({ questions: z.array(z.string()) }),
+  prompt: `${answersOf(question, comments)}Write two or three short questions that these answers (the most upvoted) most directly answer, as the asker could have put them, in the question's language. Keep what the question asks for (the best, the worst, the most dangerous). Where the answers choose among things, ask it as that choice, naming the main ones ("Which do you prefer: Sony, Bose, both, or something else?").`,
+});
+
+export async function suggestQuestions(question: string, comments: string[], provider: Provider = DEFAULT_PROVIDER, reasoningEffort?: ReasoningEffort): Promise<string[]> {
+  const { model, providerOptions } = providerFor(provider, reasoningEffort);
+  const r = await writeObject({ model, providerOptions, ...questionsRequest(question, comments) });
+
+  if (r.usage) report(provider, 'questions', r.usage);
+
+  return r.object.questions;
 }
 
 // Why people back or warn against each Option, in a line, written only from
