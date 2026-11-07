@@ -24,6 +24,16 @@ chrome.runtime.onInstalled.addListener(() => {
   void chrome.storage.local.remove(['rc_seed_url', 'rc_seed_secret', 'rc_maps_refused_until', 'rc_maps_refused_until_v2']);
 });
 
+// The Dev Reloader (~/personal/extensions/dev-reloader) asks an unpacked build to reload
+// itself after a rebuild: its fallback, toggling the extension, keeps the old manifest.
+// Store installs carry an update_url and ignore it.
+chrome.runtime.onMessageExternal.addListener((msg, _sender, respond) => {
+  if (msg !== 'dev-reload' || 'update_url' in chrome.runtime.getManifest()) return;
+
+  respond(true);
+  setTimeout(() => chrome.runtime.reload(), 100);
+});
+
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== SWEEP_ALARM) return;
   const all = await chrome.storage.local.get(null);
