@@ -1,5 +1,5 @@
 import esbuild from 'esbuild';
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, statSync, watch, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import { TRUESCORE_API_BASE } from './src/shared/api-base';
 
@@ -129,3 +129,18 @@ cpSync('src/styles/imdb.css', `${OUT}/sites/imdb.css`);
 cpSync('src/styles/reddit.css', `${OUT}/sites/reddit.css`);
 
 console.log(`Build complete → ./${OUT}/`);
+
+// `--watch`: rebuild (in a fresh process, one at a time) whenever the sources change.
+if (process.argv.includes('--watch')) {
+  const args = process.argv.slice(2).filter((a) => a !== '--watch');
+  let timer: Timer;
+  let queue = Promise.resolve();
+  for (const dir of ['src', '../gmaps-shared/src'])
+    watch(dir, { recursive: true }, (_, name) => {
+      // cpSync of src/icons fires an event on that directory; only file changes count
+      if (name && statSync(`${dir}/${name}`, { throwIfNoEntry: false })?.isDirectory()) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => (queue = queue.then(() => Bun.spawn(['bun', 'build.ts', ...args], { stdio: ['inherit', 'inherit', 'inherit'] }).exited.then(() => {}))), 200);
+    });
+  console.log('Watching src/ and gmaps-shared/src/ for changes…');
+}
