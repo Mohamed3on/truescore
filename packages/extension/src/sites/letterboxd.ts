@@ -101,9 +101,19 @@ function shareFilm(slug: string, { h, score, ratio, adjusted, recentTotal, tmdb 
   else shareTimer ??= setTimeout(flushShared, 3000);
 }
 
-/** A list the picks were read from (its films in the order read), for the IPTV app's list rows. */
-const shareList = (link: string, name: string, slugs: string[]) =>
-  chrome.runtime.sendMessage({ type: 'lbxList', list: { link, name, slugs: slugs.slice(0, 500) } }).catch(() => {});
+/** A list the picks were read from (its films in the order read, its likes), for the IPTV app's list rows. */
+const shareList = (link: string, name: string, slugs: string[], likes?: number) =>
+  chrome.runtime.sendMessage({ type: 'lbxList', list: { link, name, slugs: slugs.slice(0, 500), ...(likes !== undefined && { likes }) } }).catch(() => {});
+
+/** A list summary's like count, from its link to the list's likes ("54K", "1.2M", "312"); undefined when it has none. */
+export function listLikes(summary: Element): number | undefined {
+  const label = summary.querySelector('a[href$="/likes/"]')?.textContent?.trim().replace(/,/g, '').match(/^([\d.]+)\s*([KkMm]?)/);
+
+  if (!label) return undefined;
+  const n = Number(label[1]) * ({ k: 1e3, m: 1e6 }[label[2].toLowerCase()] ?? 1);
+
+  return Number.isFinite(n) ? Math.round(n) : undefined;
+}
 
 /** A cached film's TrueScore to share, adjusted by its cached recent tally if any; none for an unscored placeholder. */
 const scoreOf = (cached: any, recent?: RecentTally) => (cached?.scored
@@ -751,7 +761,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
       if (foundCurrentFilm) break;
     }
 
-    shareList(listLink, listName, [...listed.map((f) => f.slug), ...(foundCurrentFilm ? [currentSlug] : [])]);
+    shareList(listLink, listName, [...listed.map((f) => f.slug), ...(foundCurrentFilm ? [currentSlug] : [])], listLikes(firstList));
 
     const allFilmSlugs = await unseen(listed);
 

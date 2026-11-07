@@ -30,16 +30,17 @@ export const LETTERBOXD_BATCH = z.object({
     link: z.string().regex(/^\/[\w-]+\/list\/[\w-]+\/$/).max(300),
     name: z.string().min(1).max(300),
     slugs: z.array(z.string().regex(/^[a-z0-9-]+$/).max(200)).max(500),
+    likes: z.number().int().nonnegative().optional(),
   }).optional(),
 });
 
 // The Letterboxd lists the extension's picks were read from, by link ("/user/list/name/"):
 // its name, its films' slugs in the order read (the top of the list down to the film the
-// picks were for) and when it was last sent. The IPTV app makes rows of the newest; kept
-// beside the films the same way.
+// picks were for), its likes and when it was last sent. The IPTV app makes rows of the most
+// liked; kept beside the films the same way.
 const LISTS_PATH = `${dirname(PATH)}/letterboxd-lists.json`;
 
-type List = { name: string; slugs: string[]; at: number };
+type List = { name: string; slugs: string[]; likes?: number; at: number };
 
 const lists: Record<string, List> = await Bun.file(LISTS_PATH).json().catch(() => ({}));
 
@@ -64,8 +65,8 @@ export function putFilms(batch: z.infer<typeof LETTERBOXD_BATCH>['films'], at = 
   save();
 }
 
-export function putList({ link, name, slugs }: NonNullable<z.infer<typeof LETTERBOXD_BATCH>['list']>, at = Date.now()) {
-  lists[link] = { name, slugs, at };
+export function putList({ link, name, slugs, likes }: NonNullable<z.infer<typeof LETTERBOXD_BATCH>['list']>, at = Date.now()) {
+  lists[link] = { name, slugs, likes: likes ?? lists[link]?.likes, at };
   saveLists();
 }
 
