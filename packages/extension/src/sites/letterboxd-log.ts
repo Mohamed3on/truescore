@@ -1,15 +1,15 @@
 // Logs on Letterboxd the films Sofa (the owner's TV app) was asked to log. Letterboxd has no API for personal
 // projects and Cloudflare lets only a real browser write to it, so a mark or a film finished on the TV waits on the box
 // until a Letterboxd page is open here. Each goes in as the site's own diary entry (its log form's request), on the day
-// it was watched and with its rating, and the box is told which went in. With nothing waiting (anyone but the owner,
-// whose server has no queue), nothing happens.
+// it was watched and with its rating, and the box is told which went in. The queue names the Letterboxd account it is
+// for: anyone else signed in here (the TrueScore password is shared) logs nothing and takes nothing off it. With
+// nothing waiting (anyone without the owner's server), nothing happens.
 
 /** A film to log: TMDB's id, when it was watched (epoch ms), the rating out of 10 (Letterboxd's half stars). */
 type Log = { tmdb: number; at: number; rating?: number };
 
-/** The page's CSRF token, which every Letterboxd page sets inline (its cookie is HttpOnly). */
-const csrf = () =>
-  [...document.scripts].map((s) => s.textContent?.match(/supermodelCSRF\s*=\s*['"]([^'"]+)['"]/)?.[1]).find(Boolean);
+/** A value every Letterboxd page sets inline: the CSRF token (its cookie is HttpOnly) or the signed-in username. */
+const inline = (re: RegExp) => [...document.scripts].map((s) => s.textContent?.match(re)?.[1]).find(Boolean);
 
 /** "2026-11-07": [at] in this browser's own day. */
 const day = (at: number) => {
@@ -41,8 +41,11 @@ async function log(l: Log, token: string): Promise<boolean> {
 void navigator.locks.request('truescore-letterboxd-log', { ifAvailable: true }, async (lock) => {
   if (!lock) return;
 
-  const logs: Log[] = await chrome.runtime.sendMessage({ type: 'lbxLogs' }).catch(() => []);
-  const token = logs?.length ? csrf() : undefined;
+  const queue: { user?: string | null; logs?: Log[] } | null = await chrome.runtime.sendMessage({ type: 'lbxLogs' }).catch(() => null);
+  const logs = queue?.logs ?? [];
+  const signedIn = inline(/person\.username\s*=\s*['"]([^'"]+)['"]/);
+  const mine = !!queue?.user && signedIn?.toLowerCase() === queue.user.toLowerCase();
+  const token = mine && logs.length ? inline(/supermodelCSRF\s*=\s*['"]([^'"]+)['"]/) : undefined;
 
   if (!token) return;
 

@@ -91,6 +91,7 @@ const PASSWORD_COOKIE = 'truescore-key';
 
 // Sofa's queue of films to log on Letterboxd (see /api/letterboxd/logs); only the owner's box has one.
 const SOFA_LOGS = process.env.SOFA_LETTERBOXD_LOGS;
+const NO_LOGS = { user: null, logs: [] };
 
 const authed = (req: BunRequest) =>
   !PASSWORD || req.headers.get('x-truescore-key') === PASSWORD || req.cookies.get(PASSWORD_COOKIE) === PASSWORD;
@@ -774,11 +775,12 @@ Bun.serve({
     },
     // The films Sofa (the IPTV app's box) asks to log on Letterboxd for the owner: the extension takes them on a
     // Letterboxd page and logs them there, since Cloudflare lets only a real browser write. Passed through to
-    // SOFA_LETTERBOXD_LOGS (Sofa's /api/letterboxd/logs with its token); unset, there is nothing to log.
+    // SOFA_LETTERBOXD_LOGS (Sofa's /api/letterboxd/logs with its token): { user, logs }, the logs for that Letterboxd
+    // account only. Unset, or with no password to keep it to the owner, there is nothing to log.
     '/api/letterboxd/logs': {
-      GET: async () => corsJson(SOFA_LOGS ? await fetch(SOFA_LOGS).then((r) => (r.ok ? r.json() : []), () => []) : []),
+      GET: async () => corsJson(SOFA_LOGS && PASSWORD ? await fetch(SOFA_LOGS).then((r) => (r.ok ? r.json() : NO_LOGS), () => NO_LOGS) : NO_LOGS),
       POST: async (req) => {
-        if (!SOFA_LOGS) return corsJson({ ok: true });
+        if (!SOFA_LOGS || !PASSWORD) return corsJson({ ok: true });
         const r = await fetch(SOFA_LOGS, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: await req.text() }).catch(() => null);
 
         return corsJson({ ok: !!r?.ok }, r?.ok ? 200 : 502);

@@ -346,7 +346,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then((headers) => headers['x-truescore-key']
         ? fetch(`${TRUESCORE_API_BASE}/api/letterboxd/logs`, msg.type === 'lbxLogs' ? { headers } : { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ done: msg.done }) })
         : null)
-      .then((r) => (r?.ok && msg.type === 'lbxLogs' ? r.json() : []), () => [])
+      .then((r) => (r?.ok && msg.type === 'lbxLogs' ? r.json() : null), () => null)
       .then(sendResponse);
 
     return true;
