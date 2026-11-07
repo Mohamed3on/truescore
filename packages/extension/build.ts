@@ -66,6 +66,7 @@ await esbuild.build({
     'src/sites/gmaps-search.ts',
     'src/sites/imdb.ts',
     'src/sites/letterboxd.ts',
+    'src/sites/letterboxd-log.ts',
     'src/sites/reddit.ts',
     'src/sites/transfermarkt.ts',
     'src/sites/vinted.ts',

@@ -339,6 +339,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  // The films Sofa (the IPTV app's box) asks to log on Letterboxd, for sites/letterboxd-log.ts, and the ones it logged;
+  // asked of the server with its password, which content scripts never see. No password: nothing to log.
+  if (msg?.type === 'lbxLogs' || msg?.type === 'lbxLogged') {
+    authHeaders()
+      .then((headers) => headers['x-truescore-key']
+        ? fetch(`${TRUESCORE_API_BASE}/api/letterboxd/logs`, msg.type === 'lbxLogs' ? { headers } : { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify({ done: msg.done }) })
+        : null)
+      .then((r) => (r?.ok && msg.type === 'lbxLogs' ? r.json() : []), () => [])
+      .then(sendResponse);
+
+    return true;
+  }
+
   // Letterboxd histograms and TrueScores the page had, and the lists its picks came from, passed on for the IPTV app; nothing waits on it.
   if (msg?.type === 'lbxHistograms' || msg?.type === 'lbxList') {
     const body = msg.type === 'lbxList' ? { films: [], list: msg.list } : { films: msg.films };

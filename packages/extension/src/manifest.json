@@ -327,6 +327,11 @@
       "run_at": "document_end"
     },
     {
+      "matches": ["*://*.letterboxd.com/*"],
+      "js": ["sites/letterboxd-log.js"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["*://www.transfermarkt.com/*", "*://www.transfermarkt.de/*"],
       "js": ["sites/transfermarkt.js"],
       "run_at": "document_idle"
