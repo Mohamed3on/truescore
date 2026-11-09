@@ -245,8 +245,9 @@ const addReviews = (json: any, into: DktReview[], seen = new Set<string>()) => {
   return into;
 };
 
-// Newest first (sortBy=DATE, the page's own language leading): the newest
-// RECENT_REVIEWS in one small request, so the gauge needn't wait, and every review
+// Newest first: where the route sorts by date, the newest RECENT_REVIEWS in one
+// small request, so the gauge needn't wait; where it can't (the EU shops), the
+// gauge reads the whole set, sorted here. Every review
 // up to SEARCH_MAX for the Sample and the search — its first page at once, the
 // rest when `total` says how many there are. The whole set is kept a week in
 // IndexedDB — only once complete, or a failed page's hole would be served for the
@@ -270,14 +271,17 @@ const fetchReviews = (site: DecathlonSite, sku: string, productId: string, total
 
     for (const page of pages) if (page.status === 'fulfilled') addReviews(page.value, reviews, seen);
 
+    if (!site.newestFirst) reviews.sort((a, b) => b.date.localeCompare(a.date));
+
     // Parsed-but-empty tombstones briefly (see the TTL above).
     if (pages.every((page) => page.status === 'fulfilled')) idbSet(cacheKey, reviews);
 
     return reviews;
   });
 
-  const recent = cached.then((hit) => hit ?? fetchJson(site.reviewsUrl(sku, RECENT_REVIEWS, 0))
-    .then((json) => addReviews(json, []), () => all));
+  const recent = cached.then((hit) => hit ?? (site.newestFirst
+    ? fetchJson(site.reviewsUrl(sku, RECENT_REVIEWS, 0)).then((json) => addReviews(json, []), () => all)
+    : all));
 
   return { recent, all };
 };

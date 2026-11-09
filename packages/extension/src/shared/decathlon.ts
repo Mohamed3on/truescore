@@ -25,6 +25,7 @@ export const getDecathlonSite = () => {
     return {
       apac: true,
       oneshop: false,
+      newestFirst: true,
       statsUrl: (sku: string) => reviews(sku, 0, 0),
       reviewsUrl: (sku: string, size: number, page: number) => reviews(sku, page * size, (page + 1) * size - 1),
     };
@@ -34,16 +35,20 @@ export const getDecathlonSite = () => {
     const reviews = (sku: string, size: number, page: number) =>
       `https://www.decathlon.${m[1]}/module/oneshop_reviews/api?action=load&modelCode=${sku}&nbItemsPerPage=${size}${page ? `&page=${page + 1}` : ''}`;
 
-    return { apac: false, oneshop: true, statsUrl: (sku: string) => reviews(sku, 1, 0), reviewsUrl: reviews };
+    return { apac: false, oneshop: true, newestFirst: true, statsUrl: (sku: string) => reviews(sku, 1, 0), reviewsUrl: reviews };
   }
 
-  const reviews = (sku: string) => `${api}/reviews/${locale}/reviews-stats/${sku}/product`;
+  // The EU route takes only page, nbItemsPerPage (≥ 1) and rating — any other key,
+  // sortBy included, is a 400 since 2026-11 — and its order isn't by date.
+  const reviews = (sku: string, size: number, page: number) =>
+    `${api}/reviews/${locale}/reviews-stats/${sku}/product?nbItemsPerPage=${size}&page=${page}`;
 
   return {
     apac: false,
     oneshop: false,
-    statsUrl: (sku: string) => `${reviews(sku)}?nbItemsPerPage=0&page=0`,
-    reviewsUrl: (sku: string, size: number, page: number) => `${reviews(sku)}?nbItemsPerPage=${size}&page=${page}&sortBy=DATE`,
+    newestFirst: false,
+    statsUrl: (sku: string) => reviews(sku, 1, 0),
+    reviewsUrl: reviews,
   };
 };
 
