@@ -30,15 +30,17 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H 65.108.153.112 >> ~/.ssh/known_hosts
 
-      # Over SSH: Cloudflare challenges runner IPs (see deploy-web.yml).
+      # Over SSH: Cloudflare challenges runner IPs (see deploy-web.yml). No page paths:
+      # this repo's issues and logs are public, and paths are the owner's browsing.
       - name: Read the latest verdicts
         run: |
           ssh root@65.108.153.112 sqlite3 -readonly /var/lib/truescore/cache.sqlite > latest.tsv <<'SQL'
           .mode tabs
           SELECT json_extract(data, '$.site'), json_extract(data, '$.check'), json_extract(data, '$.ok'),
-                 json_extract(data, '$.path'), json_extract(data, '$.version'), max(ts)
+                 json_extract(data, '$.version'), max(ts)
           FROM session_events WHERE type = 'breakage' GROUP BY 1, 2;
           SQL
+          rm ~/.ssh/id_ed25519
           cat latest.tsv
 
       - name: Open and close issues
@@ -48,14 +50,15 @@ jobs:
         run: |
           gh label create breakage --color B60205 --description "TrueScore lost its place on a host page" --force
           open=$(gh issue list --label breakage --state open --limit 200 --json number,title)
-          while IFS=$'\t' read -r site check ok page version ts; do
+          while IFS=$'\t' read -r site check ok version ts; do
+            [[ $ts =~ ^[0-9]+$ ]] || continue
             title="$site: $check isn't showing"
             number=$(jq -r --arg t "$title" '.[] | select(.title == $t) | .number' <<<"$open")
             if [ "$ok" = 0 ] && [ -z "$number" ]; then
-              gh issue create --label breakage --title "$title" --body "TrueScore had the data for \`$check\` on https://$site$page but couldn't find where to show it (extension v$version, $(date -u -d @$((ts / 1000)) '+%F %H:%M') UTC). The host has likely changed its markup.
+              gh issue create --label breakage --title "$title" --body "TrueScore had the data for \`$check\` on $site but couldn't find where to show it (extension v$version, $(date -u -d @$((ts / 1000)) '+%F %H:%M') UTC). The host has likely changed its markup. The page is on the box: see \"Host breakage\" in packages/web/deploy/HETZNER.md.
 
           This closes itself once the extension sees \`$check\` showing on $site again."
             elif [ "$ok" = 1 ] && [ -n "$number" ]; then
-              gh issue close "$number" --comment "Showing again on https://$site$page (extension v$version)."
+              gh issue close "$number" --comment "Showing again on $site (extension v$version)."
             fi
           done < latest.tsv

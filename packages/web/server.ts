@@ -95,7 +95,14 @@ const SOFA_LOGS = process.env.SOFA_LETTERBOXD_LOGS;
 const NO_LOGS = { user: null, logs: [] };
 
 // One extension verdict for /api/breakage: did `check` mount on the host page `site` + `path`?
-const BREAKAGE_REPORT = z.object({ site: z.string().max(100), check: z.string().max(40), ok: z.boolean(), path: z.string().max(300), version: z.string().max(20) });
+// Strict shapes: the hourly workflow reads these back as shell fields.
+const BREAKAGE_REPORT = z.object({
+  site: z.string().regex(/^[a-z0-9.-]{1,100}$/),
+  check: z.string().regex(/^[a-z-]{1,40}$/),
+  ok: z.boolean(),
+  path: z.string().regex(/^\/[^\s]{0,300}$/),
+  version: z.string().regex(/^[0-9.]{1,20}$/),
+});
 
 const authed = (req: BunRequest) =>
   !PASSWORD || req.headers.get('x-truescore-key') === PASSWORD || req.cookies.get(PASSWORD_COOKIE) === PASSWORD;

@@ -109,6 +109,17 @@ ssh root@65.108.153.112 "sqlite3 -readonly /var/lib/truescore/cache.sqlite \"SEL
 ssh root@65.108.153.112 "sqlite3 -readonly /var/lib/truescore/cache.sqlite \"SELECT json_extract(data, '\$.name'), json_extract(data, '\$.summary') FROM entries WHERE featureId = '0x47a84f0c36e2f81f:0x1a88f216b69e4658'\""
 ```
 
+## Host breakage
+
+The extension reports whether its UI made it onto a host page (`/api/breakage`,
+from `packages/extension/src/shared/breakage.ts`) as `breakage` events, and
+`.github/workflows/breakage.yml` turns them into `breakage` issues. The issues name
+only the site and check; the page it happened on is here:
+
+```bash
+ssh root@65.108.153.112 "sqlite3 -readonly /var/lib/truescore/cache.sqlite \"SELECT datetime(ts/1000, 'unixepoch'), data FROM session_events WHERE type = 'breakage' AND data LIKE '%\\\"ok\\\":false%' ORDER BY ts DESC LIMIT 20\""
+```
+
 ## Residential proxy (Decodo)
 
 All Google fetches in `browser.ts` go through a Decodo residential proxy, set in `/opt/truescore/.env`:
