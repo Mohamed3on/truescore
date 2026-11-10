@@ -1,4 +1,5 @@
 import { addCommas, npsColor } from './utils';
+import { reportMount } from './breakage';
 
 // The shared PLP behaviour the product-grid scrapers used to each hand-roll:
 // badge every card with its net score, then re-rank each grid container by
@@ -380,8 +381,27 @@ export const setupScoreGrid = ({
       .catch(() => {});
   };
 
+  // A minute after a page's cards appear (past every retry), a grid of 8+ cards with
+  // no badge means the host moved the cards' ids or rating lines.
+  let watchedHref = '';
+
+  const watchGrid = () => {
+    const href = watchedHref = location.href;
+
+    setTimeout(() => {
+      if (location.href !== href) return;
+      const badged = !!document.querySelector('.nps-score-badge[data-nps-id]');
+
+      if (badged || document.querySelectorAll(cardSelector).length >= 8) reportMount('grid', badged);
+    }, 60_000);
+  };
+
   const processCards = () => {
-    for (const card of document.querySelectorAll(cardSelector)) {
+    const cards = document.querySelectorAll(cardSelector);
+
+    if (cards.length && watchedHref !== location.href) watchGrid();
+
+    for (const card of cards) {
       // `data-nps-done` names the product the card was scored for, so a card
       // the host recycles for another product comes round again.
       const id = identity(card);

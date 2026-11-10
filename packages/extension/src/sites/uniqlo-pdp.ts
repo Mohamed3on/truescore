@@ -375,4 +375,5 @@ setupSpaInjector({
     document.querySelectorAll('.nps-pdp-badge').forEach(el => el.remove());
     document.querySelectorAll('.ars-wrapper').forEach(el => el.remove());
   },
+  expect: ({ scoreData }) => ({ ...(scoreData && { 'pdp-badge': '.nps-pdp-badge' }) }),
 });

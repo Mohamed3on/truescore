@@ -1,3 +1,5 @@
+import { expectMount } from './breakage';
+
 interface SpaInjectorOpts<T> {
   match: () => boolean;
   load: () => Promise<T | null>;
@@ -8,9 +10,12 @@ interface SpaInjectorOpts<T> {
   // arrives in late DOM (the host renders the product after the route commits),
   // so a single load() at nav time would miss it. See docs/adr/0001.
   retryUntilLoaded?: boolean;
+  // What inject() should have put on the page for this data, by check name: each
+  // selector missing once the grace period is up is reported as host breakage.
+  expect?: (data: T) => Record<string, string>;
 }
 
-export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLoaded }: SpaInjectorOpts<T>) => {
+export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLoaded, expect }: SpaInjectorOpts<T>) => {
   let generation = 0;
   let activeObs: MutationObserver | null = null;
   let retryObs: MutationObserver | null = null;
@@ -44,6 +49,8 @@ export const setupSpaInjector = <T>({ match, load, inject, cleanup, retryUntilLo
     };
 
     run();
+
+    for (const [check, selector] of Object.entries(expect?.(data) ?? {})) expectMount(check, selector);
     let timer: ReturnType<typeof setTimeout> | null = null;
     activeObs = new MutationObserver(() => {
       if (timer) return;

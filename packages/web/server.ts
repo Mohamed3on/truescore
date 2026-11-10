@@ -55,6 +55,7 @@ import { answerKey, cache, type CachedAnswer, type CacheEntry } from './cache';
 import { logEvent } from './events';
 import { LETTERBOXD_BATCH, putFilms, putList } from './letterboxd';
 import { createInflight } from './inflight';
+import { z } from 'zod';
 import index from './index.html';
 import login from './login.html';
 import { errStatus, NoReviews, resolveSubject } from './summary-subject';
@@ -92,6 +93,9 @@ const PASSWORD_COOKIE = 'truescore-key';
 // Sofa's queue of films to log on Letterboxd (see /api/letterboxd/logs); only the owner's box has one.
 const SOFA_LOGS = process.env.SOFA_LETTERBOXD_LOGS;
 const NO_LOGS = { user: null, logs: [] };
+
+// One extension verdict for /api/breakage: did `check` mount on the host page `site` + `path`?
+const BREAKAGE_REPORT = z.object({ site: z.string().max(100), check: z.string().max(40), ok: z.boolean(), path: z.string().max(300), version: z.string().max(20) });
 
 const authed = (req: BunRequest) =>
   !PASSWORD || req.headers.get('x-truescore-key') === PASSWORD || req.cookies.get(PASSWORD_COOKIE) === PASSWORD;
@@ -770,6 +774,19 @@ Bun.serve({
         if (batch.data.list) putList(batch.data.list);
 
         return corsJson({ ok: true, n: batch.data.films.length });
+      },
+      OPTIONS: corsOptions,
+    },
+    // The extension's verdicts on whether its UI made it onto a host page; a GitHub
+    // workflow turns the latest per site and check into issues (.github/workflows/breakage.yml).
+    '/api/breakage': {
+      POST: async (req) => {
+        const report = BREAKAGE_REPORT.safeParse(await req.json().catch(() => null));
+
+        if (!report.success) return corsJson({ error: 'bad report' }, 400);
+        logEvent('breakage', report.data);
+
+        return corsJson({ ok: true });
       },
       OPTIONS: corsOptions,
     },

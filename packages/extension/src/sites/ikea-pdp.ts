@@ -236,4 +236,5 @@ setupSpaInjector({
     }
   },
   cleanup,
+  expect: ({ scoreData, reviews }) => ({ ...(scoreData && { 'pdp-badge': '.nps-pdp-badge' }), ...(reviews && { 'pdp-panel': '.ars-wrapper' }) }),
 });

@@ -320,10 +320,40 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
+// A content script's verdict on whether its UI made it onto the host page
+// (shared/breakage.ts), passed to the server when it changes and at most daily
+// otherwise. No password: nowhere to report.
+const BREAKAGE_ASK = z.object({ type: z.literal('breakage'), check: z.string(), ok: z.boolean() });
+const BREAKAGE_SENT = z.object({ ok: z.boolean(), ts: z.number() });
+const BREAKAGE_RESEND_MS = 24 * 60 * 60 * 1000;
+
+const reportBreakage = async (pageUrl: string, check: string, ok: boolean) => {
+  const { hostname: site, pathname: path } = new URL(pageUrl);
+  const key = `breakage:${site}:${check}`;
+  const last = BREAKAGE_SENT.safeParse((await chrome.storage.local.get(key))[key]);
+
+  if (last.success && last.data.ok === ok && Date.now() - last.data.ts < BREAKAGE_RESEND_MS) return;
+  const headers = await authHeaders();
+
+  if (!headers['x-truescore-key']) return;
+
+  const res = await fetch(`${TRUESCORE_API_BASE}/api/breakage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify({ site, check, ok, path, version: chrome.runtime.getManifest().version }),
+  }).catch(() => null);
+
+  if (res?.ok) await chrome.storage.local.set({ [key]: { ok, ts: Date.now() } });
+};
+
 // A tab's ask for IMDb histograms; an id that isn't a string is dropped.
 const IMDB_HISTOGRAMS_ASK = z.object({ type: z.literal('imdbHistograms'), ids: z.array(z.catch(z.nullable(z.string()), null)) });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  const breakage = BREAKAGE_ASK.safeParse(msg);
+
+  if (breakage.success && sender.url) void reportBreakage(sender.url, breakage.data.check, breakage.data.ok);
+
   const imdbAsk = IMDB_HISTOGRAMS_ASK.safeParse(msg);
 
   if (imdbAsk.success) {

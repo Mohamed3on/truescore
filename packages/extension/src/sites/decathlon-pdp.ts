@@ -343,4 +343,5 @@ setupSpaInjector({
       .forEach(el => { el.style.display = ''; });
     document.querySelectorAll('.ars-wrapper').forEach(el => el.remove());
   },
+  expect: ({ scoreData, reviews }) => ({ ...(scoreData && { 'pdp-badge': '.nps-pdp-badge' }), ...(reviews && { 'pdp-panel': '.ars-wrapper' }) }),
 });

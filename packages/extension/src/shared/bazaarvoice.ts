@@ -545,5 +545,7 @@ export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl,
       }
     },
     cleanup: () => document.querySelectorAll('.nps-pdp-badge, .ars-wrapper').forEach((el) => el.remove()),
+    // A scored product always gets both.
+    expect: ({ scoreData }) => ({ ...(scoreData && { 'pdp-badge': '.nps-pdp-badge', 'pdp-panel': '.ars-wrapper' }) }),
   });
 };
