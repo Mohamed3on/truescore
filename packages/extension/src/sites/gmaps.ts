@@ -1,6 +1,6 @@
 import { TRUESCORE_API_BASE } from '../shared/api-base';
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, LLM_SETTINGS_GET, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, SERVER_SCORE_GET, SERVER_SCORE_RESULT, type MapsCapturedCreds, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, LLM_SETTINGS_GET, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, SERVER_SCORE_GET, SERVER_SCORE_RESULT, EXPECT_MOUNT, type MapsCapturedCreds, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import type { LLMProvider, ReasoningEffort } from '../shared/config';
@@ -198,6 +198,10 @@ const createLimiter = (limit: number) => {
 
 let currentOption: Period = 'total';
 let lastFeatureId = '';
+
+// The place whose simple score was last expected (handleDomMutation).
+let expectedFor = '';
+
 let lastUrl = '';
 let chipViewMode: 'reviews' | 'summary' = 'reviews';
 let fullPctObserver: MutationObserver | null = null;
@@ -3051,6 +3055,17 @@ const triggerSummarize = async () => {
 // handling it gets is what starts a place's scoring.
 const handleDomMutation = () => {
   const url = location.href;
+
+  // A place whose histogram has reviews always gets its simple score; the bridge
+  // reports it if it never lands (shared/breakage.ts).
+  if (lastFeatureId && expectedFor !== lastFeatureId && getFeatureId() === lastFeatureId) {
+    const counts = readHistogramCounts();
+
+    if (counts && histogramTotal(counts) && counts.join(',') !== staleHistogramKey) {
+      expectedFor = lastFeatureId;
+      document.dispatchEvent(new CustomEvent(EXPECT_MOUNT, { detail: 'simple-score' }));
+    }
+  }
 
   const placeDetails = document.querySelector<HTMLElement>('.dmRWX');
 

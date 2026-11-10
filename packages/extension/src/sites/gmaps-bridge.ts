@@ -1,5 +1,6 @@
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, LLM_SETTINGS_GET, SERVER_SCORE_GET, SERVER_SCORE_RESULT, SERVER_SCORE_PORT, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, LLM_SETTINGS_GET, SERVER_SCORE_GET, SERVER_SCORE_RESULT, SERVER_SCORE_PORT, EXPECT_MOUNT, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
 import { getProviderChoice, getReasoningEffort } from '../shared/config';
+import { expectMount } from '../shared/breakage';
 
 // ISOLATED world, document_start. Bridges chrome.storage.local, which
 // MAIN-world gmaps.ts can't reach itself (request/response via CustomEvents).
@@ -33,6 +34,12 @@ document.addEventListener(STORAGE_SET, (e) => {
   } catch {
     respond(id, false);
   }
+});
+
+// Any page script can dispatch this too, so only a known check name gets through,
+// with the selector fixed here.
+document.addEventListener(EXPECT_MOUNT, (e) => {
+  if (e instanceof CustomEvent && e.detail === 'simple-score') expectMount('simple-score', '.truescore-simple-score');
 });
 
 // Only the two choices themselves (see LLM_SETTINGS_GET).

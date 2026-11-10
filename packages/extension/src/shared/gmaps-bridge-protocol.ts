@@ -14,6 +14,10 @@ export const PREVIEW_CAPTURED = 'truescore-preview-captured';
 // and any script on the page can dispatch this event.
 export const LLM_SETTINGS_GET = 'truescore-llm-settings-get';
 
+// A breakage check MAIN-world gmaps.ts can't report itself (shared/breakage.ts):
+// the detail is a check name the bridge maps to its own fixed selector.
+export const EXPECT_MOUNT = 'truescore-expect-mount';
+
 // Botguard creds lifted off Google's own ListUgcPosts batchexecute request. The session
 // they carry is kept and replayed, each request signed by the page;
 // legacy GET /maps/rpc/listugcposts is retired.
