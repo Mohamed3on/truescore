@@ -4,6 +4,7 @@ import { buildReviewPanel } from '../shared/review-panel';
 import { buildGauge, createIslandShell, type IslandScore } from '../shared/score-island';
 import { renderVariationCard, tallyVariationDims } from '../shared/variation-table';
 import { computeScore, loadReviews, reviewToText, tatamiStore, type ProductInfo, type ReviewBundle, type StampedReview } from '../shared/stamped';
+import { expectMount } from '../shared/breakage';
 
 // Tatami's reviews pool across a product's family — its colours, its men's,
 // ladies' and kids' cuts — the same pool its own stars count.
@@ -96,6 +97,8 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
     const scored = computeScore(bundle);
 
     if (!scored || scored.total < 5) return;
+    expectMount('pdp-panel', '.ars-wrapper');
+    expectMount('pdp-badge', '.ts-tatami-line');
     document.querySelector('.ars-wrapper')?.remove();
     document.querySelector('.ts-tatami-line')?.remove();
     const panel = buildPanel(info, bundle, scored);

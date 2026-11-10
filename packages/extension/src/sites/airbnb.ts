@@ -4,6 +4,7 @@ import { getActiveLLM } from '../shared/config';
 import { betterAlternativeRule, buildSummarizeWidget } from '../shared/review-summary';
 import { quoteCards } from '../shared/review-search';
 import { createIslandShell } from '../shared/score-island';
+import { expectMount } from '../shared/breakage';
 import { fetchAirbnbReviewSample, sampleText } from './airbnb-reviews';
 
 // The listing score sits in a distinct panel near Airbnb's own rating. Its
@@ -118,6 +119,7 @@ document.head.append(style);
 const stats = airbnbStats(document.getElementById('data-deferred-state-0')?.textContent || 'null');
 
 if (stats) {
+  expectMount('pdp-badge', '.ts-air-score');
   const item = buildScore(stats);
 
   if (!place(item)) {

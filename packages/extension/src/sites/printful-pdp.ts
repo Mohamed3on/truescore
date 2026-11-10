@@ -5,6 +5,7 @@ import { appendStat, createIslandShell } from '../shared/score-island';
 import { renderScoreBadge } from '../shared/score-grid';
 import { renderVariationCard, tallyVariationDims } from '../shared/variation-table';
 import { fetchReviews, pageProductId, productScore, type PrintfulReview } from '../shared/printful';
+import { expectMount } from '../shared/breakage';
 
 const text = (r: PrintfulReview) => r.body;
 const card = (r: PrintfulReview) => ({ rating: r.rating, body: r.body, meta: r.date });
@@ -58,5 +59,7 @@ const card = (r: PrintfulReview) => ({ rating: r.rating, body: r.body, meta: r.d
   };
 
   place();
+  expectMount('pdp-badge', '.reviews-in-total .nps-score-badge');
+  expectMount('pdp-panel', '.ars-wrapper');
   new MutationObserver(place).observe(document.body, { childList: true, subtree: true });
 })();

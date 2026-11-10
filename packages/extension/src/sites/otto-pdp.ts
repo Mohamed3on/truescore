@@ -4,6 +4,7 @@ import { buildReviewPanel } from '../shared/review-panel';
 import { appendStat, createIslandShell } from '../shared/score-island';
 import { renderScoreBadge } from '../shared/score-grid';
 import { fetchReviews, histogram, scoreOf, type OttoReview } from '../shared/otto';
+import { expectMount } from '../shared/breakage';
 
 // A product page is `/p/<slug>-<id>/`; reviews are the product's, across its
 // variations.
@@ -48,5 +49,7 @@ if (productId && scored) {
   };
 
   place();
+  expectMount('pdp-badge', '.pdp_cr-rating__wrapper .nps-score-badge');
+  expectMount('pdp-panel', '.ars-wrapper');
   new MutationObserver(place).observe(document.body, { childList: true, subtree: true });
 }

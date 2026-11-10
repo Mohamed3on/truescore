@@ -3,6 +3,7 @@ import { PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { buildReviewPanel } from '../shared/review-panel';
 import { buildGauge, createIslandShell, type IslandScore } from '../shared/score-island';
 import { computeScore, getProductInfo, loadReviews, PROGRESS, reviewToText, type ProductInfo, type ReviewBundle, type StampedReview } from '../shared/stamped';
+import { expectMount } from '../shared/breakage';
 
 // Progress sells gis, rash guards and shorts, and its reviews mostly talk fit,
 // so sizing leads as a buying tip, as on Uniqlo.
@@ -79,6 +80,7 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
     const scored = computeScore(bundle);
 
     if (!scored || scored.total < 5) return;
+    expectMount('pdp-panel', '.ars-wrapper');
     document.querySelector('.ars-wrapper')?.remove();
     lineScore?.remove();
     // Below the product's own details, just above Stamped's Customer Reviews.

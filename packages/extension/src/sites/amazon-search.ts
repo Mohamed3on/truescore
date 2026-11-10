@@ -2,6 +2,7 @@
 import { netScore } from '@truescore/gmaps-shared';
 import { addCommas } from '../shared/utils';
 import { markBestRatios, cycleBestRatios, orderByCssBand } from '../shared/score-grid';
+import { reportMount } from '../shared/breakage';
 
 const CACHE_KEY = 'amz-rating-cache';
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
@@ -220,6 +221,9 @@ const sortAmazonResults = async () => {
   const itemsArr: [number | null, Element][] = results
     .filter((r): r is PromiseFulfilledResult<[number | null, Element]> => r.status === 'fulfilled')
     .map(r => r.value);
+
+  // A grid of 8+ results none of which scored means the cards or their rating lines moved.
+  if (itemsArr.length >= 8) reportMount('grid', itemsArr.some(([score]) => score !== null));
 
   itemsArr.sort(sortFunction);
 

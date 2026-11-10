@@ -8,6 +8,7 @@ import { buildSearchSection } from '../shared/review-search';
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 import { z } from 'zod';
+import { expectMount } from '../shared/breakage';
 
 // =============================================================================
 // Configuration
@@ -1358,6 +1359,9 @@ function initObserver() {
   // only then do the fetches start before the ratings chart renders. An unreleased
   // film's never does, and its picks crawl would be for nothing.
   const rated = !!document.querySelector('meta[name="twitter:data2"]');
+
+  // run() needs the synopsis too, so a rated film with one always gets its score line.
+  if (rated && document.querySelector('.review.body-text')) expectMount('pdp-badge', '.lbx-score');
   (rated ? run(histogram) : histogram.then(() => run(histogram)))
     .catch((error) => console.error('LBX Extension error:', error));
 }

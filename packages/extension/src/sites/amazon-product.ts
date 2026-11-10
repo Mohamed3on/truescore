@@ -7,6 +7,7 @@ import { type SearchReviewFields } from '../shared/review-search';
 import { buildReviewPanel } from '../shared/review-panel';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
 import { createIslandShell } from '../shared/score-island';
+import { expectMount } from '../shared/breakage';
 
 const NUMBER_OF_PAGES_TO_PARSE = 10;
 
@@ -807,6 +808,8 @@ const getParentASIN = () => {
     : parseInt(countText.replace(/\D/g, ''), 10);
 
   const cacheASIN = getParentASIN() || productSIN;
+  // A rated product always gets the panel.
+  expectMount('pdp-panel', '.ars-wrapper');
   await getRatingSummary(productSIN, numOfRatingsElement, numOfRatings, cacheASIN);
 
   // Re-attach when variant switch removes our widget

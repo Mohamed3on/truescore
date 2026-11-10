@@ -1,4 +1,5 @@
 import { structuralContainers } from '../shared/score-grid';
+import { expectMount } from '../shared/breakage';
 
 const CARD = '[data-testid="card-container"]';
 const SEARCH_HASH = '0afc7d440ee66286e44038530dc8d2af77d795e434e5cc5c8a8034c93cb377cf';
@@ -276,6 +277,8 @@ export const extendFirstSearchPage = (): void => {
     const existingIds = new Set([...document.querySelectorAll(CARD)].map((card) => card.querySelector('a[href*="/rooms/"]')?.getAttribute('href')?.match(/\/rooms\/(\d+)/)?.[1]));
     cards = data.listings.filter((listing) => !existingIds.has(listingId(listing) || '')).map(renderListing).filter((card): card is HTMLElement => !!card);
     nextCursor = data.nextCursor;
+
+    if (cards.length) expectMount('search-extra', '.ts-air-extra');
     const currentGrid = mainGrid();
 
     if (currentGrid) mount(currentGrid);

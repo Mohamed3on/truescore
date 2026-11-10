@@ -10,6 +10,7 @@
 import { countsInTally, mdToHtml, MIN_TALLY_PEOPLE, replaceChips, signedNet, speakersOf, STANCE_MARKS, threadFromListing, type ListedOption, type OptionTally, type Stance, type TallyCount, type TallyEvent, type Thread, type TitleTally } from '@truescore/gmaps-shared';
 import { loadQAs, saveQA } from '../shared/qa-history';
 import { askThread, requestTally, suggestQuestions, tallyReady } from '../shared/tally';
+import { expectMount } from '../shared/breakage';
 import { el } from '../shared/utils';
 
 const button = (className: string, text?: string) => {
@@ -876,6 +877,8 @@ const sync = () => {
     rows = [];
     drawer.hidden = true;
     markThread(null);
+
+    if (onThread()) expectMount('tally-button', `.${LINK_CLASS}`);
   }
 
   placeEntry();
@@ -884,6 +887,8 @@ const sync = () => {
 void tallyReady().then((ready) => {
   if (!ready) return;
   sync();
+
+  if (onThread()) expectMount('tally-button', `.${LINK_CLASS}`);
   let pending = 0;
   new MutationObserver(() => {
     if (pending) return;

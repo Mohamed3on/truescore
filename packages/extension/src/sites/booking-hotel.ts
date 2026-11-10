@@ -4,6 +4,7 @@ import { betterAlternativeRule, buildSummarizeWidget } from '../shared/review-su
 import { quoteCards } from '../shared/review-search';
 import { el } from '../shared/utils';
 import { createIslandShell } from '../shared/score-island';
+import { expectMount } from '../shared/breakage';
 
 const graphqlEndpoint = 'https://www.booking.com/dml/graphql?';
 const MIN_REVIEWS_PER_GROUP = 3;
@@ -805,4 +806,6 @@ waitForHotelData((hotelData) => {
   };
 
   render();
+  // The panel mounts as soon as the hotel is known, loading or not.
+  expectMount('pdp-panel', '.ts-bp');
 });

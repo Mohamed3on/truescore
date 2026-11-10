@@ -109,4 +109,5 @@ setupSpaInjector<HTMLElement>({
     if (anchor && !document.body.contains(wrapper)) anchor[0].insertAdjacentElement(anchor[1], wrapper);
   },
   cleanup: () => document.querySelectorAll('.ars-wrapper').forEach((node) => node.remove()),
+  expect: () => ({ 'pdp-panel': '.ars-wrapper' }),
 });

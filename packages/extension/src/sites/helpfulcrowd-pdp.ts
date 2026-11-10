@@ -2,6 +2,7 @@ import { addCommas, el } from '../shared/utils';
 import { buildReviewPanel } from '../shared/review-panel';
 import { buildGauge, createIslandShell, type IslandScore } from '../shared/score-island';
 import { computeScore, fetchReviews, storeCode, type HcReview } from '../shared/helpfulcrowd';
+import { expectMount } from '../shared/breakage';
 
 const MIN_REVIEW_CHARS = 20;
 
@@ -55,5 +56,6 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
   };
 
   place();
+  expectMount('pdp-panel', '.ars-wrapper');
   new MutationObserver(place).observe(document.body, { childList: true, subtree: true });
 })();

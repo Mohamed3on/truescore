@@ -3,6 +3,7 @@ import { courseContext, SUMMARY_PROMPT } from './bjjfanatics-prompt';
 import { buildReviewPanel } from '../shared/review-panel';
 import { createIslandShell } from '../shared/score-island';
 import { BJJ_FANATICS, computeScore, getProductInfo, loadReviews, reviewToText, type ProductInfo, type ReviewBundle, type StampedReview } from '../shared/stamped';
+import { expectMount } from '../shared/breakage';
 
 // A reviewer's answers as a card's meta line reads them: "Blue belt · age 26-32 · 1-3 yrs training".
 const optionText = ({ message = '', value = '' }: { message?: string; value?: string }) =>
@@ -154,6 +155,7 @@ openCourseAccordions();
     const scored = computeScore(bundle);
 
     if (!scored || scored.total < 5) return;
+    expectMount('pdp-panel', '.ars-wrapper');
     document.querySelector('.ars-wrapper')?.remove();
     anchor.after(buildPanel(info, bundle, scored, courseContent, autoSummarize));
   });

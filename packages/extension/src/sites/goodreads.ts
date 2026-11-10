@@ -6,6 +6,7 @@ import { adjust, recentRatio, THIN_SAMPLE, trendClass } from '../shared/recency'
 import { createThrottledFetcher } from '../shared/throttled-fetch';
 import { addCommas, el } from '../shared/utils';
 import { buildMediaSummary } from '../shared/review-summary';
+import { expectMount } from '../shared/breakage';
 import { buildSearchSection, orSearch, runSearch, searchWith } from '../shared/review-search';
 import { shrunkAverage } from './goodreads-picks';
 import {
@@ -1811,6 +1812,9 @@ const appendScore = async (bookTitle: Element) => {
 };
 
 const init = () => {
+  // A scored book always gets its score on Goodreads' own ratings line.
+  if (getCurrentBookStats()) expectMount('pdp-badge', '.RatingStatistics__meta .gr-score');
+
   const ready = () => {
     const bookTitle = document.querySelector('[data-testid="bookTitle"]');
     const labelTotal5 = document.querySelector('[data-testid="labelTotal-5"]');
