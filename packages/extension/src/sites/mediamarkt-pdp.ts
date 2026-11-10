@@ -25,11 +25,9 @@ setupBazaarvoicePdp(location.hostname.endsWith('saturn.de') ? SATURN : MEDIAMARK
   productId: productIdFromUrl,
   // The stars and review count under the title.
   ratingLine: () => document.querySelector('[data-test="mms-select-details-header"] a[href="#reviews"]')?.parentElement ?? null,
-  // Under the price, in the buy box the add-to-basket row closes (not a bundle card's
-  // or the sticky bar's): financing, services and promos push that row ~2000px down.
+  // Under the price, in the buy box (not a bundle card's or the sticky bar's).
   panelAnchor: () => {
-    const box = document.querySelector('#pdp-add-to-cart-button')?.parentElement?.parentElement?.parentElement;
-    const node = [...(box?.children ?? [])].find((block) => block.querySelector('[data-test="mms-product-price"]'));
+    const node = document.querySelector('[data-test="mms-pdp-offer-selection"] [data-test="mms-product-price"]')?.parentElement;
 
     return node ? { node, position: 'after' } : null;
   },
