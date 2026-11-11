@@ -44,8 +44,12 @@ export const el = (tag: string, className?: string, text?: string | number) => {
 export const afterHydration = () => new Promise<void>((resolve) => {
   const idle = () => requestIdleCallback(() => resolve(), { timeout: 3000 });
 
-  if (document.readyState === 'complete') idle();
-  else window.addEventListener('load', idle, { once: true });
+  if (document.readyState === 'complete') return idle();
+
+  window.addEventListener('load', idle, { once: true });
+  // A load held up by one hung request (a tracker) may never fire, and the page
+  // hydrated long before.
+  setTimeout(idle, 8000);
 });
 
 export const renderMarkdown = (container: HTMLElement, text: string) => {
