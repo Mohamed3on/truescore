@@ -25,7 +25,7 @@ rivals: every specific ${rival} that even one of these reviews says is better th
 // Domain-specific pages (hotels, films, BJJ courses) keep their own prompts.
 export const PRODUCT_SUMMARY_PROMPT = `Analyze these product reviews. Ignore shipping, delivery, packaging, or seller issues — focus ONLY on the product itself. Skip generic praise like "great product".
 
-Cover the recurring themes mentioned by 2+ reviewers, ranked by how often they come up. Each bullet is one concrete, specific point with enough detail to be useful — e.g. "Adhesive lifts at the edges after a few hours", not just "doesn't stick". When reviewers disagree on a point, say so. Give the 4–6 strongest points for praised and for complaints; don't pad with weak or one-off mentions.
+Cover the recurring themes mentioned by 2+ reviewers, ranked by how often they come up. Each bullet is one concrete, specific point with enough detail to be useful — e.g. "Adhesive lifts at the edges after a few hours", not just "doesn't stick". Each bullet takes one side only: where reviewers disagree, what 2+ like goes under praised and what 2+ dislike under complaints, each as its own bullet, and a side only one reviewer takes is left out. Give the 4–6 strongest points for praised and for complaints; don't pad with weak or one-off mentions.
 
 ${betterAlternativeRule('competing product')}
 
