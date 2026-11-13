@@ -234,7 +234,9 @@ export const stanceMark = (stance: Stance | undefined, authorReviews?: number): 
 // them below it, each as the site's own review card (`renderQuote`, which may
 // fetch the reviews to find it among first), or as its text when none holds it.
 // `quotes` may be read only then, when their order waits on reviews still
-// arriving. `title` says what was checked when it wasn't every review.
+// arriving. `title` says what was checked when it wasn't every review, and
+// `label` what the button reads where its count isn't "N reviews" (a divided
+// topic's ▲ and ▼). An item's buttons share one box: opening one closes another's.
 const isText = (q: string | { text: string }): q is string => typeof q === 'string';
 
 export const receiptButton = <Q extends string | { text: string }>(
@@ -243,22 +245,21 @@ export const receiptButton = <Q extends string | { text: string }>(
   quotes: Q[] | (() => Q[]),
   renderQuote: (q: Q) => HTMLElement | null | Promise<HTMLElement | null>,
   title = 'Show the reviews that say this',
+  label = `${n} reviews`,
 ): HTMLButtonElement => {
   ensureJevStyles();
   // SAFETY: el('button') creates a <button>.
-  const btn = el('button', 'ars-receipt', `${n} reviews`) as HTMLButtonElement;
+  const btn = el('button', 'ars-receipt', label) as HTMLButtonElement;
   btn.type = 'button';
   btn.title = title;
   btn.setAttribute('aria-expanded', 'false');
   btn.addEventListener('click', async () => {
-    const open = item.querySelector('.ars-receipt-quotes');
-    btn.setAttribute('aria-expanded', String(!open));
+    const wasOpen = btn.getAttribute('aria-expanded') === 'true';
+    item.querySelector('.ars-receipt-quotes')?.remove();
+    item.querySelectorAll('.ars-receipt').forEach((b) => b.setAttribute('aria-expanded', 'false'));
 
-    if (open) {
-      open.remove();
-
-      return;
-    }
+    if (wasOpen) return;
+    btn.setAttribute('aria-expanded', 'true');
 
     // Open at once, so a second press closes it while the cards are found.
     const box = item.appendChild(el('div', 'ars-receipt-quotes'));

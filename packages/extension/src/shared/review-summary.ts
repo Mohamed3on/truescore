@@ -4,7 +4,7 @@ import { cacheGet, cacheSet } from './cache';
 import { askTransport, bumpRateLimit, checkRateLimit, RL_MAX, summarize } from './llm';
 import { loadQAs, removeQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
-import { bySupport, PLAIN_PROSE, enter, fadeIn, foldAway, mountBullets, parseOrQuery, receiptsFor, smoothDrafts, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
+import { bySupport, isDivided, PLAIN_PROSE, enter, fadeIn, foldAway, mountBullets, parseOrQuery, receiptsFor, smoothDrafts, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
 import type { JSONSchema7 } from 'ai';
 import * as z from 'zod/mini';
 import { readAnswers, readSupport, receiptButton } from './jev';
@@ -21,12 +21,23 @@ export const betterAlternativeRule = (rival: string) => `betterAlternative: only
 
 rivals: every specific ${rival} that even one of these reviews says is better than this one in that sense, most-preferred first, at most ${MAX_RIVALS} — including ones betterAlternative leaves out for too few reviewers or for disagreement, since every review naming each is read before it shows. name: its name, spelled out as reviewers who write it in full do, never starred out ("Acme Pro"); aliases: every other way reviewers write it, exactly as written ("Acme", "AcmePro"), as each is searched; why: in one line, what they say it does better ("lasts twice as long") — never who or how many say so, as the count shows beside it. An empty list if no review prefers one.`;
 
-// The rule for praised and complaints bullets the product and stay prompts
-// share. Each bullet is checked against the reviews and shows how many say it
+// The rule for praised and complaints bullets the stay prompts share. Each bullet is checked against the reviews and shows how many say it
 // (withReceipts), and a review saying any part of one counts: for a bullet
 // giving both sides ("too sweet for some, others say not sweet at all") that
 // counted the reviews saying the opposite too.
 export const ONE_SIDE_RULE = `Each praised or complaints bullet takes one side only: where reviewers disagree, what 2+ like goes under praised and what 2+ dislike under complaints, each as its own bullet, and a side only one reviewer takes is left out.`;
+
+// Divided topics per summary, each side a point checked against the reviews.
+const MAX_DIVIDED = 3;
+
+// The product prompt's form of ONE_SIDE_RULE: a topic reviewers disagree on
+// leaves both lists for `divided`, where its two sides are counted against
+// each other ("Taste 78% · ▲124 ▼36", see withReceipts). Each side is counted
+// as a bullet is, by the reviews that say it: a Stance read of the topic's name
+// took a toothpaste's every happy review for praise of its "Tube".
+const DIVIDED_RULE = `divided: the topics reviewers disagree on, 2+ liking it and 2+ disliking it, the most-mentioned first, at most ${MAX_DIVIDED} — topic: the one thing both sides speak of, in a word or two and without the verdict ("Taste", not "Artificial taste"); liked: in one line, all that those who like it say of it; disliked: all that those who don't say of that same thing. Where only one reviewer takes a side, the topic isn't divided. An empty list if reviewers disagree on nothing.
+
+Each praised or complaints bullet takes one side only, never two ("too much for some, too little for others"), a side only one reviewer takes is left out, and none is about a divided topic: everything reviewers say for or against one goes in its two lines, so a taste that divides them has no bullet in either list.`;
 
 // Shared default summary prompt for retail product pages (Amazon, Decathlon, dm…).
 // Domain-specific pages (hotels, films, BJJ courses) keep their own prompts.
@@ -34,7 +45,7 @@ export const PRODUCT_SUMMARY_PROMPT = `Analyze these product reviews. Ignore shi
 
 Cover the recurring themes mentioned by 2+ reviewers, ranked by how often they come up. Each bullet is one concrete, specific point with enough detail to be useful — e.g. "Adhesive lifts at the edges after a few hours", not just "doesn't stick". Give the 4–6 strongest points for praised and for complaints; don't pad with weak or one-off mentions.
 
-${ONE_SIDE_RULE}
+${DIVIDED_RULE}
 
 ${betterAlternativeRule('competing product')}
 
@@ -60,6 +71,17 @@ type Receipt = { n: number; quotes: string[] };
 
 type Rival = { name: string; aliases: string[]; why: string };
 
+// A divided topic as the model writes it, and, once its sides are checked, the
+// reviews on each. Read as far as it's written: one still streaming in has
+// no sides yet.
+type Divided = { topic: string; liked: string; disliked: string; pos?: Receipt; neg?: Receipt };
+
+const RECEIPT = z.object({ n: z.number(), quotes: z.array(z.string()) });
+const TEXT = z.catch(z.string(), '');
+const DIVIDED = z.catch(z.array(z.catch(z.object({ topic: TEXT, liked: TEXT, disliked: TEXT, pos: z.optional(RECEIPT), neg: z.optional(RECEIPT) }), { topic: '', liked: '', disliked: '' })), []);
+
+const dividedOf = (summary: any): Divided[] => DIVIDED.parse(summary.divided).filter((t) => t.topic);
+
 // The reviews naming a rival: every one of the page's when it can search them,
 // else the ones in hand — not the model's sample, which may hold too few of them
 // to settle it (Amazon's newest 100 held 3 of a syrup's 8 reviews naming More).
@@ -74,32 +96,47 @@ const naming = async ({ name, aliases }: Rival, reviews: string[], search?: Sear
 // the server's endpoints: each praise and complaint keeps how many reviews make
 // it and which, one too few make is dropped before it's ever shown, and the
 // better alternative is the rival most reviewers naming it would rather have,
-// when the shared rule keeps one. Unchanged when Jev can't read them; the
-// model's own pick stands when only the rivals couldn't be read.
+// when the shared rule keeps one. A divided topic's two sides are points like
+// any other: where enough reviews make each (isDivided) it keeps them, and
+// where they don't, each side joins praised or complaints as the bullet it is.
+// Unchanged, but for that, when Jev can't read them; the model's own pick
+// stands when only the rivals couldn't be read.
 export const withReceipts = async (parsed: any, reviews: string[], search?: SearchReviews) => {
   const texts = reviews.slice(0, RECEIPT_REVIEWS);
-  const points: string[] = [...(parsed.praised ?? []), ...(parsed.complaints ?? [])];
+  const topics = dividedOf(parsed).filter((t) => t.liked && t.disliked).slice(0, MAX_DIVIDED);
+  const praised: string[] = [...(parsed.praised ?? []), ...topics.map((t) => t.liked)];
+  const complaints: string[] = [...(parsed.complaints ?? []), ...topics.map((t) => t.disliked)];
+  const points = [...praised, ...complaints];
   const rivals: Rival[] = (parsed.rivals ?? []).filter((r: Rival) => r?.name?.trim()).slice(0, MAX_RIVALS);
   const checked = await receiptsFor(points, texts, rivals.map((r) => ({ name: r.name, texts: naming(r, reviews, search) })), { support: readSupport, answers: readAnswers });
 
-  if (!checked) return parsed;
+  if (!checked) return { ...parsed, praised, complaints, divided: [] };
   const receipts: Record<string, Receipt> = {};
   points.forEach((p, i) => {
     const r = checked.points[i];
 
     if (r) receipts[p] = { n: r.support, quotes: r.quotes };
   });
+
+  const divided = topics.flatMap((t): Divided[] => {
+    const [pos, neg] = [receipts[t.liked], receipts[t.disliked]];
+
+    return pos && neg && isDivided(pos.n, neg.n) ? [{ ...t, pos, neg }] : [];
+  });
+
   const [best] = [...(checked.alternatives ?? [])].sort((a, b) => b.support - a.support);
   const why = best && rivals.find((r) => r.name === best.name)?.why;
   const line = best ? (why ? `**${best.name}** — ${why}` : `**${best.name}**`) : '';
 
   if (best) receipts[line] = { n: best.support, quotes: best.quotes };
-  const made = (p: string) => p in receipts;
+  // A point too few reviews make is dropped, and a divided topic's sides show in its row.
+  const shown = (p: string) => p in receipts && !divided.some((t) => t.liked === p || t.disliked === p);
 
   const withChecks = {
     ...parsed,
-    praised: (parsed.praised ?? []).filter(made),
-    complaints: (parsed.complaints ?? []).filter(made),
+    praised: praised.filter(shown),
+    complaints: complaints.filter(shown),
+    divided,
     betterAlternative: checked.alternatives ? line : parsed.betterAlternative,
     receipts,
   };
@@ -120,11 +157,13 @@ const receiptFor = (item: HTMLElement, { n, quotes }: Receipt, checkedOf: number
 // streams in), written and being checked against the reviews, or checked.
 type SummaryPhase = 'writing' | 'checking' | 'checked';
 
-// A panel's blocks join `container` in their fixed order, whichever is drawn first.
+// A panel's blocks join `container` in their fixed order, whichever is drawn
+// first — and whether or not the panel is on the page yet (a cached summary is
+// drawn before it is).
 const inOrder = (container: HTMLElement, blocks: () => (HTMLElement | undefined)[]) => (node: HTMLElement) => {
-  if (node.isConnected) return;
+  if (node.parentNode === container) return;
   const all = blocks();
-  container.insertBefore(node, all.slice(all.indexOf(node) + 1).find((b) => b?.isConnected) ?? null);
+  container.insertBefore(node, all.slice(all.indexOf(node) + 1).find((other) => other?.parentNode === container) ?? null);
 };
 
 const sectionOf = (type: string, title: string) => {
@@ -132,6 +171,40 @@ const sectionOf = (type: string, title: string) => {
   section.appendChild(el('div', 'ars-section-title', title));
 
   return section;
+};
+
+// A divided topic's row: its name, then, once its sides are checked, the share
+// of the reviews taking one that like it, a bar of the two sides and a count
+// of each that opens its reviews; under them what each side says. Drafted, it's
+// the name and the sides alone.
+const drawSplit = (row: HTMLElement, t: Divided, checkedOf: number | undefined, renderQuote: RenderQuote) => {
+  const head = el('div', 'ars-split-head');
+  head.appendChild(el('span', 'ars-split-topic', t.topic));
+  row.replaceChildren(head);
+
+  if (t.pos && t.neg) {
+    head.appendChild(el('span', 'ars-split-share', `${Math.round((t.pos.n / (t.pos.n + t.neg.n)) * 100)}% like it`));
+    const counts = head.appendChild(el('span', 'ars-split-counts'));
+    const bar = row.appendChild(el('div', 'ars-split-bar'));
+    bar.setAttribute('role', 'img');
+    bar.setAttribute('aria-label', `${t.pos.n} like it, ${t.neg.n} don't`);
+
+    for (const [side, receipt, mark, say] of [['pos', t.pos, '\u25B2', 'like it'], ['neg', t.neg, '\u25BC', "don't like it"]] as const) {
+      const of = checkedOf ? `Of the ${RECEIPT_REVIEWS} longest of ${checkedOf} reviews — show` : 'Show';
+      const btn = receiptButton(row, receipt.n, receipt.quotes, renderQuote, `${of} the ${receipt.n} that ${say}`, `${mark}${receipt.n}`);
+      btn.classList.add('ars-split-count', side);
+      btn.setAttribute('aria-label', `${receipt.n} reviews ${say} — show them`);
+      counts.appendChild(btn);
+      bar.appendChild(el('i', side)).style.flexGrow = String(receipt.n);
+    }
+  }
+
+  for (const [side, mark, text] of [['pos', '\u25B2', t.liked], ['neg', '\u25BC', t.disliked]] as const) {
+    if (!text) continue;
+    const line = row.appendChild(el('div', 'ars-split-side'));
+    line.appendChild(el('span', `ars-split-mark ${side}`, mark)).setAttribute('aria-hidden', 'true');
+    renderMarkdownInline(line.appendChild(el('span')), text);
+  }
 };
 
 // A bullet list as a summary holds it, streaming or cached: its strings, with
@@ -161,9 +234,11 @@ const mountStructuredSummary = (container: HTMLElement, renderQuote: RenderQuote
   };
 
   const lists = [listOf('praised', '\u25B3 Universally praised'), listOf('complaints', '\u25BD Common complaints')] as const;
+  const split = sectionOf('divided', '\u25C7 Reviewers split');
+  const topics = mountBullets<Divided>(split, (t) => t.topic, () => el('div', 'ars-split'), (row, t) => drawSplit(row, t, receiptsOf, renderQuote));
   let alt: HTMLElement | undefined;
   let streamed = false;
-  const show = inOrder(container, () => [conclusion, lists[0].section, lists[1].section, alt]);
+  const show = inOrder(container, () => [conclusion, lists[0].section, split, lists[1].section, alt]);
 
   const drawConclusion = (text: string | undefined, phase: SummaryPhase) => {
     if (text) {
@@ -204,6 +279,15 @@ const mountStructuredSummary = (container: HTMLElement, renderQuote: RenderQuote
       else void foldAway(section);
     }
 
+    const divided = dividedOf(summary);
+
+    if (phase !== 'checked') topics.draft(divided);
+    // Only a topic whose two sides were counted is shown as divided.
+    else void topics.settle(divided.filter((t) => t.pos && t.neg));
+
+    if (divided.some((t) => phase !== 'checked' || (t.pos && t.neg))) show(split);
+    else void foldAway(split);
+
     if (phase !== 'checked' || !betterAlternative) return;
     alt = sectionOf('alt', '\u21C4 Better alternative');
     const item = alt.appendChild(el('div', 'ars-section-item'));
@@ -243,6 +327,24 @@ const SUMMARY_SCHEMA = {
   additionalProperties: false,
 };
 
+// SUMMARY_SCHEMA with the divided topics DIVIDED_RULE asks for, written first:
+// written after praised, their sides were in both lists already.
+const DIVIDED_SUMMARY_SCHEMA = (() => {
+  const text = { type: 'string' as const };
+
+  return {
+    ...SUMMARY_SCHEMA,
+    properties: {
+      divided: { type: 'array' as const, items: { type: 'object' as const, properties: { topic: text, liked: text, disliked: text }, required: ['topic', 'liked', 'disliked'], additionalProperties: false } },
+      ...SUMMARY_SCHEMA.properties,
+    },
+    required: ['divided', ...SUMMARY_SCHEMA.required],
+  };
+})();
+
+// A prompt that asks for divided topics gets the schema that holds them.
+const schemaFor = (prompt: string) => (prompt.includes(DIVIDED_RULE) ? DIVIDED_SUMMARY_SCHEMA : SUMMARY_SCHEMA);
+
 // Reference material (e.g. a course's volume/chapter breakdown) appended to
 // both the structured-summary prompt and every Ask, so questions can map vague
 // reviewer mentions to specific named sections too — not just the summary.
@@ -250,7 +352,7 @@ export const withContext = (prompt: string, context?: string) => (context ? `${p
 
 // One pass over the reviews on the popup's model: free-form text for a null
 // schema, else an object matching it, streamed to `onPartial` (see llm.ts).
-export const llmSummarize = (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null = SUMMARY_SCHEMA, onPartial?: (partial: any) => void): Promise<any> =>
+export const llmSummarize = (reviewTexts: string[], prompt: string, schema: JSONSchema7 | null = schemaFor(prompt), onPartial?: (partial: any) => void): Promise<any> =>
   summarize(reviewTexts, prompt, schema, onPartial);
 
 // Rewrites the answer already there, so a streamed one grows in place.

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { receiptsFor, type SupportReader } from './receipts';
+import { isDivided, receiptsFor, type SupportReader } from './receipts';
 import type { Answer } from './stance';
 
 // A fake Jev: a review makes a point when it holds the point's last word, and
@@ -61,4 +61,8 @@ describe('receiptsFor', () => {
   test('null when the points can\'t be checked', async () => {
     expect(await receiptsFor(['Loved penguins'], ['penguins'], [], { ...reader(), support: async () => null })).toBeNull();
   });
+});
+
+test('a topic is divided when 2+ reviews take each side and a tenth or more of them the smaller one', () => {
+  expect([isDivided(18, 2), isDivided(40, 3), isDivided(5, 1), isDivided(2, 3)]).toEqual([true, false, false, true]);
 });

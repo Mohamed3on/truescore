@@ -8,6 +8,10 @@ import type { Answer } from './stance';
 // prompt's own "2+ reviewers" rule, enforced instead of trusted.
 const MIN_SUPPORT = 2;
 
+// A topic shows as divided when the smaller side holds at least this share of
+// the reviews taking one: 100 liking it and 3 not is a complaint, not a split.
+const MIN_MINORITY = 0.1;
+
 // Supporting reviews a receipt carries for its click-through: the newest.
 const QUOTES_MAX = 20;
 
@@ -70,3 +74,12 @@ export async function receiptsFor(points: string[], texts: string[], rivals: Riv
 
   return receipts;
 }
+
+// Whether a topic the model calls divided shows as one, by how many reviews
+// take each side of it: MIN_SUPPORT on each, the smaller MIN_MINORITY of both.
+// One that doesn't leaves each side to stand as a bullet of its own.
+export const isDivided = (liked: number, disliked: number): boolean => {
+  const fewer = Math.min(liked, disliked);
+
+  return fewer >= MIN_SUPPORT && fewer >= MIN_MINORITY * (liked + disliked);
+};
