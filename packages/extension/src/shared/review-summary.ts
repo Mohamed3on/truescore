@@ -28,14 +28,14 @@ rivals: every specific ${rival} that even one of these reviews says is better th
 export const ONE_SIDE_RULE = `Each praised or complaints bullet takes one side only: where reviewers disagree, what 2+ like goes under praised and what 2+ dislike under complaints, each as its own bullet, and a side only one reviewer takes is left out.`;
 
 // Divided topics per summary, each side a point checked against the reviews.
-const MAX_DIVIDED = 3;
+const MAX_DIVIDED = 5;
 
 // The product prompt's form of ONE_SIDE_RULE: a topic reviewers disagree on
 // leaves both lists for `divided`, where its two sides are counted against
 // each other ("Taste 78% · ▲124 ▼36", see withReceipts). Each side is counted
 // as a bullet is, by the reviews that say it: a Stance read of the topic's name
 // took a toothpaste's every happy review for praise of its "Tube".
-const DIVIDED_RULE = `divided: the topics reviewers disagree on, 2+ liking it and 2+ disliking it, the most-mentioned first, at most ${MAX_DIVIDED} — topic: the one thing both sides speak of, in a word or two and without the verdict ("Taste", not "Artificial taste"); liked: in one line, all that those who like it say of it; disliked: all that those who don't say of that same thing. Where only one reviewer takes a side, the topic isn't divided. An empty list if reviewers disagree on nothing.
+const DIVIDED_RULE = `divided: the topics reviewers disagree on, 2+ liking it and 2+ disliking it, the most-mentioned first, at most ${MAX_DIVIDED} — topic: the one thing both sides speak of, in a word or two and without the verdict ("Taste", not "Artificial taste"); liked: in one line, all that those who like it say of it; disliked: all that those who don't say of that same thing. However few reviewers speak of it, a thing 2+ praise and 2+ complain about is divided, so check each complaint against the praise for the same thing (a fluoride level some call right and others blame); where only one reviewer takes a side, it isn't. An empty list if reviewers disagree on nothing.
 
 Each praised or complaints bullet takes one side only, never two ("too much for some, too little for others"), a side only one reviewer takes is left out, and none is about a divided topic: everything reviewers say for or against one goes in its two lines, so a taste that divides them has no bullet in either list.`;
 
