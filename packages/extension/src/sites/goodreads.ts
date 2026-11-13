@@ -12,6 +12,7 @@ import { shrunkAverage } from './goodreads-picks';
 import {
   goodreadsViewerCacheScope,
   readViewerShelving,
+  viewerShelvingFromPageData,
   shelfScoreCacheTtl,
   type ShelfStatus,
   type ViewerShelving,
@@ -1569,17 +1570,17 @@ const watchViewerShelving = (bookId: string) => {
   let seen = JSON.stringify({ status: null, myRating: 0 });
   let syncing: Promise<unknown> = Promise.resolve();
 
-  const check = () => {
-    const now = readViewerShelving(document);
-
+  const apply = (now: ViewerShelving | null) => {
     if (!now || JSON.stringify(now) === seen) return;
     seen = JSON.stringify(now);
     // One at a time, so a quick second click never lands before the first.
     syncing = syncing.then(() => syncViewerShelving(viewerScope, bookId, now)).catch((e) => debug('shelving sync failed:', e));
   };
 
-  new MutationObserver(check).observe(document.body, { childList: true, subtree: true, attributeFilter: ['aria-label', 'aria-valuenow'] });
-  check();
+  // As served, from the page's data; from its markup only for changes made on the page.
+  apply(viewerShelvingFromPageData(document, bookId) ?? readViewerShelving(document));
+  new MutationObserver(() => apply(readViewerShelving(document)))
+    .observe(document.body, { childList: true, subtree: true, attributeFilter: ['aria-label', 'aria-valuenow'] });
 };
 
 // =============================================================================

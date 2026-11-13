@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { goodreadsViewerCacheScope, readViewerShelving, shelfScoreCacheTtl } from './goodreads-shelf-cache';
+import { goodreadsViewerCacheScope, readViewerShelving, shelfScoreCacheTtl, viewerShelvingFromPageData, type PageState } from './goodreads-shelf-cache';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const THRESHOLD = -2;
@@ -78,5 +78,35 @@ describe('readViewerShelving', () => {
 
   test("waits for the book's own stars, never a reviewer's", () => {
     expect(page("Shelved as 'Read'. Tap to edit shelf for this book")).toBeNull();
+  });
+});
+
+describe('viewerShelvingFromPageData', () => {
+  const page = (apolloState: PageState) => {
+    document.body.innerHTML = `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { apolloState } } })}</script>`;
+
+    return viewerShelvingFromPageData(document, '43868109');
+  };
+
+  const book = (viewerShelving: { __ref: string } | null) => ({ __typename: 'Book', legacyId: 43868109, viewerShelving });
+
+  test("reads the page's own book among the others its data holds", () => {
+    expect(page({
+      'Book:other': { __typename: 'Book', legacyId: 1, viewerShelving: { __ref: 'Shelving:other' } },
+      'Shelving:other': { shelf: { name: 'to-read' }, review: null },
+      'Book:own': book({ __ref: 'Shelving:own' }),
+      'Shelving:own': { shelf: { name: 'read' }, review: { __ref: 'Review:own' } },
+      'Review:own': { rating: 2 },
+    })).toEqual({ status: 'read', myRating: 2 });
+  });
+
+  test('a shelved, unrated book has no stars; a shelf of the viewer\'s own is "other"', () => {
+    expect(page({ 'Book:own': book({ __ref: 'S' }), S: { shelf: { name: 'currently-reading' }, review: null } })).toEqual({ status: 'reading', myRating: 0 });
+    expect(page({ 'Book:own': book({ __ref: 'S' }), S: { shelf: { name: 'abandoned' }, review: null } })).toEqual({ status: 'other', myRating: 0 });
+  });
+
+  test('an unshelved book is on no shelf; a page without the book says nothing', () => {
+    expect(page({ 'Book:own': book(null) })).toEqual({ status: null, myRating: 0 });
+    expect(page({})).toBeNull();
   });
 });
