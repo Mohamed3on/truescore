@@ -40,12 +40,12 @@ const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: IslandScore
   return wrapper;
 };
 
-// One more item on Stamped's stars line under the title, in its type and grey;
-// a click goes down to the panel.
+// A line of its own under the stars row (full, with the points link beside it),
+// in the review count's type and grey; a click goes down to the panel.
 const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) => {
-  const item = el('a', undefined, ' · TrueScore ');
+  const item = el('a', undefined, 'TrueScore ');
   item.setAttribute('href', '#');
-  item.style.cssText = 'color:inherit;text-decoration:none';
+  item.style.cssText = 'flex-basis:100%;font-size:12px;color:#696969;text-decoration:none';
   item.title = `Net loved: 5★ minus 1★, over all ${addCommas(total)} reviews`;
   item.append(el('b', undefined, addCommas(score)), ` · ${Math.round(nps)}% net loved`);
   item.addEventListener('click', (e) => {
@@ -62,19 +62,7 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
 
   if (!info) return;
   const reviewsWidget = document.getElementById('stamped-main-widget')!;
-  const titleBlock = document.querySelector('.product__title-and-price');
-
-  // Stamped redraws its stars line once its script loads, wiping whatever is
-  // inside, so the score goes back in whenever it's missing.
   let lineScore: HTMLElement | null = null;
-
-  const placeLineScore = () => {
-    const line = titleBlock?.querySelector('.stamped-main-badge .stamped-badge');
-
-    if (lineScore && line && !line.contains(lineScore)) line.append(lineScore);
-  };
-
-  if (titleBlock) new MutationObserver(placeLineScore).observe(titleBlock, { childList: true, subtree: true });
 
   loadReviews(PROGRESS, info, (bundle, autoSummarize) => {
     const scored = computeScore(bundle);
@@ -87,6 +75,6 @@ const buildLineScore = ({ score, nps, total }: IslandScore, panel: HTMLElement) 
     const panel = buildPanel(info, bundle, scored, autoSummarize);
     reviewsWidget.before(panel);
     lineScore = buildLineScore(scored, panel);
-    placeLineScore();
+    document.querySelector('.pj-pdp-headline__meta')?.after(lineScore);
   });
 })();

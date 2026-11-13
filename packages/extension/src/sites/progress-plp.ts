@@ -4,8 +4,8 @@ import { cardScores, PROGRESS } from '../shared/stamped';
 const scoreOf = cardScores(PROGRESS);
 
 setupScoreGrid({
-  cardSelector: '.product-grid-item[data-product-id]',
-  scoreForCard: (card) => scoreOf(card.getAttribute('data-product-id')!),
-  // Beside Stamped's stars, not inside them: its redraw would wipe the badge.
-  placeBadge: (card, badge) => card.querySelector('.stamped-product-reviews-badge')?.after(badge),
+  cardSelector: '.pj-card:has([data-wpd-product-id])',
+  scoreForCard: (card) => scoreOf(card.querySelector('[data-wpd-product-id]')!.getAttribute('data-wpd-product-id')!),
+  // Inside the theme's stars: the title row spreads its items apart.
+  placeBadge: (card, badge) => card.querySelector('.pj-product-card__rating')?.append(badge),
 });
