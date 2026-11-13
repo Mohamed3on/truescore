@@ -1133,8 +1133,6 @@ const anchorLink = (href: string, className: string | undefined, text: string) =
   // SAFETY: el creates the tag it's given, here an <a>.
   const a = el('a', className, text) as HTMLAnchorElement;
   a.href = href;
-  a.target = '_blank';
-  a.rel = 'noopener';
 
   return a;
 };
@@ -1580,7 +1578,7 @@ const watchViewerShelving = (bookId: string) => {
     syncing = syncing.then(() => syncViewerShelving(viewerScope, bookId, now)).catch((e) => debug('shelving sync failed:', e));
   };
 
-  new MutationObserver(check).observe(document.body, { childList: true, subtree: true, attributeFilter: ['aria-label'] });
+  new MutationObserver(check).observe(document.body, { childList: true, subtree: true, attributeFilter: ['aria-label', 'aria-valuenow'] });
   check();
 };
 

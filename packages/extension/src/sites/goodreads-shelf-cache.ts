@@ -45,19 +45,19 @@ const SHELF_BY_NAME = new Map<string, ShelfStatus>([
 
 /**
  * The viewer's shelf and stars for a book page's own book, as its shelf button ("Shelved
- * as 'Read'. Tap to edit…", or "Tap to shelve…" when it's on none) and its stars ("Rating
- * 2 out of 5") show them now. Null until both are there: the stars render on hydration.
- * Reviewers' stars sit outside the book's actions.
+ * as 'Read'. Tap to edit…", or "Tap to shelve…" when it's on none) and its quarter-star slider
+ * (aria-valuenow, 0 when unrated) show them now. Null until both are there: the stars render
+ * on hydration. Reviewers' stars sit outside the book's actions.
  */
 export const readViewerShelving = (root: ParentNode): ViewerShelving | null => {
   const shelf = root
     .querySelector('.BookActions button[aria-label^="Shelved as "], .BookActions button[aria-label^="Tap to shelve"]')
     ?.getAttribute('aria-label');
 
-  const stars = root.querySelector('.BookActions [aria-label^="Rating "]')?.getAttribute('aria-label')?.match(/^Rating (\d) out of 5$/);
+  const stars = root.querySelector('.BookActions [role="slider"]')?.getAttribute('aria-valuenow');
 
-  if (!shelf || !stars) return null;
+  if (!shelf || stars == null) return null;
   const name = shelf.match(/^Shelved as '(.+)'\./)?.[1];
 
-  return { status: name ? (SHELF_BY_NAME.get(name) ?? 'other') : null, myRating: Number(stars[1]) };
+  return { status: name ? (SHELF_BY_NAME.get(name) ?? 'other') : null, myRating: Number(stars) || 0 };
 };
