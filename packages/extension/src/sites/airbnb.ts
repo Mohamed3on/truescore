@@ -1,7 +1,7 @@
 import { addCommas, el } from '../shared/utils';
 import { airbnbStats, type AirbnbStats } from '../shared/airbnb-stats';
 import { getActiveLLM } from '../shared/config';
-import { betterAlternativeRule, buildSummarizeWidget } from '../shared/review-summary';
+import { betterAlternativeRule, buildSummarizeWidget, ONE_SIDE_RULE } from '../shared/review-summary';
 import { quoteCards } from '../shared/review-search';
 import { createIslandShell } from '../shared/score-island';
 import { expectMount } from '../shared/breakage';
@@ -56,9 +56,11 @@ const STYLES = `
 
 const SUMMARY_PROMPT = `Analyze this Airbnb listing's guest reviews. The sample deliberately includes the lowest-rated reviews and Airbnb's most relevant reviews; each review begins with its star rating.
 
-Focus especially on recurring complaints in the low-rated reviews. Identify specific problems with the room, cleanliness, sleep, noise, amenities, host, check-in, location, or value. Include a complaint only when at least two independent guests describe it; distinguish a repeated pattern from a single bad stay. If guests disagree, say so. Rank complaints by how often and how seriously they affect a stay.
+Focus especially on recurring complaints in the low-rated reviews. Identify specific problems with the room, cleanliness, sleep, noise, amenities, host, check-in, location, or value. Include a complaint only when at least two independent guests describe it; distinguish a repeated pattern from a single bad stay. Rank complaints by how often and how seriously they affect a stay.
 
 Also cover the concrete positives that guests repeatedly describe, drawing from the whole sample. Avoid generic praise. Do not let the larger number of five-star reviews drown out substantiated complaints. Do not claim this sample represents every review or infer a percentage from it.
+
+${ONE_SIDE_RULE}
 
 ${betterAlternativeRule('nearby Airbnb stay')}
 

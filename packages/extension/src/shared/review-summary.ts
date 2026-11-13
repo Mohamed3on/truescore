@@ -21,11 +21,20 @@ export const betterAlternativeRule = (rival: string) => `betterAlternative: only
 
 rivals: every specific ${rival} that even one of these reviews says is better than this one in that sense, most-preferred first, at most ${MAX_RIVALS} — including ones betterAlternative leaves out for too few reviewers or for disagreement, since every review naming each is read before it shows. name: its name, spelled out as reviewers who write it in full do, never starred out ("Acme Pro"); aliases: every other way reviewers write it, exactly as written ("Acme", "AcmePro"), as each is searched; why: in one line, what they say it does better ("lasts twice as long") — never who or how many say so, as the count shows beside it. An empty list if no review prefers one.`;
 
+// The rule for praised and complaints bullets the product and stay prompts
+// share. Each bullet is checked against the reviews and shows how many say it
+// (withReceipts), and a review saying any part of one counts: for a bullet
+// giving both sides ("too sweet for some, others say not sweet at all") that
+// counted the reviews saying the opposite too.
+export const ONE_SIDE_RULE = `Each praised or complaints bullet takes one side only: where reviewers disagree, what 2+ like goes under praised and what 2+ dislike under complaints, each as its own bullet, and a side only one reviewer takes is left out.`;
+
 // Shared default summary prompt for retail product pages (Amazon, Decathlon, dm…).
 // Domain-specific pages (hotels, films, BJJ courses) keep their own prompts.
 export const PRODUCT_SUMMARY_PROMPT = `Analyze these product reviews. Ignore shipping, delivery, packaging, or seller issues — focus ONLY on the product itself. Skip generic praise like "great product".
 
-Cover the recurring themes mentioned by 2+ reviewers, ranked by how often they come up. Each bullet is one concrete, specific point with enough detail to be useful — e.g. "Adhesive lifts at the edges after a few hours", not just "doesn't stick". Each bullet takes one side only: where reviewers disagree, what 2+ like goes under praised and what 2+ dislike under complaints, each as its own bullet, and a side only one reviewer takes is left out. Give the 4–6 strongest points for praised and for complaints; don't pad with weak or one-off mentions.
+Cover the recurring themes mentioned by 2+ reviewers, ranked by how often they come up. Each bullet is one concrete, specific point with enough detail to be useful — e.g. "Adhesive lifts at the edges after a few hours", not just "doesn't stick". Give the 4–6 strongest points for praised and for complaints; don't pad with weak or one-off mentions.
+
+${ONE_SIDE_RULE}
 
 ${betterAlternativeRule('competing product')}
 

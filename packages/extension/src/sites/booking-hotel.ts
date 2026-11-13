@@ -1,6 +1,6 @@
 // Booking.com hotel page - recent reviews scoreboard + summary
 import { cacheGet, cacheSet } from '../shared/cache';
-import { betterAlternativeRule, buildSummarizeWidget } from '../shared/review-summary';
+import { betterAlternativeRule, buildSummarizeWidget, ONE_SIDE_RULE } from '../shared/review-summary';
 import { quoteCards } from '../shared/review-search';
 import { el } from '../shared/utils';
 import { createIslandShell } from '../shared/score-island';
@@ -93,6 +93,8 @@ const FALLBACK_TOPIC_FILTERS: TopicFilter[] = [
 const SUMMARY_PROMPT = `Analyze these hotel reviews. Focus on the stay itself: rooms, beds, cleanliness, noise, staff, breakfast, amenities, location, and value. Ignore booking flow, flights, transfers, or anything unrelated to the actual hotel experience.
 
 ONLY include points mentioned by 2+ reviewers. Rank by frequency (most mentioned first). Each bullet should be one concrete point, e.g. "Rooms are clean but noticeably compact".
+
+${ONE_SIDE_RULE}
 
 ${betterAlternativeRule('nearby hotel, apartment, or chain')}
 
