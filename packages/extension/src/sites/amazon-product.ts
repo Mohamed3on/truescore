@@ -240,7 +240,7 @@ const cardFields = (r: FilteredReview): SearchReviewFields => ({
   rating: r.rating,
   title: r.shown?.title || r.title,
   body: r.shown?.body || r.body,
-  meta: [r.verified ? '\u2713 Verified' : '', r.meta].filter(Boolean).join(' \u00b7 '),
+  meta: [r.verified ? '\u2713 Verified' : '', r.meta, r.format?.replaceAll(VAR_SEP, ', ')].filter(Boolean).join(' \u00b7 '),
 });
 
 // The page title goes along as context, so the model knows which product the
