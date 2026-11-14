@@ -56,7 +56,11 @@ conclusion: 2–4 sentences: what most owners agree on, who it suits best or wha
 // framing a brand-name search ("Durex") on a competitor page came back as a
 // review of Durex.
 export const keywordSummaryPrompt = (kw: string) =>
-  `These are reviews of the product on this page that mention "${kw}". This product is always the subject, never ${kw}: do not review, rate, or give a verdict on ${kw} itself. Cover what reviewers praise and complain about regarding this product where ${kw} comes up, most-mentioned first; include a point only if 2+ reviewers make it. If ${kw} is a competing product or brand, frame each point as how reviewers say this product compares to it. Ignore shipping, delivery, packaging, and seller issues. Where reviewers disagree, give both sides. End with one sentence on how this product does on ${kw}. ${PLAIN_PROSE}`;
+  `These are reviews of the product on this page that mention "${kw}". This product is always the subject, never ${kw}: do not review, rate, or give a verdict on ${kw} itself. Cover what reviewers praise and complain about regarding this product where ${kw} comes up, most-mentioned first; include a point only if 2+ reviewers make it. If ${kw} is a competing product or brand, frame each point as how reviewers say this product compares to it. Ignore shipping, delivery, packaging, and seller issues.
+
+${DIVIDED_RULE} A divided topic is never ${kw} itself: it's the one thing about it that reviewers disagree on.
+
+conclusion: one sentence on how this product does on ${kw}. ${PLAIN_PROSE}`;
 
 // A product's Summary and Ask read every review up to the newest this many: more
 // would put hundreds of thousands of tokens into each one. An Ask on an item with
