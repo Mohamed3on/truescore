@@ -47,6 +47,6 @@ setupBazaarvoicePdp(DM, {
   productId: productIdFromUrl,
   ratingLine: () => document.querySelector('[data-dmid="product-detail-rating-summary"]'),
   panelAnchor: resolvePanelAnchor,
-  exampleQuery: 'Duft OR Haut',
+  exampleQuery: 'Qualität OR Preis',
   unitPrice,
 });

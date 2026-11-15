@@ -206,6 +206,7 @@ export const buildSearchSection = <T,>({
   input.type = 'text';
   input.className = 'ars-search-input';
   input.placeholder = `Search ${addCommas(corpusSize)} reviews… (e.g. “${exampleQuery}”)`;
+  input.setAttribute('aria-label', 'Search reviews');
   section.appendChild(input);
 
   const header = el('div', 'ars-search-header');

@@ -35,6 +35,10 @@ export interface ItemReviews<T> {
   autoSummarize?: boolean | Promise<boolean>;
 }
 
+// The newest reviews are "recent" only as a sample: once they hold all but this
+// share of the Item's reviews, their ratio is the all-time one.
+const WHOLE_SHARE = 0.9;
+
 // Fewer reviews than this make no Search box or Summary.
 const MIN_REVIEWS = 5;
 
@@ -75,10 +79,25 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
 
         if (ratio == null) return;
 
-        if (score != null) appendStat(stats!, addCommas(adjust(score, ratio)), 'adjusted');
+        const pct = Math.round(ratio * 100);
 
-        // The sample size, only where it is a sample: not every review again.
-        if (newest.length < total) appendStat(stats!, String(newest.length), 'analyzed');
+        // Every review, near enough: the all-time share, with no score to damp by it.
+        if (newest.length >= total * WHOLE_SHARE) {
+          gauge.querySelector('.ars-gauge-when')?.remove();
+          gauge.title = `5★ minus 1★ reviews, as a share of all ${addCommas(newest.length)}`;
+
+          return;
+        }
+
+        gauge.title = `5★ minus 1★ reviews, as a share of the newest ${addCommas(newest.length)}`;
+
+        if (score != null) {
+          appendStat(stats!, addCommas(adjust(score, ratio)), 'adjusted');
+          // SAFETY: appendStat just appended its cell, a <div>, as the row's last child.
+          (stats!.lastElementChild as HTMLElement).title = `The score of ${addCommas(score)}, scaled by the newest reviews' ${pct}%`;
+        }
+
+        appendStat(stats!, addCommas(newest.length), 'analyzed');
       })
       .catch(() => fillRecentGauge(gauge, null));
   }

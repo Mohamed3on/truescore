@@ -419,7 +419,7 @@ const insights = (row: HTMLElement, stats: any, labels: Record<string, RatingLab
 interface PdpData {
   stats: any;
   labels: Record<string, RatingLabel> | null;
-  scoreData: { score: number; nps: number } | null;
+  scoreData: { score: number; nps: number; total: number } | null;
   productId: string;
   reviews: ReturnType<typeof fetchReviews>;
 }
@@ -461,10 +461,13 @@ const buildCard = (
 
   if (tables) row!.after(tables);
 
-  // Last in the row: after the recent reviews have settled their cells.
-  if (unitPrice) void Promise.allSettled([unitPrice(productId), reviews.recent]).then(([price]) => {
-    if (price.status === 'fulfilled' && price.value) appendStat(row!, ...price.value);
-  });
+  // Context for the decision, not a review stat: aside, at the row's far edge.
+  if (unitPrice) void unitPrice(productId).then((price) => {
+    if (!price) return;
+    const aside = el('div', 'ars-stat ars-stat-aside');
+    aside.append(el('span', 'ars-stat-val', price[0]), el('span', 'ars-stat-lbl', price[1]));
+    row!.append(aside);
+  }, () => {});
 
   // Each review names the family member it reviews, so the variants rank.
   const values = variants?.();
@@ -501,15 +504,16 @@ export interface BvPdp {
 // PDP shape ADR 0001 describes, same as ikea-pdp/decathlon-pdp. inject() re-runs
 // on body mutations until the host has rendered an anchor to attach to.
 export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl, ratingLine, panelAnchor, exampleQuery, variants, unitPrice, ready }: BvPdp) => {
-  const injectScoreBadge = (scoreData: { score: number; nps: number }) => {
+  const injectScoreBadge = (scoreData: { score: number; nps: number; total: number }) => {
     const line = ratingLine();
 
     if (!line || line.querySelector('.nps-pdp-badge')) return;
 
     const badge = document.createElement('span');
     badge.className = 'nps-score-badge nps-pdp-badge';
-    badge.style.cssText = `color:${npsColor(scoreData.nps)};font-weight:700;font-size:12px;margin-left:8px;white-space:nowrap;`;
+    badge.style.cssText = `color:${npsColor(scoreData.nps, 28)};font-weight:700;font-size:12px;margin-left:8px;white-space:nowrap;`;
     badge.textContent = `${addCommas(scoreData.score)} (${Math.round(scoreData.nps)}%)`;
+    badge.title = `TrueScore ${badge.textContent}: 5★ minus 1★ reviews are ${Math.round(scoreData.nps)}% of ${addCommas(scoreData.total)}; the score weighs that share by how many they are`;
     line.appendChild(badge);
   };
 

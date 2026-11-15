@@ -54,7 +54,7 @@
   text-decoration: none !important;
   cursor: pointer;
 }
-.ars-gauge:hover .ars-gauge-fill { filter: brightness(1.1); }
+a.ars-gauge:hover .ars-gauge-fill { filter: brightness(1.1); }
 .ars-gauge-label {
   font-size: 13px;
   color: #57534E;
@@ -130,12 +130,16 @@
   animation: ars-stat-bump 0.3s cubic-bezier(0.25, 1, 0.5, 1);
 }
 .ars-stat-lbl {
-  font-size: 9.5px;
+  font-size: 10.5px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #A8A29E;
-  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #78716C;
+  font-weight: 700;
 }
+/* Context beside the review stats, not one of them: the row's far edge, a rank
+   quieter, no divider, whenever it lands. */
+.ars-stat-aside { order: 1; margin-left: auto; align-items: flex-end; }
+.ars-stat-aside .ars-stat-val { color: #57534E; font-weight: 600; }
 .ars-stat-div {
   width: 1px;
   height: 22px;
@@ -145,7 +149,7 @@
 /* Loading state */
 .ars-loading {
   font-size: 12px;
-  color: #A8A29E;
+  color: #78716C;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -185,7 +189,7 @@
 /* Empty state */
 .ars-empty {
   font-size: 12px;
-  color: #A8A29E;
+  color: #78716C;
   font-style: italic;
   padding: 4px 0;
 }
@@ -205,15 +209,17 @@
   font-size: 12px;
   color: #1C1917;
   background: #fff;
-  border: 1px solid #E7E5E4;
+  border: 1px solid #D6D3D1;
   border-radius: 6px;
   outline: none;
   transition: border-color 0.15s;
 }
-.ars-question-input::placeholder { color: #A8A29E; }
+.ars-question-input::placeholder { color: #78716C; }
 .ars-question-input:focus { border-color: #0F766E; }
 
 /* Summarize / Ask button */
+.ars-summarize-btn:focus-visible,
+.ars-resummarize-btn:focus-visible { outline: 2px solid #0F766E; outline-offset: 2px; }
 .ars-summarize-btn {
   display: inline-flex;
   align-items: center;
@@ -253,7 +259,7 @@
   flex-shrink: 0;
   width: 20px;
   padding: 0;
-  color: #A8A29E;
+  color: #78716C;
   background: none;
   border: none;
   border-radius: 6px;
@@ -282,7 +288,7 @@
 }
 .ars-summary-date {
   font-size: 10px;
-  color: #A8A29E;
+  color: #78716C;
   letter-spacing: 0.02em;
 }
 .ars-resummarize-btn {
@@ -378,7 +384,7 @@
   position: absolute;
   left: 3px;
   font-weight: 700;
-  color: #A8A29E;
+  color: #78716C;
 }
 .ars-section--praised .ars-section-item::before { color: #16A34A; }
 .ars-section--complaints .ars-section-item::before { color: #EA580C; }
@@ -478,7 +484,7 @@
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #A8A29E;
+  color: #78716C;
   margin-right: 2px;
   white-space: nowrap;
 }
@@ -520,7 +526,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  color: #A8A29E;
+  color: #78716C;
   font-size: 14px;
   line-height: 1;
   flex: 0 0 auto;
@@ -547,12 +553,12 @@
   font-size: 12px;
   color: #1C1917;
   background: #fff;
-  border: 1px solid #E7E5E4;
+  border: 1px solid #D6D3D1;
   border-radius: 6px;
   outline: none;
   transition: border-color 0.15s;
 }
-.ars-search-input::placeholder { color: #A8A29E; }
+.ars-search-input::placeholder { color: #78716C; }
 .ars-search-input:focus { border-color: #0F766E; }
 /* Pinned: injected CSS loses to a host's own text-input rules (Printful gives
    every one 16px type, a 39px height, square corners, an inset shadow and an
@@ -565,7 +571,7 @@
   font-size: 12px !important;
   line-height: normal !important;
   background: #fff !important;
-  border: 1px solid #E7E5E4 !important;
+  border: 1px solid #D6D3D1 !important;
   border-radius: 6px !important;
   box-shadow: none !important;
 }
@@ -647,7 +653,7 @@
 }
 .ars-search-meta {
   font-size: 10px;
-  color: #A8A29E;
+  color: #78716C;
   letter-spacing: 0.02em;
 }
 .ars-search-title {
@@ -667,7 +673,7 @@
 .ars-search-empty,
 .ars-search-truncated {
   font-size: 11px;
-  color: #A8A29E;
+  color: #78716C;
   font-style: italic;
   padding: 4px 0;
 }
@@ -700,7 +706,7 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #A8A29E;
+  color: #78716C;
   white-space: nowrap;
 }
 .ars-ask-search-terms {
@@ -717,7 +723,7 @@
   font-variant-numeric: tabular-nums;
 }
 .ars-ask-search-pct { font-size: 12px; font-weight: 700; }
-.ars-ask-search-count { font-size: 11px; color: #A8A29E; }
+.ars-ask-search-count { font-size: 11px; color: #78716C; }
 .ars-ask-reading:empty::before { content: 'Reading reviews…'; }
 .ars-ask-search.live .ars-ask-search-label,
 .ars-ask-search.live .ars-ask-search-count,
@@ -735,7 +741,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #A8A29E;
+  color: #78716C;
   margin-bottom: 4px;
 }
 .ars-topic { display: flex; flex-direction: column; }
@@ -768,11 +774,11 @@
 .ars-topic-label::after {
   content: "\25B8";
   font-size: 8px;
-  color: #A8A29E;
+  color: #78716C;
   transition: transform 0.15s;
 }
 .ars-topic-btn.is-open .ars-topic-label::after { transform: rotate(90deg); }
-.ars-topic-sub { font-size: 10px; color: #A8A29E; letter-spacing: 0.01em; }
+.ars-topic-sub { font-size: 10px; color: #78716C; letter-spacing: 0.01em; }
 .ars-topic-warn { color: #C2410C; font-weight: 600; }
 .ars-topic-track { height: 5px; background: #EFEDEC; border-radius: 3px; overflow: hidden; }
 .ars-topic-fill { display: block; height: 100%; border-radius: 3px; }
@@ -786,7 +792,7 @@
 .ars-topic-reviews { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 10px; }
 .ars-topic-summary { display: flex; flex-direction: column; gap: 8px; }
 .ars-topic-reviews .ars-search-list { max-height: 300px; }
-.ars-topic-loading { font-size: 11px; color: #A8A29E; font-style: italic; padding: 4px 0; }
+.ars-topic-loading { font-size: 11px; color: #78716C; font-style: italic; padding: 4px 0; }
 
 /* Accessibility: respect reduced motion */
 @media (prefers-reduced-motion: reduce) {

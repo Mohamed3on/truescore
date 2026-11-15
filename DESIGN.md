@@ -197,7 +197,7 @@ Two grounds, one signature pair, three sentiment hues, and an opacity ladder for
 - **Ink ladder** (`ink-1` to `ink-5`): white at 88 / 70 / 50 / 30 / 6 percent. Primary text, secondary text, labels and disabled figures, tertiary marks, and the faintest rule. Each step is a rank; two elements at the same step are peers.
 - **Hairline, Control, Control Line, Control Hover, Card Glass** (`hairline`, `control`, `control-line`, `control-hover`, `card-glass`): the night skin's surfaces at 3–8% white. Cards sit at 3%, controls at 4%, their borders at 8%, and hover only lifts a control to 8%.
 - **Paper, Paper Tint, Paper Line** (`paper`, `paper-tint`, `paper-line`): the daylight island's ground, its conclusion block, and every border and dashed rule on it.
-- **Stone ink** (`stone-ink`, `stone-2`, `stone-3`, `stone-4`): the daylight ladder. Body, secondary, labels and the island header, placeholders and dates.
+- **Stone ink** (`stone-ink`, `stone-2`, `stone-3`, `stone-4`): the daylight ladder. Body, secondary, then labels, placeholders and dates. `stone-4` is 2.4:1 on paper, so it never sets text: it is for marks that carry no meaning alone.
 
 ### Named Rules
 **The One Signature Rule.** The brass-to-sea-glass gradient appears once per panel, as the top hairline or a primary bar fill. A second use is a bug.
@@ -273,7 +273,7 @@ Instrument-grade and quiet. Controls are small, hairline-bordered, and mono-labe
 - **Internal Padding:** 10px 12px on glass cards, 8px 10–12px on daylight sections and review cards, 12px in the summary panel.
 
 ### Inputs / Fields
-- **Style:** `control` ground with `control-line` border on glass, `white` with `paper-line` on paper; 7px 10px padding; Sora 11px or the host sans 12px; placeholders at `ink-4` / `stone-4`. Key inputs in the popup are monospaced.
+- **Style:** `control` ground with `control-line` border on glass, `white` with `paper-line` on paper; 7px 10px padding; Sora 11px or the host sans 12px; placeholders at `ink-4` / `stone-3`. Key inputs in the popup are monospaced.
 - **Focus:** border only: 20% white on glass, `teal-ink` on paper; 0.15–0.2s. No glow.
 - **Error / Disabled:** status text turns `negative`; nothing else changes.
 

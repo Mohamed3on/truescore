@@ -426,6 +426,7 @@ export const buildSummarizeWidget = ({
   const questionInput = document.createElement('input');
   questionInput.type = 'text';
   questionInput.placeholder = questionPlaceholder;
+  questionInput.setAttribute('aria-label', questionPlaceholder);
   questionInput.className = 'ars-question-input';
   questionRow.appendChild(questionInput);
   wrapper.appendChild(questionRow);
@@ -595,7 +596,8 @@ export const buildSummarizeWidget = ({
 
   questionInput.addEventListener('input', syncControls);
   questionInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') summarizeBtn.click();
+    // An empty box asks nothing: Enter never stands in for the Summarize button.
+    if (e.key === 'Enter' && questionInput.value.trim()) summarizeBtn.click();
   });
   summarizeBtn.addEventListener('click', () => {
     const question = questionInput.value.trim();

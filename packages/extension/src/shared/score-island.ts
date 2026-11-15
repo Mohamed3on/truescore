@@ -3,7 +3,7 @@ import { addCommas, el, npsColor } from './utils';
 // The recent ratio and the adjusted Score live in ./recency — one polarity rule,
 // one unit, and null (not 0) for "no evidence". This module only renders them.
 
-// The retail PDP "score island": a dark-glass panel embedded into the host page.
+// The retail PDP "score island": a daylight-paper card embedded into the host page.
 // Sites compose it — shell + gauge + their own sections (variation card, topics,
 // summarize widget) — and inject it via setupSpaInjector. The `.ars-*` styling
 // ships in styles/amazon-product.css, registered per-site in the manifest.
@@ -88,7 +88,7 @@ export const buildRecentGauge = (ratio?: number): HTMLElement => {
   gauge.className = 'ars-gauge';
   gauge.style.cursor = 'default';
   gauge.innerHTML = `
-    <div class="ars-gauge-label"><span class="ars-gauge-pct">—</span> recent positive <span class="ars-scan-spinner"></span></div>
+    <div class="ars-gauge-label"><span class="ars-gauge-pct">—</span> <span class="ars-gauge-when">recent</span> positive <span class="ars-scan-spinner"></span></div>
     <div class="ars-gauge-track"><div class="ars-gauge-fill" style="transform:scaleX(0)"></div></div>
   `; // safe: no user content in template
 

@@ -145,11 +145,17 @@ describe('the recent gauge', () => {
 
   test('reads the newest reviews, and damps the score by them', async () => {
     // (3 loved − 1 hated) / 5 = 40% recent positive.
-    const { host } = panel({ all: five, recent: Promise.resolve(five), score: 1000 });
+    const { host } = panel({ all: five, recent: Promise.resolve(five), score: 1000, total: 50 });
     await settle();
     expect(host.querySelector('.ars-gauge-pct')?.textContent).toBe('40%');
-    // Every review is in the sample: no count of them again.
-    expect(stats(host)).toEqual(['400adjusted']);
+    expect(stats(host)).toEqual(['400adjusted', '5analyzed']);
+  });
+
+  test('calls nothing recent, and damps nothing, when the newest reviews are all of them', async () => {
+    const { host } = panel({ all: five, recent: Promise.resolve(five), score: 1000 });
+    await settle();
+    expect(host.querySelector('.ars-gauge-label')?.textContent).not.toContain('recent');
+    expect(stats(host)).toEqual([]);
   });
 
   test("joins the site's own stats, and leads the panel", async () => {
