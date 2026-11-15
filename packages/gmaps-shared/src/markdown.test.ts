@@ -65,6 +65,10 @@ test('escapes HTML and renders inline code', () => {
   expect(mdInline('a <script> & `code`')).toBe('a &lt;script&gt; &amp; <code>code</code>');
 });
 
+test('a link that is not to the web stays text', () => {
+  expect(mdInline('[tap](javascript:alert(1))')).not.toContain('<a');
+});
+
 test('renders links with a safe target', () => {
   expect(mdInline('see [the docs](https://example.com/x)')).toBe(
     'see <a href="https://example.com/x" target="_blank" rel="noopener noreferrer">the docs</a>',

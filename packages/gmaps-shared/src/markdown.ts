@@ -26,7 +26,9 @@ export const mdInline = (s: string): string => {
   // emphasis. Runs before the link rule so its injected target="_blank" is safe.
   s = s.replace(/(^|[^\w_])__(?=\S)([^_\n]+?)(?<=\S)__(?=[^\w_]|$)/g, '$1<strong>$2</strong>');
   s = s.replace(/(^|[^\w_])_(?=\S)([^_\n]+?)(?<=\S)_(?=[^\w_]|$)/g, '$1<em>$2</em>');
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  // Web links only: the text comes from a model that read strangers' reviews,
+  // and a javascript: target would run on the page it's shown on.
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gi, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 
   return s;
 };
