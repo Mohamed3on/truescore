@@ -2,7 +2,7 @@ import { netScore } from '@truescore/gmaps-shared';
 import { z } from 'zod';
 import { cacheGet, cacheSet } from '../shared/cache';
 import { addCommas, el } from '../shared/utils';
-import { adjust, ratioFromTally } from '../shared/recency';
+import { adjust, isSample, ratioFromTally } from '../shared/recency';
 import { type SearchReviewFields } from '../shared/review-search';
 import { buildReviewPanel } from '../shared/review-panel';
 import { renderVariationCard, type VarDim } from '../shared/variation-table';
@@ -527,6 +527,26 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     return reviews;
   };
 
+  // Once every review is read: the newest are recent, and damp the score, only
+  // as a sample of the ratings. Read near enough all of them and their share is
+  // the all-time one the rating line already scores.
+  const settleRecent = (gauge: HTMLElement, stats: HTMLElement) => {
+    const read = addCommas(numberOfParsedReviews);
+
+    if (!isSample(numberOfParsedReviews, parseInt(numOfRatings) || Infinity)) {
+      gauge.querySelector('.ars-gauge-when')?.remove();
+      gauge.title = `5★ minus 1★ reviews, as a share of all ${read}`;
+      stats.remove();
+
+      return;
+    }
+
+    gauge.title = `5★ minus 1★ reviews, as a share of the newest ${read}`;
+    const adjusted = stats.querySelector<HTMLElement>('.ars-stat');
+
+    if (adjusted) adjusted.title = `The score of ${addCommas(scores.total.calculated)}, scaled by the newest reviews' share`;
+  };
+
   // The scoring walk: ten cursor-chained pages, so inherently one after another.
   let walked: Promise<void> = Promise.resolve();
 
@@ -553,7 +573,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     gauge.className = 'ars-gauge';
     gauge.href = recentRatingsURL;
     gauge.innerHTML = `
-      <div class="ars-gauge-label"><span class="ars-gauge-pct">\u2014</span> recent positive</div>
+      <div class="ars-gauge-label"><span class="ars-gauge-pct">\u2014</span> <span class="ars-gauge-when">recent</span> positive</div>
       <div class="ars-gauge-track"><div class="ars-gauge-fill"></div></div>
     `;  // safe: no user content in template
     wrapper.appendChild(gauge);
@@ -669,6 +689,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
       void keepReviews(walkedReviews, pages);
 
+      if (numberOfParsedReviews > 0) settleRecent(gauge, stats);
+
       // Fade out scanning indicator
       const spinner = wrapper.querySelector('[data-ars="scanning"]');
 
@@ -700,7 +722,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
       gauge.className = 'ars-gauge';
       gauge.href = recentRatingsURL;
       gauge.innerHTML = `
-        <div class="ars-gauge-label"><span class="ars-gauge-pct" style="color:${backgroundColor}">${pct}%</span> recent positive</div>
+        <div class="ars-gauge-label"><span class="ars-gauge-pct" style="color:${backgroundColor}">${pct}%</span> <span class="ars-gauge-when">recent</span> positive</div>
         <div class="ars-gauge-track"><div class="ars-gauge-fill" style="transform:scaleX(${pctRaw});background:${backgroundColor}"></div></div>
       `;
       wrapper.appendChild(gauge);
@@ -713,6 +735,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
         <div class="ars-stat"><span class="ars-stat-val">${numberOfParsedReviews}</span><span class="ars-stat-lbl">analyzed</span></div>
       `;
       wrapper.appendChild(stats);
+      settleRecent(gauge, stats);
     } else {
       const noReviews = document.createElement('div');
       noReviews.className = 'ars-empty';
