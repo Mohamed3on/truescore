@@ -46,6 +46,13 @@ export const THIN_SAMPLE = 30;
 /** A product's recent % reads its newest this many reviews, where the site hands over more. */
 export const RECENT_REVIEWS = 500;
 
+/**
+ * Whether the newest reviews are a sample of an item's `total`. Once they hold
+ * all but a tenth of them their share is the all-time one: nothing recent about
+ * it, and no score to damp by it.
+ */
+export const isSample = (newest: number, total: number): boolean => newest < total * 0.9;
+
 /** How the recent share sits against the all-time one, compared as the whole percents on screen. */
 export const trendClass = (allTime: number, recent: number): string => {
   const [a, r] = [Math.round(allTime * 100), Math.round(recent * 100)];

@@ -1,6 +1,6 @@
 import { addCommas, el, isComputed } from './utils';
 import { appendStat, buildRecentGauge, fillRecentGauge } from './score-island';
-import { adjust, RECENT_REVIEWS, recentRatio } from './recency';
+import { adjust, isSample, RECENT_REVIEWS, recentRatio } from './recency';
 import { buildSummarizeWidget, keywordSummaryPrompt, PRODUCT_SUMMARY_PROMPT, SAMPLE_MAX, summarizeMatches } from './review-summary';
 import { buildSearchSection, localSearchAsk, orSearch, quoteCards, runSearch, SEARCH_MAX, searchWith, type SearchReviewFields } from './review-search';
 import type { SearchAsk } from './review-ask';
@@ -34,10 +34,6 @@ export interface ItemReviews<T> {
   context?: string;
   autoSummarize?: boolean | Promise<boolean>;
 }
-
-// The newest reviews are "recent" only as a sample: once they hold all but this
-// share of the Item's reviews, their ratio is the all-time one.
-const WHOLE_SHARE = 0.9;
 
 // Fewer reviews than this make no Search box or Summary.
 const MIN_REVIEWS = 5;
@@ -82,7 +78,7 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
         const pct = Math.round(ratio * 100);
 
         // Every review, near enough: the all-time share, with no score to damp by it.
-        if (newest.length >= total * WHOLE_SHARE) {
+        if (!isSample(newest.length, total)) {
           gauge.querySelector('.ars-gauge-when')?.remove();
           gauge.title = `5★ minus 1★ reviews, as a share of all ${addCommas(newest.length)}`;
 

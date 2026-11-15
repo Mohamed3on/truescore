@@ -1,7 +1,6 @@
-import { addCommas, npsColor } from '../shared/utils';
 import { SAMPLE_MAX } from '../shared/review-summary';
 import { buildReviewPanel } from '../shared/review-panel';
-import { appendStat, createIslandShell } from '../shared/score-island';
+import { createIslandShell } from '../shared/score-island';
 import { renderScoreBadge } from '../shared/score-grid';
 import { renderVariationCard, tallyVariationDims } from '../shared/variation-table';
 import { fetchReviews, pageProductId, productScore, type PrintfulReview } from '../shared/printful';
@@ -15,13 +14,13 @@ const card = (r: PrintfulReview) => ({ rating: r.rating, body: r.body, meta: r.d
   const scored = productId ? await productScore(productId) : null;
 
   if (!productId || !scored) return;
-  const { score, nps, total } = scored;
+  const { score, total } = scored;
   const badge = renderScoreBadge(scored);
 
   const panel = createIslandShell();
   const reviews = fetchReviews(productId, total);
 
-  const { stats } = buildReviewPanel(panel, {
+  buildReviewPanel(panel, {
     key: `printful-summary-${productId}`,
     // Searches reach only the reviews in hand.
     total: Math.min(total, SAMPLE_MAX),
@@ -33,9 +32,6 @@ const card = (r: PrintfulReview) => ({ rating: r.rating, body: r.body, meta: r.d
     date: (r) => r.date,
     exampleQuery: 'fit OR print',
   });
-
-  appendStat(stats!, addCommas(score), 'score', npsColor(nps));
-  appendStat(stats!, addCommas(total), 'reviews');
 
   // Each review names the colour and size bought.
   reviews.all.then((all) => {

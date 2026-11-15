@@ -1,7 +1,6 @@
-import { addCommas, npsColor } from '../shared/utils';
 import { SAMPLE_MAX } from '../shared/review-summary';
 import { buildReviewPanel } from '../shared/review-panel';
-import { appendStat, createIslandShell } from '../shared/score-island';
+import { createIslandShell } from '../shared/score-island';
 import { renderScoreBadge } from '../shared/score-grid';
 import { fetchReviews, histogram, scoreOf, type OttoReview } from '../shared/otto';
 import { expectMount } from '../shared/breakage';
@@ -12,12 +11,12 @@ const productId = location.pathname.match(/^\/p\/(?:.*-)?([A-Z0-9]+)\/?$/)?.[1];
 const scored = productId ? scoreOf(histogram(document)) : null;
 
 if (productId && scored) {
-  const { score, nps, total } = scored;
+  const { score, total } = scored;
   const badge = renderScoreBadge(scored);
 
   const panel = createIslandShell();
 
-  const { stats } = buildReviewPanel(panel, {
+  buildReviewPanel(panel, {
     key: `otto-summary-${productId}`,
     // Searches reach only the reviews in hand.
     total: Math.min(total, SAMPLE_MAX),
@@ -29,9 +28,6 @@ if (productId && scored) {
     date: (r) => r.date,
     exampleQuery: 'Qualität OR Lieferung',
   });
-
-  appendStat(stats!, addCommas(score), 'score', npsColor(nps));
-  appendStat(stats!, addCommas(total), 'reviews');
 
   // The score joins the stars under the title; the panel goes under the
   // add-to-cart card of the buy column, whose payment and returns notes are a

@@ -5,7 +5,7 @@ import { renderVariationCard, type VarDim } from '../shared/variation-table';
 import { buildSummarizeWidget, PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { quoteCards } from '../shared/review-search';
 import { appendStat, buildRecentGauge, createIslandShell } from '../shared/score-island';
-import { adjust, recentRatio } from '../shared/recency';
+import { adjust, isSample, recentRatio } from '../shared/recency';
 import { z } from 'zod';
 
 // Uniqlo reviews are overwhelmingly about fit, fabric, and sizing, so nudge those
@@ -99,7 +99,7 @@ const getScore = (rating: any) => {
 
   if (total === 0) return null;
 
-  return npsStats(five, one, total);
+  return { ...npsStats(five, one, total), total };
 };
 
 const appendScore = (ratingEl: Element, { score, nps }: { score: number; nps: number }) => {
@@ -307,23 +307,30 @@ const addSummarizeUI = (
   productId: string,
   texts: string[],
   reviews: any[],
-  scoreData: { score: number; nps: number } | null
+  scoreData: { score: number; nps: number; total: number } | null
 ) => {
   if (document.querySelector('.ars-wrapper')) return;
 
   const wrapper = createIslandShell();
 
   // The reviews arrive newest-first (sort=submission_time), so they carry the
-  // Amazon-style recent-positive gauge and the adjusted score it damps.
+  // Amazon-style recent-positive gauge and the adjusted score it damps — where
+  // they are a sample of more; all of an item's reviews are just its share.
   const ratio = recentRatio(reviews.map((r) => r.rate));
 
   if (ratio != null) {
-    wrapper.appendChild(buildRecentGauge(ratio));
-    const stats = el('div', 'ars-stats');
+    const gauge = buildRecentGauge(ratio);
+    wrapper.appendChild(gauge);
 
-    if (scoreData) appendStat(stats, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
-    appendStat(stats, String(reviews.length), 'analyzed');
-    wrapper.appendChild(stats);
+    if (scoreData && !isSample(reviews.length, scoreData.total)) {
+      gauge.querySelector('.ars-gauge-when')?.remove();
+    } else {
+      const stats = el('div', 'ars-stats');
+
+      if (scoreData) appendStat(stats, addCommas(adjust(scoreData.score, ratio)), 'adjusted');
+      appendStat(stats, String(reviews.length), 'analyzed');
+      wrapper.appendChild(stats);
+    }
   }
 
   buildSummarizeWidget({
