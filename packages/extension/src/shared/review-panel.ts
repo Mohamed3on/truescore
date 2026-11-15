@@ -76,7 +76,9 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
         if (ratio == null) return;
 
         if (score != null) appendStat(stats!, addCommas(adjust(score, ratio)), 'adjusted');
-        appendStat(stats!, String(newest.length), 'analyzed');
+
+        // The sample size, only where it is a sample: not every review again.
+        if (newest.length < total) appendStat(stats!, String(newest.length), 'analyzed');
       })
       .catch(() => fillRecentGauge(gauge, null));
   }

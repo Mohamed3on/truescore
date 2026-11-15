@@ -347,16 +347,14 @@ const searchTerm = async (site: BvSite, productId: string, term: string) => {
 // A secondary rating's average as the stats report it, on a 1–ValueRange scale.
 const SECONDARY_AVERAGE = z.object({ AverageRating: z.number(), ValueRange: z.optional(z.unknown()) });
 
-// The score, review and recommend stats as cells of `row`; the secondary
-// ratings as tables, returned for the caller to place.
+// The score and recommend stats as cells of `row` — the review count is the
+// host's own, on its rating line — and the secondary ratings as tables, returned
+// for the caller to place.
 const insights = (row: HTMLElement, stats: any, scoreData: { score: number; nps: number } | null, labels: Record<string, RatingLabel> | null) => {
-  const total = Number(stats.TotalReviewCount) || 0;
   const recommended = Number(stats.RecommendedCount) || 0;
   const recommendTotal = recommended + (Number(stats.NotRecommendedCount) || 0);
 
   if (scoreData) appendStat(row, addCommas(scoreData.score), 'score', npsColor(scoreData.nps));
-
-  if (total) appendStat(row, addCommas(total), 'reviews');
 
   if (recommendTotal > 0) {
     appendStat(row, `${Math.round((recommended / recommendTotal) * 100)}%`, 'recommend');
@@ -429,12 +427,13 @@ interface PdpData {
 }
 
 // One unified score card: the review panel — its recent-positive
-// gauge leading — with the score/review/recommend stats in its row and the
+// gauge leading — with the score/recommend stats in its row and the
 // secondary ratings under them.
 const buildCard = (
   site: BvSite,
   exampleQuery: string,
   variants: BvPdp['variants'],
+  unitPrice: BvPdp['unitPrice'],
   { stats, labels, scoreData, productId, reviews }: PdpData,
 ): HTMLElement | null => {
   const total = Number(stats?.TotalReviewCount) || 0;
@@ -464,6 +463,11 @@ const buildCard = (
 
   if (tables) row!.after(tables);
 
+  // Last in the row: after the recent reviews have settled their cells.
+  if (unitPrice) void Promise.allSettled([unitPrice(productId), reviews.recent]).then(([price]) => {
+    if (price.status === 'fulfilled' && price.value) appendStat(row!, ...price.value);
+  });
+
   // Each review names the family member it reviews, so the variants rank.
   const values = variants?.();
 
@@ -488,6 +492,8 @@ export interface BvPdp {
   exampleQuery: string;
   // The values each family member varies by, by product id ("Size": "65 Zoll").
   variants?: () => Map<string, [string, string][]>;
+  // The price per unit of measure as a stat cell: its value and label.
+  unitPrice?: (productId: string) => Promise<[value: string, label: string] | null>;
   // Settles once the host page may be written to (a server-rendered host's
   // hydration); the requests start before it.
   ready?: Promise<void>;
@@ -496,7 +502,7 @@ export interface BvPdp {
 // The id is in the URL, so load() needs no page DOM — the URL-id single-entity
 // PDP shape ADR 0001 describes, same as ikea-pdp/decathlon-pdp. inject() re-runs
 // on body mutations until the host has rendered an anchor to attach to.
-export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl, ratingLine, panelAnchor, exampleQuery, variants, ready }: BvPdp) => {
+export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl, ratingLine, panelAnchor, exampleQuery, variants, unitPrice, ready }: BvPdp) => {
   const injectScoreBadge = (scoreData: { score: number; nps: number }) => {
     const line = ratingLine();
 
@@ -537,7 +543,7 @@ export const setupBazaarvoicePdp = (site: BvSite, { productId: productIdFromUrl,
 
       if (!anchor) return;
 
-      const card = buildCard(site, exampleQuery, variants, data);
+      const card = buildCard(site, exampleQuery, variants, unitPrice, data);
 
       if (card) {
         if (anchor.position === 'before') anchor.node.before(card);

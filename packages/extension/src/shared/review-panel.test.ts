@@ -148,11 +148,12 @@ describe('the recent gauge', () => {
     const { host } = panel({ all: five, recent: Promise.resolve(five), score: 1000 });
     await settle();
     expect(host.querySelector('.ars-gauge-pct')?.textContent).toBe('40%');
-    expect(stats(host)).toEqual(['400adjusted', '5analyzed']);
+    // Every review is in the sample: no count of them again.
+    expect(stats(host)).toEqual(['400adjusted']);
   });
 
   test("joins the site's own stats, and leads the panel", async () => {
-    const { host, stats: row } = panel({ all: five, recent: Promise.resolve(five) });
+    const { host, stats: row } = panel({ all: five, recent: Promise.resolve(five), total: 12 });
     row!.append(el('div', 'ars-stat', '12reviews'));
     await settle();
     expect(stats(host)).toEqual(['12reviews', '5analyzed']);

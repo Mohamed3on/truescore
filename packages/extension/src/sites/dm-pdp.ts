@@ -34,9 +34,19 @@ const resolvePanelAnchor = () => {
   return null;
 };
 
+// dm's product API states the base price as "0,5 kg (5,70 € je 1 kg)". Read
+// there, not off the page, which Chrome Translate rewrites.
+const unitPrice = async (productId: string): Promise<[string, string] | null> => {
+  const res = await fetch(`https://products.dm.de/product/products/detail/DE/dan/${productId}`);
+  const match = /\((.+?) je (?:1 )?(.+?)\)/.exec((await res.json())?.price?.infos?.[0] ?? '');
+
+  return match ? [match[1], `per ${match[2]}`] : null;
+};
+
 setupBazaarvoicePdp(DM, {
   productId: productIdFromUrl,
   ratingLine: () => document.querySelector('[data-dmid="product-detail-rating-summary"]'),
   panelAnchor: resolvePanelAnchor,
   exampleQuery: 'Duft OR Haut',
+  unitPrice,
 });
