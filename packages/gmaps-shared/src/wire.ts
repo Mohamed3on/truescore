@@ -22,7 +22,9 @@ export type SummaryHighlight = { text: string; sentiment: string; support?: numb
 // who don't. `pos` and `neg`: the reviews on each side, counted as a bullet's
 // are. Checked, a topic stays only when enough take each side (receipts.ts
 // isDivided); one that doesn't leaves each side to stand as a highlight.
-export type Divided = { topic: string; liked: string; disliked: string; pos?: Backing; neg?: Backing };
+// `item`: the standout (Summary.items) the topic is, when it is one: its row
+// then counts as that chip does (receipts.ts chipSplit).
+export type Divided = { topic: string; liked: string; disliked: string; item?: string; pos?: Backing; neg?: Backing };
 
 export type Backing = { support: number; quotes: Quote[] };
 

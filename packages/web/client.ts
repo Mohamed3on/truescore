@@ -6,7 +6,7 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, standoutNames, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, receiptReviews, isQuoteText, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
-  answersOf, bySupport, countAnswers, drawSplit, mountBullets, smoothDrafts, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
+  answersOf, bySupport, chipSplit, countAnswers, drawSplit, mountBullets, smoothDrafts, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Quote, type Review, type SearchEvent, type SearchResult,
@@ -349,7 +349,13 @@ function renderHighlights(highlights: UiChip[]) {
 // click. Scores fill in inline; a chip that lands below 2 mentions drops out.
 // Standouts render in the topics row instead.
 function renderScored(kind: ScoredKind) {
-  if (kind === 'standouts') return renderTopics();
+  if (kind === 'standouts') {
+    // A split row naming a standout takes its counts once it's scored.
+    if (mainSummary) void mainBullets.settle(bulletsOf(mainSummary, true, true));
+
+    return renderTopics();
+  }
+
   const g = scoredGroups[kind];
   const scored = selectScoredChips(g.chips, (d) => d.result && (d.result.stance ? { totalReviews: opinionsOf(d.result.stance).mentions } : d.result));
   const pending = g.chips.filter((d) => d.state === 'loading');
@@ -845,8 +851,19 @@ const bulletsIn = (ul: HTMLElement) => {
 
 // The drafted rows of a summary, the split topics first as the model writes
 // them first; checked, the bullets most-backed first, then the topics.
-const bulletsOf = ({ highlights, divided = [] }: SummaryDraft, checked: boolean) =>
-  checked ? [...bySupport(highlights), ...divided] : [...divided, ...highlights];
+// `main`: the place's own summary, whose standouts are on screen beside it, so a
+// topic naming one counts as that chip does (chipSplit; null while it's scored).
+const bulletsOf = ({ highlights, divided = [] }: SummaryDraft, checked: boolean, main = false) => {
+  if (!checked) return [...divided, ...highlights];
+
+  const chipRead = (item: string | undefined) => {
+    const d = scoredGroups.standouts.chips.find((c) => c.item === item);
+
+    return d?.state === 'error' ? undefined : d?.result ?? null;
+  };
+
+  return [...bySupport(highlights), ...divided.flatMap((t) => chipSplit(t, main ? chipRead(t.item) : undefined) ?? [])];
+};
 
 // A row's buttons share one box: opening one closes another's.
 function receipt(li: HTMLElement, support: number, quotes: Quote[], label = `${support} reviews`, title = 'Show the reviews that say this'): HTMLButtonElement {
@@ -1337,7 +1354,7 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   searchInput.value = '';
   searchRefreshBtn.hidden = true;
   highlightsList.replaceChildren();
-  mainBullets = bulletsIn(highlightsListEl);
+  freshBullets();
   chipBody.replaceChildren();
   // Wipe the previous place's meta/freshness so a fresh-lookup sequence
   // doesn't show stale photo + address until `preview` lands.
@@ -1691,20 +1708,28 @@ function renderValue(rating?: number) {
 // The place's bullets: drafted as a summary streams in, settled once it's
 // checked, or settled at once for a cached one.
 let mainBullets = bulletsIn(highlightsListEl);
+let mainSummary: Summary | undefined;
+
+// A fresh list, for another place or another writing of this one's summary.
+function freshBullets() {
+  mainSummary = undefined;
+  mainBullets = bulletsIn(highlightsListEl);
+}
 
 function renderSummary(summary: Summary, epoch: PlaceEpoch) {
   if (!epoch.alive) return;
+  mainSummary = summary;
   preferredBy = summary.preferredBy;
   renderValue(summary.valueForMoney);
   renderMarkdown($('verdict'), summary.verdict);
   resummarizeBtn.hidden = false;
-  void mainBullets.settle(bulletsOf(summary, true));
+  void mainBullets.settle(bulletsOf(summary, true, true));
   showScored('standouts', summary.items, epoch.featureId, summary.aliases);
   showScored('alternatives', summary.alternatives, epoch.featureId);
 }
 
 function renderSummaryError(msg: string) {
-  mainBullets = bulletsIn(highlightsListEl);
+  freshBullets();
   $('verdict').textContent = `summary failed: ${msg}`;
   clearScored('standouts');
   clearScored('alternatives');
@@ -1732,7 +1757,7 @@ async function fetchSummaryFor(epoch: PlaceEpoch, force = false): Promise<{ ok: 
     const data = await streamSummary('/api/summarize', { featureId: epoch.featureId, force, stream: true } satisfies SummarizeRequest, (draft) => {
       if (!epoch.alive) return;
 
-      if (!drafting) mainBullets = bulletsIn(highlightsListEl);
+      if (!drafting) freshBullets();
       drafting = true;
       renderMarkdown($('verdict'), draft.verdict);
       mainBullets.draft(bulletsOf(draft, false));

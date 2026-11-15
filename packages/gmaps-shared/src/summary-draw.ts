@@ -59,6 +59,10 @@ type Row = { el: HTMLElement; key: string; drawn: string };
 // builds a row and `fill` draws an item into it, again only when it changed.
 export const mountBullets = <T>(list: HTMLElement, key: (item: T) => string, make: () => HTMLElement, fill: (row: HTMLElement, item: T) => void) => {
   let rows: Row[] = [];
+  // One settle at a time: a second, begun while the first waits on its rows
+  // folding away, would sort the rows the first is about to replace. With none
+  // under way it runs at once, so a cached summary still draws at once.
+  let settling: Promise<void> | undefined;
   const fresh = (): Row => ({ el: make(), key: '', drawn: '' });
 
   const draw = (row: Row, item: T) => {
@@ -68,6 +72,27 @@ export const mountBullets = <T>(list: HTMLElement, key: (item: T) => string, mak
     row.drawn = drawn;
     row.key = key(item);
     fill(row.el, item);
+  };
+
+  const settleNow = async (items: T[]) => {
+    const byKey = new Map(rows.map((r) => [r.key, r]));
+    const next = items.map((item) => byKey.get(key(item)) ?? fresh());
+    const kept = rows.filter((r) => next.includes(r));
+    const sorted = kept.some((r, i) => r !== next[i]);
+    const leaving = [...rows.filter((r) => !next.includes(r)).map((r) => foldAway(r.el)), ...(sorted ? kept.map((r) => fadeOut(r.el)) : [])];
+
+    if (leaving.length) await Promise.all(leaving);
+    rows = next;
+    list.append(...next.map((r) => r.el));
+
+    for (const [i, row] of next.entries()) {
+      draw(row, items[i]!);
+      const dim = !!row.el.style.opacity;
+      row.el.style.removeProperty('opacity');
+
+      if (sorted) fadeIn(row.el);
+      else if (dim) brighten(row.el);
+    }
   };
 
   return {
@@ -85,25 +110,12 @@ export const mountBullets = <T>(list: HTMLElement, key: (item: T) => string, mak
 
       for (const gone of rows.splice(items.length)) gone.el.remove();
     },
-    async settle(items: T[]) {
-      const byKey = new Map(rows.map((r) => [r.key, r]));
-      const next = items.map((item) => byKey.get(key(item)) ?? fresh());
-      const kept = rows.filter((r) => next.includes(r));
-      const sorted = kept.some((r, i) => r !== next[i]);
-      const leaving = [...rows.filter((r) => !next.includes(r)).map((r) => foldAway(r.el)), ...(sorted ? kept.map((r) => fadeOut(r.el)) : [])];
+    settle(items: T[]) {
+      const mine: Promise<void> = (settling ? settling.then(() => settleNow(items)) : settleNow(items)).finally(() => {
+        if (settling === mine) settling = undefined;
+      });
 
-      if (leaving.length) await Promise.all(leaving);
-      rows = next;
-      list.append(...next.map((r) => r.el));
-
-      for (const [i, row] of next.entries()) {
-        draw(row, items[i]!);
-        const dim = !!row.el.style.opacity;
-        row.el.style.removeProperty('opacity');
-
-        if (sorted) fadeIn(row.el);
-        else if (dim) brighten(row.el);
-      }
+      return (settling = mine);
     },
   };
 };

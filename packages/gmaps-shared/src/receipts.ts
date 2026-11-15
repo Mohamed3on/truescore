@@ -2,7 +2,9 @@
 // points, and which better alternatives reviewers actually prefer — the one
 // policy the server and the extension both keep, over a SupportReader port
 // (Jev in-process on the server, the server's endpoints from the extension).
-import type { Answer } from './stance';
+import type { Review } from './index';
+import type { Answer, StanceResult } from './stance';
+import type { Backing, Divided } from './wire';
 
 // Summary points need the support of this many reviews to be shown — the
 // prompt's own "2+ reviewers" rule, enforced instead of trusted.
@@ -14,6 +16,9 @@ const MIN_MINORITY = 0.1;
 
 // Supporting reviews a receipt carries for its click-through: the newest.
 const QUOTES_MAX = 20;
+
+// A standout chip's read of the reviews naming it, as far as a client holds it.
+export type ChipRead = Partial<StanceResult> & { reviews?: Review[] };
 
 export type SupportReader = {
   // Per point, the indices of `texts` that make it; null when they couldn't all be read.
@@ -82,4 +87,30 @@ export const isDivided = (liked: number, disliked: number): boolean => {
   const fewer = Math.min(liked, disliked);
 
   return fewer >= MIN_SUPPORT && fewer >= MIN_MINORITY * (liked + disliked);
+};
+
+// A divided topic as its row shows it where its standout chip is on screen too
+// (`chip`: null while it's being scored). The chip read every review naming
+// the thing for what it says of it; the summary counted the reviews it read
+// against a sentence. So the row takes the chip's numbers, and one number shows
+// for one thing: none until the chip's land, and no row (null) when they aren't
+// split. A topic that is no standout keeps the summary's own, and so does one
+// whose chip read no review of it: a throttled search comes back empty, just
+// like one for a thing nobody names.
+export const chipSplit = (t: Divided, chip: ChipRead | null | undefined): Divided | null => {
+  if (!t.item || chip === undefined) return t;
+
+  if (!chip) return { ...t, pos: undefined, neg: undefined };
+  const { stance, stances, reviews } = chip;
+
+  if (!stance || stance.praise + stance.complain + stance.mixed === 0) return t;
+
+  if (!isDivided(stance.praise, stance.complain)) return null;
+
+  const side = (says: 'praise' | 'complain', own?: Backing): Backing => ({
+    support: stance[says],
+    quotes: stances && reviews ? reviews.filter((r) => stances[r.reviewId] === says).slice(0, QUOTES_MAX) : own?.quotes ?? [],
+  });
+
+  return { ...t, pos: side('praise', t.pos), neg: side('complain', t.neg) };
 };

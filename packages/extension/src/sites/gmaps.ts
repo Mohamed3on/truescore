@@ -76,6 +76,7 @@ import {
   type Divided,
   type SummaryDraft,
   type SummaryHighlight,
+  chipSplit,
   drawSplit,
   mountBullets,
   streamSummary,
@@ -2687,7 +2688,12 @@ const clearScored = (kind: ScoredKind) => {
 // each label search resolves, so scores fill in inline and a chip that lands
 // below 2 mentions drops out. Hidden only once nothing is left to show.
 const redrawScored = (kind: ScoredKind) => {
-  if (kind === 'standouts') return renderHighlights();
+  if (kind === 'standouts') {
+    resplit?.();
+
+    return renderHighlights();
+  }
+
   const section = cardEls.alternativesSection;
   const ctx = scoredCtx[kind];
 
@@ -2898,6 +2904,18 @@ const valueMeter = (rating: number) => {
   return box;
 };
 
+// A standout's read as its split row takes it (chipSplit): null while it's scored.
+const chipRead = (item: string | undefined) => {
+  const key = `${getFeatureId()}|${item?.toLowerCase()}`;
+  const stats = standoutScoreCache.get(key);
+
+  return stats ? { stance: stats.stance, ...standoutReviewsCache.get(key) } : null;
+};
+
+// Settles the place's summary again once a standout is scored: a split row
+// naming it takes its counts then.
+let resplit: (() => void) | undefined;
+
 // A summary drawn into `panel` and redrawn in place as it streams (gmaps-shared
 // summary-draw): its verdict as it's written, its bullets dim until they're
 // checked. Drawn `checked`, the bullets settle most-backed first, and a cached
@@ -2936,8 +2954,13 @@ const mountSummary = (panel: HTMLElement) => {
     if (result.verdict) renderMarkdown(verdict, result.verdict);
 
     if (!checked) return bullets.draft([...(result.divided ?? []), ...(result.highlights ?? [])]);
+    // Only the place's own summary has standouts beside it.
+    const main = panel === cardEls.sumPanel;
     // Most-backed first once checked.
-    void bullets.settle([...bySupport(result.highlights ?? []), ...(result.divided ?? [])]);
+    const settle = () => void bullets.settle([...bySupport(result.highlights ?? []), ...(result.divided ?? []).flatMap((t) => chipSplit(t, main ? chipRead(t.item) : undefined) ?? [])]);
+    settle();
+
+    if (main) resplit = settle;
     finishSummary(panel, result);
   };
 };

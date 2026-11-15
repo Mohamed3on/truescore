@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isDivided, receiptsFor, type SupportReader } from './receipts';
+import { chipSplit, isDivided, receiptsFor, type SupportReader } from './receipts';
 import type { Answer } from './stance';
 
 // A fake Jev: a review makes a point when it holds the point's last word, and
@@ -65,4 +65,24 @@ describe('receiptsFor', () => {
 
 test('a topic is divided when 2+ reviews take each side and a tenth or more of them the smaller one', () => {
   expect([isDivided(18, 2), isDivided(40, 3), isDivided(5, 1), isDivided(2, 3)]).toEqual([true, false, false, true]);
+});
+
+describe('chipSplit', () => {
+  const own = { support: 9, quotes: ['from the summary'] };
+  const topic = { topic: 'Calamari', item: 'calamari', liked: 'Crispy calamari', disliked: 'Tough calamari', pos: own, neg: own };
+  const review = (reviewId: string) => ({ reviewId, stars: 4, reviewerReviewCount: 5, timestamp: null, text: reviewId });
+  const stance = (praise: number, complain: number) => ({ praise, complain, mixed: 0, off: 0 });
+
+  test('a topic naming a standout counts as its chip does, by the reviews on each side', () => {
+    const split = chipSplit(topic, { stance: stance(6, 2), stances: { a: 'praise', b: 'complain', c: 'off' }, reviews: [review('a'), review('b'), review('c')] });
+    expect(split).toMatchObject({ pos: { support: 6, quotes: [{ reviewId: 'a' }] }, neg: { support: 2, quotes: [{ reviewId: 'b' }] } });
+  });
+
+  test('no counts while the chip is scored, no row when its reviews do not split, its own when none could be read', () => {
+    expect(chipSplit(topic, null)).toMatchObject({ pos: undefined, neg: undefined });
+    expect(chipSplit(topic, { stance: stance(11, 1) })).toBeNull();
+    expect(chipSplit(topic, {})).toBe(topic);
+    expect(chipSplit(topic, { stance: stance(0, 0) })).toBe(topic);
+    expect(chipSplit({ ...topic, item: undefined }, null)?.pos).toBe(own);
+  });
 });
