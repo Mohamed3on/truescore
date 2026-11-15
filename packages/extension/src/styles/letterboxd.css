@@ -150,6 +150,14 @@
   font-size: .85em;
   text-decoration: none;
 }
+/* Seen already: a faint tick in Letterboxd's watched green, so the unseen picks read as the ones left. */
+.lbx-watched .lbx-similar-link::after {
+  content: '✓';
+  margin-left: .35em;
+  color: #00e054;
+  opacity: .55;
+  font-size: .8em;
+}
 .lbx-similar-item.lbx-excluded {
   opacity: .6;
 }

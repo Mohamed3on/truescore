@@ -670,7 +670,7 @@ async function fetchWatched(uids: (string | null | undefined)[]) {
  * shorter runtime, each with its combined score. Comparing them against the
  * current film is the display layer's job.
  */
-async function findSimilarPicks(currentSlug: string, currentRuntime: number, statusElement: HTMLElement) {
+async function findSimilarPicks(currentSlug: string, currentRuntime: number, statusElement: HTMLElement, seen: Set<string>) {
   // Earlier versions hid watched films through a filmFilter cookie on .letterboxd.com:
   // a second cookie beside the user's own (host-only) one, shadowing it site-wide.
   document.cookie = 'filmFilter=; path=/; domain=.letterboxd.com; max-age=0';
@@ -682,6 +682,8 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 
   const unseen = async <T extends { uid?: string }>(films: T[]) => {
     const { watched, ratings } = await fetchWatched([productionUid, ...films.map((f) => f.uid)]);
+
+    for (const uid of watched) seen.add(uid);
 
     if (!productionUid || !watched.has(productionUid)) return films.filter((f) => !watched.has(f.uid ?? ''));
     const bar = ratings.get(productionUid) ?? 0; // unrated: nothing to fall below
@@ -917,8 +919,10 @@ function moveTo(element: HTMLElement, target: HTMLElement, after: Element | null
 function startSimilarPicks(currentSlug: string, currentRuntime: number) {
   const section = el('section', 'lbx-similar');
   section.append(el('span', 'lbx-progress', 'Finding similar picks...'));
+  // Filled as the picks are found, so a row can show the user has seen its film.
+  const seen = new Set<string>();
 
-  return { section, found: findSimilarPicks(currentSlug, currentRuntime, section), ignored: loadIgnored(IGNORED_KEY), minYear: loadMinYear() };
+  return { section, seen, found: findSimilarPicks(currentSlug, currentRuntime, section, seen), ignored: loadIgnored(IGNORED_KEY), minYear: loadMinYear() };
 }
 
 /**
@@ -1106,6 +1110,7 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
 
   films.forEach((film: any) => {
     const item = el('li', 'lbx-similar-item');
+    item.classList.toggle('lbx-watched', picks.seen.has(film.uid));
     // SAFETY: el creates the tag it's given, here an <a>.
     const link = el('a', 'lbx-similar-link', film.name) as HTMLAnchorElement;
     link.href = film.link;
