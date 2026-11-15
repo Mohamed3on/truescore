@@ -3,7 +3,7 @@
 // with fixture strings — no live model. llm.ts owns the prompts, the zod schema,
 // and the SDK calls; this owns turning a cut-off reply into Summary fields. See
 // summary-parse.test.ts.
-import { salvageNumber, salvageObjects, salvageStringArray, type Summary, type SummaryHighlight } from '@truescore/gmaps-shared';
+import { salvageNumber, salvageObjects, salvageStringArray, type Divided, type Summary, type SummaryHighlight } from '@truescore/gmaps-shared';
 
 // Standouts and alternatives each fire one label search per entry, so the cap
 // bounds the fan-out. What the entries say — no blanks, no duplicates — is the
@@ -40,13 +40,14 @@ export const aliasesOf = (items: string[], written: { name: string; aliases: str
 // objects from the raw text instead of failing the whole summary — the verdict
 // is a separate call and is always worth returning. valueForMoney stays unset
 // when the cut came before it: the UI shows no rating rather than an invented one.
-type SalvagedSummary = { highlights: SummaryHighlight[]; items: string[]; alternatives: string[]; valueForMoney?: number };
+type SalvagedSummary = { divided: Divided[]; highlights: SummaryHighlight[]; items: string[]; alternatives: string[]; valueForMoney?: number };
 
 export function salvageStructured(text: string): SalvagedSummary {
   const highlights = salvageObjects<SummaryHighlight>(text, 'text');
   console.warn(`[summarize] structured JSON truncated; salvaged ${highlights.length} highlights`);
 
   return {
+    divided: salvageObjects<Divided>(text, 'topic'),
     highlights,
     items: capItems(salvageStringArray(text, 'items')),
     alternatives: capItems(salvageStringArray(text, 'alternatives')),

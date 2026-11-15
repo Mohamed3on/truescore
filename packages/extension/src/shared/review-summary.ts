@@ -4,7 +4,7 @@ import { cacheGet, cacheSet } from './cache';
 import { askTransport, bumpRateLimit, checkRateLimit, RL_MAX, summarize } from './llm';
 import { loadQAs, removeQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
-import { bySupport, isDivided, PLAIN_PROSE, enter, fadeIn, foldAway, mountBullets, parseOrQuery, receiptsFor, smoothDrafts, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
+import { bySupport, drawSplit, isDivided, PLAIN_PROSE, enter, fadeIn, foldAway, mountBullets, parseOrQuery, receiptsFor, smoothDrafts, writeMarkdown, type AskSearch, type SearchReviews } from '@truescore/gmaps-shared';
 import type { JSONSchema7 } from 'ai';
 import * as z from 'zod/mini';
 import { readAnswers, readSupport, receiptButton } from './jev';
@@ -177,39 +177,10 @@ const sectionOf = (type: string, title: string) => {
   return section;
 };
 
-// A divided topic's row: its name, then, once its sides are checked, the share
-// of the reviews taking one that like it, a bar of the two sides and a count
-// of each that opens its reviews; under them what each side says. Drafted, it's
-// the name and the sides alone.
-const drawSplit = (row: HTMLElement, t: Divided, checkedOf: number | undefined, renderQuote: RenderQuote) => {
-  const head = el('div', 'ars-split-head');
-  head.appendChild(el('span', 'ars-split-topic', t.topic));
-  row.replaceChildren(head);
-
-  if (t.pos && t.neg) {
-    head.appendChild(el('span', 'ars-split-share', `${Math.round((t.pos.n / (t.pos.n + t.neg.n)) * 100)}% like it`));
-    const counts = head.appendChild(el('span', 'ars-split-counts'));
-    const bar = row.appendChild(el('div', 'ars-split-bar'));
-    bar.setAttribute('role', 'img');
-    bar.setAttribute('aria-label', `${t.pos.n} like it, ${t.neg.n} don't`);
-
-    for (const [side, receipt, mark, say] of [['pos', t.pos, '\u25B2', 'like it'], ['neg', t.neg, '\u25BC', "don't like it"]] as const) {
-      const of = checkedOf ? `Of the ${RECEIPT_REVIEWS} longest of ${checkedOf} reviews — show` : 'Show';
-      const btn = receiptButton(row, receipt.n, receipt.quotes, renderQuote, `${of} the ${receipt.n} that ${say}`, `${mark}${receipt.n}`);
-      btn.classList.add('ars-split-count', side);
-      btn.setAttribute('aria-label', `${receipt.n} reviews ${say} — show them`);
-      counts.appendChild(btn);
-      bar.appendChild(el('i', side)).style.flexGrow = String(receipt.n);
-    }
-  }
-
-  for (const [side, mark, text] of [['pos', '\u25B2', t.liked], ['neg', '\u25BC', t.disliked]] as const) {
-    if (!text) continue;
-    const line = row.appendChild(el('div', 'ars-split-side'));
-    line.appendChild(el('span', `ars-split-mark ${side}`, mark)).setAttribute('aria-hidden', 'true');
-    renderMarkdownInline(line.appendChild(el('span')), text);
-  }
-};
+// A divided topic's row (gmaps-shared drawSplit), each count opening its side's reviews.
+const splitRow = (row: HTMLElement, t: Divided, checkedOf: number | undefined, renderQuote: RenderQuote) =>
+  drawSplit(row, { ...t, pos: t.pos?.n, neg: t.neg?.n }, renderMarkdownInline, (side, n, label, say) =>
+    receiptButton(row, n, t[side]!.quotes, renderQuote, `${checkedOf ? `Of the ${RECEIPT_REVIEWS} longest of ${checkedOf} reviews — show` : 'Show'} the ${n} that ${say}`, label));
 
 // A bullet list as a summary holds it, streaming or cached: its strings, with
 // whatever else (an entry still being written, no list yet) read as none.
@@ -239,7 +210,7 @@ const mountStructuredSummary = (container: HTMLElement, renderQuote: RenderQuote
 
   const lists = [listOf('praised', '\u25B3 Universally praised'), listOf('complaints', '\u25BD Common complaints')] as const;
   const split = sectionOf('divided', '\u25C7 Reviewers split');
-  const topics = mountBullets<Divided>(split, (t) => t.topic, () => el('div', 'ars-split'), (row, t) => drawSplit(row, t, receiptsOf, renderQuote));
+  const topics = mountBullets<Divided>(split, (t) => t.topic, () => el('div', 'ars-split'), (row, t) => splitRow(row, t, receiptsOf, renderQuote));
   let alt: HTMLElement | undefined;
   let streamed = false;
   const show = inOrder(container, () => [conclusion, lists[0].section, split, lists[1].section, alt]);

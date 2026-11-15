@@ -17,7 +17,7 @@ const model = fakeModel(async (fields) => {
 
   if (!fields.length) return 'Worth it for the **penguins**.';
 
-  if (fields.includes('highlights')) return JSON.stringify({ highlights: [{ text: 'The penguins are a favourite', sentiment: 'positive' }], items: ['penguins'], alternatives: [], valueForMoney: null });
+  if (fields.includes('highlights')) return JSON.stringify({ divided: [], highlights: [{ text: 'The penguins are a favourite', sentiment: 'positive' }], items: ['penguins'], alternatives: [], valueForMoney: null });
   await aliasesDue;
 
   return JSON.stringify({ items: [{ name: 'penguins', aliases: ['penguin'] }] });

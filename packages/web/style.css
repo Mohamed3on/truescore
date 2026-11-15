@@ -1015,6 +1015,26 @@ section#result::before {
 .highlights .h-text.pos { color: var(--pos); }
 .highlights .h-text.neg { color: var(--neg); }
 .highlights .h-text.neutral { color: var(--t1); }
+/* A topic reviewers split on: its name, the share that like it and a count of
+   each side, a bar of the two, then what each side says. */
+.ars-split-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.ars-split-topic { font-weight: 600; color: var(--t1); }
+.ars-split-share { font-variant-numeric: tabular-nums; color: var(--t3); }
+.ars-split-counts { display: inline-flex; gap: 4px; margin-left: auto; }
+.receipt.ars-split-count { margin: 0; padding: 0 6px; opacity: 1; border-color: transparent; border-radius: 4px; }
+.ars-split-count.pos, .ars-split-mark.pos { color: var(--pos); }
+.ars-split-count.neg, .ars-split-mark.neg { color: var(--neg); }
+.receipt.ars-split-count[aria-expanded="true"] { background: color-mix(in srgb, currentColor 14%, transparent); border-color: color-mix(in srgb, currentColor 45%, transparent); }
+.ars-split-count:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+@media (hover: hover) and (pointer: fine) { .receipt.ars-split-count:hover { border-color: color-mix(in srgb, currentColor 35%, transparent); } }
+.ars-split-bar { display: flex; gap: 2px; height: 4px; margin: 6px 0; }
+.ars-split-bar > i { flex: 0 0 0; min-width: 4px; border-radius: 2px; }
+.ars-split-bar > .pos { background: var(--pos); }
+.ars-split-bar > .neg { background: var(--neg); }
+.ars-split-side { display: flex; gap: 6px; margin: 2px 0; line-height: 1.45; }
+.ars-split-mark { flex: none; font-size: 8px; }
+.highlights > .ars-split { display: block; }
+.ars-split > .receipt-quotes { margin-top: 8px; }
 /* A bullet's receipt: how many reviews make its point; it opens them below. */
 .receipt {
   flex-shrink: 0;

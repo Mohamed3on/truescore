@@ -99,6 +99,15 @@ describe('withReceipts', () => {
     expect(checked.highlights.map((h) => h.support)).toEqual([2]);
   });
 
+  test('a divided topic stays when enough reviews take each side, and else its sides are bullets', async () => {
+    setJevClient(fake(rule));
+    const divided = [{ topic: 'Queues', liked: 'The queues move fast', disliked: 'Long queues at the door' }, { topic: 'Cafe', liked: 'The cafe is cosy', disliked: 'Its bland food' }, { topic: 'Shop', liked: 'The cafe has a shop', disliked: '' }];
+    const reviewTexts = ['queues a', 'queues b', 'queues c', 'cafe a', 'cafe b', 'bland'];
+    const checked = await withReceipts({ ...summary(), divided }, { placeName: 'Aquarium', reviewTexts });
+    expect(checked.divided).toMatchObject([{ topic: 'Queues', pos: { support: 3 }, neg: { support: 3 } }]);
+    expect(checked.highlights).toMatchObject([{ text: 'The cafe is cosy', sentiment: 'positive', support: 2 }, { text: 'The cafe has a shop', support: 2 }]);
+  });
+
   test('a rival stays when the reviews naming it, in full or by its longest word, prefer it', async () => {
     setJevClient(fake(rule));
     const reviewTexts = ['penguins a', 'penguins b', 'rather go to Rival Zoo', "I'd rather go to the Rival", 'Other Zoo: rather go to it', 'Other Zoo? I would rather stay here', 'Other Zoo, I would rather stay'];

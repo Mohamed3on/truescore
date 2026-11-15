@@ -1,5 +1,5 @@
 import { choice, noul, TypeSafeClient, type EntryType, type Question, type Questions, type SystemOneRequest, type Usage } from '@typesafe-ai/sdk';
-import { receiptsFor, stripAccents, trustedStance, type Answer, type Quote, type Review, type Stance, type StanceReader, type StanceResult, type Summary, type SupportReader } from '@truescore/gmaps-shared';
+import { isDivided, receiptsFor, stripAccents, trustedStance, type Answer, type Quote, type Review, type Stance, type StanceReader, type StanceResult, type Summary, type SupportReader } from '@truescore/gmaps-shared';
 import { z } from 'zod';
 import { db } from './db';
 import type { Subject } from './summary-subject';
@@ -323,20 +323,38 @@ const mentioning = (texts: string[], name: string): string[] => {
 
 // A summary with its Receipts (receiptsFor): each bullet carries how many
 // reviews make its point and the newest of them, a bullet too few make is
-// dropped, and an alternative stays only if reviewers naming it prefer it.
+// dropped, and an alternative stays only if reviewers naming it prefer it. A
+// divided topic's two sides are points like any other: where enough reviews
+// make each (isDivided) it keeps them, and where they don't, each side joins
+// the highlights as the bullet it is.
 // Unchanged when Jev can't check it — the summary shows as it always did.
 export async function withReceipts(summary: Summary, { reviewTexts }: Subject): Promise<Summary> {
   // Google hands some reviews over twice; a point is made once per reviewer.
   const texts = [...new Set(reviewTexts)];
   const rivals = (summary.alternatives ?? []).map((name) => ({ name, texts: mentioning(texts, name) }));
-  const checked = await receiptsFor(summary.highlights.map((h) => h.text), texts, rivals, jevReader);
+  const topics = summary.divided ?? [];
+  // A topic written with one side only has that side for a bullet.
+  const sides = topics.flatMap((t) => [{ text: t.liked, sentiment: 'positive' }, { text: t.disliked, sentiment: 'negative' }]).filter((s) => s.text);
+  const bullets = [...summary.highlights, ...sides];
+  const checked = await receiptsFor(bullets.map((h) => h.text), texts, rivals, jevReader);
 
   if (!checked) return summary;
   const { points, alternatives } = checked;
+  const receiptOf = new Map(bullets.map((b, k) => [b.text, points[k]]));
+
+  const divided = topics.flatMap((t) => {
+    const [pos, neg] = [receiptOf.get(t.liked), receiptOf.get(t.disliked)];
+
+    return pos && neg && isDivided(pos.support, neg.support) ? [{ ...t, pos, neg }] : [];
+  });
+
+  // A divided topic's sides show in its row.
+  const inRow = new Set(divided.flatMap((t) => [t.liked, t.disliked]));
 
   const receipted: Summary = {
     ...summary,
-    highlights: summary.highlights.flatMap((h, k) => (points[k] ? [{ ...h, ...points[k] }] : [])),
+    highlights: bullets.flatMap((h, k) => (points[k] && !inRow.has(h.text) ? [{ ...h, ...points[k] }] : [])),
+    divided,
   };
 
   if (alternatives) {
@@ -359,5 +377,7 @@ export const quotingReviews = (summary: Summary, reviews: Review[] | undefined):
   // Keyed by text, so a quote that's already a review finds nothing and stays.
   const byText = new Map<Quote, Review>(reviews.map((r) => [r.text, r]));
 
-  return { ...summary, highlights: summary.highlights.map((h) => (h.quotes ? { ...h, quotes: h.quotes.map((q) => byText.get(q) ?? q) } : h)) };
+  const quoting = <T extends { quotes?: Quote[] }>(r: T): T => (r.quotes ? { ...r, quotes: r.quotes.map((q) => byText.get(q) ?? q) } : r);
+
+  return { ...summary, highlights: summary.highlights.map(quoting), divided: summary.divided?.map((t) => ({ ...t, pos: t.pos && quoting(t.pos), neg: t.neg && quoting(t.neg) })) };
 };

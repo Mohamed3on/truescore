@@ -18,6 +18,14 @@ import type { Thread } from './thread';
 // then). Both absent on drafts and on summaries Jev didn't check.
 export type SummaryHighlight = { text: string; sentiment: string; support?: number; quotes?: Quote[] };
 
+// A topic reviewers disagree on: what those who like it say of it, and those
+// who don't. `pos` and `neg`: the reviews on each side, counted as a bullet's
+// are. Checked, a topic stays only when enough take each side (receipts.ts
+// isDivided); one that doesn't leaves each side to stand as a highlight.
+export type Divided = { topic: string; liked: string; disliked: string; pos?: Backing; neg?: Backing };
+
+export type Backing = { support: number; quotes: Quote[] };
+
 // A receipt's review: the whole Review when the server holds it (quotingReviews,
 // web/jev.ts), else the text the model read, which a client finds among the
 // reviews it holds (receiptReviews).
@@ -42,7 +50,8 @@ export const isQuoteText = (q: Quote): q is string => typeof q === 'string';
 // spelling, its name in another language), searched with it; a topic chip going
 // by any of them pools into its chip. Only items that have some; absent on
 // summaries from before them.
-export type Summary = { highlights: SummaryHighlight[]; verdict: string; valueForMoney?: number; items?: string[]; aliases?: Record<string, string[]>; alternatives?: string[]; preferredBy?: Record<string, number> };
+// `divided`: absent on summaries from before it.
+export type Summary = { highlights: SummaryHighlight[]; divided?: Divided[]; verdict: string; valueForMoney?: number; items?: string[]; aliases?: Record<string, string[]>; alternatives?: string[]; preferredBy?: Record<string, number> };
 
 export type Score = {
   featureId: string;
@@ -127,11 +136,11 @@ export type HighlightEvent =
   | { type: 'error'; error: string };
 
 // ---- streamed summaries (NDJSON) ----
-// A summary as far as the model has written it: its verdict and highlights,
-// none checked yet. A summary request that asks to `stream` gets these as the
+// A summary as far as the model has written it: its verdict, highlights and
+// divided topics, none checked yet. A summary request that asks to `stream` gets these as the
 // model writes, then the checked summary — or, cached, just that. A place
 // summary's aliases that land after it follow it (`aliases`).
-export type SummaryDraft = Pick<Summary, 'verdict' | 'highlights'>;
+export type SummaryDraft = Pick<Summary, 'verdict' | 'highlights' | 'divided'>;
 
 // At most one draft per DRAFT_MS on the stream.
 export const DRAFT_MS = 150;

@@ -18,6 +18,7 @@ const HEADER_NUMBERS: NumberStyle = { ...TITLE_NUMBERS, color: (o) => TONE_HEX[o
 import { DefaultChatTransport, type JSONValue } from 'ai';
 import {
   isQuoteText,
+  type Quote,
   type SummarizeRequest,
   type AskMessage,
   type AskSearch,
@@ -72,8 +73,10 @@ import {
   type AnswerCounts,
   type Stance,
   type StanceResult,
+  type Divided,
   type SummaryDraft,
   type SummaryHighlight,
+  drawSplit,
   mountBullets,
   streamSummary,
 } from '@truescore/gmaps-shared';
@@ -84,7 +87,7 @@ const HIGHLIGHT_FETCH_CONCURRENCY = 3;
 
 type FetchState = { isFetching: boolean; done: boolean; cursor: string; pageCount: number };
 
-type SummaryResult = { highlights?: SummaryHighlight[]; verdict?: string; valueForMoney?: number; items?: string[]; aliases?: Record<string, string[]>; alternatives?: string[] };
+type SummaryResult = { highlights?: SummaryHighlight[]; divided?: Divided[]; verdict?: string; valueForMoney?: number; items?: string[]; aliases?: Record<string, string[]>; alternatives?: string[] };
 
 type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
 
@@ -1803,7 +1806,7 @@ const reviewCardEl = (r: Review, fallbackTerms: string[] = [], stance?: Stance):
 // A summary point's reviews as the panel lists them, newest first: the ones its
 // quotes carry, or the ones with their texts among those this tab holds — the
 // place's own scrape, the open topic's, the label search's.
-const receiptOf = (h: SummaryHighlight) => () =>
+const receiptOf = (h: { quotes?: Quote[] }) => () =>
   receiptReviews(h.quotes ?? [], [...Object.values(store.mergedReviews()), ...(activeHighlight?.reviews ?? []), ...(activeLabelSearch?.reviews ?? [])]);
 
 const renderReviewsInto = (container: HTMLElement, reviews: Review[], terms: string[] = [], stances?: Record<string, Stance>) => {
@@ -2898,21 +2901,31 @@ const valueMeter = (rating: number) => {
 // A summary drawn into `panel` and redrawn in place as it streams (gmaps-shared
 // summary-draw): its verdict as it's written, its bullets dim until they're
 // checked. Drawn `checked`, the bullets settle most-backed first, and a cached
-// summary draws at once.
+// summary draws at once. The topics reviewers split on are rows of the same
+// list: first as it's written, as the model writes them first, then last.
 const mountSummary = (panel: HTMLElement) => {
   panel.textContent = '';
   const verdict = el('div', 'rc-verdict');
   const rows = el('div', 'rc-summary-bullets');
   panel.append(verdict, rows);
 
-  const bullets = mountBullets<SummaryHighlight>(rows, (h) => h.text, () => el('div'), (row, h) => {
+  const quoteCard = (q: Quote) => (isQuoteText(q) ? null : reviewCardEl(q));
+
+  const bullets = mountBullets<SummaryHighlight | Divided>(rows, (h) => ('topic' in h ? h.topic : h.text), () => el('div'), (row, h) => {
+    if ('topic' in h) {
+      row.className = 'ars-split';
+
+      return drawSplit(row, { ...h, pos: h.pos?.support, neg: h.neg?.support }, renderMarkdownInline, (side, n, label, say) =>
+        receiptButton(row, n, receiptOf(h[side]!), quoteCard, `Show the ${n} that ${say}`, label));
+    }
+
     row.className = `rc-highlight ${h.sentiment}`;
     const text = el('span', 'rc-h-text');
     renderMarkdownInline(text, h.text ?? '');
     row.replaceChildren(text);
 
     // How many reviews make the point (checked on the server), opened below.
-    if (h.support != null) row.appendChild(receiptButton(row, h.support, receiptOf(h), (q) => (isQuoteText(q) ? null : reviewCardEl(q))));
+    if (h.support != null) row.appendChild(receiptButton(row, h.support, receiptOf(h), quoteCard));
   });
 
   return (result: SummaryResult, checked = true) => {
@@ -2922,9 +2935,9 @@ const mountSummary = (panel: HTMLElement) => {
 
     if (result.verdict) renderMarkdown(verdict, result.verdict);
 
-    if (!checked) return bullets.draft(result.highlights ?? []);
+    if (!checked) return bullets.draft([...(result.divided ?? []), ...(result.highlights ?? [])]);
     // Most-backed first once checked.
-    void bullets.settle(bySupport(result.highlights ?? []));
+    void bullets.settle([...bySupport(result.highlights ?? []), ...(result.divided ?? [])]);
     finishSummary(panel, result);
   };
 };

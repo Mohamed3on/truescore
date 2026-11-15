@@ -388,6 +388,27 @@
 .rc-highlight.positive { color: #4ADE80; }
 .rc-highlight.negative { color: #F87171; }
 
+/* A topic reviewers split on: its name, the share that like it and a count of
+   each side, a bar of the two, then what each side says. */
+.ars-split-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.ars-split-topic { font-weight: 600; color: rgba(255, 255, 255, 0.88); }
+.ars-split-share { font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.5); }
+.ars-split-counts { display: inline-flex; gap: 4px; margin-left: auto; }
+.ars-receipt.ars-split-count { margin: 0; padding: 0 6px; opacity: 1; border-color: transparent; border-radius: 4px; }
+.ars-split-count.pos, .ars-split-mark.pos { color: #4ADE80; }
+.ars-split-count.neg, .ars-split-mark.neg { color: #F87171; }
+.ars-receipt.ars-split-count[aria-expanded="true"] { background: color-mix(in srgb, currentColor 14%, transparent); border-color: color-mix(in srgb, currentColor 45%, transparent); }
+.ars-split-count:focus-visible { outline: 2px solid currentColor; outline-offset: 1px; }
+@media (hover: hover) and (pointer: fine) { .ars-receipt.ars-split-count:hover { border-color: color-mix(in srgb, currentColor 35%, transparent); } }
+.ars-split-bar { display: flex; gap: 2px; height: 4px; margin: 6px 0; }
+.ars-split-bar > i { flex: 0 0 0; min-width: 4px; border-radius: 2px; }
+.ars-split-bar > .pos { background: #4ADE80; }
+.ars-split-bar > .neg { background: #F87171; }
+.ars-split-side { display: flex; gap: 6px; margin: 2px 0; line-height: 1.5; }
+.ars-split-mark { flex: none; font-size: 8px; }
+.rc-summary-bullets > .ars-split { padding: 6px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.rc-summary-bullets > .ars-split:last-child { border-bottom: none; }
+
 /* Value for money on an Overpriced → Bargain rail: the word carries the
    verdict, the dot shows where it sits; both tinted by tone, the rail only
    faintly, so the dot is the one mark that reads. */

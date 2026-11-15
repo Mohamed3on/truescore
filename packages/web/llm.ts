@@ -70,7 +70,12 @@ const NOTES = `On factual disagreements (price, hours), trust the more recent re
 // entries) live in structuredRequest's prompt; the code only caps the fan-out (capItems).
 const SENTIMENTS = ['positive', 'negative', 'neutral'] as const;
 
+// Divided topics per summary, each side a point checked against the reviews.
+const MAX_DIVIDED = 5;
+
+// `divided` is written first: after the highlights, its sides are in them already.
 const HIGHLIGHTS_SCHEMA = z.object({
+  divided: z.array(z.object({ topic: z.string(), liked: z.string(), disliked: z.string() })),
   highlights: z.array(
     z.object({
       text: z.string(),
@@ -100,7 +105,9 @@ export const structuredRequest = ({ placeName, reviewTexts, removedReviews }: Su
     schema: HIGHLIGHTS_SCHEMA,
     prompt: `${reviewBlock(reviewTexts)}\n\n---\n\nExtract highlights about ${subjectOf(placeName, filterQuery)} and rate its value for money.
 
-Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral).
+divided: the topics reviewers disagree on, 2+ liking it and 2+ disliking it, the most-mentioned first, at most ${MAX_DIVIDED} — topic: the one thing both sides speak of, in a word or two and without the verdict ("Portions", not "Small portions"); liked: in one line that names it, as each line is counted on its own ("The portions are generous and filling"), all that those who like it say of it; disliked: likewise, all that those who don't say of that same thing, and nothing else they complain of. Where one side has a single reviewer or none, it isn't divided and has no entry here: never write a side nobody takes. An empty list if reviewers disagree on nothing.${filterQuery ? ` A divided topic is never "${filterQuery}" itself: it's the one thing about it that reviewers disagree on.` : ''}
+
+Each highlight: text (one concrete line, ≤20 words, specifics over adjectives), sentiment (positive/negative/neutral). A highlight takes one side only, never two ("too loud for some, lively for others"), and none is about a divided topic: everything reviewers say for or against one goes in its two lines.
 
 valueForMoney: what reviewers say about the price for what they got, from the reviews alone, never general knowledge:
 1 overpriced: it costs too much for what you get (a rip-off, not worth the money)
@@ -152,12 +159,13 @@ ${NOTES}${removal ? `\n\n${removal}` : ''}`;
     }),
     // A sentiment still being written reads as neutral, not as half a word.
     writeObject({ model, providerOptions, ...structuredRequest({ placeName, reviewTexts, removedReviews }, filterQuery) }, drafting && ((partial) => drafting({
+      divided: (partial.divided ?? []).flatMap((t) => (t?.topic ? [{ topic: t.topic, liked: t.liked ?? '', disliked: t.disliked ?? '' }] : [])),
       highlights: (partial.highlights ?? []).flatMap((h) => (h?.text ? [{ text: h.text, sentiment: SENTIMENTS.find((s) => s === h.sentiment) ?? 'neutral' }] : [])),
     })), salvageStructured)
       .then((r) => {
         if (r.usage) report(provider, 'structured', r.usage);
 
-        return { ...r.object, valueForMoney: r.object.valueForMoney ?? undefined, items: capItems(r.object.items), alternatives: capItems(r.object.alternatives) };
+        return { ...r.object, divided: r.object.divided.slice(0, MAX_DIVIDED), valueForMoney: r.object.valueForMoney ?? undefined, items: capItems(r.object.items), alternatives: capItems(r.object.alternatives) };
       }),
   ]);
 

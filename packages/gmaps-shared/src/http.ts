@@ -144,6 +144,7 @@ type DraftStep<T> = (shown: T | undefined, target: T, grow: (from: string | unde
 const stepSummary: DraftStep<SummaryDraft> = (shown, target, grow) => ({
   verdict: grow(shown?.verdict, target.verdict),
   highlights: target.highlights.map((h, i) => ({ ...h, text: grow(shown?.highlights[i]?.text, h.text) })),
+  divided: target.divided?.map((t, i) => ({ ...t, liked: grow(shown?.divided?.[i]?.liked, t.liked), disliked: grow(shown?.divided?.[i]?.disliked, t.disliked) })),
 });
 
 type Drafts<T> = { push(draft: T): void; stop(): void };

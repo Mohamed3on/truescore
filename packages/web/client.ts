@@ -6,11 +6,11 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, standoutNames, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, receiptReviews, isQuoteText, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
-  answersOf, bySupport, countAnswers, mountBullets, smoothDrafts, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
+  answersOf, bySupport, countAnswers, drawSplit, mountBullets, smoothDrafts, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Quote, type Review, type SearchEvent, type SearchResult,
-  type SortStats, type Summary, type SummaryDraft, type SummaryHighlight,
+  type Divided, type SortStats, type Summary, type SummaryDraft, type SummaryHighlight,
   type AskRequest, type HighlightSummaryRequest, type HighlightsRequest, type HistogramRequest, type LookupRequest, type SearchRequest, type SummarizeRequest,
 } from '@truescore/gmaps-shared';
 
@@ -822,11 +822,19 @@ function renderReviewList(reviews: Review[]) {
 // A summary's bullets in `ul`, drawn in place as it streams in (gmaps-shared
 // summary-draw): one <li><span class="h-text {sentiment}"> per highlight, with
 // its receipt once Jev checked it — how many reviews make the point, a button
-// that opens them under the bullet.
+// that opens them under the bullet. The topics reviewers split on are rows of
+// the same list (bulletsOf).
 const bulletsIn = (ul: HTMLElement) => {
   ul.replaceChildren();
 
-  return mountBullets<SummaryHighlight>(ul, (h) => h.text, () => el('li'), (li, h) => {
+  return mountBullets<SummaryHighlight | Divided>(ul, (h) => ('topic' in h ? h.topic : h.text), () => el('li'), (li, h) => {
+    li.className = 'topic' in h ? 'ars-split' : '';
+
+    if ('topic' in h) {
+      return drawSplit(li, { ...h, pos: h.pos?.support, neg: h.neg?.support }, renderMarkdownInline, (side, n, label, say) =>
+        receipt(li, n, h[side]!.quotes, label, `Show the ${n} that ${say}`));
+    }
+
     const text = el('span', `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`);
     renderMarkdownInline(text, h.text ?? '');
     li.replaceChildren(text);
@@ -835,20 +843,24 @@ const bulletsIn = (ul: HTMLElement) => {
   });
 };
 
-function receipt(li: HTMLElement, support: number, quotes: Quote[]): HTMLButtonElement {
-  const btn = el('button', 'receipt', `${support} reviews`);
+// The drafted rows of a summary, the split topics first as the model writes
+// them first; checked, the bullets most-backed first, then the topics.
+const bulletsOf = ({ highlights, divided = [] }: SummaryDraft, checked: boolean) =>
+  checked ? [...bySupport(highlights), ...divided] : [...divided, ...highlights];
+
+// A row's buttons share one box: opening one closes another's.
+function receipt(li: HTMLElement, support: number, quotes: Quote[], label = `${support} reviews`, title = 'Show the reviews that say this'): HTMLButtonElement {
+  const btn = el('button', 'receipt', label);
   btn.type = 'button';
   btn.setAttribute('aria-expanded', 'false');
-  btn.title = 'Show the reviews that say this';
+  btn.title = title;
   btn.addEventListener('click', () => {
-    const open = li.querySelector('.receipt-quotes');
-    btn.setAttribute('aria-expanded', String(!open));
+    const wasOpen = btn.getAttribute('aria-expanded') === 'true';
+    li.querySelector('.receipt-quotes')?.remove();
+    li.querySelectorAll('.receipt').forEach((b) => b.setAttribute('aria-expanded', 'false'));
 
-    if (open) {
-      open.remove();
-
-      return;
-    }
+    if (wasOpen) return;
+    btn.setAttribute('aria-expanded', 'true');
 
     // Each as the panel lists it; a text none of the reviews here holds stays text.
     const box = el('ul', 'receipt-quotes review-list');
@@ -875,10 +887,10 @@ function mountChipSummary() {
   return (summary: SummaryDraft, checked = false) => {
     renderMarkdown(verdict, summary.verdict);
 
-    if (!checked) return bullets.draft(summary.highlights);
-    void bullets.settle(bySupport(summary.highlights));
+    if (!checked) return bullets.draft(bulletsOf(summary, false));
+    void bullets.settle(bulletsOf(summary, true));
 
-    if (!summary.highlights.length) ul.remove();
+    if (!bulletsOf(summary, true).length) ul.remove();
   };
 }
 
@@ -1686,7 +1698,7 @@ function renderSummary(summary: Summary, epoch: PlaceEpoch) {
   renderValue(summary.valueForMoney);
   renderMarkdown($('verdict'), summary.verdict);
   resummarizeBtn.hidden = false;
-  void mainBullets.settle(bySupport(summary.highlights));
+  void mainBullets.settle(bulletsOf(summary, true));
   showScored('standouts', summary.items, epoch.featureId, summary.aliases);
   showScored('alternatives', summary.alternatives, epoch.featureId);
 }
@@ -1723,7 +1735,7 @@ async function fetchSummaryFor(epoch: PlaceEpoch, force = false): Promise<{ ok: 
       if (!drafting) mainBullets = bulletsIn(highlightsListEl);
       drafting = true;
       renderMarkdown($('verdict'), draft.verdict);
-      mainBullets.draft(draft.highlights);
+      mainBullets.draft(bulletsOf(draft, false));
     });
 
     if (!epoch.alive) return { ok: false, ms: Date.now() - t0 };

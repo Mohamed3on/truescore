@@ -107,3 +107,51 @@ export const mountBullets = <T>(list: HTMLElement, key: (item: T) => string, mak
     },
   };
 };
+
+// A divided topic's row, the same in every client: its name, then, once its
+// sides are counted (`pos` and `neg`, the reviews on each), the share of them
+// that like it, a bar of the two and a count of each (`count` builds the
+// button that opens its reviews); under them what each side says. Drafted,
+// it's the name and the sides alone.
+export type Split = { topic: string; liked: string; disliked: string; pos?: number; neg?: number };
+
+type Side = 'pos' | 'neg';
+
+const SIDES = [['pos', '▲', 'like it', 'liked'], ['neg', '▼', "don't like it", 'disliked']] as const;
+
+export const drawSplit = (row: HTMLElement, t: Split, inline: (node: HTMLElement, text: string) => void, count: (side: Side, n: number, label: string, say: string) => HTMLElement) => {
+  const add = (parent: HTMLElement, tag: string, cls: string, text = '') => {
+    const node = parent.appendChild(document.createElement(tag));
+    node.className = cls;
+    node.textContent = text;
+
+    return node;
+  };
+
+  row.replaceChildren();
+  const head = add(row, 'div', 'ars-split-head');
+  add(head, 'span', 'ars-split-topic', t.topic);
+
+  if (t.pos != null && t.neg != null) {
+    add(head, 'span', 'ars-split-share', `${Math.round((t.pos / (t.pos + t.neg)) * 100)}% like it`);
+    const counts = add(head, 'span', 'ars-split-counts');
+    const bar = add(row, 'div', 'ars-split-bar');
+    bar.setAttribute('role', 'img');
+    bar.setAttribute('aria-label', `${t.pos} like it, ${t.neg} don't`);
+
+    for (const [side, mark, say] of SIDES) {
+      const n = t[side]!;
+      const btn = counts.appendChild(count(side, n, `${mark}${n}`, say));
+      btn.classList.add('ars-split-count', side);
+      btn.setAttribute('aria-label', `${n} reviews ${say} — show them`);
+      add(bar, 'i', side).style.flexGrow = String(n);
+    }
+  }
+
+  for (const [side, mark, , says] of SIDES) {
+    if (!t[says]) continue;
+    const line = add(row, 'div', 'ars-split-side');
+    add(line, 'span', `ars-split-mark ${side}`, mark).setAttribute('aria-hidden', 'true');
+    inline(add(line, 'span', ''), t[says]);
+  }
+};
