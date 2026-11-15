@@ -936,6 +936,7 @@
   align-items: center;
   gap: 8px;
 }
+.rc-search-close { flex: none; align-self: flex-start; margin-left: auto; }
 .rc-search-score {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 18px;

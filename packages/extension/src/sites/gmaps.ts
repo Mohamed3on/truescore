@@ -2053,6 +2053,18 @@ const askActiveChip = async () => {
   }
 };
 
+// Closes the open label search: its results, its summary and the query typed.
+const closeLabelSearch = () => {
+  activeLabelSearch = null;
+  labelSearchSeq++;
+
+  if (cardEls.searchInput) cardEls.searchInput.value = '';
+
+  if (cardEls.searchResults) cardEls.searchResults.style.display = 'none';
+
+  if (cardEls.filteredSumPanel) cardEls.filteredSumPanel.style.display = 'none';
+};
+
 const renderLabelSearchResult = () => {
   const res = cardEls.searchResults;
   const panel = cardEls.filteredSumPanel;
@@ -2124,6 +2136,13 @@ const renderLabelSearchResult = () => {
   header.appendChild(scoreEl);
   header.appendChild(el('span', 'rc-search-count', `${reviews.length} label-search reviews for "${query}"`));
   header.appendChild(filters);
+  // SAFETY: el creates the tag it's given, here a <button>.
+  const close = el('button', 'rc-chip-panel-close rc-search-close', '✕') as HTMLButtonElement;
+  close.type = 'button';
+  close.title = 'Close';
+  close.setAttribute('aria-label', 'Close search');
+  close.onclick = closeLabelSearch;
+  header.appendChild(close);
   res.appendChild(header);
 
   // SAFETY: el creates the tag it's given, here a <button>.
@@ -2424,13 +2443,7 @@ const createUIElements = () => {
     if (e.key === 'Enter') runLabelSearch();
   });
   searchInput.addEventListener('input', () => {
-    if (!searchInput.value.trim()) {
-      activeLabelSearch = null;
-
-      if (cardEls.searchResults) cardEls.searchResults.style.display = 'none';
-
-      if (cardEls.filteredSumPanel) cardEls.filteredSumPanel.style.display = 'none';
-    }
+    if (!searchInput.value.trim()) closeLabelSearch();
   });
   questionInput.type = 'text';
   questionInput.placeholder = 'Ask about this place…';
