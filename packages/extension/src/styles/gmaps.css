@@ -180,14 +180,6 @@
   letter-spacing: 0.12em;
   color: rgba(255, 255, 255, 0.5);
 }
-.rc-card-value + .rc-card-count { margin-left: 10px; }
-
-.rc-card-count {
-  font-family: 'IBM Plex Mono', 'SF Mono', monospace;
-  font-size: 9px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.25);
-}
 
 /* Big percentage */
 .rc-card-pct {
@@ -252,7 +244,7 @@
   animation: rc-pulse 1.5s ease-in-out infinite;
 }
 
-.rc-card.loading .rc-card-count::after {
+.rc-card.loading .rc-card-detail::after {
   content: '…';
   animation: rc-dots 1.2s steps(3) infinite;
 }

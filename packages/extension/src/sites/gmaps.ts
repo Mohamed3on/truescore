@@ -91,7 +91,7 @@ type FetchState = { isFetching: boolean; done: boolean; cursor: string; pageCoun
 
 type SummaryResult = { highlights?: SummaryHighlight[]; divided?: Divided[]; verdict?: string; valueForMoney?: number; items?: string[]; aliases?: Record<string, string[]>; alternatives?: string[] };
 
-type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement; valueEl: HTMLElement };
+type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement; valueEl: HTMLElement };
 
 type CardEls = {
   merged?: MergedEls;
@@ -2326,8 +2326,7 @@ const createUIElements = () => {
   // Value for money, from the place's summary (finishSummary).
   const valueEl = el('span', 'rc-card-value');
   valueEl.hidden = true;
-  const countEl = el('span', 'rc-card-count');
-  head.append(pctEl, valueEl, countEl);
+  head.append(pctEl, valueEl);
   card.appendChild(head);
   const bar = el('div', 'rc-card-bar');
   const barFill = el('div', 'rc-card-bar-fill');
@@ -2338,7 +2337,7 @@ const createUIElements = () => {
   const detailEl = el('div', 'rc-card-detail');
   card.appendChild(detailEl);
   c.appendChild(card);
-  cardEls.merged = { card, pctEl, barFill, countEl, diffEl, detailEl, tooltip, valueEl };
+  cardEls.merged = { card, pctEl, barFill, diffEl, detailEl, tooltip, valueEl };
 
   // The place's verdict, under its score: Summarize until there is one, then
   // the verdict with re-summarize beside it (refreshSumBtnState).
@@ -2655,7 +2654,6 @@ const updateUI = () => {
     els.barFill.style.width = `${Math.max(2, Math.min(100, (displayRounded / 100 + 1) / 2 * 100))}%`;
   }
 
-  els.countEl.textContent = String(totalCount);
   const headReview = store.newestHeadReview();
 
   const parts = [
