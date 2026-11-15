@@ -347,14 +347,12 @@ const searchTerm = async (site: BvSite, productId: string, term: string) => {
 // A secondary rating's average as the stats report it, on a 1–ValueRange scale.
 const SECONDARY_AVERAGE = z.object({ AverageRating: z.number(), ValueRange: z.optional(z.unknown()) });
 
-// The score and recommend stats as cells of `row` — the review count is the
-// host's own, on its rating line — and the secondary ratings as tables, returned
-// for the caller to place.
-const insights = (row: HTMLElement, stats: any, scoreData: { score: number; nps: number } | null, labels: Record<string, RatingLabel> | null) => {
+// The recommend stat as a cell of `row` — the score and the review count sit on
+// the host's rating line — and the secondary ratings as tables, returned for the
+// caller to place.
+const insights = (row: HTMLElement, stats: any, labels: Record<string, RatingLabel> | null) => {
   const recommended = Number(stats.RecommendedCount) || 0;
   const recommendTotal = recommended + (Number(stats.NotRecommendedCount) || 0);
-
-  if (scoreData) appendStat(row, addCommas(scoreData.score), 'score', npsColor(scoreData.nps));
 
   if (recommendTotal > 0) {
     appendStat(row, `${Math.round((recommended / recommendTotal) * 100)}%`, 'recommend');
@@ -427,7 +425,7 @@ interface PdpData {
 }
 
 // One unified score card: the review panel — its recent-positive
-// gauge leading — with the score/recommend stats in its row and the
+// gauge leading — with the recommend stat in its row and the
 // secondary ratings under them.
 const buildCard = (
   site: BvSite,
@@ -459,7 +457,7 @@ const buildCard = (
     exampleQuery,
   });
 
-  const tables = insights(row!, stats, scoreData, labels);
+  const tables = insights(row!, stats, labels);
 
   if (tables) row!.after(tables);
 
