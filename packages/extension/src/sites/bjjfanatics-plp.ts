@@ -1,43 +1,46 @@
-import { containersBySelector, orderByCssBand, setupScoreGrid } from '../shared/score-grid';
+import { containersBySelector, setupScoreGrid } from '../shared/score-grid';
 import { BJJ_FANATICS, cardScores } from '../shared/stamped';
 
 const scoreOf = cardScores(BJJ_FANATICS);
 const starsOf = (card: Element) => card.querySelector('.stamped-product-reviews-badge[data-id]');
 
-// The carousels on product and home pages ("What students are viewing").
-const CAROUSEL_CARD = 'a.product-card';
-const CLONE = 'splide__slide--clone';
-const isClone = (slide: Element) => slide.classList.contains(CLONE);
-const cardIn = (slide: Element) => slide.querySelector(CAROUSEL_CARD);
+// The Splide carousels on product and home pages ("What students are viewing")
+// lay slides out by transform and turn clicks into paging, so they can't be
+// ranked in place: each is swapped for a plain scrolling row of its own slides.
+const ROW = 'ts-carousel';
+const REPLACED = 'data-ts-replaced';
 
-// Splide pages a carousel by where each slide is laid out, so CSS order would
-// scramble its arrows: the cards move between the slides instead (static
-// Shopify markup, nothing re-renders them). Its loop clones copy the slides
-// (the last few ahead of the first, the first few after the last), so each is
-// refreshed from the slide it stands for.
-const orderSlides = (list: Element, scored: Element[], rest: Element[], sunk: Element[]) => {
-  const cards = [...scored, ...rest, ...sunk].flatMap((slide) => (isClone(slide) ? [] : [cardIn(slide)]));
-  const slides = [...list.children].filter((slide) => !isClone(slide));
+const style = document.createElement('style');
 
-  slides.forEach((slide, i) => {
-    if (cards[i] && cardIn(slide) !== cards[i]) slide.replaceChildren(cards[i]!);
-  });
+style.textContent = `
+.${ROW} { display: flex !important; gap: 16px; margin: 0; padding: 0 0 12px; list-style: none; overflow-x: auto; scrollbar-width: thin; scrollbar-color: rgba(30, 45, 92, 0.45) transparent; }
+.${ROW} > li { flex: 0 0 clamp(220px, 22%, 320px) !important; width: auto !important; margin: 0 !important; }
+`;
 
-  const head = [...list.children].findIndex((child) => !isClone(child));
+document.head.append(style);
 
-  [...list.children].forEach((child, at) => {
-    if (!isClone(child)) return;
-    const card = cards[(((at - head) % cards.length) + cards.length) % cards.length];
-    const copy = cardIn(child);
+const replaceCarousels = () => {
+  for (const root of document.querySelectorAll<HTMLElement>(`.splide:not([${REPLACED}])`)) {
+    const list = root.querySelector('.splide__list');
 
-    if (card && (copy?.getAttribute('href') !== card.getAttribute('href') || !copy.querySelector('.nps-score-badge') !== !card.querySelector('.nps-score-badge'))) {
-      child.replaceChildren(card.cloneNode(true));
-    }
-  });
+    if (!list?.querySelector('a.product-card')) continue;
+    const row = document.createElement('ul');
+    row.className = list.className;
+    row.classList.remove('splide__list', 'invisible');
+    row.classList.add(ROW);
+    row.append(...[...list.children].filter((slide) => !slide.classList.contains('splide__slide--clone')));
+    root.setAttribute(REPLACED, '');
+    root.style.display = 'none';
+    root.after(row);
+  }
 };
 
+replaceCarousels();
+
+new MutationObserver(replaceCarousels).observe(document.body, { childList: true, subtree: true });
+
 setupScoreGrid({
-  cardSelector: `.product-card__grid-item, ${CAROUSEL_CARD}`,
+  cardSelector: `.product-card__grid-item, .${ROW} a.product-card`,
   scoreForCard: (card) => {
     const id = starsOf(card)?.getAttribute('data-id');
 
@@ -50,7 +53,5 @@ setupScoreGrid({
   },
   // Search lists every result at once (964 for "guard"), too many to find their
   // row by structure on each re-rank.
-  discover: containersBySelector('.search-results, .collection-page__grid-products, .splide__list'),
-  rankableChild: (child) => !isClone(child),
-  applyOrder: (container, ...ranked) => (container.matches('.splide__list') ? orderSlides : orderByCssBand)(container, ...ranked),
+  discover: containersBySelector(`.search-results, .collection-page__grid-products, .${ROW}`),
 });
