@@ -125,6 +125,10 @@
         </div>
       </div>
     </div>
+    <div class="verdict-row">
+      <div id="verdict" class="verdict"></div>
+      <button id="resummarize" class="ghost-btn" type="button" hidden title="Re-summarize" aria-label="Re-summarize">↻</button>
+    </div>
     <div class="highlights-row" id="highlightsRow" hidden>
       <div class="highlights-header">
         <span class="micro">HIGHLIGHTS</span>
@@ -136,11 +140,22 @@
       <div class="alternatives-header"><span class="micro">BETTER ALTERNATIVES</span></div>
       <div id="alternativesList" class="alternatives-list"></div>
     </div>
-    <form id="searchForm" class="search-row" hidden>
-      <input id="searchInput" type="text" placeholder="Search reviews… wifi OR parking" autocomplete="off">
-      <button id="searchBtn" class="ghost-btn" type="submit">SEARCH</button>
-      <button id="searchRefreshBtn" class="ghost-btn" type="button" hidden title="Re-run search ignoring cache">↻</button>
-    </form>
+    <div class="ask-row" id="askRow" data-mode="search">
+      <div class="seg" role="group" aria-label="Search or ask">
+        <button type="button" data-mode="search" aria-pressed="true">Search</button>
+        <button type="button" data-mode="ask" aria-pressed="false">Ask</button>
+      </div>
+      <form id="searchForm" class="search-row" hidden>
+        <input id="searchInput" type="text" placeholder="wifi OR parking" aria-label="Search reviews" autocomplete="off">
+        <button id="searchBtn" class="ghost-btn" type="submit">SEARCH</button>
+        <button id="searchRefreshBtn" class="ghost-btn" type="button" hidden title="Re-run search ignoring cache">↻</button>
+      </form>
+      <form id="askForm" class="ask">
+        <input id="question" placeholder="Ask anything about this place" aria-label="Ask about this place" autocomplete="off">
+        <button id="askBtn" type="submit">ASK</button>
+      </form>
+    </div>
+    <div id="answer" class="answer"></div>
     <div id="chipPanel" class="chip-panel" role="region" aria-labelledby="chipPanelTitle" hidden>
       <div class="chip-panel-header">
         <div class="chip-panel-top">
@@ -156,17 +171,7 @@
       </form>
       <div id="chipBody" class="chip-body"></div>
     </div>
-    <div class="verdict-row">
-      <div id="verdict" class="verdict"></div>
-      <button id="resummarize" class="ghost-btn" type="button" hidden>RE-SUMMARIZE</button>
-    </div>
     <ul id="highlights" class="highlights"></ul>
-
-    <form id="askForm" class="ask">
-      <input id="question" placeholder="Ask anything about this place" autocomplete="off">
-      <button id="askBtn" type="submit">ASK</button>
-    </form>
-    <div id="answer" class="answer"></div>
   </section>
 
   <div id="status" class="status"></div>

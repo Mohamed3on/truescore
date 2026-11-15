@@ -760,11 +760,36 @@ section#result::before {
   padding-bottom: 18px;
   border-bottom: 1px solid var(--hairline);
 }
-.search-row {
+/* Search and Ask share a row: the toggle picks which form shows; Enter runs it. */
+.ask-row {
   display: flex;
   gap: 8px;
   align-items: center;
   margin-bottom: 18px;
+}
+.ask-row[data-mode="ask"] #searchForm,
+.ask-row[data-mode="search"] #askForm,
+.ask-row #searchBtn,
+.ask-row #askBtn { display: none; }
+.ask-row form { flex: 1; min-width: 0; }
+.ask-row .ask { padding-top: 0; border-top: none; }
+.seg { display: inline-flex; flex: none; padding: 3px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface); }
+.seg button {
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: normal;
+  color: var(--t3);
+  background: none;
+  border-radius: 7px;
+}
+.seg button[aria-pressed="true"] { background: rgba(109, 211, 206, 0.14); color: var(--t1); }
+.seg button:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+.search-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 .search-row input {
   flex: 1;
@@ -1011,14 +1036,23 @@ section#result::before {
   padding: 6px 0;
   border-bottom: 1px solid var(--t5);
 }
-.highlights .h-text { flex: 1; line-height: 1.45; font-weight: 500; }
-.highlights .h-text.pos { color: var(--pos); }
-.highlights .h-text.neg { color: var(--neg); }
-.highlights .h-text.neutral { color: var(--t1); }
+/* A point in ink; its mark alone carries which way it leans. */
+.highlights .h-text { flex: 1; line-height: 1.45; font-weight: 500; color: var(--t1); }
+.highlights .h-mark { flex: none; font-size: 9px; line-height: 19px; color: var(--t3); }
+.highlights .h-mark.pos { color: var(--pos); }
+.highlights .h-mark.neg { color: var(--neg); }
 /* A topic reviewers split on: its name, the share that like it and a count of
    each side, a bar of the two, then what each side says. */
 .ars-split-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .ars-split-topic { font-weight: 600; color: var(--t1); }
+/* Folded to its counts; the name opens what each side says. */
+.ars-split-topic[role="button"] { cursor: pointer; border-radius: 3px; }
+.ars-split-topic[role="button"]::before { content: '▸'; display: inline-block; width: 12px; font-size: 9px; color: var(--t3); transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.ars-split-topic[aria-expanded="true"]::before { transform: rotate(90deg); }
+.ars-split-topic[role="button"]:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.highlights > .ars-split:not(.open) > .ars-split-side { display: none; }
+.highlights > .ars-split:not(.open) > .ars-split-bar { margin-bottom: 0; }
+@media (prefers-reduced-motion: reduce) { .ars-split-topic[role="button"]::before { transition: none; } }
 .ars-split-share { font-variant-numeric: tabular-nums; color: var(--t3); }
 .ars-split-counts { display: inline-flex; gap: 4px; margin-left: auto; }
 .receipt.ars-split-count { margin: 0; padding: 0 6px; opacity: 1; border-color: transparent; border-radius: 4px; }
@@ -1193,3 +1227,7 @@ section#result::before {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* The main Ask's answer, under the row that asked it. */
+#answer { margin: 0 0 18px; }
+#answer:empty { display: none; }

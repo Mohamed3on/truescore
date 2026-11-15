@@ -6,7 +6,7 @@ import {
   fetchJson, fetchWithRetry, ndjsonResponse, postJson, postNdjson, readNdjson, runAsk, streamNdjson,
   type AskMessage, type AskSearch, type AskView, type SearchReviews,
   chipPolarity, compileMatchRegex, displayScore, standoutNames, valueForMoneyScale, overallScoreFromHistogram, parseOrQuery, receiptReviews, isQuoteText, removedCountEstimate, reviewAge, selectScoredChips, sortedDisplayReviews, starString, textReviewsFor, timeAgo,
-  answersOf, bySupport, chipSplit, countAnswers, drawSplit, mountBullets, smoothDrafts, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
+  answersOf, bySupport, chipSplit, countAnswers, drawSplit, foldSplit, mountBullets, smoothDrafts, streamSummary, mentionsText, MAX_JUDGED, opinionsOf, opinionTone, reviewMark, signedNet, STANCE_MARKS, tooFewMentions, isTrusted, TRUSTED_MIN_REVIEWS, SCORED_CHIP_MIN_REVIEWS, chipRowOrder, pooledReads, replaceChips, type ChipState, type AnswerCounts, type Opinions, type Stance, type StanceCounts, type StanceRequest, type StanceResponse,
   type Chip, type HighlightEvent, type HighlightsResponse, type HistogramResponse,
   type LookupEvent, type LookupPayload, type LookupScore, type PartialScore, type PlaceItem, type PlaceMeta,
   type PlacesResponse, type Quote, type Review, type SearchEvent, type SearchResult,
@@ -49,7 +49,6 @@ const form = $('form') as HTMLFormElement,
   chipAskForm = $('chipAskForm') as HTMLFormElement,
   chipQuestionInput = $('chipQuestion') as HTMLInputElement,
   chipAskBtn = $('chipAskBtn') as HTMLButtonElement,
-  verdictRow = document.querySelector('.verdict-row') as HTMLElement,
   highlightsListEl = $('highlights'),
   placesSection = $('places'),
   placesList = $('placesList'),
@@ -528,9 +527,7 @@ function showChipPanel(h: UiChip) {
   setPanelTitle(h.label.toUpperCase(), { scorePct: h.score?.scorePct ?? 0, trustedReviews: h.score?.trustedReviews ?? 0, stance: h.stance, of: h.of });
   renderReviewList(h.reviews ?? []);
   chipPanel.hidden = false;
-  verdictRow.style.display = 'none';
   highlightsListEl.style.display = 'none';
-  resummarizeBtn.style.display = 'none';
   chipSummarizeBtn.disabled = false;
   chipSummarizeBtn.textContent = 'SUMMARIZE';
   chipQuestionInput.value = '';
@@ -543,9 +540,7 @@ function closeChipPanel() {
   stanceFilter = null;
   setActiveChip(undefined);
   chipPanel.hidden = true;
-  verdictRow.style.display = '';
   highlightsListEl.style.display = '';
-  resummarizeBtn.style.display = '';
   searchInput.value = '';
   chipQuestionInput.value = '';
   setStatus('');
@@ -708,9 +703,7 @@ function showSearchPanel(r: SearchResult) {
   setActiveChip(undefined);
   setPanelTitle(`"${r.query.toUpperCase()}"`, r);
   chipPanel.hidden = false;
-  verdictRow.style.display = 'none';
   highlightsListEl.style.display = 'none';
-  resummarizeBtn.style.display = 'none';
   chipSummarizeBtn.disabled = false;
   chipQuestionInput.value = '';
 
@@ -826,31 +819,36 @@ function renderReviewList(reviews: Review[]) {
 }
 
 // A summary's bullets in `ul`, drawn in place as it streams in (gmaps-shared
-// summary-draw): one <li><span class="h-text {sentiment}"> per highlight, with
-// its receipt once Jev checked it — how many reviews make the point, a button
-// that opens them under the bullet. The topics reviewers split on are rows of
-// the same list (bulletsOf).
+// summary-draw): one <li> per highlight — a mark for which way it leans, its
+// text, and its receipt once Jev checked it: how many reviews make the point, a
+// button that opens them under the bullet. The topics reviewers split on are
+// rows of the same list (bulletsOf), each folded to its counts (foldSplit).
 const bulletsIn = (ul: HTMLElement) => {
   ul.replaceChildren();
 
   return mountBullets<SummaryHighlight | Divided>(ul, (h) => ('topic' in h ? h.topic : h.text), () => el('li'), (li, h) => {
-    li.className = 'topic' in h ? 'ars-split' : '';
-
     if ('topic' in h) {
-      return drawSplit(li, { ...h, pos: h.pos?.support, neg: h.neg?.support }, renderMarkdownInline, (side, n, label, say) =>
+      li.className = li.classList.contains('open') ? 'ars-split open' : 'ars-split';
+      drawSplit(li, { ...h, pos: h.pos?.support, neg: h.neg?.support }, renderMarkdownInline, (side, n, label, say) =>
         receipt(li, n, h[side]!.quotes, label, `Show the ${n} that ${say}`));
+
+      return foldSplit(li);
     }
 
-    const text = el('span', `h-text ${h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral'}`);
+    li.className = '';
+    const tone = h.sentiment === 'positive' ? 'pos' : h.sentiment === 'negative' ? 'neg' : 'neutral';
+    const mark = el('span', `h-mark ${tone}`, tone === 'pos' ? '▲' : tone === 'neg' ? '▼' : '●');
+    mark.setAttribute('aria-hidden', 'true');
+    const text = el('span', 'h-text');
     renderMarkdownInline(text, h.text ?? '');
-    li.replaceChildren(text);
+    li.replaceChildren(mark, text);
 
     if (h.support != null) li.appendChild(receipt(li, h.support, h.quotes ?? []));
   });
 };
 
-// The drafted rows of a summary, the split topics first as the model writes
-// them first; checked, the bullets most-backed first, then the topics.
+// The rows of a summary: the split topics first, as the model writes them
+// first, then the bullets — checked, most-backed first, whichever way they lean.
 // `main`: the place's own summary, whose standouts are on screen beside it, so a
 // topic naming one counts as that chip does (chipSplit; null while it's scored).
 const bulletsOf = ({ highlights, divided = [] }: SummaryDraft, checked: boolean, main = false) => {
@@ -862,7 +860,7 @@ const bulletsOf = ({ highlights, divided = [] }: SummaryDraft, checked: boolean,
     return d?.state === 'error' ? undefined : d?.result ?? null;
   };
 
-  return [...bySupport(highlights), ...divided.flatMap((t) => chipSplit(t, main ? chipRead(t.item) : undefined) ?? [])];
+  return [...divided.flatMap((t) => chipSplit(t, main ? chipRead(t.item) : undefined) ?? []), ...bySupport(highlights)];
 };
 
 // A row's buttons share one box: opening one closes another's.
@@ -1348,7 +1346,6 @@ function initResultPanel(featureId: string, resolvedUrl?: string) {
   clearScored('standouts');
   clearScored('alternatives');
   chipPanel.hidden = true;
-  verdictRow.style.display = '';
   highlightsListEl.style.display = '';
   searchForm.hidden = false;
   searchInput.value = '';
@@ -1880,6 +1877,18 @@ chipSummarizeBtn.addEventListener('click', () => {
   if (activePanel?.kind === 'highlight') summarizeActiveChip();
   else if (activePanel?.kind === 'search') summarizeActiveSearch();
 });
+
+// Search and Ask share a row: the toggle picks which form shows.
+const askRow = $('askRow');
+
+for (const btn of askRow.querySelectorAll<HTMLButtonElement>('.seg button')) {
+  btn.addEventListener('click', () => {
+    askRow.dataset.mode = btn.dataset.mode;
+
+    for (const b of askRow.querySelectorAll('.seg button')) b.setAttribute('aria-pressed', String(b === btn));
+    (btn.dataset.mode === 'ask' ? questionInput : searchInput).focus();
+  });
+}
 
 searchForm.addEventListener('submit', (e) => {
   e.preventDefault();

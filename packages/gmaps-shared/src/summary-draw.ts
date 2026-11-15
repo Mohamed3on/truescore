@@ -167,3 +167,22 @@ export const drawSplit = (row: HTMLElement, t: Split, inline: (node: HTMLElement
     inline(add(line, 'span', ''), t[says]);
   }
 };
+
+// A drawn split row folded to its name, share, bar and counts: the name opens
+// what each side says (the row's `open` class, which a client's styles show the
+// sides by). Called after each drawSplit; a row redrawn open stays open.
+export const foldSplit = (row: HTMLElement) => {
+  const topic = row.querySelector<HTMLElement>('.ars-split-topic');
+
+  if (!topic) return;
+  const toggle = () => topic.setAttribute('aria-expanded', String(row.classList.toggle('open')));
+  topic.setAttribute('role', 'button');
+  topic.tabIndex = 0;
+  topic.setAttribute('aria-expanded', String(row.classList.contains('open')));
+  topic.onclick = toggle;
+  topic.onkeydown = (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    toggle();
+  };
+};

@@ -78,6 +78,7 @@ import {
   type SummaryHighlight,
   chipSplit,
   drawSplit,
+  foldSplit,
   mountBullets,
   streamSummary,
 } from '@truescore/gmaps-shared';
@@ -90,13 +91,15 @@ type FetchState = { isFetching: boolean; done: boolean; cursor: string; pageCoun
 
 type SummaryResult = { highlights?: SummaryHighlight[]; divided?: Divided[]; verdict?: string; valueForMoney?: number; items?: string[]; aliases?: Record<string, string[]>; alternatives?: string[] };
 
-type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement };
+type MergedEls = { card: HTMLElement; pctEl: HTMLElement; barFill: HTMLElement; countEl: HTMLElement; diffEl: HTMLElement; detailEl: HTMLElement; tooltip: HTMLElement; valueEl: HTMLElement };
 
 type CardEls = {
   merged?: MergedEls;
   sumBtn?: HTMLButtonElement;
   resumBtn?: HTMLButtonElement;
   questionInput?: HTMLInputElement;
+  askMode?: (mode: 'search' | 'ask') => void;
+  verdict?: HTMLElement;
   sumPanel?: HTMLElement;
   searchInput?: HTMLInputElement;
   searchResults?: HTMLElement;
@@ -1351,7 +1354,8 @@ const renderRecentQuestions = () => {
     chip.append(el('span', 'rc-qa-text', qa.q), forget);
     chip.onclick = () => {
       if (cardEls.questionInput) cardEls.questionInput.value = qa.q;
-      triggerSummarize(); // finds it in the Recent questions and replays it
+      cardEls.askMode?.('ask');
+      triggerSummarize(true); // finds it in the Recent questions and replays it
     };
 
     row.append(chip);
@@ -2316,14 +2320,15 @@ const createUIElements = () => {
 
   const card = el('div', 'rc-card');
   const head = el('div', 'rc-card-head');
-  head.appendChild(el('span', 'rc-card-label', 'Review Score'));
-  const countEl = el('span', 'rc-card-count');
-  head.appendChild(countEl);
-  card.appendChild(head);
   const pctEl = el('div', 'rc-card-pct', '—');
-  card.appendChild(pctEl);
   const tooltip = el('div', 'rc-tooltip');
   pctEl.appendChild(tooltip);
+  // Value for money, from the place's summary (finishSummary).
+  const valueEl = el('span', 'rc-card-value');
+  valueEl.hidden = true;
+  const countEl = el('span', 'rc-card-count');
+  head.append(pctEl, valueEl, countEl);
+  card.appendChild(head);
   const bar = el('div', 'rc-card-bar');
   const barFill = el('div', 'rc-card-bar-fill');
   bar.appendChild(barFill);
@@ -2333,7 +2338,28 @@ const createUIElements = () => {
   const detailEl = el('div', 'rc-card-detail');
   card.appendChild(detailEl);
   c.appendChild(card);
-  cardEls.merged = { card, pctEl, barFill, countEl, diffEl, detailEl, tooltip };
+  cardEls.merged = { card, pctEl, barFill, countEl, diffEl, detailEl, tooltip, valueEl };
+
+  // The place's verdict, under its score: Summarize until there is one, then
+  // the verdict with re-summarize beside it (refreshSumBtnState).
+  const verdictSlot = el('div', 'rc-verdict-slot');
+  const verdictEl = el('div', 'rc-verdict');
+  verdictEl.hidden = true;
+  // SAFETY: el creates the tag it's given, here a <button>.
+  const sumBtn = el('button', 'rc-summarize-btn', 'Summarize') as HTMLButtonElement;
+  sumBtn.type = 'button';
+  sumBtn.onclick = () => triggerSummarize();
+  // SAFETY: el creates the tag it's given, here a <button>.
+  const resumBtn = el('button', 'rc-resummarize-btn', '↻') as HTMLButtonElement;
+  resumBtn.type = 'button';
+  resumBtn.title = 'Re-summarize';
+  resumBtn.setAttribute('aria-label', 'Re-summarize');
+  resumBtn.onclick = () => triggerSummarize();
+  verdictSlot.append(verdictEl, sumBtn, resumBtn);
+  c.appendChild(verdictSlot);
+  cardEls.verdict = verdictEl;
+  cardEls.sumBtn = sumBtn;
+  cardEls.resumBtn = resumBtn;
 
   const hlSec = el('div', 'rc-highlights-section');
   const hlHeader = el('div', 'rc-highlights-header');
@@ -2366,9 +2392,34 @@ const createUIElements = () => {
   cardEls.alternativesSection = altSec;
 
   const searchSec = el('div', 'rc-search-section');
+  const askRow = el('div', 'rc-ask-row');
+  const seg = el('div', 'rc-seg');
+  seg.setAttribute('role', 'group');
+  seg.setAttribute('aria-label', 'Search or ask');
+  const questionInput = document.createElement('input');
   const searchInput = document.createElement('input');
+
+  const modes = (['search', 'ask'] as const).map((mode) => {
+    // SAFETY: el creates the tag it's given, here a <button>.
+    const btn = el('button', 'rc-seg-btn', mode === 'search' ? 'Search' : 'Ask') as HTMLButtonElement;
+    btn.type = 'button';
+    btn.onclick = () => { setMode(mode); (mode === 'search' ? searchInput : questionInput).focus(); };
+
+    seg.appendChild(btn);
+
+    return { mode, btn };
+  });
+
+  const setMode = (mode: 'search' | 'ask') => {
+    for (const m of modes) m.btn.setAttribute('aria-pressed', String(m.mode === mode));
+    searchInput.hidden = mode !== 'search';
+    questionInput.hidden = mode !== 'ask';
+  };
+
+  cardEls.askMode = setMode;
   searchInput.type = 'text';
-  searchInput.placeholder = 'Label search… wifi OR parking (Enter)';
+  searchInput.placeholder = 'wifi OR parking';
+  searchInput.setAttribute('aria-label', 'Search reviews');
   searchInput.className = 'rc-search-input';
   searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') runLabelSearch();
@@ -2382,8 +2433,24 @@ const createUIElements = () => {
       if (cardEls.filteredSumPanel) cardEls.filteredSumPanel.style.display = 'none';
     }
   });
-  searchSec.appendChild(searchInput);
+  questionInput.type = 'text';
+  questionInput.placeholder = 'Ask about this place…';
+  questionInput.setAttribute('aria-label', 'Ask about this place');
+  questionInput.className = 'rc-question-input';
+  questionInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && questionInput.value.trim()) triggerSummarize(true);
+  });
+  questionInput.addEventListener('input', () => {
+    if (!questionInput.value.trim()) restoreMainSummary();
+  });
+  askRow.append(seg, searchInput, questionInput);
+  setMode('search');
+  searchSec.appendChild(askRow);
   cardEls.searchInput = searchInput;
+  cardEls.questionInput = questionInput;
+  const qaHistory = el('div', 'rc-qa-history');
+  searchSec.appendChild(qaHistory);
+  cardEls.qaHistory = qaHistory;
   const searchResults = el('div', 'rc-search-results');
   searchResults.style.display = 'none';
   searchSec.appendChild(searchResults);
@@ -2405,38 +2472,7 @@ const createUIElements = () => {
   // already in its final order.
   if (highlightsState && highlightsState.items.length) renderHighlights();
 
-  const sumRow = el('div', 'rc-sum-row');
-  // SAFETY: el creates the tag it's given, here a <button>.
-  const sumBtn = el('button', 'rc-summarize-btn', 'Summarize') as HTMLButtonElement;
-  sumBtn.onclick = () => triggerSummarize();
-  sumRow.appendChild(sumBtn);
-  // SAFETY: el creates the tag it's given, here a <button>.
-  const resumBtn = el('button', 'rc-resummarize-btn', '↻') as HTMLButtonElement;
-  resumBtn.type = 'button';
-  resumBtn.title = 'Re-summarize';
-  resumBtn.onclick = () => triggerSummarize();
-  sumRow.appendChild(resumBtn);
-  c.appendChild(sumRow);
-  cardEls.sumBtn = sumBtn;
-  cardEls.resumBtn = resumBtn;
-
-  const questionInput = document.createElement('input');
-  questionInput.type = 'text';
-  questionInput.placeholder = 'Ask about this place… (Enter to ask)';
-  questionInput.className = 'rc-question-input';
-  questionInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') sumBtn.click();
-  });
-  questionInput.addEventListener('input', () => {
-    if (!questionInput.value.trim()) restoreMainSummary();
-    refreshSumBtnState();
-  });
-  c.appendChild(questionInput);
-  cardEls.questionInput = questionInput;
   refreshSumBtnState();
-  const qaHistory = el('div', 'rc-qa-history');
-  c.appendChild(qaHistory);
-  cardEls.qaHistory = qaHistory;
   renderRecentQuestions();
 
   const chipPanel = el('div', 'rc-chip-panel');
@@ -2920,27 +2956,31 @@ let resplit: (() => void) | undefined;
 // summary-draw): its verdict as it's written, its bullets dim until they're
 // checked. Drawn `checked`, the bullets settle most-backed first, and a cached
 // summary draws at once. The topics reviewers split on are rows of the same
-// list: first as it's written, as the model writes them first, then last.
+// list, ahead of the bullets as the model writes them, each folded to its
+// counts (foldSplit). The place's own verdict is written under its score.
 const mountSummary = (panel: HTMLElement) => {
   panel.textContent = '';
-  const verdict = el('div', 'rc-verdict');
+  const verdict = (panel === cardEls.sumPanel && cardEls.verdict) || panel.appendChild(el('div', 'rc-verdict'));
   const rows = el('div', 'rc-summary-bullets');
-  panel.append(verdict, rows);
+  panel.append(rows);
 
   const quoteCard = (q: Quote) => (isQuoteText(q) ? null : reviewCardEl(q));
 
   const bullets = mountBullets<SummaryHighlight | Divided>(rows, (h) => ('topic' in h ? h.topic : h.text), () => el('div'), (row, h) => {
     if ('topic' in h) {
-      row.className = 'ars-split';
-
-      return drawSplit(row, { ...h, pos: h.pos?.support, neg: h.neg?.support }, renderMarkdownInline, (side, n, label, say) =>
+      row.className = row.classList.contains('open') ? 'ars-split open' : 'ars-split';
+      drawSplit(row, { ...h, pos: h.pos?.support, neg: h.neg?.support }, renderMarkdownInline, (side, n, label, say) =>
         receiptButton(row, n, receiptOf(h[side]!), quoteCard, `Show the ${n} that ${say}`, label));
+
+      return foldSplit(row);
     }
 
     row.className = `rc-highlight ${h.sentiment}`;
+    const mark = el('span', 'rc-h-mark', h.sentiment === 'positive' ? '▲' : h.sentiment === 'negative' ? '▼' : '●');
+    mark.setAttribute('aria-hidden', 'true');
     const text = el('span', 'rc-h-text');
     renderMarkdownInline(text, h.text ?? '');
-    row.replaceChildren(text);
+    row.replaceChildren(mark, text);
 
     // How many reviews make the point (checked on the server), opened below.
     if (h.support != null) row.appendChild(receiptButton(row, h.support, receiptOf(h), quoteCard));
@@ -2956,8 +2996,8 @@ const mountSummary = (panel: HTMLElement) => {
     if (!checked) return bullets.draft([...(result.divided ?? []), ...(result.highlights ?? [])]);
     // Only the place's own summary has standouts beside it.
     const main = panel === cardEls.sumPanel;
-    // Most-backed first once checked.
-    const settle = () => void bullets.settle([...bySupport(result.highlights ?? []), ...(result.divided ?? []).flatMap((t) => chipSplit(t, main ? chipRead(t.item) : undefined) ?? [])]);
+    // The bullets most-backed first once checked, whichever way they lean.
+    const settle = () => void bullets.settle([...(result.divided ?? []).flatMap((t) => chipSplit(t, main ? chipRead(t.item) : undefined) ?? []), ...bySupport(result.highlights ?? [])]);
     settle();
 
     if (main) resplit = settle;
@@ -2967,10 +3007,20 @@ const mountSummary = (panel: HTMLElement) => {
 
 const renderSummary = (panel: HTMLElement, result: SummaryResult) => mountSummary(panel)(result);
 
-// What only a whole summary carries: value for money, and for the place's own
-// summary its standouts and alternatives.
+// What only a whole summary carries: value for money (the place's own beside
+// its score, a chip's or search's as a meter), and for the place's own summary
+// its standouts and alternatives.
 const finishSummary = (panel: HTMLElement, result: SummaryResult) => {
-  if (result.valueForMoney) panel.appendChild(valueMeter(result.valueForMoney));
+  const valueEl = panel === cardEls.sumPanel ? cardEls.merged?.valueEl : undefined;
+
+  if (valueEl) {
+    valueEl.hidden = !result.valueForMoney;
+
+    if (result.valueForMoney) {
+      const { label, tone } = valueForMoneyScale(result.valueForMoney);
+      valueEl.replaceChildren(el('span', 'rc-card-value-label', 'Value'), el('span', `rc-value-word ${tone}`, label));
+    }
+  } else if (result.valueForMoney) panel.appendChild(valueMeter(result.valueForMoney));
 
   // Standouts and alternatives are scored chip groups about the place as a whole
   // — only the main summary, never a label-search/chip sub-summary whose items
@@ -3006,18 +3056,18 @@ const refreshSumBtnState = () => {
   const btn = cardEls.sumBtn;
 
   if (!btn) return;
-  const hasQuestion = !!cardEls.questionInput?.value?.trim();
   const cached = !!summaryCache.all;
-  btn.textContent = hasQuestion ? 'Ask' : 'Summarize';
-  btn.disabled = !hasQuestion && cached;
+  btn.hidden = cached;
+  btn.disabled = false;
 
   if (cardEls.resumBtn) {
-    cardEls.resumBtn.hidden = hasQuestion || !cached;
+    cardEls.resumBtn.hidden = !cached;
     cardEls.resumBtn.disabled = false;
   }
 };
 
-const triggerSummarize = async () => {
+// Summarizes the place, or with `ask` answers the question in the ask box.
+const triggerSummarize = async (ask = false) => {
   const panel = cardEls.sumPanel;
 
   if (!panel) return;
@@ -3034,10 +3084,12 @@ const triggerSummarize = async () => {
     return;
   }
 
-  if (cardEls.sumBtn) cardEls.sumBtn.disabled = true;
+  const customQuestion = (ask && cardEls.questionInput?.value?.trim()) || null;
+
+  // The verdict is written where Summarize sits.
+  if (cardEls.sumBtn && !customQuestion) cardEls.sumBtn.hidden = true;
 
   if (cardEls.resumBtn) cardEls.resumBtn.disabled = true;
-  const customQuestion = cardEls.questionInput?.value?.trim() || null;
   const place = currentPlace();
 
   try {

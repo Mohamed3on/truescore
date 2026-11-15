@@ -144,7 +144,7 @@ export async function summarize({ placeName, reviewTexts, removedReviews }: Subj
   const block = reviewBlock(reviewTexts);
   const removal = removalNote(removedReviews);
 
-  const verdictPrompt = `${block}\n\n---\n\nSum up ${subject} in a few sentences: what stands out and whether it's worth it. Keep it about this place: only point to another place when many reviewers repeatedly name the same one as better — never a place they say is worse or that this place beats — and a one-off mention stays out, since alternatives are surfaced separately. Include a downside only if the reviews raise it — don't invent one. **Bold** specifics. Markdown prose, no headings or bullets. Max 120 words. ${PLAIN_PROSE}
+  const verdictPrompt = `${block}\n\n---\n\nSum up ${subject} in a few sentences: what stands out and whether it's worth it. Keep it about this place: only point to another place when many reviewers repeatedly name the same one as better — never a place they say is worse or that this place beats — and a one-off mention stays out, since alternatives are surfaced separately. Include a downside only if the reviews raise it — don't invent one. **Bold** specifics. Markdown prose, no headings or bullets. Max 75 words. ${PLAIN_PROSE}
 
 ${NOTES}${removal ? `\n\n${removal}` : ''}`;
 
