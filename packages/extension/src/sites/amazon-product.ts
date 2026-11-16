@@ -30,9 +30,14 @@ const getRatingPercentages = (root: Document | HTMLElement = document) => {
     .map((el) => parseInt(el.getAttribute('aria-valuenow')!.replace('%', ''), 10))
     .filter((n) => Number.isFinite(n));
 
-  if (values.length < 2) return { fiveStars: 0, oneStars: 0 };
+  if (values.length >= 2) return { fiveStars: values[0], oneStars: values[values.length - 1] };
 
-  return { fiveStars: values[0], oneStars: values[values.length - 1] };
+  // Amazon's newer histogram: one link per star row, its share in the aria-label
+  // ("5 stars represent 81% of ratings"), with no progressbar role.
+  const share = (star: string) =>
+    parseInt(root.querySelector(`a[href*="filterByStar=${star}"][aria-label]`)?.getAttribute('aria-label')?.match(/(\d+)\s*%/)?.[1] ?? '0', 10);
+
+  return { fiveStars: share('five_star'), oneStars: share('one_star') };
 };
 
 // Amazon separates variation attributes with an <i class="a-icon-text-separator"> element
