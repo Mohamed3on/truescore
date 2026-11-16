@@ -50,11 +50,17 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
   const sample = () => all().then((rs) => [...new Set(rs.slice(0, SAMPLE_MAX).map(text).filter(Boolean))]);
 
   const remote = searchTerm && total > allMax ? orSearch(searchTerm, { text, date }) : null;
+  // Reviews only the site's search reached, so their receipts show as cards too.
+  const found = new Map<string, T>();
   const reach = remote ? total : Math.min(total, allMax);
 
   const searchAsk: SearchAsk | undefined = reach <= Math.min(allMax, SAMPLE_MAX) ? undefined
     : remote ? {
-      search: searchWith((terms) => remote(terms).then((hit) => hit.matches), text, (r) => card(r).rating),
+      search: searchWith((terms) => remote(terms).then((hit) => {
+        for (const r of hit.matches) found.set(text(r), r);
+
+        return hit.matches;
+      }), text, (r) => card(r).rating),
       open: (query) => runSearch(host, query),
     }
     : localSearchAsk(all(), card, text, host);
@@ -127,7 +133,7 @@ export const buildReviewPanel = <T,>(host: HTMLElement, reviews: ItemReviews<T>)
     autoSummarize,
     fetchReviews: sample,
     searchAsk,
-    renderQuote: quoteCards(all, text, card),
+    renderQuote: quoteCards(() => all().then((rs) => [...found.values(), ...rs]), text, card),
   });
 
   return { stats };
