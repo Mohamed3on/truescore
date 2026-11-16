@@ -8,9 +8,9 @@
   --line: rgba(255, 255, 255, 0.09);
   --line-strong: rgba(255, 255, 255, 0.2);
   --t-hi: rgba(255, 255, 255, 0.92);
-  --t-mid: rgba(255, 255, 255, 0.6);
-  --t-lo: rgba(255, 255, 255, 0.44);
-  --t-faint: rgba(255, 255, 255, 0.28);
+  --t-mid: rgba(255, 255, 255, 0.68);
+  --t-lo: rgba(255, 255, 255, 0.56);
+  --t-faint: rgba(255, 255, 255, 0.48);
   --gold: #e8b86d;
   --teal: #6dd3ce;
   --pos: #4ade80;
@@ -43,18 +43,16 @@ body::before {
 
 .header { padding: 16px 20px 2px; }
 h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.02em; }
-.tagline { margin: 3px 0 0; font-size: 11px; color: var(--t-lo); }
+.tagline { margin: 3px 0 0; font-size: 12px; color: var(--t-lo); }
 
 .block { padding: 0 20px; margin-top: 18px; }
 
-/* Micro-label group header (brand grammar). */
-.eyebrow {
-  margin: 0 0 9px;
-  font-size: 9px;
+/* Group heading. */
+.group-title {
+  margin: 0 0 8px;
+  font-size: 13px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--t-faint);
+  color: var(--t-hi);
 }
 
 /* Works-on list — reference, deliberately quiet. */
@@ -62,15 +60,15 @@ h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.02em; }
 .sites li { display: flex; align-items: center; gap: 9px; padding: 3px 0; font-size: 12px; }
 .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12); }
 .name { flex: 1; color: var(--t-mid); }
-.what { font-size: 9.5px; letter-spacing: 0.01em; color: var(--t-faint); }
+.what { font-size: 12px; letter-spacing: 0.01em; color: var(--t-faint); }
 
 /* Fields */
 .field { display: flex; flex-direction: column; gap: 7px; }
 .field + .field { margin-top: 13px; }
 .field-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; font-weight: 550; color: var(--t-hi); }
-.field-hint { font-size: 10.5px; line-height: 1.4; color: var(--t-lo); }
+.field-hint { font-size: 12px; line-height: 1.4; color: var(--t-lo); }
 .field-label a, .field-hint a { color: var(--teal); text-decoration: none; border-bottom: 1px solid rgba(109, 211, 206, 0.3); transition: border-color 0.16s var(--ease); }
-.field-label a { font-size: 10px; font-weight: 500; }
+.field-label a { font-size: 11px; font-weight: 500; }
 .field-label a:hover, .field-hint a:hover { border-bottom-color: var(--teal); }
 
 /* Segmented control (providers + reasoning) */

@@ -345,7 +345,7 @@ const injectStyles = () => {
       position: absolute; inset: 0;
       background: rgba(255,255,255,0.9);
       display: flex; align-items: center; justify-content: center; gap: 10px;
-      z-index: 100; font-family: Arial, sans-serif;
+      z-index: 100;
     }
     .loading-spinner {
       width: 24px; height: 24px;
@@ -356,7 +356,7 @@ const injectStyles = () => {
     .global-sort-badge {
       background: #1a73e8; color: white;
       padding: 8px 12px; border-radius: 4px;
-      font-size: 12px; margin-bottom: 8px; font-family: Arial, sans-serif;
+      font-size: 12px; margin-bottom: 8px;
     }
     th.sorted-asc::after { content: ' ▲'; font-size: 10px; }
     th.sorted-desc::after { content: ' ▼'; font-size: 10px; }

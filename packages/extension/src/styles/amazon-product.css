@@ -445,7 +445,7 @@ a.ars-gauge:hover .ars-gauge-fill { filter: brightness(1.1); }
 .ars-answer code,
 .ars-conclusion code,
 .ars-section-item code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: ui-monospace, "SF Mono", monospace;
   font-size: 12px;
   padding: 1px 4px;
   background: rgba(0, 0, 0, 0.06);
@@ -584,7 +584,7 @@ a.ars-gauge:hover .ars-gauge-fill { filter: brightness(1.1); }
   flex-wrap: wrap;
 }
 .ars-search-score {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: ui-monospace, "SF Mono", monospace;
   font-size: 16px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -719,7 +719,7 @@ a.ars-gauge:hover .ars-gauge-fill { filter: brightness(1.1); }
 }
 .ars-ask-search-pct,
 .ars-ask-search-count {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: ui-monospace, "SF Mono", monospace;
   font-variant-numeric: tabular-nums;
 }
 .ars-ask-search-pct { font-size: 12px; font-weight: 700; }
@@ -783,7 +783,7 @@ a.ars-gauge:hover .ars-gauge-fill { filter: brightness(1.1); }
 .ars-topic-track { height: 5px; background: #EFEDEC; border-radius: 3px; overflow: hidden; }
 .ars-topic-fill { display: block; height: 100%; border-radius: 3px; }
 .ars-topic-pct {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: ui-monospace, "SF Mono", monospace;
   font-size: 12.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
