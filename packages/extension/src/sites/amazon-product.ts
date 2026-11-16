@@ -310,8 +310,8 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   const formatRatings: Record<string, number> = {};
   const formatCounts: Record<string, number> = {}; // every rated review per format, the % base
 
-  // v4: v3 cached the total score before it kept its sign.
-  const scoresCacheKey = `ars-scores-v4-${cacheASIN}`;
+  // v5: v4 cached a 0 total when Amazon's new histogram went unread.
+  const scoresCacheKey = `ars-scores-v5-${cacheASIN}`;
   const cachedScores = cacheGet(scoresCacheKey, THREE_DAYS);
   let usedCache = false;
 
