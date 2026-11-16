@@ -10,11 +10,11 @@ import { fetchAirbnbReviewSample, sampleText } from './airbnb-reviews';
 // The listing score sits in a distinct panel near Airbnb's own rating. Its
 // working opens on hover or keyboard focus.
 const STYLES = `
-  .ts-air-score { position: relative; display: inline-grid; grid-template-columns: auto auto; align-items: center; column-gap: 24px; row-gap: 2px; max-width: 100%; box-sizing: border-box; padding: 13px 16px; border: 1px solid #cce5d2; border-left: 4px solid #247a43; border-radius: 12px; background: #f3faf5; color: #173e2b; font-variant-numeric: tabular-nums; cursor: default; }
+  .ts-air-score { position: relative; display: inline-grid; grid-template-columns: auto auto; align-items: center; column-gap: 24px; row-gap: 2px; max-width: 100%; box-sizing: border-box; padding: 13px 16px; border: 1px solid #cce5d2; border-radius: 12px; background: #f3faf5; color: #173e2b; font-variant-numeric: tabular-nums; cursor: default; }
   .ts-air-label { font-size: 11px; line-height: 15px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .ts-air-value { grid-column: 2; grid-row: 1 / 3; font-size: 32px; line-height: 1; font-weight: 750; }
   .ts-air-meta { font-size: 14px; line-height: 19px; color: #42624c; }
-  .ts-air-score[data-tone="negative"] { border-color: #f0cece; border-left-color: #b44444; background: #fff6f6; color: #742727; }
+  .ts-air-score[data-tone="negative"] { border-color: #f0cece; background: #fff6f6; color: #742727; }
   .ts-air-score[data-tone="negative"] .ts-air-meta { color: #815353; }
   .ts-air-score:focus-visible { outline: 3px solid #247a43; outline-offset: 3px; }
   .ts-air-caption { margin-top: 12px; }
