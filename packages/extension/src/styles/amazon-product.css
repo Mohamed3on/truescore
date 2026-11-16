@@ -217,6 +217,36 @@ a.ars-gauge:hover .ars-gauge-fill { filter: brightness(1.1); }
 .ars-question-input::placeholder { color: #78716C; }
 .ars-question-input:focus { border-color: #0F766E; }
 
+/* Clear (×) inside the question box, shown only while it holds text */
+.ars-question-field {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.ars-question-field .ars-question-input:not(:placeholder-shown) { padding-right: 30px; }
+.ars-question-clear {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: #78716C;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  transform: translateY(-50%);
+  cursor: pointer;
+  transition: color 150ms ease-out;
+}
+.ars-question-input:placeholder-shown + .ars-question-clear { display: none; }
+.ars-question-clear:hover { color: #1C1917; }
+.ars-question-clear:focus-visible { outline: 2px solid #0F766E; outline-offset: -2px; }
+
 /* Summarize / Ask button */
 .ars-summarize-btn:focus-visible,
 .ars-resummarize-btn:focus-visible { outline: 2px solid #0F766E; outline-offset: 2px; }

@@ -421,6 +421,19 @@
   color: var(--ts-ink-4);
 }
 
+.ts-bp .ars-question-clear {
+  right: 6px;
+  color: var(--ts-ink-4);
+}
+
+.ts-bp .ars-question-clear:hover {
+  color: var(--ts-ink-1);
+}
+
+.ts-bp .ars-question-clear:focus-visible {
+  outline-color: rgba(109, 211, 206, 0.7);
+}
+
 .ts-bp .ars-question-input:focus {
   border-color: rgba(109, 211, 206, 0.7);
   box-shadow: 0 0 0 3px rgba(109, 211, 206, 0.12);

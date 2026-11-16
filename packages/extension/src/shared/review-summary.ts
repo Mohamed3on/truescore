@@ -428,7 +428,21 @@ export const buildSummarizeWidget = ({
   questionInput.placeholder = questionPlaceholder;
   questionInput.setAttribute('aria-label', questionPlaceholder);
   questionInput.className = 'ars-question-input';
-  questionRow.appendChild(questionInput);
+  // An × inside the box while it holds text; emptying the box clears the answer.
+  const questionField = el('span', 'ars-question-field');
+  // SAFETY: el('button') creates a <button>.
+  const clearBtn = el('button', 'ars-question-clear') as HTMLButtonElement;
+  clearBtn.type = 'button';
+  clearBtn.title = 'Clear question';
+  clearBtn.setAttribute('aria-label', 'Clear question');
+  clearBtn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+  clearBtn.addEventListener('click', () => {
+    questionInput.value = '';
+    questionInput.dispatchEvent(new Event('input'));
+    questionInput.focus();
+  });
+  questionField.append(questionInput, clearBtn);
+  questionRow.appendChild(questionField);
   wrapper.appendChild(questionRow);
 
   const summarizeBtn = document.createElement('button');

@@ -50,7 +50,7 @@ const STYLES = `
   .ts-air-reviews-note { color: #78716c; font-size: 12px; line-height: 1.5; }
   .ts-air-reviews .ars-receipt-quotes { box-sizing: border-box; width: min(100%, 72ch); max-height: 26rem; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
   .ts-air-reviews .ars-receipt-quote { overflow-wrap: anywhere; }
-  @media (max-width: 520px) { .ts-air-reviews .ars-question-row { flex-wrap: wrap; } .ts-air-reviews .ars-question-input { flex-basis: 100%; } }
+  @media (max-width: 520px) { .ts-air-reviews .ars-question-row { flex-wrap: wrap; } .ts-air-reviews .ars-question-field { flex-basis: 100%; } }
   @media (prefers-reduced-motion: reduce) { .ts-air-card { transform: none !important; } }
 `;
 
