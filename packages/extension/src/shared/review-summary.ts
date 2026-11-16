@@ -554,6 +554,31 @@ export const buildSummarizeWidget = ({
     }
   };
 
+  const readCache = () => {
+    try { return JSON.parse(localStorage.getItem(cacheKey) || ''); } catch { return null; }
+  };
+
+  // The cached summary in the panel, or an empty panel when there's none.
+  const showCachedSummary = () => {
+    const c = readCache();
+
+    if (c?.parsed) {
+      summaryTs = c.ts;
+      renderStructuredSummary(summaryPanel, c.parsed, renderQuote);
+      summaryPanel.style.display = 'block';
+      panelMode = 'summary';
+    } else {
+      summaryPanel.textContent = '';
+      summaryPanel.style.display = 'none';
+      panelMode = 'none';
+    }
+  };
+
+  // An emptied question box, or a removed question, takes its answer with it.
+  const clearAnswer = () => {
+    if (panelMode === 'answer') showCachedSummary();
+  };
+
   const qaHistoryRow = el('div', 'ars-alternates ars-qa-history');
   qaHistoryRow.style.display = 'none';
 
@@ -581,6 +606,13 @@ export const buildSummarizeWidget = ({
       remove.addEventListener('click', (e) => {
         e.stopPropagation();
         removeQA(cacheKey, item.q);
+
+        if (questionInput.value.trim() === item.q) {
+          questionInput.value = '';
+          clearAnswer();
+          syncControls();
+        }
+
         renderQAHistory();
       });
       chip.appendChild(text);
@@ -594,7 +626,10 @@ export const buildSummarizeWidget = ({
     }
   };
 
-  questionInput.addEventListener('input', syncControls);
+  questionInput.addEventListener('input', () => {
+    if (!questionInput.value.trim()) clearAnswer();
+    syncControls();
+  });
   questionInput.addEventListener('keydown', (e) => {
     // An empty box asks nothing: Enter never stands in for the Summarize button.
     if (e.key === 'Enter' && questionInput.value.trim()) summarizeBtn.click();
@@ -640,20 +675,8 @@ export const buildSummarizeWidget = ({
   });
   questionRow.appendChild(copyBtn);
 
-  // Restore cached summary
-  const rawCache = localStorage.getItem(cacheKey);
-  let cached: any = null;
-
-  if (rawCache) {
-    try { cached = JSON.parse(rawCache); } catch {}
-  }
-
-  if (cached?.parsed) {
-    summaryTs = cached.ts;
-    renderStructuredSummary(summaryPanel, cached.parsed, renderQuote);
-    summaryPanel.style.display = 'block';
-    panelMode = 'summary';
-  }
+  const cached = readCache();
+  showCachedSummary();
 
   wrapper.appendChild(dateRow);
   wrapper.appendChild(summaryPanel);
