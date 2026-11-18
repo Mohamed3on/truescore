@@ -243,11 +243,29 @@ export const cardScores = (site: BvSite) => {
 interface BvReview {
   // The family member it reviews: a product's reviews include its variants'.
   productId: string;
+  // BazaarVoice's name for it: "Super Stay Matte Ink Lippenstift Nr. 65 Seductress".
+  productName?: string;
   rating: number;
   title: string;
   body: string;
   date: string;
 }
+
+// The leading words every name shares: "Super Stay Matte Ink".
+const sharedWords = (names: string[]) => {
+  const words = names[0]?.split(' ') ?? [];
+  let n = words.length;
+
+  for (const name of names) {
+    const own = name.split(' ');
+    let i = 0;
+
+    while (i < n && own[i] === words[i]) i++;
+    n = i;
+  }
+
+  return words.slice(0, n).join(' ');
+};
 
 const reviewToText = (r: BvReview) => [r.title, r.body].filter(Boolean).join(': ').trim();
 
@@ -259,9 +277,11 @@ const fetchPage = async (site: BvSite, productId: string, offset: number, search
 
   if (!res.ok) throw new Error(`${site.key} reviews ${res.status}`);
   const response = (await res.json())?.response;
+  const products = response?.Includes?.Products ?? {};
 
   const reviews: BvReview[] = (response?.Results ?? []).map((r: any) => ({
     productId: String(r.ProductId ?? ''),
+    productName: products[r.ProductId]?.Name,
     rating: Number(r.Rating) || 0,
     title: r.Title || '',
     body: r.ReviewText || '',
@@ -294,7 +314,7 @@ const dedupe = (reviews: BvReview[]) => {
 // the search. Kept a week in IndexedDB, and only whole: a failed page's hole would
 // otherwise be served for the week.
 const fetchReviews = (site: BvSite, productId: string, total: Promise<number>) => {
-  const cacheKey = `${site.key}_reviews_v7_${productId}`;
+  const cacheKey = `${site.key}_reviews_v8_${productId}`;
   const cached: Promise<BvReview[] | null> = idbGet(cacheKey, REVIEWS_TTL);
 
   const pages = cached.then((hit) => {
@@ -469,15 +489,26 @@ const buildCard = (
     row!.append(aside);
   }, () => {});
 
-  // Each review names the family member it reviews, so the variants rank.
+  // Each review names the family member it reviews, so the variants rank: by the
+  // page's own variant map, else by their BazaarVoice names less the words all share.
   const values = variants?.();
 
-  if (values?.size) reviews.all.then((all) => {
-    const dims = tallyVariationDims(all, { variationsOf: (r) => values.get(r.productId) ?? [], ratingOf: (r) => r.rating });
+  void reviews.all.then((all) => {
+    const prefix = sharedWords([...new Set(all.map((r) => r.productName ?? ''))]);
+
+    const variationsOf = values?.size
+      ? (r: BvReview) => values.get(r.productId) ?? []
+      : (r: BvReview): [string, string][] => [['Variant', r.productName?.slice(prefix.length).trim() || r.productName || '']];
+
+    const dims = tallyVariationDims(all, { variationsOf, ratingOf: (r) => r.rating });
 
     if (!dims.length) return;
     const card = renderVariationCard(dims, { animate: true, summarize: { key, text: reviewToText, card: reviewFields } });
     card.style.maxWidth = '100%';
+    // A shade range runs to dozens: past about seven rows the list scrolls.
+    const rows = card.querySelector<HTMLElement>('.ts-var-panel');
+
+    if (rows) rows.style.cssText += ';max-height:440px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#0F766E transparent';
     wrapper.append(card);
   });
 
