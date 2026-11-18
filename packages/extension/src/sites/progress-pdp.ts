@@ -2,6 +2,7 @@ import { addCommas, el } from '../shared/utils';
 import { PRODUCT_SUMMARY_PROMPT } from '../shared/review-summary';
 import { buildReviewPanel } from '../shared/review-panel';
 import { buildGauge, createIslandShell, type IslandScore } from '../shared/score-island';
+import { renderVariationCard, tallyVariationDims } from '../shared/variation-table';
 import { computeScore, getProductInfo, loadReviews, PROGRESS, reviewToText, type ProductInfo, type ReviewBundle, type StampedReview } from '../shared/stamped';
 import { expectMount } from '../shared/breakage';
 
@@ -36,6 +37,11 @@ const buildPanel = (info: ProductInfo, bundle: ReviewBundle, scored: IslandScore
     summaryPrompt: SUMMARY_PROMPT,
     autoSummarize,
   });
+
+  // Each review names the size bought: rank the sizes by how they're loved.
+  const dims = tallyVariationDims(bundle.reviews, { variationsOf: (r) => [['Size', sizeOf(r)]], ratingOf: (r) => r.reviewRating });
+
+  if (dims.length) wrapper.append(renderVariationCard(dims, { animate: true, summarize: { key: `progress-summary-${info.id}`, text: toText, card: cardFields, summaryPrompt: SUMMARY_PROMPT } }));
 
   return wrapper;
 };
