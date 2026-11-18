@@ -189,32 +189,46 @@ const fetchReviews = (country: string, lang: string, itemNo: string) => {
   return { recent, all };
 };
 
-interface StyleOption { title: string; linkId: string; isSelected?: boolean }
+interface VariantOption { title: string; linkId: string; isSelected?: boolean }
 
-interface VariationStyle { title: string; selectedOption: string; allOptions: StyleOption[] }
+// One dimension the item varies by: the colour picker's list is `allOptions`, the others' `options`.
+interface VariantDim { title: string; selectedOption: string; options?: VariantOption[]; allOptions?: VariantOption[] }
 
-// The item's variants, from the style picker in the page's hydration data: each
-// one's item number and what it is ([['Farbe', 'Schwarzbraun'], ['Größe', '77x77 cm']]).
-// A picker lists the items that differ from this one in a single dimension, so
-// each keeps this item's selection in the rest. Empty if the data is for another item.
+interface PageProps {
+  productStylePickerProps?: { variationStyles?: VariantDim[] };
+  productSpecificationSectionProps?: { variations?: VariantDim[] };
+  functionalSelectorProps?: { variations?: VariantDim[] };
+}
+
+// The item's variants, from the pickers in the page's hydration data — colour,
+// size and add-ons such as a bed's slats: each one's item number and what it is
+// ([['Farbe', 'Schwarzbraun'], ['Größe', '77x77 cm']]). A picker lists the items that
+// differ from this one in its dimension alone, so each keeps this item's
+// selection in the rest. The page also carries other products' pickers: only
+// the one selecting this item counts.
 const variants = (itemNo: string) => {
   const out = new Map<string, [string, string][]>();
 
   for (const script of document.querySelectorAll('script[type="text/hydrate"]')) {
-    if (!script.textContent?.includes('productStylePickerProps')) continue;
+    if (!script.textContent?.includes('pageProps')) continue;
     // SAFETY: IKEA's hydration data holds route loaders by index; any field may be missing.
-    const loaders = JSON.parse(script.textContent) as Record<string, { loaderData?: { pageProps?: { productStylePickerProps?: { variationStyles?: VariationStyle[] } } } }>;
-    const styles = Object.values(loaders).map((l) => l?.loaderData?.pageProps?.productStylePickerProps?.variationStyles).find(Boolean) ?? [];
+    const loaders = JSON.parse(script.textContent) as Record<string, { loaderData?: { pageProps?: PageProps } } | null>;
 
-    if (!styles.some((s) => s.allOptions.some((o) => o.isSelected && o.linkId === itemNo))) return out;
+    for (const loader of Object.values(loaders)) {
+      const props = loader?.loaderData?.pageProps;
 
-    for (const style of styles) {
-      for (const option of style.allOptions) {
-        out.set(option.linkId, styles.map((s) => [s.title.trim(), s === style ? option.title : s.selectedOption]));
+      const dims = [props?.productStylePickerProps?.variationStyles, props?.productSpecificationSectionProps?.variations, props?.functionalSelectorProps?.variations]
+        .flatMap((list) => list ?? [])
+        .map((d) => ({ title: d.title.trim(), selected: d.selectedOption, options: d.allOptions ?? d.options ?? [] }));
+
+      if (!dims.some((d) => d.options.some((o) => o.isSelected && o.linkId === itemNo))) continue;
+
+      for (const dim of dims) {
+        for (const option of dim.options) out.set(option.linkId, dims.map((d): [string, string] => [d.title, d === dim ? option.title : d.selected]));
       }
-    }
 
-    return out;
+      return out;
+    }
   }
 
   return out;
