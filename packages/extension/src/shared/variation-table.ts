@@ -115,7 +115,7 @@ const ensureStyles = () => {
 .ts-var-fill{display:block;height:100%;border-radius:3px}
 .ts-var-fill.is-pos{background:#16A34A}
 .ts-var-fill.is-neg{background:#DC2626}
-.ts-var-score{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;color:#78716C}
+.ts-var-score{font-family:ui-monospace,'SF Mono',monospace;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;text-align:right;color:#78716C}
 .ts-var-score.is-pos{color:#15803D}
 .ts-var-score.is-neg{color:#DC2626}
 .ts-var-pct{margin-left:6px;font-size:11px;font-weight:500;opacity:.7}
