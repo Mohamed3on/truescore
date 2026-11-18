@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-21T17:30:00.000Z",
+  "generatedAt": "2026-11-18T15:30:48.548Z",
   "title": "Design System: TrueScore",
   "extensions": {
     "colorMeta": {
@@ -29,7 +29,7 @@
       "stone-ink": { "role": "neutral", "displayName": "Stone Ink", "canonical": "#1C1917", "tonalRamp": ["oklch(15.0% 0.003 58.1)", "oklch(26.4% 0.005 58.1)", "oklch(37.9% 0.007 58.1)", "oklch(49.3% 0.010 58.1)", "oklch(60.7% 0.011 58.1)", "oklch(72.1% 0.009 58.1)", "oklch(83.6% 0.007 58.1)", "oklch(95.0% 0.005 58.1)"] },
       "stone-2": { "role": "neutral", "displayName": "Stone 2 · secondary", "canonical": "#57534E" },
       "stone-3": { "role": "neutral", "displayName": "Stone 3 · labels", "canonical": "#78716C" },
-      "stone-4": { "role": "neutral", "displayName": "Stone 4 · placeholders", "canonical": "#A8A29E" },
+      "stone-4": { "role": "neutral", "displayName": "Stone 4 · marks", "canonical": "#A8A29E" },
       "teal-wash": { "role": "tertiary", "displayName": "Teal wash", "canonical": "#F0FDFA" },
       "teal-line": { "role": "tertiary", "displayName": "Teal line", "canonical": "#99F6E4" },
       "sea-glass-wash": { "role": "tertiary", "displayName": "Sea Glass wash", "canonical": "rgba(109, 211, 206, 0.1)" },
@@ -135,7 +135,7 @@
       "refersTo": "input-daylight",
       "description": "Search and Ask fields on paper: white, stone line, teal on focus.",
       "html": "<input class=\"ds-input-daylight\" placeholder=\"Search 7,450 reviews… (e.g. battery OR strap)\">",
-      "css": ".ds-input-daylight { width: 100%; box-sizing: border-box; padding: 7px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1C1917; background: #fff; border: 1px solid #E7E5E4; border-radius: 6px; outline: none; transition: border-color 0.15s; } .ds-input-daylight::placeholder { color: #A8A29E; } .ds-input-daylight:focus { border-color: #0F766E; }"
+      "css": ".ds-input-daylight { width: 100%; box-sizing: border-box; padding: 7px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #1C1917; background: #fff; border: 1px solid #E7E5E4; border-radius: 6px; outline: none; transition: border-color 0.15s; } .ds-input-daylight::placeholder { color: #78716C; } .ds-input-daylight:focus { border-color: #0F766E; }"
     },
     {
       "name": "Popup segmented control",
@@ -148,7 +148,7 @@
   ],
   "narrative": {
     "northStar": "The Quiet Ledger",
-    "overview": "TrueScore is a ledger someone keeps beside the shop window: figures entered in a monospaced hand, ruled with hairlines, never decorated. It sits on other people's pages, so it never competes with them. It adds one calm instrument, states a number, and lets the number carry the argument. Everything else on the panel exists to make that figure legible and trustworthy: a nine-pixel label above it, a two-pixel bar under it, a one-line verdict beside it.\n\nThe ledger has two skins for two desks. On dark or busy hosts (Google Maps, Booking.com, the popup, the web app) it is night glass: a tinted near-black slab with backdrop blur, one signature hairline of brass fading to sea glass, and white ink stepped through a strict opacity ladder. On white retail pages (Amazon, Decathlon, Uniqlo, IKEA, dm, Etsy, AliExpress, BJJ Fanatics) it is daylight paper: a warm stone card in the host's own system font, teal for the one accent, and pale washes to sort praise from complaint. Both skins share the same grammar: mono, tabular numerals for every figure; uppercase micro-labels instead of headings; hairline rules instead of boxes; sentiment carried by green, amber, and red tints rather than fills. On Letterboxd, IMDb, and Goodreads the ledger borrows the host's palette and typeface outright and keeps only its grammar.\n\nIt is analytical, editorial, and quiet. It rejects the generic AI look (purple-to-blue gradients), gradient text, and blur used as decoration: blur is the material of the night-glass panel and nothing else.",
+    "overview": "TrueScore is a ledger someone keeps beside the shop window: figures entered in a monospaced hand, ruled with hairlines, never decorated. It sits on other people's pages, so it never competes with them. It adds one calm instrument, states a number, and lets the number carry the argument. Everything else on the panel exists to make that figure legible and trustworthy: a nine-pixel label above it, a two-pixel bar under it, a one-line verdict beside it.\n\nThe ledger has two skins for two desks. On dark or busy hosts (Google Maps, Booking.com, the popup, the web app) it is night glass: a tinted near-black slab with backdrop blur, one signature hairline of brass fading to sea glass, and white ink stepped through a strict opacity ladder. On white retail pages (Amazon, Decathlon, Uniqlo, IKEA, dm, DocMorris, Rossmann, MediaMarkt, Saturn, OTTO, Printful, Etsy, AliExpress, BJJ Fanatics, Progress Jiu Jitsu, Wear The Peace) it is daylight paper: a warm stone card in the host's own system font, teal for the one accent, and pale washes to sort praise from complaint. Both skins share the same grammar: mono, tabular numerals for every figure; uppercase micro-labels instead of headings; hairline rules instead of boxes; sentiment carried by green, amber, and red tints rather than fills. On Letterboxd, IMDb, and Goodreads the ledger borrows the host's palette and typeface outright and keeps only its grammar.\n\nIt is analytical, editorial, and quiet. It rejects the generic AI look (purple-to-blue gradients), gradient text, and blur used as decoration: blur is the material of the night-glass panel and nothing else.",
     "keyCharacteristics": [
       "Numbers lead: the figure is the largest element on any panel, set in IBM Plex Mono 600 with tabular numerals.",
       "Micro-labels, not headings: 9–10.5px uppercase tracked labels introduce every section.",
