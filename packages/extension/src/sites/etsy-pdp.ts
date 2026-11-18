@@ -397,7 +397,6 @@ const buildIsland = async (meta: ListingMeta): Promise<HTMLElement | null> => {
 
           if (!dims.length) return;
           const card = renderVariationCard(dims, { animate: true, summarize: { key: `etsy-summary-${meta.listingId}`, text: reviewText, card: reviewFields } });
-          card.style.maxWidth = '100%';
           card.style.margin = '2px 0 0';
           variationSlot.appendChild(card);
         })

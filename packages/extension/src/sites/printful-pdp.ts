@@ -42,7 +42,6 @@ const card = (r: PrintfulReview) => ({ rating: r.rating, body: r.body, meta: r.d
 
     if (!dims.length) return;
     const variations = renderVariationCard(dims, { animate: true, summarize: { key: `printful-summary-${productId}`, text, card } });
-    variations.style.maxWidth = '100%';
     panel.append(variations);
   });
 

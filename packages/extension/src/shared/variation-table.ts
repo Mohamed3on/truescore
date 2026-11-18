@@ -87,6 +87,7 @@ const ensureStyles = () => {
 @keyframes ts-var-enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes ts-var-row-in{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:translateX(0)}}
 .ts-var{margin:12px 0;width:100%;max-width:360px;background:#FAFAF9;border:1px solid #E7E5E4;border-radius:8px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.ars-wrapper .ts-var{max-width:none}
 .ts-var.is-animated{animation:ts-var-enter .4s cubic-bezier(.25,1,.5,1)}
 .ts-var-head{padding:10px 12px 0}
 .ts-var-head:empty{display:none}

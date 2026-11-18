@@ -504,7 +504,6 @@ const buildCard = (
 
     if (!dims.length) return;
     const card = renderVariationCard(dims, { animate: true, summarize: { key, text: reviewToText, card: reviewFields } });
-    card.style.maxWidth = '100%';
     // A shade range runs to dozens: past about seven rows the list scrolls.
     const rows = card.querySelector<HTMLElement>('.ts-var-panel');
 

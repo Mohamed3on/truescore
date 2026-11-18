@@ -70,7 +70,6 @@ const buildIsland = async (id: string): Promise<HTMLElement | null> => {
 
     if (dims.length) {
       const variations = renderVariationCard(dims, { animate: true, summarize: { key: `ali-summary-${id}`, text, card } });
-      variations.style.maxWidth = '100%';
       variations.style.margin = '2px 0 0';
       wrapper.appendChild(variations);
     }
