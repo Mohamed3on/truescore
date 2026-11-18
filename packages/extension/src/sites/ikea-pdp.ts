@@ -6,6 +6,7 @@ import { buildReviewPanel } from '../shared/review-panel';
 import { setupSpaInjector } from '../shared/spa-injector';
 import { createIslandShell } from '../shared/score-island';
 import { RECENT_REVIEWS } from '../shared/recency';
+import { renderVariationCard, tallyVariationDims } from '../shared/variation-table';
 
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
 const REVIEWS_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -116,7 +117,8 @@ const buildInsightsPanel = (data: any) => {
   return host;
 };
 
-interface IkeaReview { rating: number; title: string; body: string; date: string }
+// itemNo: the variant (colour, size…) it reviews: an item's reviews include its variants'.
+interface IkeaReview { rating: number; title: string; body: string; date: string; itemNo?: string }
 
 const reviewToText = (r: IkeaReview): string => [r.title, r.body].filter(Boolean).join(': ').trim();
 
@@ -151,6 +153,7 @@ const fetchPage = async (country: string, lang: string, itemNo: string, size: nu
       title: r.title || '',
       body: r.text || '',
       date: String(r.submissionOn || '').slice(0, 10),
+      itemNo: r.itemKey?.itemNo,
     };
 
     const id = String(r.id ?? '') || reviewToText(review);
@@ -168,7 +171,7 @@ const fetchPage = async (country: string, lang: string, itemNo: string, size: nu
 // asked; KALLAX's ~10.5k is 13 MB) for the Sample and the search. The whole set is
 // kept a week in IndexedDB: a big item's set would crowd the site's localStorage.
 const fetchReviews = (country: string, lang: string, itemNo: string) => {
-  const cacheKey = `ikea-reviews-v3-${itemNo}`;
+  const cacheKey = `ikea-reviews-v4-${itemNo}`;
   const cached: Promise<IkeaReview[] | null> = idbGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
 
   const all = cached.then(async (hit) => {
@@ -184,6 +187,37 @@ const fetchReviews = (country: string, lang: string, itemNo: string) => {
   const recent = cached.then(async (hit) => hit ?? (await fetchPage(country, lang, itemNo, RECENT_REVIEWS)) ?? all);
 
   return { recent, all };
+};
+
+interface StyleOption { title: string; linkId: string; isSelected?: boolean }
+
+interface VariationStyle { title: string; selectedOption: string; allOptions: StyleOption[] }
+
+// The item's variants, from the style picker in the page's hydration data: each
+// one's item number and what it is ([['Farbe', 'Schwarzbraun'], ['Größe', '77x77 cm']]).
+// A picker lists the items that differ from this one in a single dimension, so
+// each keeps this item's selection in the rest. Empty if the data is for another item.
+const variants = (itemNo: string) => {
+  const out = new Map<string, [string, string][]>();
+
+  for (const script of document.querySelectorAll('script[type="text/hydrate"]')) {
+    if (!script.textContent?.includes('productStylePickerProps')) continue;
+    // SAFETY: IKEA's hydration data holds route loaders by index; any field may be missing.
+    const loaders = JSON.parse(script.textContent) as Record<string, { loaderData?: { pageProps?: { productStylePickerProps?: { variationStyles?: VariationStyle[] } } } }>;
+    const styles = Object.values(loaders).map((l) => l?.loaderData?.pageProps?.productStylePickerProps?.variationStyles).find(Boolean) ?? [];
+
+    if (!styles.some((s) => s.allOptions.some((o) => o.isSelected && o.linkId === itemNo))) return out;
+
+    for (const style of styles) {
+      for (const option of style.allOptions) {
+        out.set(option.linkId, styles.map((s) => [s.title.trim(), s === style ? option.title : s.selectedOption]));
+      }
+    }
+
+    return out;
+  }
+
+  return out;
 };
 
 const cleanup = () => {
@@ -233,6 +267,13 @@ setupSpaInjector({
         exampleQuery: 'quality OR assembly',
       });
       anchor.after(island);
+      const values = variants(itemNo);
+
+      if (values.size) void reviews.all.then((all) => {
+        const dims = tallyVariationDims(all, { variationsOf: (r) => values.get(r.itemNo ?? '') ?? [], ratingOf: (r) => r.rating });
+
+        if (dims.length) island.append(renderVariationCard(dims, { animate: true, summarize: { key: `ikea-summary-${itemNo}`, text: reviewToText, card: reviewFields } }));
+      });
     }
   },
   cleanup,
