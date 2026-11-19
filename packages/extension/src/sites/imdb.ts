@@ -43,7 +43,7 @@ const histograms = async (ids: string[]): Promise<Record<string, number[]>> => {
   const missing: string[] = [];
 
   for (const id of new Set(ids)) {
-    const cached = cacheGet(`nps_imdb_h_${id}`, CACHE_TTL);
+    const cached = await cacheGet(`nps_imdb_h_${id}`, CACHE_TTL);
 
     if (cached) found[id] = cached;
     else missing.push(id);

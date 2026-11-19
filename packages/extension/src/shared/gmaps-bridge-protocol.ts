@@ -3,9 +3,17 @@ import type { Chip, ChipMeta, PartialScore, Review } from '@truescore/gmaps-shar
 // Shared protocol constants for the gmaps content scripts. ISOLATED-world
 // gmaps-bridge.ts proxies chrome.storage; MAIN-world gmaps-capture.ts emits
 // PREVIEW_CAPTURED so harvesters can wake on the event instead of polling.
-export const STORAGE_GET = 'truescore-storage-get';
-export const STORAGE_SET = 'truescore-storage-set';
+// A STORAGE_REQUEST names an op of shared/cache.ts's Backend; the bridge runs it
+// in its own host's namespace, so a page script can never reach another site's data.
+export const STORAGE_REQUEST = 'truescore-storage-request';
 export const STORAGE_RESULT = 'truescore-storage-result';
+
+export type StorageOp = 'get' | 'set' | 'remove' | 'entries';
+
+// What a bridge request carries besides its id: a storage op and its arguments,
+// or nothing (LLM_SETTINGS_GET).
+export type BridgePayload = { op?: StorageOp; key?: string; value?: any; prefix?: string };
+
 export const PREVIEW_CAPTURED = 'truescore-preview-captured';
 
 // The popup's model choices for Maps summaries and Asks, which MAIN-world gmaps.ts
@@ -56,3 +64,32 @@ declare global {
     __truescoreSignMaps?: (request: string) => Promise<string | null>;
   }
 }
+
+// MAIN world's line to gmaps-bridge: dispatches the request and resolves with the
+// bridge's STORAGE_RESULT reply, or null after a timeout (an extension reload
+// mid-flight drops the reply; without it the listener and promise leak forever).
+const BRIDGE_TIMEOUT_MS = 5000;
+let nextRequestId = 0;
+
+export const bridgeRequest = <T>(eventName: string, payload: BridgePayload): Promise<T | null> => new Promise((resolve) => {
+  const id = String(++nextRequestId);
+
+  const cleanup = () => {
+    document.removeEventListener(STORAGE_RESULT, handler);
+    clearTimeout(timer);
+  };
+
+  const handler = (e: Event) => {
+    // SAFETY: gmaps-bridge sends STORAGE_RESULT as a CustomEvent; anything else has
+    // no detail and fails the id check.
+    const detail = (e as CustomEvent).detail;
+
+    if (detail?.id !== id) return;
+    cleanup();
+    resolve(detail.value);
+  };
+
+  const timer = setTimeout(() => { cleanup(); resolve(null); }, BRIDGE_TIMEOUT_MS);
+  document.addEventListener(STORAGE_RESULT, handler);
+  document.dispatchEvent(new CustomEvent(eventName, { detail: { id, ...payload } }));
+});

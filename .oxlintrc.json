@@ -17,7 +17,10 @@
     "**/*conflict_on_*"
   ],
   "jsPlugins": [
-    { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" }
+    {
+      "name": "anti-slop",
+      "specifier": "./tools/oxlint/anti-slop/index.ts"
+    }
   ],
   "rules": {
     "oxc/no-accumulating-spread": "error",
@@ -30,7 +33,12 @@
     "anti-slop/no-object-parameters": "error",
     "anti-slop/no-reflect-apply": "error",
     "anti-slop/no-reflect-get": "error",
-    "anti-slop/no-runtime-typeof": ["error", { "allowInTypeGuards": true }],
+    "anti-slop/no-runtime-typeof": [
+      "error",
+      {
+        "allowInTypeGuards": true
+      }
+    ],
     "anti-slop/no-shape-in-symbol-names": "error",
     "anti-slop/no-unknown-parameters": "error",
     "anti-slop/no-unknown-returns": "error",
@@ -39,5 +47,29 @@
     "anti-slop/no-widen-then-assert": "error",
     "anti-slop/require-readable-spacing": "error",
     "anti-slop/require-safety-comment-for-type-assertion": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": [
+        "packages/extension/src/**"
+      ],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "localStorage",
+            "message": "TrueScore keeps its data in chrome.storage through shared/cache.ts: a content script sharing the page's storage spends the site's own quota."
+          },
+          {
+            "name": "sessionStorage",
+            "message": "TrueScore keeps its data in chrome.storage through shared/cache.ts: a content script sharing the page's storage spends the site's own quota."
+          },
+          {
+            "name": "indexedDB",
+            "message": "TrueScore keeps its data in chrome.storage through shared/cache.ts: a content script sharing the page's storage spends the site's own quota."
+          }
+        ]
+      }
+    }
+  ]
 }

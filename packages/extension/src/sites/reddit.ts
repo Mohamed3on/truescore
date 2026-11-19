@@ -500,12 +500,12 @@ const offerQuestions = () => {
     suggestions.replaceChildren();
   }
 
-  recentQuestions.replaceChildren(...[...new Set([thread?.title.trim() ?? '', ...loadQAs(questionsKey()).map((e) => e.q)])].flatMap((q) => {
+  void loadQAs(questionsKey()).then((qas) => recentQuestions.replaceChildren(...[...new Set([thread?.title.trim() ?? '', ...qas.map((e) => e.q)])].flatMap((q) => {
     const option = document.createElement('option');
     option.value = q;
 
     return q ? [option] : [];
-  }));
+  })));
 };
 
 const showQuestions = () => {
@@ -518,7 +518,7 @@ const tallyAsked = () => {
   const q = questionInput.value.trim();
   tallyQuestion = q === thread?.title.trim() ? '' : q;
 
-  if (tallyQuestion) saveQA(questionsKey(), { q: tallyQuestion, a: '', ts: Date.now() });
+  if (tallyQuestion) void saveQA(questionsKey(), { q: tallyQuestion, a: '', ts: Date.now() });
   void start();
 };
 
@@ -754,7 +754,7 @@ const ask = (q: string) => {
 
       if (e.type === 'error') turn.error = e.error;
       else if (!turn.a.trim()) turn.error = 'The answer was cut off — try again';
-      else { turn.done = true; saveQA(qaKey(), { q, a: turn.a, ts: Date.now() }); }
+      else { turn.done = true; void saveQA(qaKey(), { q, a: turn.a, ts: Date.now() }); }
 
       renderChat();
     }
@@ -812,7 +812,9 @@ async function start() {
   showQuestions();
 
   // The questions asked of it on earlier visits, oldest first.
-  if (!turns.length) turns = loadQAs(qaKey()).reverse().map((e) => ({ q: e.q, a: e.a, done: true }));
+  const asked = await loadQAs(qaKey());
+
+  if (!turns.length) turns = asked.reverse().map((e) => ({ q: e.q, a: e.a, done: true }));
   renderChat();
   stop = requestTally(thread, onEvent, tallyQuestion || undefined);
 }

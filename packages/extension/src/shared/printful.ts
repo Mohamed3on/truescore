@@ -1,5 +1,4 @@
 import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
-import { idbGet, idbSet } from './idb-cache';
 import { createThrottledFetcher } from './throttled-fetch';
 import { SAMPLE_MAX } from './review-summary';
 import { RECENT_REVIEWS } from './recency';
@@ -53,7 +52,7 @@ export const pageProductId = () => document.querySelector('[product-id], [\\:pro
 
 export const productIdOf = async (path: string): Promise<string | null> => {
   const key = `printful_id_v1_${path}`;
-  const cached = cacheGet(key, ID_TTL);
+  const cached = await cacheGet(key, ID_TTL);
 
   if (cached) return cached;
   const res = await throttled(path);
@@ -70,7 +69,7 @@ export const productIdOf = async (path: string): Promise<string | null> => {
 // no reviews is tombstoned.
 export const productScore = async (productId: string) => {
   const key = `printful_counts_v1_${productId}`;
-  const cached = cacheGetMaybe(key, COUNTS_TTL);
+  const cached = await cacheGetMaybe(key, COUNTS_TTL);
   let counts: { five: number; one: number; total: number } | null;
 
   if (cached) counts = cached.value;
@@ -97,7 +96,7 @@ const fetchPage = async (productId: string, page: number): Promise<PrintfulRevie
 // in IndexedDB, and only whole, so a failed page's hole is never served.
 export const fetchReviews = (productId: string, total: number) => {
   const key = `printful_reviews_v2_${productId}`;
-  const cached: Promise<PrintfulReview[] | null> = idbGet(key, REVIEWS_TTL);
+  const cached: Promise<PrintfulReview[] | null> = cacheGet(key, REVIEWS_TTL);
   const pages = cached.then((hit) => (hit ? [] : Array.from({ length: Math.ceil(Math.min(total, SAMPLE_MAX) / PAGE) }, (_, i) => fetchPage(productId, i + 1))));
 
   const settle = async (of: Promise<PrintfulReview[]>[]) => {
@@ -112,7 +111,7 @@ export const fetchReviews = (productId: string, total: number) => {
     if (hit) return hit;
     const { reviews, whole } = await settle(await pages);
 
-    if (reviews.length && whole) idbSet(key, reviews);
+    if (reviews.length && whole) cacheSet(key, reviews);
 
     return reviews;
   });

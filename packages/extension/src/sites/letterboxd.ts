@@ -1,5 +1,5 @@
 import { animates, netScore } from '@truescore/gmaps-shared';
-import { idbEntries, idbGet, idbSet } from '../shared/idb-cache';
+import { cacheEntries, cacheGet, cacheSet, storeGet, storeSet } from '../shared/cache';
 import { couldReach, rankPicks } from '../shared/better-picks';
 import { loadIgnored, saveIgnored } from '../shared/ignored-picks';
 import { adjust, ratioFromTally, TEN_POINT, THIN_SAMPLE, trendClass } from '../shared/recency';
@@ -124,21 +124,21 @@ const scoreOf = (cached: any, recent?: RecentTally) => (cached?.scored
 // Once per install: every film already in the cache (v5 on; older scores were on
 // another scale), so the IPTV app has the films seen before sharing scores began.
 async function backfillShared() {
-  if (await idbGet('lbx_shared_backfill_v2', Infinity)) return;
+  if (await storeGet('lbx_shared_backfill_v2')) return;
   const recent = new Map<string, RecentTally>(); // a full tally over a partial one
 
   for (const prefix of ['lbx_recent_part_v3_', 'lbx_recent_v3_']) {
-    for (const [key, tally] of await idbEntries(prefix)) if (tally?.ratio != null) recent.set(key.slice(prefix.length), tally);
+    for (const [key, tally] of await cacheEntries(prefix)) if (tally?.ratio != null) recent.set(key.slice(prefix.length), tally);
   }
 
-  for (const [key, cached] of await idbEntries('lbx_film_v')) {
+  for (const [key, cached] of await cacheEntries('lbx_film_v')) {
     const [, version, slug] = key.match(/^lbx_film_v(\d+)_(.+)$/) ?? [];
 
     if (slug && Number(version) >= 5) shareFilm(slug, { h: cached?.ratings, tmdb: cached?.tmdb, ...scoreOf(cached, recent.get(slug)) });
   }
 
   flushShared();
-  idbSet('lbx_shared_backfill_v2', true);
+  void storeSet('lbx_shared_backfill_v2', true);
 }
 
 /**
@@ -235,24 +235,22 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
 // Cache
 // =============================================================================
 
-// Heavy per-film accumulators (one entry per candidate film during similar-picks)
-// live in IndexedDB — they'd otherwise fill the ~5MB localStorage cap. The small
-// summary cache stays on localStorage (owned by buildMediaSummary).
+// Per-film accumulators: one entry per candidate film during similar-picks.
 // v3: v2 scores lost their sign (see netScore), so hated films read positive.
 // v4: v3 placeholders lacked ratings, so a later runtime match was scored — and cached — as 0.
 // v5: v4 cached a Letterboxd-only score whenever the IMDb fetch failed (see fetchImdbRatings).
 // v6: keeps the rating histogram, so a cached film is still shared with the IPTV app.
-const getCachedFilmData = (slug: string) => idbGet(`lbx_film_v6_${slug}`, CONFIG.CACHE_EXPIRY_MS);
-const setCachedFilmData = (slug: string, data: any) => idbSet(`lbx_film_v6_${slug}`, data);
+const getCachedFilmData = (slug: string) => cacheGet(`lbx_film_v6_${slug}`, CONFIG.CACHE_EXPIRY_MS);
+const setCachedFilmData = (slug: string, data: any) => cacheSet(`lbx_film_v6_${slug}`, data);
 
 // v3: v2 tallies counted the review pages' icon sprite as ratings (see tallyRatings).
-const getCachedRecentRatings = (slug: string): Promise<RecentTally | null> => idbGet(`lbx_recent_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
-const setCachedRecentRatings = (slug: string, data: RecentTally) => idbSet(`lbx_recent_v3_${slug}`, data);
+const getCachedRecentRatings = (slug: string): Promise<RecentTally | null> => cacheGet(`lbx_recent_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
+const setCachedRecentRatings = (slug: string, data: RecentTally) => cacheSet(`lbx_recent_v3_${slug}`, data);
 
 // A tally abandoned early by getCandidateRecentRatings — kept apart from the full
 // one so the film's own page never mistakes a ceiling for its real recent %.
-const getCachedRecentPartial = (slug: string): Promise<(RecentTally & { room: number }) | null> => idbGet(`lbx_recent_part_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
-const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number }) => idbSet(`lbx_recent_part_v3_${slug}`, data);
+const getCachedRecentPartial = (slug: string): Promise<(RecentTally & { room: number }) | null> => cacheGet(`lbx_recent_part_v3_${slug}`, CONFIG.RECENT_RATINGS_CACHE_MS);
+const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number }) => cacheSet(`lbx_recent_part_v3_${slug}`, data);
 
 // v3: holds every scored runtime match; the comparison against the current film
 // happens at display time, so the cache no longer bakes in a threshold.
@@ -261,8 +259,8 @@ const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number
 // page 1, so it dropped — and saved without — every candidate found on a later page.
 // v7: recomputed once so its films' histograms reach the IPTV app (v6 picks were cached before sharing existed).
 // v8: keeps the list's films and likes, so a cached film shares its list with the IPTV app too.
-const getCachedSimilarPicks = (slug: string) => idbGet(`lbx_similar_v8_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
-const setCachedSimilarPicks = (slug: string, data: any) => idbSet(`lbx_similar_v8_${slug}`, data);
+const getCachedSimilarPicks = (slug: string) => cacheGet(`lbx_similar_v8_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
+const setCachedSimilarPicks = (slug: string, data: any) => cacheSet(`lbx_similar_v8_${slug}`, data);
 
 // Films the user has muted from Similar Picks, by slug (see shared/ignored-picks).
 const IGNORED_KEY = 'lbx_ignored';

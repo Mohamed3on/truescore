@@ -1,4 +1,5 @@
 import { test, expect, describe, mock } from 'bun:test';
+import { storeSet } from './cache';
 import * as realLlm from './llm';
 
 // The model, stubbed: each Ask records the Sample it reads and whether it may
@@ -178,8 +179,9 @@ test("a Summary point's reviews show as the site's cards", async () => {
   const all = [review(5, 'Lasts', 'a full year'), review(4, 'b'), review(4, 'c'), review(4, 'd'), review(4, 'e')];
   const key = 'panel-test-receipts';
   const parsed = { praised: ['Lasts long'], complaints: [], conclusion: 'Good.', betterAlternative: '', receipts: { 'Lasts long': { n: 2, quotes: ['Lasts: a full year'] } } };
-  localStorage.setItem(key, JSON.stringify({ parsed, ts: 1 }));
+  await storeSet(key, { parsed, ts: 1 });
   const { host } = panel({ all, key });
+  await settle();
   elementAt(host, '.ars-receipt', HTMLButtonElement).click();
   await settle();
   const quote = host.querySelector('.ars-receipt-quotes .ars-search-review');

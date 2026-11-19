@@ -1,6 +1,6 @@
 // Combined background service worker
 import { TRUESCORE_API_BASE } from './shared/api-base';
-import { SCORE_CACHE_PREFIX } from './shared/cache-keys';
+import { CACHE_ENTRY, SCORE_CACHE_PREFIX } from './shared/cache-keys';
 import { createThrottledFetcher } from './shared/throttled-fetch';
 import { SERVER_SCORE_PORT, type ServerScoreMessage } from './shared/gmaps-bridge-protocol';
 import { getProviderChoice, getReasoningEffort, getTruescorePassword } from './shared/config';
@@ -8,20 +8,42 @@ import { TALLY_PORT, type TallyAsk } from './shared/tally';
 import { featureIdFromPlaceUrl, readNdjson, type HighlightEvent, type HighlightsRequest, type HighlightsResponse, type LookupEvent, type PartialScore, type Score, type SearchEvent, type SearchRequest, type TallyEvent, type TallyRequest, type ThreadAskEvent, type ThreadAskRequest } from '@truescore/gmaps-shared';
 import * as z from 'zod/mini';
 
-// Drop rc_score_* entries older than 30 days. Registered on install/update
-// only — top-level chrome.alarms.create on every SW wake would reset the
-// next-fire time and starve the alarm under heavy activity.
+// The daily sweep of chrome.storage.local: Maps score entries older than 30 days,
+// and cache entries (shared/cache.ts) older than 90, past nearly every cache's TTL
+// (Printful's year-long product ids just refetch). Summaries, Q&A history and
+// settings are kept. Registered on install/update only — top-level
+// chrome.alarms.create on every SW wake would reset the next-fire time and starve
+// the alarm under heavy activity.
 const SWEEP_ALARM = 'truescore-sweep';
-const ENTRY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const SCORE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const CACHE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+
+// Keys read per storage call, so the sweep never loads the whole store at once.
+const SWEEP_BATCH = 500;
 
 // A score cache entry's write time, all the sweep reads of it.
 const SCORE_ENTRY = z.object({ ts: z.number() });
+
+// Keys are filed per host (`<host>|<key>`, shared/cache.ts); settings aren't.
+const withoutHost = (key: string) => key.slice(key.indexOf('|') + 1);
+
+// Maps wrote its keys bare through gmaps-bridge before shared/cache.ts filed every
+// key under its host; they move under www.google.com, where the bridge now reads.
+const fileMapsKeysUnderHost = async () => {
+  const bare = (await chrome.storage.local.getKeys()).filter((k) => k.startsWith('rc_'));
+
+  if (!bare.length) return;
+  const items = await chrome.storage.local.get(bare);
+  await chrome.storage.local.set(Object.fromEntries(bare.map((k) => [`www.google.com|${k}`, items[k]])));
+  await chrome.storage.local.remove(bare);
+};
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(SWEEP_ALARM, { periodInMinutes: 24 * 60 });
   // Config for seeding the server with a Maps session, retired 2026-09-29; the secret
   // shouldn't outlive the feature. The per-account Maps refusal memory, retired 2026-10-02.
-  void chrome.storage.local.remove(['rc_seed_url', 'rc_seed_secret', 'rc_maps_refused_until', 'rc_maps_refused_until_v2']);
+  void chrome.storage.local.remove(['rc_seed_url', 'rc_seed_secret', 'rc_maps_refused_until', 'rc_maps_refused_until_v2'])
+    .then(fileMapsKeysUnderHost);
 });
 
 // The Dev Reloader (~/personal/extensions/dev-reloader) asks an unpacked build to reload
@@ -36,21 +58,32 @@ chrome.runtime.onMessageExternal.addListener((msg, _sender, respond) => {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== SWEEP_ALARM) return;
-  const all = await chrome.storage.local.get(null);
-  const cutoff = Date.now() - ENTRY_MAX_AGE_MS;
+  const keys = await chrome.storage.local.getKeys();
+  const now = Date.now();
+  let swept = 0;
 
-  const stale = Object.keys(all).filter((k) => {
-    if (k.startsWith('rc_score_') && !k.startsWith(SCORE_CACHE_PREFIX)) return true;
+  for (let i = 0; i < keys.length; i += SWEEP_BATCH) {
+    const batch = keys.slice(i, i + SWEEP_BATCH);
+    const items = await chrome.storage.local.get(batch);
 
-    if (!k.startsWith(SCORE_CACHE_PREFIX)) return false;
-    const entry = SCORE_ENTRY.safeParse(all[k]);
+    const stale = batch.filter((k) => {
+      const local = withoutHost(k);
 
-    return entry.success && entry.data.ts < cutoff;
-  });
+      if (local.startsWith('rc_score_') && !local.startsWith(SCORE_CACHE_PREFIX)) return true;
+      const ts = SCORE_ENTRY.safeParse(items[k]).data?.ts;
 
-  if (!stale.length) return;
-  await chrome.storage.local.remove(stale);
-  console.log(`[truescore] swept ${stale.length} stale score cache entries`);
+      if (ts == null) return false;
+
+      if (local.startsWith(SCORE_CACHE_PREFIX)) return now - ts > SCORE_MAX_AGE_MS;
+
+      return CACHE_ENTRY.safeParse(items[k]).success && now - ts > CACHE_MAX_AGE_MS;
+    });
+
+    if (stale.length) await chrome.storage.local.remove(stale);
+    swept += stale.length;
+  }
+
+  if (swept) console.log(`[truescore] swept ${swept} stale cache entries`);
 });
 
 // IMDb's per-rating vote counts (index 0 = 1★ … 9 = 10★) per title id, from the

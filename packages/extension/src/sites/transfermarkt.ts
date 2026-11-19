@@ -1,3 +1,4 @@
+import { cacheGet, cacheSet } from '../shared/cache';
 // ============================================================
 // Constants & Utilities
 // ============================================================
@@ -96,24 +97,8 @@ const cache = {
     return CACHE_PREFIX + urlObj.pathname + '?' + params.toString();
   },
 
-  get(key: string) {
-    try {
-      const data = localStorage.getItem(key);
-
-      if (!data) return null;
-      const parsed = JSON.parse(data);
-
-      return Date.now() - parsed.fetchedAt < CACHE_TTL ? parsed.rows : null;
-    } catch { return null; }
-  },
-
-  set(key: string, rows: any[]) {
-    try {
-      localStorage.setItem(key, JSON.stringify({ rows, fetchedAt: Date.now() }));
-    } catch (e) {
-      console.warn('[TM Sorter] Cache failed:', e);
-    }
-  }
+  get: (key: string) => cacheGet(key, CACHE_TTL),
+  set: (key: string, rows: any[]) => cacheSet(key, rows),
 };
 
 // ============================================================
@@ -153,7 +138,7 @@ const fetchPage = async (baseUrl: string, pageNum: number) => {
 
 const fetchAllPages = async (baseUrl: string, totalPages: number, onProgress?: (current: number, total: number) => void) => {
   const cacheKey = cache.getKey(baseUrl);
-  const cached = cache.get(cacheKey);
+  const cached = await cache.get(cacheKey);
 
   if (cached) {
     console.log('[TM Sorter] Using cache:', cached.length, 'rows');
@@ -177,7 +162,7 @@ const fetchAllPages = async (baseUrl: string, totalPages: number, onProgress?: (
   if (!rows.length) throw new Error('no rows loaded');
 
   // A result missing pages is shown (and flagged) but never cached.
-  if (!failedPages) cache.set(cacheKey, rows);
+  if (!failedPages) void cache.set(cacheKey, rows);
 
   return { rows, failedPages };
 };

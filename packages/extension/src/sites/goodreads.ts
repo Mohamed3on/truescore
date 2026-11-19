@@ -1,5 +1,5 @@
 import { netScore } from '@truescore/gmaps-shared';
-import { idbEdit, idbGet, idbSet } from '../shared/idb-cache';
+import { cacheEdit, cacheGet, cacheSet } from '../shared/cache';
 import { couldReach, rankPicks, type RankedPick } from '../shared/better-picks';
 import { loadIgnored, saveIgnored } from '../shared/ignored-picks';
 import { adjust, recentRatio, THIN_SAMPLE, trendClass } from '../shared/recency';
@@ -578,7 +578,7 @@ const getBookIdFromURL = (url: string): string | null =>
 const bookCacheKey = (id: string) => `gr_book_v2_${id}`;
 
 /** The credentials are the page's, not the book's — only the live page's are ever used. */
-const cacheBookStats = (id: string, stats: BookStats) => idbSet(bookCacheKey(id), { ...stats, jwtToken: null, apiKey: null });
+const cacheBookStats = (id: string, stats: BookStats) => cacheSet(bookCacheKey(id), { ...stats, jwtToken: null, apiKey: null });
 
 const deadBookKey = (id: string) => `gr_book_dead_v1_${id}`;
 
@@ -589,7 +589,7 @@ const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
   const id = getBookIdFromURL(bookURL);
 
   if (id) {
-    const [cached, knownDead] = await Promise.all([idbGet(bookCacheKey(id), CONFIG.BOOK_CACHE_MS), idbGet(deadBookKey(id), CONFIG.DEAD_BOOK_CACHE_MS)]);
+    const [cached, knownDead] = await Promise.all([cacheGet(bookCacheKey(id), CONFIG.BOOK_CACHE_MS), cacheGet(deadBookKey(id), CONFIG.DEAD_BOOK_CACHE_MS)]);
 
     if (cached) return cached;
 
@@ -597,7 +597,7 @@ const getBookStatsFromURL = async (bookURL: string): Promise<BookStats> => {
   }
 
   const dead = (why: string) => {
-    if (id) idbSet(deadBookKey(id), true);
+    if (id) cacheSet(deadBookKey(id), true);
 
     return new DeadBookError(`${why} on ${bookURL}`);
   };
@@ -763,12 +763,12 @@ const fetchRecentStats = (workId: string): Promise<RecentStats> => {
       const cacheKey = `gr_recent_v3_${workId}`;
       // SAFETY: this key only holds the RecentStats stored just below (v3 entries), or
       // null when absent or expired.
-      const cached = (await idbGet(cacheKey, CONFIG.RECENT_CACHE_MS)) as RecentStats | null;
+      const cached = (await cacheGet(cacheKey, CONFIG.RECENT_CACHE_MS)) as RecentStats | null;
 
       if (cached) return cached;
       const { nodes, totalCount } = await fetchReviewNodes(workId);
       const stats: RecentStats = { ratio: recentRatioFromNodes(nodes), total: totalCount, rated: nodes.filter((n) => n.rating).length };
-      idbSet(cacheKey, stats);
+      cacheSet(cacheKey, stats);
 
       return stats;
     })();
@@ -792,7 +792,7 @@ const getBookShelves = async (bookURL: string): Promise<string[]> => {
   const id = getBookIdFromURL(bookURL);
   const cacheKey = id && `gr_shelves_v1_${id}`;
 
-  const cached = cacheKey && (await idbGet(cacheKey, (shelves: string[]) =>
+  const cached = cacheKey && (await cacheGet(cacheKey, (shelves: string[]) =>
     shelves.length >= 100 ? CONFIG.FULL_SHELVES_CACHE_MS : CONFIG.SHELVES_CACHE_MS));
 
   if (cached) return cached;
@@ -803,7 +803,7 @@ const getBookShelves = async (bookURL: string): Promise<string[]> => {
     .map(el => el.textContent?.trim() || '')
     .filter(Boolean);
 
-  if (cacheKey && shelves.length) idbSet(cacheKey, shelves);
+  if (cacheKey && shelves.length) cacheSet(cacheKey, shelves);
 
   return shelves;
 };
@@ -901,11 +901,11 @@ const getShelfPage = (shelf: string, page: number, viewerScope: string): Promise
     pending = (async () => {
       // SAFETY: this key only holds the parsed rows stored just below (syncViewerShelving
       // edits them in place), or null when absent or expired.
-      const cached = (await idbGet(cacheKey, CONFIG.SHELF_PAGE_CACHE_MS)) as Candidate[] | null;
+      const cached = (await cacheGet(cacheKey, CONFIG.SHELF_PAGE_CACHE_MS)) as Candidate[] | null;
 
       if (cached) return cached;
       const rows = parseShelfPage(await fetchDoc(shelfPageURL(shelf, page)));
-      idbSet(cacheKey, rows);
+      cacheSet(cacheKey, rows);
 
       return rows;
     })();
@@ -929,14 +929,14 @@ const shelfScore = (firstPage: Candidate[]) =>
 const getShelfScore = async (shelf: string, viewerScope: string): Promise<number> => {
   const cacheKey = `${viewerKey.shelfScore(viewerScope)}${shelf}`;
 
-  const cached = await idbGet(
+  const cached = await cacheGet(
     cacheKey,
     (score) => shelfScoreCacheTtl(score, CONFIG.IGNORED_SHELF_THRESHOLD),
   );
 
   if (cached !== null) return cached;
   const score = shelfScore(await getShelfPage(shelf, 1, viewerScope));
-  idbSet(cacheKey, score);
+  cacheSet(cacheKey, score);
 
   return score;
 };
@@ -1026,7 +1026,7 @@ const findSimilarPicks = async (params: {
   const cacheKey = `${viewerKey.picks(viewerScope)}${originalId}_${shelf}${threshold === null ? '_alltime' : ''}`;
   // SAFETY: this key only holds a SimilarResult stored below (the version in its prefix
   // retires older shapes), or null when absent or expired.
-  const cached = (await idbGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
+  const cached = (await cacheGet(cacheKey, CONFIG.PICKS_CACHE_MS)) as SimilarResult | null;
 
   if (cached) return cached;
   const refAvg = parseFloat(refAvgRating);
@@ -1096,7 +1096,7 @@ const findSimilarPicks = async (params: {
     if (qualifying.length) {
       const result: SimilarResult = { avgGate, qualifying, allScored, totalEligible, pagesSearched, foundOnPage };
 
-      if (isComplete(result)) idbSet(cacheKey, result);
+      if (isComplete(result)) cacheSet(cacheKey, result);
 
       return result;
     }
@@ -1107,7 +1107,7 @@ const findSimilarPicks = async (params: {
 
   const result: SimilarResult = { avgGate, qualifying: [], allScored, totalEligible, pagesSearched, foundOnPage };
 
-  if (isComplete(result)) idbSet(cacheKey, result);
+  if (isComplete(result)) cacheSet(cacheKey, result);
 
   return result;
 };
@@ -1418,7 +1418,7 @@ const renderSimilarPicks = async (
   const viewKey = `${viewerKey.picksView(viewerScope)}${getBookIdFromURL(currentBookURL)}`;
   // SAFETY: this key only holds the SimilarView stored further down (the version in its
   // prefix retires older shapes), or null when absent or expired.
-  const cachedView = (await idbGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
+  const cachedView = (await cacheGet(viewKey, CONFIG.PICKS_CACHE_MS)) as SimilarView | null;
 
   if (cachedView) {
     renderPicksView(section, cachedView, currentStats, await ignored);
@@ -1492,7 +1492,7 @@ const renderSimilarPicks = async (
   // Only a view that holds all week: no failed book, and the reference's own recency known —
   // the view keeps it, so an unknown one would stay unjudged long after it resolves.
   if (!recentFailed && isComplete(result) && currentRecentRatio !== null) {
-    idbSet(viewKey, { ...view, result: { ...result, allScored: [] } });
+    cacheSet(viewKey, { ...view, result: { ...result, allScored: [] } });
   }
 
   renderPicksView(section, view, currentStats, await ignored);
@@ -1513,7 +1513,7 @@ const renderSimilarPicks = async (
 const syncViewerShelving = async (viewerScope: string, bookId: string, now: ViewerShelving) => {
   const pages = viewerKey.shelfPage(viewerScope);
   const listings: Array<{ shelf: string; page: number; before: Candidate; rows: Candidate[] }> = [];
-  await idbEdit(pages, (rows: Candidate[], key) => {
+  await cacheEdit(pages, (rows: Candidate[], key) => {
     const before = rows.find((r) => r.bookId === bookId);
 
     if (!before || (before.status === now.status && before.myRating === now.myRating)) return undefined;
@@ -1530,7 +1530,7 @@ const syncViewerShelving = async (viewerScope: string, bookId: string, now: View
   for (const { shelf, page, before, rows } of listings) {
     if (page !== 1 || before.myRating === now.myRating) continue;
     const key = `${viewerKey.shelfScore(viewerScope)}${shelf}`;
-    await idbEdit(key, (score: number, k) => {
+    await cacheEdit(key, (score: number, k) => {
       if (k !== key) return undefined;
       const next = shelfScore(rows);
       crossed ||= passes(next) !== passes(score);
@@ -1549,9 +1549,9 @@ const syncViewerShelving = async (viewerScope: string, bookId: string, now: View
   const views = viewerKey.picksView(viewerScope);
   const scans = viewerKey.picks(viewerScope);
   await Promise.all([
-    idbEdit(views, (view: SimilarView, key) => (crossed || stale(key.slice(views.length), view.shelf, view.result) ? null : undefined)),
+    cacheEdit(views, (view: SimilarView, key) => (crossed || stale(key.slice(views.length), view.shelf, view.result) ? null : undefined)),
     // A scan's key runs `${refId}_${shelf}`, plus `_alltime` when the all-time Score bounded it.
-    idbEdit(scans, (result: SimilarResult, key) => {
+    cacheEdit(scans, (result: SimilarResult, key) => {
       const [refId, ...shelf] = key.slice(scans.length).replace(/_alltime$/, '').split('_');
 
       return stale(refId, shelf.join('_'), result) ? null : undefined;
@@ -1754,9 +1754,8 @@ const appendScore = async (bookTitle: Element) => {
   const getReviews = makeGetReviews(stats.workId);
   const searchReviews = stats.jwtToken || stats.apiKey ? makeReviewSearch(stats.workId) : null;
 
-  // Mount the AI panel synchronously so a cached summary / Q&A restores instantly —
-  // buildMediaSummary reads localStorage and never blocks on the network. Review
-  // text is fetched lazily, only when the user actually summarizes or asks.
+  // Mount the AI panel synchronously; a cached summary / Q&A fills in once read
+  // from storage, never waiting on the network. Review text is fetched lazily, only when the user actually summarizes or asks.
   const summarySection = buildMediaSummary({
     // Below the book's own details, so the author, ratings and description stay on the first screen.
     anchor: document.querySelector('.BookDetails') ?? bookTitle,

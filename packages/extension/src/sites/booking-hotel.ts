@@ -391,7 +391,7 @@ const fetchRecentReviews = async (
 ): Promise<ReviewsPayload> => {
   const reviewLimit = normalizeReviewLimit(filterState.reviewLimit);
   const cacheKey = cacheKeyFor(hotelData.hotelId, { ...filterState, reviewLimit });
-  const cached = cacheGet(cacheKey, REVIEWS_CACHE_TTL);
+  const cached = await cacheGet(cacheKey, REVIEWS_CACHE_TTL);
 
   if (cached) {
     return {

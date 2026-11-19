@@ -35,7 +35,7 @@ const fetchScore = async (country: string, lang: string, productId: string) => {
   const cacheKey = `nps_uniqlo_score_v2_${productId}`; // v2: scores keep their sign (netScore)
   // Prefer the product page's cache when it has one: its aggregate rating carries
   // the same star counts this would fetch.
-  const rateCount = cacheGet(`nps_uniqlo_v3_${productId}`, CACHE_TTL)?.rating?.rateCount;
+  const rateCount = (await cacheGet(`nps_uniqlo_v3_${productId}`, CACHE_TTL))?.rating?.rateCount;
 
   if (rateCount) {
     const result = scoreFromRateCount(rateCount);
@@ -47,7 +47,7 @@ const fetchScore = async (country: string, lang: string, productId: string) => {
     }
   }
 
-  const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
+  const cached = await cacheGetMaybe(cacheKey, CACHE_TTL);
 
   if (cached) return cached.value;
 

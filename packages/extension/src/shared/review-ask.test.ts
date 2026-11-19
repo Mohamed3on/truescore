@@ -41,7 +41,7 @@ const text = (id: string, delta: string): UIMessageChunk[] => [{ type: 'text-sta
 const call = (toolCallId: string, query: string): UIMessageChunk => ({ type: 'tool-input-available', toolCallId, toolName: 'searchReviews', input: { query } });
 const matches = { texts: ['[2024-01-01] dogs welcome', '[2024-02-01] brought our dog'], scorePct: 100, trustedReviews: 2 };
 
-beforeEach(() => { localStorage.clear(); readFor.length = 0; });
+beforeEach(async () => { await chrome.storage.local.clear(); readFor.length = 0; });
 
 describe('askReviews', () => {
   test("each Search's matches get Jev's read, and the settled view keeps it", async () => {
@@ -98,7 +98,7 @@ describe('askReviews', () => {
     await expect(run).rejects.toThrow();
     expect(signal?.aborted).toBe(true);
     expect(texts.at(-1)).toBe('Half');
-    expect(findQA('ask-test', 'Dogs?')).toBeUndefined();
+    expect(await findQA('ask-test', 'Dogs?')).toBeUndefined();
   });
 
   test('a kept Answer replays with its Searches and calls no model', async () => {
@@ -144,7 +144,7 @@ describe('askReviews', () => {
     expect(canSearch).toBe(false);
     expect(sent).toHaveLength(1);
     expect(view.text).toBe('Fits true to size.');
-    expect(findQA('ask-test', 'sizing')?.a).toBe('Fits true to size.');
+    expect((await findQA('ask-test', 'sizing'))?.a).toBe('Fits true to size.');
     expect(checkRateLimit().count).toBe(before + 1);
   });
 });

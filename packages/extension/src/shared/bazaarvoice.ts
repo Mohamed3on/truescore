@@ -1,6 +1,5 @@
 import { addCommas, el, npsColor, npsStats, toneColor } from './utils';
 import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
-import { idbGet, idbSet } from './idb-cache';
 import { createThrottledFetcher } from './throttled-fetch';
 import { SAMPLE_MAX } from './review-summary';
 import { buildReviewPanel } from './review-panel';
@@ -133,7 +132,7 @@ type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
 const fetchStats = async (site: BvSite, productId: string, fetcher: Fetcher = fetch) => {
   const cacheKey = `nps_${site.key}_stats_v2_${productId}`;
-  const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
+  const cached = await cacheGetMaybe(cacheKey, CACHE_TTL);
 
   if (cached) return cached.value;
 
@@ -183,7 +182,7 @@ const objectAt = (text: string, start: number) => {
 // "ratings" object is JSON, at the deployment the bfd token names (zone, locale).
 const fetchRatingLabels = async (site: BvSite): Promise<Record<string, RatingLabel> | null> => {
   const cacheKey = `${site.key}_rating_labels`;
-  const cached = cacheGet(cacheKey, CACHE_TTL);
+  const cached = await cacheGet(cacheKey, CACHE_TTL);
 
   if (cached) return cached;
 
@@ -315,7 +314,7 @@ const dedupe = (reviews: BvReview[]) => {
 // otherwise be served for the week.
 const fetchReviews = (site: BvSite, productId: string, total: Promise<number>) => {
   const cacheKey = `${site.key}_reviews_v8_${productId}`;
-  const cached: Promise<BvReview[] | null> = idbGet(cacheKey, REVIEWS_TTL);
+  const cached: Promise<BvReview[] | null> = cacheGet(cacheKey, REVIEWS_TTL);
 
   const pages = cached.then((hit) => {
     if (hit) return [];
@@ -339,7 +338,7 @@ const fetchReviews = (site: BvSite, productId: string, total: Promise<number>) =
     if (hit) return hit;
     const { reviews, whole } = await settle(await pages);
 
-    if (reviews.length && whole) idbSet(cacheKey, reviews);
+    if (reviews.length && whole) cacheSet(cacheKey, reviews);
 
     return reviews;
   });

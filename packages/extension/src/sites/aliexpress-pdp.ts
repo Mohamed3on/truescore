@@ -14,7 +14,7 @@ const throttledFetch = createThrottledFetcher(8);
 // One request already carries both halves, so they share a cache entry.
 const evaluationFor = async (id: string): Promise<Evaluation> => {
   const key = `ali_eval_v2_${id}`; // v2: scores keep their sign (netScore)
-  const cached = cacheGet(key, EVAL_TTL);
+  const cached = await cacheGet(key, EVAL_TTL);
 
   if (cached) return cached;
 
@@ -54,7 +54,7 @@ const buildIsland = async (id: string): Promise<HTMLElement | null> => {
   // A score the search grid already cached paints the gauge at once; the
   // reviews' parts fill in when the evaluation request lands.
   const evaluation = evaluationFor(id);
-  const score = cachedItemScore(id) || (await evaluation).score;
+  const score = (await cachedItemScore(id)) || (await evaluation).score;
   const early = score ? null : await evaluation;
 
   if (!score && !early?.reviews.length) return null;

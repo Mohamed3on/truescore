@@ -1,6 +1,5 @@
 import { addCommas, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet, NEG_TTL } from '../shared/cache';
-import { idbGet, idbSet } from '../shared/idb-cache';
 import { SEARCH_MAX } from '../shared/review-search';
 import { buildReviewPanel } from '../shared/review-panel';
 import { setupSpaInjector } from '../shared/spa-injector';
@@ -28,7 +27,7 @@ const extractItemNo = () => {
 
 const fetchRating = async (country: string, lang: string, itemNo: string) => {
   const cacheKey = `nps_ikea_${itemNo}`;
-  const cached = cacheGet(cacheKey, CACHE_TTL);
+  const cached = await cacheGet(cacheKey, CACHE_TTL);
 
   if (cached) return cached;
 
@@ -169,17 +168,17 @@ const fetchPage = async (country: string, lang: string, itemNo: string, size: nu
 // The newest RECENT_REVIEWS in one small request, so the gauge needn't wait, and
 // every review up to SEARCH_MAX in one more (IKEA hands over a page as large as
 // asked; KALLAX's ~10.5k is 13 MB) for the Sample and the search. The whole set is
-// kept a week in IndexedDB: a big item's set would crowd the site's localStorage.
+// kept a week.
 const fetchReviews = (country: string, lang: string, itemNo: string) => {
   const cacheKey = `ikea-reviews-v4-${itemNo}`;
-  const cached: Promise<IkeaReview[] | null> = idbGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
+  const cached: Promise<IkeaReview[] | null> = cacheGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
 
   const all = cached.then(async (hit) => {
     if (hit) return hit;
     const reviews = await fetchPage(country, lang, itemNo, SEARCH_MAX);
 
     // Empty result sets tombstone briefly too (see the TTL above).
-    if (reviews) idbSet(cacheKey, reviews);
+    if (reviews) cacheSet(cacheKey, reviews);
 
     return reviews ?? [];
   });

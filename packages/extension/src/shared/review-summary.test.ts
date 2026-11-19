@@ -1,4 +1,5 @@
 import { test, expect, mock } from 'bun:test';
+import { cacheSet, storeSet } from './cache';
 import type { JSONSchema7 } from 'ai';
 import * as realLlm from './llm';
 import * as realJev from './jev';
@@ -52,9 +53,10 @@ const elementAt = <E extends Element>(root: ParentNode, selector: string, kind: 
 test('Re-summarize gets its label back once the new summary is on screen', async () => {
   const { buildSummarizeWidget } = await import('./review-summary');
   const cacheKey = 'review-summary-test-kw-durex';
-  localStorage.setItem(cacheKey, JSON.stringify({ parsed: PARSED, ts: 1 }));
+  await storeSet(cacheKey, { parsed: PARSED, ts: 1 });
   const wrapper = document.createElement('div');
   buildSummarizeWidget({ wrapper, cacheKey, summaryPrompt: 'p', fetchReviews: async () => ['a review long enough to count'], renderQuote: () => null });
+  await new Promise((r) => setTimeout(r, 0));
 
   const reBtn = elementAt(wrapper, '.ars-resummarize-btn', HTMLButtonElement);
   expect(reBtn.textContent).toBe('↻ Re-summarize');
@@ -71,7 +73,7 @@ test('Re-summarize gets its label back once the new summary is on screen', async
 test('a promised auto-summarize waits for its answer, and a no spends no call', async () => {
   const { buildSummarizeWidget } = await import('./review-summary');
   // A key for getActiveLLM, so only the promise decides.
-  Object.assign(globalThis, { chrome: { storage: { sync: { get: async (name: string) => ({ [name]: 'key' }) } } } });
+  Object.assign(chrome.storage, { sync: { get: async (name: string) => ({ [name]: 'key' }) } });
 
   try {
     const land = async (go: boolean) => {
@@ -97,7 +99,7 @@ test('a promised auto-summarize waits for its answer, and a no spends no call', 
     expect(await land(false)).not.toContain('Lasts long');
     expect(await land(true)).toContain('Lasts long');
   } finally {
-    Reflect.deleteProperty(globalThis, 'chrome');
+    Reflect.deleteProperty(chrome.storage, 'sync');
   }
 });
 
@@ -108,7 +110,7 @@ test("a receipt's reviews show as the site's cards, found by the text the model 
   const reviews = [{ belt: 'BLUE', rating: 5, title: 'Great', body: 'Very detailed' }];
   const toText = (r: (typeof reviews)[number]) => `[Ranking: ${r.belt}] ${r.title}: ${r.body}`;
   const quotes = [toText(reviews[0]!), 'an unmatched review text'];
-  localStorage.setItem(cacheKey, JSON.stringify({ parsed: { ...PARSED, receipts: { 'Lasts long': { n: 2, quotes } } }, ts: 1 }));
+  await storeSet(cacheKey, { parsed: { ...PARSED, receipts: { 'Lasts long': { n: 2, quotes } } }, ts: 1 });
   let fetched = 0;
   const wrapper = document.createElement('div');
   buildSummarizeWidget({
@@ -118,6 +120,7 @@ test("a receipt's reviews show as the site's cards, found by the text the model 
     fetchReviews: async () => quotes,
     renderQuote: quoteCards(() => (fetched++, reviews), toText, ({ rating, title, body }) => ({ rating, title, body })),
   });
+  await new Promise((r) => setTimeout(r, 0));
 
   // A summary from the cache fetches its reviews only once a receipt opens.
   expect(fetched).toBe(0);
@@ -261,11 +264,20 @@ type CachedMediaSummary =
   | { recommendation: string; loved: string; dislikes: string };
 
 test('a cached media summary shows on mount, and one cached in an older shape waits to be written again', async () => {
-  const cache = (key: string, data: CachedMediaSummary) => localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
-  cache('media-summary-test-now', { verdict: 'Read it', points: [{ text: '**Prose** sings', sentiment: 'loved' }] });
-  cache('media-summary-test-old', { recommendation: 'Read it', loved: 'Prose', dislikes: '' });
-  expect(mediaDraft(await mediaSummary('media-summary-test-now'))).toBe('Read it | Loved: Prose sings');
-  expect(mediaDraft(await mediaSummary('media-summary-test-old'))).toBe('');
+  const cache = (key: string, data: CachedMediaSummary) => cacheSet(key, data);
+  await cache('media-summary-test-now', { verdict: 'Read it', points: [{ text: '**Prose** sings', sentiment: 'loved' }] });
+  await cache('media-summary-test-old', { recommendation: 'Read it', loved: 'Prose', dislikes: '' });
+
+  // The cached summary is read after the panel mounts.
+  const mounted = async (key: string) => {
+    const section = await mediaSummary(key);
+    await new Promise((r) => setTimeout(r, 0));
+
+    return section;
+  };
+
+  expect(mediaDraft(await mounted('media-summary-test-now'))).toBe('Read it | Loved: Prose sings');
+  expect(mediaDraft(await mounted('media-summary-test-old'))).toBe('');
 });
 
 test('a free-form answer grows in place as it streams', async () => {

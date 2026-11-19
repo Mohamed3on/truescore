@@ -1,6 +1,7 @@
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, LLM_SETTINGS_GET, SERVER_SCORE_GET, SERVER_SCORE_RESULT, SERVER_SCORE_PORT, EXPECT_MOUNT, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
+import { STORAGE_REQUEST, STORAGE_RESULT, LLM_SETTINGS_GET, SERVER_SCORE_GET, SERVER_SCORE_RESULT, SERVER_SCORE_PORT, EXPECT_MOUNT, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
 import { getProviderChoice, getReasoningEffort } from '../shared/config';
 import { expectMount } from '../shared/breakage';
+import { hostBackend } from '../shared/cache';
 
 // ISOLATED world, document_start. Bridges chrome.storage.local, which
 // MAIN-world gmaps.ts can't reach itself (request/response via CustomEvents).
@@ -10,30 +11,21 @@ const respond = <Reply>(id: string, value: Reply) => {
   document.dispatchEvent(new CustomEvent(STORAGE_RESULT, { detail: { id, value } }));
 };
 
-document.addEventListener(STORAGE_GET, (e) => {
+// MAIN-world gmaps.ts's storage (shared/cache.ts), run in this host's namespace only:
+// any script on the page can dispatch this event, so it must never reach another
+// site's data.
+const storage = hostBackend(location.host);
+
+document.addEventListener(STORAGE_REQUEST, async (e) => {
   if (!(e instanceof CustomEvent)) return;
-  const { id, key } = e.detail || {};
+  const { id, op, key, value, prefix } = e.detail || {};
 
-  if (!id || !key) return;
+  if (!id) return;
 
-  try {
-    chrome.storage.local.get(key, (items) => respond(id, items?.[key] ?? null));
-  } catch {
-    respond(id, null); // context invalidated (extension reloaded) — fail fast
-  }
-});
-
-document.addEventListener(STORAGE_SET, (e) => {
-  if (!(e instanceof CustomEvent)) return;
-  const { id, key, value } = e.detail || {};
-
-  if (!id || !key) return;
-
-  try {
-    chrome.storage.local.set({ [key]: value }, () => respond(id, true));
-  } catch {
-    respond(id, false);
-  }
+  if (op === 'get' && key) respond(id, await storage.get(key));
+  else if (op === 'set' && key) respond(id, await storage.set(key, value));
+  else if (op === 'remove' && key) respond(id, await storage.remove(key));
+  else if (op === 'entries' && prefix) respond(id, await storage.entries(prefix));
 });
 
 // Any page script can dispatch this too, so only a known check name gets through,

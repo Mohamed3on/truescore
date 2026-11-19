@@ -1,6 +1,5 @@
 import { addCommas, afterHydration, npsColor, npsStats } from '../shared/utils';
 import { cacheGet, cacheSet, NEG_TTL } from '../shared/cache';
-import { idbGet, idbSet } from '../shared/idb-cache';
 import { SEARCH_MAX } from '../shared/review-search';
 import { buildReviewPanel } from '../shared/review-panel';
 import { APAC_RATING, type DecathlonSite, getDecathlonSite, pageDecathlonIds } from '../shared/decathlon';
@@ -22,7 +21,7 @@ const REVIEWS_PAGE = 5000;
 
 const fetchStats = async (site: DecathlonSite, sku: string, productId: string) => {
   const cacheKey = `nps_stats_${productId}`;
-  const cached = cacheGet(cacheKey, CACHE_TTL);
+  const cached = await cacheGet(cacheKey, CACHE_TTL);
 
   if (cached) return cached;
 
@@ -254,7 +253,7 @@ const addReviews = (json: any, into: DktReview[], seen = new Set<string>()) => {
 // week. `v3`: entries were the newest 500 as plain texts before.
 const fetchReviews = (site: DecathlonSite, sku: string, productId: string, total: Promise<number>) => {
   const cacheKey = `dkt-reviews-v3-${productId}`;
-  const cached: Promise<DktReview[] | null> = idbGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
+  const cached: Promise<DktReview[] | null> = cacheGet(cacheKey, (reviews) => (reviews.length ? REVIEWS_TTL : NEG_TTL));
 
   const all = cached.then(async (hit) => {
     if (hit) return hit;
@@ -274,7 +273,7 @@ const fetchReviews = (site: DecathlonSite, sku: string, productId: string, total
     if (!site.newestFirst) reviews.sort((a, b) => b.date.localeCompare(a.date));
 
     // Parsed-but-empty tombstones briefly (see the TTL above).
-    if (pages.every((page) => page.status === 'fulfilled')) idbSet(cacheKey, reviews);
+    if (pages.every((page) => page.status === 'fulfilled')) cacheSet(cacheKey, reviews);
 
     return reviews;
   });

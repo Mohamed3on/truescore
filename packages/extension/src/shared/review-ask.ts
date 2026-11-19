@@ -103,7 +103,7 @@ export interface AskRun {
 // their answer as they come in, without holding up the model; the settled view
 // carries those reads, so a kept Answer replays them.
 export const askReviews = async (run: AskRun): Promise<AskView> => {
-  const kept = run.qaKey && !run.fresh ? findQA(run.qaKey, run.question) : undefined;
+  const kept = run.qaKey && !run.fresh ? await findQA(run.qaKey, run.question) : undefined;
 
   if (kept) {
     const view = { searches: kept.searches ?? [], text: kept.a, done: true, answeredAt: kept.ts };
@@ -136,9 +136,9 @@ export const askReviews = async (run: AskRun): Promise<AskView> => {
   const view = await runAsk(transport, run.question, search, (v) => (run.live() ? draw(v) : ctrl.abort()), ctrl.signal);
   const searches = await Promise.all(view.searches.map(async (s) => ({ ...s, answers: s.answers ?? (await reads.get(s.query)) ?? undefined })));
 
-  if (run.limited) bumpRateLimit();
+  if (run.limited) await bumpRateLimit();
 
-  if (run.qaKey) saveQA(run.qaKey, { q: run.question, a: view.text, ts: view.answeredAt ?? Date.now(), searches });
+  if (run.qaKey) await saveQA(run.qaKey, { q: run.question, a: view.text, ts: view.answeredAt ?? Date.now(), searches });
 
   return { ...view, searches };
 };

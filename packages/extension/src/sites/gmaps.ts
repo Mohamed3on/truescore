@@ -1,10 +1,11 @@
 import { TRUESCORE_API_BASE } from '../shared/api-base';
 import { addCommas, el, renderMarkdown, renderMarkdownInline } from '../shared/utils';
-import { STORAGE_GET, STORAGE_SET, STORAGE_RESULT, LLM_SETTINGS_GET, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, SERVER_SCORE_GET, SERVER_SCORE_RESULT, EXPECT_MOUNT, type MapsCapturedCreds, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
+import { bridgeRequest, LLM_SETTINGS_GET, PREVIEW_CAPTURED, MAPS_CREDS_CAPTURED, SERVER_SCORE_GET, SERVER_SCORE_RESULT, EXPECT_MOUNT, type MapsCapturedCreds, type ServerScoreMessage } from '../shared/gmaps-bridge-protocol';
 import { SCORE_CACHE_PREFIX, SUMMARY_CACHE_PREFIX, HIGHLIGHTS_CACHE_PREFIX, SEARCH_SUMMARY_CACHE_PREFIX, SCORE_GROUP_CACHE_PREFIX } from '../shared/cache-keys';
 import { createScoreStore, type Period } from '../shared/score-store';
 import type { LLMProvider, ReasoningEffort } from '../shared/config';
 import { loadQAs, removeQA } from '../shared/qa-history';
+import { storeDel, storeGet, storeSet } from '../shared/cache';
 import { askReviews, type Read } from '../shared/review-ask';
 import { markPressed, opinionFilters, opinionNumbers, opinionsEl, opinionsLabel, opinionsSlot, readStanceOf, receiptButton, stanceMark, type NumberStyle } from '../shared/jev';
 
@@ -233,20 +234,17 @@ const abortControllers: Record<SortKey, AbortController | null> = { relevant: nu
 type SummaryCache = { all: SummaryResult | null };
 
 // Summaries persist indefinitely — they're invalidated only by an explicit
-// re-summarize, never by review count drift like score/highlights. They live in
-// chrome.storage (unlimitedStorage), never the page's localStorage: Maps shares
-// www.google.com with Search, and once summaries filled its 5MB, Search's own
-// writes threw and Enter stopped submitting.
+// re-summarize, never by review count drift like score/highlights.
 let summaryCache: SummaryCache = { all: null };
 
 const getSummaryCacheKey = (featureId: string | null = lastFeatureId) => `${SUMMARY_CACHE_PREFIX}${featureId || 'default'}`;
 
 // Blank at once so the card never shows the last place's summary, then filled
-// from storage unless a summary already landed for this place meanwhile.
-const loadSummaryCache = async (featureId: string) => {
+// from storage unless a summary already landed for this place meanwhile. Applied
+// after the chip scores (`scoredLoaded`), which the summary's standouts reuse.
+const loadSummaryCache = async (featureId: string, scoredLoaded: Promise<void>) => {
   summaryCache = { all: null };
-  await legacySummariesMoved;
-  const saved = await bridgeStorage.get<SummaryCache>(getSummaryCacheKey(featureId));
+  const [saved] = await Promise.all([storeGet(getSummaryCacheKey(featureId)), scoredLoaded]);
 
   if (lastFeatureId !== featureId || !saved?.all || summaryCache.all) return;
   summaryCache = saved;
@@ -254,7 +252,7 @@ const loadSummaryCache = async (featureId: string) => {
 };
 
 const saveSummaryCache = (featureId: string | null = lastFeatureId, cache = summaryCache) => {
-  void bridgeStorage.set(getSummaryCacheKey(featureId), cache);
+  void storeSet(getSummaryCacheKey(featureId), cache);
 };
 
 // Label-search summaries, keyed by lowercased query, persisted per place like
@@ -266,8 +264,7 @@ const getSearchSummaryCacheKey = (featureId: string | null = lastFeatureId) => `
 
 const loadSearchSummaryCache = async (featureId: string) => {
   searchSummaryCache = {};
-  await legacySummariesMoved;
-  const saved = await bridgeStorage.get<Record<string, SummaryResult>>(getSearchSummaryCacheKey(featureId));
+  const saved = await storeGet(getSearchSummaryCacheKey(featureId));
 
   if (lastFeatureId === featureId && saved) searchSummaryCache = Object.assign(saved, searchSummaryCache);
 };
@@ -276,7 +273,7 @@ const saveSearchSummaryCache = (featureId: string | null, cache: Record<string, 
   const keys = Object.keys(cache);
 
   for (const k of keys.slice(0, Math.max(0, keys.length - SEARCH_SUMMARY_LIMIT))) delete cache[k];
-  void bridgeStorage.set(getSearchSummaryCacheKey(featureId), cache);
+  void storeSet(getSearchSummaryCacheKey(featureId), cache);
 };
 
 // Filed under the place the search ran on: the summary lands seconds later,
@@ -284,7 +281,7 @@ const saveSearchSummaryCache = (featureId: string | null, cache: Record<string, 
 const cacheSearchSummary = async (featureId: string | null, query: string, summary: SummaryResult) => {
   const cache = featureId === lastFeatureId
     ? searchSummaryCache
-    : (await bridgeStorage.get<Record<string, SummaryResult>>(getSearchSummaryCacheKey(featureId))) ?? {};
+    : (await storeGet(getSearchSummaryCacheKey(featureId))) ?? {};
 
   const key = query.toLowerCase();
   delete cache[key]; // re-insert so the most-recently-used stays newest
@@ -292,65 +289,12 @@ const cacheSearchSummary = async (featureId: string | null, query: string, summa
   saveSearchSummaryCache(featureId, cache);
 };
 
-// chrome.storage.local proxy via gmaps-bridge.ts (we run in MAIN world).
-const BRIDGE_TIMEOUT_MS = 5000;
-
-const bridgeStorage = (() => {
-  let nextId = 0;
-
-  // Timeout protects against the bridge dropping the response (e.g., extension
-  // reload mid-flight) — without it, the listener + Promise leak forever.
-  const call = <T>(eventName: string, payload: any): Promise<T | null> => new Promise((resolve) => {
-    const id = String(++nextId);
-
-    const cleanup = () => {
-      document.removeEventListener(STORAGE_RESULT, handler);
-      clearTimeout(timer);
-    };
-
-    const handler = (e: Event) => {
-      // SAFETY: gmaps-bridge sends STORAGE_RESULT as a CustomEvent; anything else has
-      // no detail and fails the id check.
-      const detail = (e as CustomEvent).detail;
-
-      if (detail?.id !== id) return;
-      cleanup();
-      resolve(detail.value);
-    };
-
-    const timer = setTimeout(() => { cleanup(); resolve(null); }, BRIDGE_TIMEOUT_MS);
-    document.addEventListener(STORAGE_RESULT, handler);
-    document.dispatchEvent(new CustomEvent(eventName, { detail: { id, ...payload } }));
-  });
-
-  return {
-    get: <T>(key: string) => call<T>(STORAGE_GET, { key }),
-    set: (key: string, value: any) => call<true>(STORAGE_SET, { key, value }),
-    llmSettings: () => call<{ reasoningEffort: ReasoningEffort; provider?: LLMProvider }>(LLM_SETTINGS_GET, {}),
-  };
-})();
-
 // Owns the review data, per-period aggregates, cached entry, and freshness
 // verdict — the hydrate → ingest → reconcile → persist cycle that produced the
-// insertion-order head bug. Storage is the gmaps-bridge chrome.storage proxy;
+// insertion-order head bug. Storage is shared/cache.ts, through gmaps-bridge;
 // the clock is Date.now. gmaps keeps the fetch lifecycle (fetchState, below)
 // and all DOM.
-const store = createScoreStore({ storage: bridgeStorage, now: Date.now });
-
-// Summaries cached before they moved to chrome.storage: copied over once, then
-// dropped from localStorage to give Search its quota back. A summary key's
-// `-qa` twin is the place's Q&A history, which stays in localStorage.
-const legacySummariesMoved = Promise.all(
-  Object.keys(localStorage)
-    .filter((k) => (k.startsWith(SUMMARY_CACHE_PREFIX) || k.startsWith(SEARCH_SUMMARY_CACHE_PREFIX)) && !k.endsWith('-qa'))
-    .map(async (k) => {
-      let value = null;
-
-      try { value = JSON.parse(localStorage.getItem(k) ?? 'null'); } catch {}
-
-      if (value === null || await bridgeStorage.set(k, value)) localStorage.removeItem(k);
-    }),
-).then(() => {});
+const store = createScoreStore({ storage: { get: storeGet, set: async (key, value) => (await storeSet(key, value)) || null }, now: Date.now });
 
 // === Botguard creds for the ListUgcPosts batchexecute RPC ===
 // Google retired GET /maps/rpc/listugcposts; reviews now come only from a
@@ -365,7 +309,7 @@ const MAPS_CREDS_KEY = 'rc_maps_creds';
 // the MAPS_CREDS_CAPTURED listener owns every update after.
 let mapsCreds: MapsCapturedCreds | null = window.__truescoreMapsCreds ?? null;
 
-const credsLoad = bridgeStorage.get<MapsCapturedCreds>(MAPS_CREDS_KEY).then((saved) => {
+const credsLoad = storeGet(MAPS_CREDS_KEY).then((saved) => {
   if (saved?.bgkey) mapsCreds ??= saved;
 });
 
@@ -384,7 +328,7 @@ const invalidateCreds = (creds: MapsCapturedCreds) => {
   // Same MAIN world as gmaps-capture — its copy must go too, or the next nudge
   // would take it as a capture and skip opening the Reviews tab.
   if (window.__truescoreMapsCreds?.bgkey === creds.bgkey) window.__truescoreMapsCreds = undefined;
-  bridgeStorage.set(MAPS_CREDS_KEY, null).catch(() => {});
+  storeSet(MAPS_CREDS_KEY, null).catch(() => {});
 };
 
 // The saved set, else this place's nudge for Maps to emit a fresh one.
@@ -397,7 +341,7 @@ const ensureCreds = async (): Promise<MapsCapturedCreds | null> => {
 document.addEventListener(MAPS_CREDS_CAPTURED, (e) => {
   // SAFETY: gmaps-capture dispatches this with the MapsCapturedCreds it just captured.
   mapsCreds = (e as CustomEvent).detail as MapsCapturedCreds;
-  bridgeStorage.set(MAPS_CREDS_KEY, mapsCreds).catch(() => {});
+  storeSet(MAPS_CREDS_KEY, mapsCreds).catch(() => {});
 });
 
 let highlightsState: HighlightsCache | null = null;
@@ -410,19 +354,21 @@ let highlightCandidates: HighlightCandidate[] = [];
 // featureId whose highlights are currently being computed — a per-place mutex,
 // so an SPA nav can start the new place's compute while the old run winds down.
 let highlightsComputingFor: string | null = null;
-const getHighlightsCacheKey = () => `${HIGHLIGHTS_CACHE_PREFIX}${lastFeatureId || 'default'}`;
+const getHighlightsCacheKey = (featureId: string | null = lastFeatureId) => `${HIGHLIGHTS_CACHE_PREFIX}${featureId || 'default'}`;
 
 // Google counts reviews under this topic, yet the fetch returned none: a dead
 // session or a throttle, never a real 0% — so it's neither kept nor shown (the
 // load filter also heals entries saved before computeHighlights checked this).
 const chipFetchFailed = (h: Highlight): boolean => h.fetched === 0 && h.count > 0;
 
-const loadHighlightsCache = () => {
-  try {
-    highlightsState = JSON.parse(localStorage.getItem(getHighlightsCacheKey()) ?? 'null') || null;
+// Blank at once, then filled from storage unless highlights landed meanwhile.
+const loadHighlightsCache = async (featureId: string) => {
+  highlightsState = null;
+  const saved: HighlightsCache | null = await storeGet(getHighlightsCacheKey(featureId));
 
-    if (highlightsState) highlightsState.items = highlightsState.items.filter((h) => !chipFetchFailed(h));
-  } catch { highlightsState = null; }
+  if (lastFeatureId !== featureId || !Array.isArray(saved?.items) || highlightsState) return;
+  highlightsState = { ...saved, items: saved.items.filter((h) => !chipFetchFailed(h)) };
+  renderHighlights();
 };
 
 // Bounds the cloud-cache GET so a slow/hung server can't delay auto-highlights
@@ -520,9 +466,9 @@ const showLoadedSummary = () => {
   refreshSumBtnState();
 };
 
-// Waits on the stored summary, so the cloud is asked only for what's missing.
-const hydrateFromCloud = (featureId: string, summaryLoaded: Promise<void>) => {
-  cloudHydratePromise = summaryLoaded.then(() => {
+// Waits on the stored summary and highlights, so the cloud is asked only for what's missing.
+const hydrateFromCloud = (featureId: string, placeCachesLoaded: Promise<void>) => {
+  cloudHydratePromise = placeCachesLoaded.then(() => {
     const needSummary = !summaryCache.all;
     const needHighlights = !highlightsState?.items?.length;
 
@@ -643,49 +589,23 @@ const fetchServerScore = (featureId: string): void => {
   document.dispatchEvent(new CustomEvent(SERVER_SCORE_GET, { detail: { id } }));
 };
 
-// Strip review bodies before persisting — they balloon to MBs per place and
-// exhaust the 5MB localStorage quota, silently dropping summaries. Reviews
-// refetch on demand when a chip opens.
+// Strip review bodies before persisting — they balloon to MBs per place.
+// Reviews refetch on demand when a chip opens.
 const slimHighlightItems = <T extends { items: any[] }>(state: T): T => ({
   ...state,
   items: state.items.map(({ reviews: _r, ...rest }: any) => rest),
 });
 
 const saveHighlightsCache = () => {
-  try {
-    if (highlightsState) {
-      const head = store.newestHeadId();
+  if (highlightsState) {
+    const head = store.newestHeadId();
 
-      if (head) highlightsState.newestHeadId = head;
-      localStorage.setItem(getHighlightsCacheKey(), JSON.stringify(slimHighlightItems(highlightsState)));
-    } else {
-      localStorage.removeItem(getHighlightsCacheKey());
-    }
-  } catch {}
+    if (head) highlightsState.newestHeadId = head;
+    void storeSet(getHighlightsCacheKey(), slimHighlightItems(highlightsState));
+  } else {
+    void storeDel(getHighlightsCacheKey());
+  }
 };
-
-
-// Legacy rc_highlights_* entries persisted full review bodies; one place can
-// hit 3MB and crowd out everything else. The substring gate skips the parse
-// for already-slim entries so this loop is cheap on every page load.
-(() => {
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-
-      if (!k?.startsWith(HIGHLIGHTS_CACHE_PREFIX)) continue;
-      const raw = localStorage.getItem(k);
-
-      if (!raw || !raw.includes('"reviews":[')) continue;
-      let parsed: any;
-
-      try { parsed = JSON.parse(raw); } catch { continue; }
-
-      if (!Array.isArray(parsed?.items)) continue;
-      localStorage.setItem(k, JSON.stringify(slimHighlightItems(parsed)));
-    }
-  } catch {}
-})();
 
 const makeFetchState = (): FetchState => ({ isFetching: false, done: false, cursor: '', pageCount: 0 });
 const fetchState: Record<SortKey, FetchState> = { relevant: makeFetchState(), newest: makeFetchState() };
@@ -1266,7 +1186,7 @@ const llmContext = async () => {
   // so the server keeps its own default); reasoning-effort is gpt-6-luna only
   // (the server ignores it on Gemini/DeepSeek). No bridge answer leaves both to
   // the server's defaults.
-  const settings = (await bridgeStorage.llmSettings()) ?? {};
+  const settings = (await bridgeRequest<{ reasoningEffort: ReasoningEffort; provider?: LLMProvider }>(LLM_SETTINGS_GET, {})) ?? {};
 
   // removedReviews: Google's takedown notice for this place, so the model knows
   // it's reading the survivors and couches its words (see summary-subject.removalNote).
@@ -1359,18 +1279,21 @@ const askPlace = async (panel: HTMLElement, job: AskJob, force = false) => {
     },
   });
 
-  if (job.qaKey && job.live()) renderRecentQuestions();
+  if (job.qaKey && job.live()) void renderRecentQuestions();
 };
 
 // The main ask's Recent questions, as one-click replays under the ask box like
 // the product widget; × forgets one. Stored per place with the Searches behind
 // each Answer, so a replay paints them too.
-const renderRecentQuestions = () => {
+const renderRecentQuestions = async () => {
   const row = cardEls.qaHistory;
 
   if (!row) return;
   const key = getSummaryCacheKey();
-  const items = loadQAs(key);
+  const items = await loadQAs(key);
+
+  // A nav or a newer render while the read was out owns the row now.
+  if (cardEls.qaHistory !== row || getSummaryCacheKey() !== key) return;
   row.replaceChildren();
   row.style.display = items.length ? '' : 'none';
 
@@ -1384,7 +1307,11 @@ const renderRecentQuestions = () => {
     chip.title = qa.q;
     const forget = el('span', 'rc-qa-remove', '×');
     forget.title = 'Forget';
-    forget.onclick = (e) => { e.stopPropagation(); removeQA(key, qa.q); renderRecentQuestions(); };
+    forget.onclick = async (e) => {
+      e.stopPropagation();
+      await removeQA(key, qa.q);
+      void renderRecentQuestions();
+    };
 
     chip.append(el('span', 'rc-qa-text', qa.q), forget);
     chip.onclick = () => {
@@ -2520,7 +2447,7 @@ const createUIElements = () => {
   if (highlightsState && highlightsState.items.length) renderHighlights();
 
   refreshSumBtnState();
-  renderRecentQuestions();
+  void renderRecentQuestions();
 
   const chipPanel = el('div', 'rc-chip-panel');
   chipPanel.style.display = 'none';
@@ -2908,40 +2835,36 @@ const renderScoredGroup = (kind: ScoredKind, items: string[], aliases?: Record<s
 // it (new reviews), the scores are stale and re-run — the same policy as
 // highlights. Scores are stored without the featureId prefix and rekeyed on load.
 let scoredCacheHeadId: string | undefined;
-const getScoredCacheKey = () => `${SCORE_GROUP_CACHE_PREFIX}${lastFeatureId || 'default'}`;
+const getScoredCacheKey = (featureId: string | null = lastFeatureId) => `${SCORE_GROUP_CACHE_PREFIX}${featureId || 'default'}`;
 
-const loadScoredCache = () => {
+// Scores computed for this place before the load lands are kept over the stored ones.
+const loadScoredCache = async (featureId: string) => {
   scoredCacheHeadId = undefined;
+  const raw = await storeGet(getScoredCacheKey(featureId));
 
-  if (!lastFeatureId) return;
+  if (lastFeatureId !== featureId || !raw?.scores) return;
 
-  try {
-    const raw = JSON.parse(localStorage.getItem(getScoredCacheKey()) ?? 'null');
+  for (const [item, stats] of Object.entries(raw.scores)) {
+    const key = `${featureId}|${item}`;
 
-    if (!raw?.scores) return;
+    if (standoutScoreCache.has(key)) continue;
+    // SAFETY: saveScoredCache is all that writes this key, its scores SortStats by item.
+    standoutScoreCache.set(key, stats as SortStats);
+  }
 
-    for (const [item, stats] of Object.entries(raw.scores)) {
-      // SAFETY: saveScoredCache is all that writes this key, its scores SortStats by item.
-      standoutScoreCache.set(`${lastFeatureId}|${item}`, stats as SortStats);
-    }
-
-    scoredCacheHeadId = raw.newestHeadId;
-  } catch {}
+  scoredCacheHeadId ??= raw.newestHeadId;
 };
 
 const saveScoredCache = () => {
   if (!lastFeatureId) return;
+  const prefix = `${lastFeatureId}|`;
+  const scores: Record<string, SortStats> = {};
 
-  try {
-    const prefix = `${lastFeatureId}|`;
-    const scores: Record<string, SortStats> = {};
+  for (const [k, v] of standoutScoreCache) if (k.startsWith(prefix) && !standoutScoreTransient.has(k) && !standoutScoreStale.has(k)) scores[k.slice(prefix.length)] = v;
 
-    for (const [k, v] of standoutScoreCache) if (k.startsWith(prefix) && !standoutScoreTransient.has(k) && !standoutScoreStale.has(k)) scores[k.slice(prefix.length)] = v;
-
-    if (!Object.keys(scores).length) return;
-    scoredCacheHeadId = store.newestHeadId() ?? scoredCacheHeadId;
-    localStorage.setItem(getScoredCacheKey(), JSON.stringify({ scores, newestHeadId: scoredCacheHeadId }));
-  } catch {}
+  if (!Object.keys(scores).length) return;
+  scoredCacheHeadId = store.newestHeadId() ?? scoredCacheHeadId;
+  void storeSet(getScoredCacheKey(), { scores, newestHeadId: scoredCacheHeadId });
 };
 
 // New reviews since these scores were computed → re-score whatever groups are
@@ -3244,17 +3167,16 @@ const handleDomMutation = () => {
     if (lastFeatureId || featureId !== placeOpened.featureId) placeOpened = { featureId, at: Date.now() };
     lastFeatureId = featureId;
     resetScores();
-    const summaryLoaded = loadSummaryCache(featureId);
-    renderRecentQuestions();
-    loadHighlightsCache();
+    const scoredLoaded = loadScoredCache(featureId);
+    const placeCachesLoaded = Promise.all([loadSummaryCache(featureId, scoredLoaded), loadHighlightsCache(featureId)]).then(() => {});
+    void renderRecentQuestions();
     void loadSearchSummaryCache(featureId);
-    loadScoredCache();
     activeLabelSearch = null;
     labelSearchSeq++;
     document.querySelector('#reviews-container')?.remove();
     clearCardEls();
     startFetching();
-    hydrateFromCloud(featureId, summaryLoaded);
+    hydrateFromCloud(featureId, placeCachesLoaded);
     // Skip if live data already arrived — a stale disk read must not clobber a
     // fresh in-memory result. store.loadCache applies that guard, the still-
     // current featureId check, and the reviewData restore internally.

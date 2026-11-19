@@ -130,7 +130,7 @@ export const fetchItemScore = async (
   shopId: string
 ): Promise<ItemScore | null> => {
   const key = `nps_etsy_v3_${listingId}`; // v2: entries now also carry topic tags; v3: scores keep their sign
-  const cached = cacheGetMaybe(key, SCORE_TTL);
+  const cached = await cacheGetMaybe(key, SCORE_TTL);
 
   if (cached) return cached.value;
 

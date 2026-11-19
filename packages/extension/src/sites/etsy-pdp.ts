@@ -44,7 +44,7 @@ const chunk = <T,>(items: T[], size: number): T[][] => {
 
 const recentReviews = async (meta: ListingMeta): Promise<EtsyReview[]> => {
   const key = `etsy_reviews_${meta.listingId}`;
-  const cached = cacheGet(key, REVIEWS_TTL);
+  const cached = await cacheGet(key, REVIEWS_TTL);
 
   if (cached) return cached;
 

@@ -67,7 +67,7 @@ type Kept = { stance: Stance[]; answer: Answer[]; support: number[][] };
 const kept = async <K extends keyof Kept>(kind: K, parts: unknown[], read: () => Promise<Kept[K] | null>): Promise<Kept[K] | null> => {
   const key = `ts_jev_${kind}_${hash(JSON.stringify(parts))}`;
   // SAFETY: only this function writes ts_jev_<kind>_ keys, each with a read of that kind.
-  const hit = cacheGet(key, KEEP_MS) as Kept[K] | null;
+  const hit = await cacheGet(key, KEEP_MS) as Kept[K] | null;
 
   if (hit) return hit;
   const fresh = await read();

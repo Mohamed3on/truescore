@@ -44,7 +44,7 @@ const findBuyBoxRating = (): Element | null =>
 // id in case the API clamps an out-of-range offset. Cached a week, so it's paid ~once per product.
 const fetchReviewData = async (country: string, lang: string, productId: string) => {
   const cacheKey = `nps_uniqlo_v3_${productId}`;
-  const cached = cacheGet(cacheKey, CACHE_TTL);
+  const cached = await cacheGet(cacheKey, CACHE_TTL);
 
   if (cached) return cached;
 

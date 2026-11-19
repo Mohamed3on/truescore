@@ -1,6 +1,6 @@
 import { getActiveLLM } from './config';
 import { addCommas, el, isComputed, renderMarkdown, renderMarkdownInline } from './utils';
-import { cacheGet, cacheSet } from './cache';
+import { cacheGet, cacheSet, storeEntries, storeGet, storeSet } from './cache';
 import { askTransport, bumpRateLimit, checkRateLimit, RL_MAX, summarize } from './llm';
 import { loadQAs, removeQA } from './qa-history';
 import { askReviews, mountAskView, type SearchAsk } from './review-ask';
@@ -368,26 +368,13 @@ interface SummarizeWidgetOpts {
   renderQuote: RenderQuote;
 }
 
-const collectAlternates = (prefix: string, currentKey: string): AlternateEntry[] => {
-  const items: AlternateEntry[] = [];
+const collectAlternates = async (prefix: string, currentKey: string): Promise<AlternateEntry[]> =>
+  (await storeEntries(prefix))
+    .flatMap(([key, v]) => (key !== currentKey && v?.parsed ? [{ key, ts: v.ts || 0, meta: v.meta ?? null }] : []))
+    .sort((a, b) => b.ts - a.ts);
 
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-
-    if (!key || key === currentKey || !key.startsWith(prefix)) continue;
-
-    try {
-      const v = JSON.parse(localStorage.getItem(key) || '');
-
-      if (v?.parsed) items.push({ key, ts: v.ts || 0, meta: v.meta ?? null });
-    } catch {}
-  }
-
-  return items.sort((a, b) => b.ts - a.ts);
-};
-
-const renderAlternatesRow = (config: AlternatesConfig, currentKey: string): HTMLElement | null => {
-  const decoded = collectAlternates(config.prefix, currentKey)
+const renderAlternatesRow = async (config: AlternatesConfig, currentKey: string): Promise<HTMLElement | null> => {
+  const decoded = (await collectAlternates(config.prefix, currentKey))
     .map((entry) => config.decode(entry))
     .filter((d): d is { label: string; onSelect: () => void } => d !== null);
 
@@ -469,6 +456,8 @@ export const buildSummarizeWidget = ({
   // belongs to a summary, the Ask button to a question.
   let panelMode: 'none' | 'summary' | 'answer' = 'none';
   let summaryTs = 0;
+  // The stored summary ({ parsed, ts, meta }), once read or written.
+  let saved: { parsed: any; ts: number; meta?: any } | null = null;
 
   const syncControls = () => {
     const asking = !!questionInput.value.trim();
@@ -509,11 +498,10 @@ export const buildSummarizeWidget = ({
       btn.textContent = '\u23F3 Checking it against the reviews\u2026';
       void draw(summary, 'checking');
       const parsed = await withReceipts(summary, reviews, searchAsk?.search);
-      bumpRateLimit();
+      void bumpRateLimit();
       summaryTs = Date.now();
-
-      // Quota-full must not discard a summary the LLM call already paid for.
-      try { localStorage.setItem(cacheKey, JSON.stringify({ parsed, ts: summaryTs, meta: cacheMeta })); } catch {}
+      saved = { parsed, ts: summaryTs, meta: cacheMeta };
+      void storeSet(cacheKey, saved);
 
       void draw(parsed);
       panelMode = 'summary';
@@ -558,7 +546,7 @@ export const buildSummarizeWidget = ({
           return mountAskView(summaryPanel, 'ars-answer', searchAsk?.open, reads);
         },
       });
-      renderQAHistory();
+      void renderQAHistory();
     } catch (e: any) {
       summaryPanel.textContent = `Error: ${e.message}`;
       summaryPanel.style.display = 'block';
@@ -568,17 +556,11 @@ export const buildSummarizeWidget = ({
     }
   };
 
-  const readCache = () => {
-    try { return JSON.parse(localStorage.getItem(cacheKey) || ''); } catch { return null; }
-  };
-
   // The cached summary in the panel, or an empty panel when there's none.
   const showCachedSummary = () => {
-    const c = readCache();
-
-    if (c?.parsed) {
-      summaryTs = c.ts;
-      renderStructuredSummary(summaryPanel, c.parsed, renderQuote);
+    if (saved?.parsed) {
+      summaryTs = saved.ts;
+      renderStructuredSummary(summaryPanel, saved.parsed, renderQuote);
       summaryPanel.style.display = 'block';
       panelMode = 'summary';
     } else {
@@ -596,9 +578,9 @@ export const buildSummarizeWidget = ({
   const qaHistoryRow = el('div', 'ars-alternates ars-qa-history');
   qaHistoryRow.style.display = 'none';
 
-  const renderQAHistory = () => {
+  const renderQAHistory = async () => {
+    const items = await loadQAs(cacheKey);
     qaHistoryRow.textContent = '';
-    const items = loadQAs(cacheKey);
 
     if (!items.length) {
       qaHistoryRow.style.display = 'none';
@@ -617,9 +599,8 @@ export const buildSummarizeWidget = ({
       const text = el('span', 'ars-qa-chip-text', item.q);
       const remove = el('span', 'ars-qa-chip-remove', '×');
       remove.title = 'Remove';
-      remove.addEventListener('click', (e) => {
+      remove.addEventListener('click', async (e) => {
         e.stopPropagation();
-        removeQA(cacheKey, item.q);
 
         if (questionInput.value.trim() === item.q) {
           questionInput.value = '';
@@ -627,7 +608,8 @@ export const buildSummarizeWidget = ({
           syncControls();
         }
 
-        renderQAHistory();
+        await removeQA(cacheKey, item.q);
+        void renderQAHistory();
       });
       chip.appendChild(text);
       chip.appendChild(remove);
@@ -689,26 +671,32 @@ export const buildSummarizeWidget = ({
   });
   questionRow.appendChild(copyBtn);
 
-  const cached = readCache();
   showCachedSummary();
 
   wrapper.appendChild(dateRow);
   wrapper.appendChild(summaryPanel);
   wrapper.appendChild(qaHistoryRow);
-  renderQAHistory();
+  void renderQAHistory();
   syncControls();
 
-  if (alternates) {
-    const altRow = renderAlternatesRow(alternates, cacheKey);
+  // The stored summary lands after the widget is drawn; a summary or Answer the
+  // user started meanwhile keeps the panel.
+  const savedLoaded = storeGet(cacheKey).then((stored) => {
+    if (!stored?.parsed || saved) return;
+    saved = stored;
 
-    if (altRow) wrapper.appendChild(altRow);
-  }
+    if (panelMode !== 'none' || summaryPanel.style.display !== 'none') return;
+    showCachedSummary();
+    syncControls();
+  });
+
+  if (alternates) void renderAlternatesRow(alternates, cacheKey).then((row) => row && wrapper.appendChild(row));
 
   // Auto-summarize on landing — skip silently if a summary is already cached
   // or the active provider has no key (the manual button stays available either way).
-  if (autoSummarize && !cached?.parsed) {
-    Promise.resolve(autoSummarize).then(async (go) => {
-      if (go && (await getActiveLLM()).key && !questionInput.value.trim()) summarizeBtn.click();
+  if (autoSummarize) {
+    void Promise.all([autoSummarize, savedLoaded]).then(async ([go]) => {
+      if (go && !saved?.parsed && (await getActiveLLM()).key && !questionInput.value.trim()) summarizeBtn.click();
     });
   }
 };
@@ -782,8 +770,8 @@ interface MediaSummaryOpts {
 }
 
 // Shared summary + Q&A panel for media-review sites (Goodreads books, Letterboxd
-// films): a verdict and stance-marked points (MEDIA_SUMMARY_SCHEMA), instant
-// synchronous restore of the cached summary on mount, and an optional
+// films): a verdict and stance-marked points (MEDIA_SUMMARY_SCHEMA), the cached
+// summary restored once it is read, and an optional
 // free-form Ask with cached recent-question chips. Styled entirely by the host
 // via `classPrefix` (each site ships its own CSS using the same suffixes). This
 // is the editorial counterpart to buildSummarizeWidget (the retail praised/
@@ -937,7 +925,7 @@ export const buildMediaSummary = ({
       const data = await llmSummarize(texts, isComputed(summaryPrompt) ? summaryPrompt(texts) : summaryPrompt, MEDIA_SUMMARY_SCHEMA, drafts.push)
         .finally(drafts.stop);
 
-      bumpRateLimit();
+      void bumpRateLimit();
 
       if (summaryCacheKey) cacheSet(summaryCacheKey, data);
       draw(data);
@@ -950,9 +938,9 @@ export const buildMediaSummary = ({
     }
   };
 
-  const renderQA = () => {
+  const renderQA = async () => {
     if (!qaRow || !ask) return;
-    const items = ask.qaCacheKey ? loadQAs(ask.qaCacheKey) : [];
+    const items = ask.qaCacheKey ? await loadQAs(ask.qaCacheKey) : [];
     qaRow.textContent = '';
 
     if (!items.length) {
@@ -1001,7 +989,7 @@ export const buildMediaSummary = ({
         },
       });
       showingSummary = false;
-      renderQA();
+      void renderQA();
     } catch (e: any) {
       note(`${p}-error`, e.message);
     } finally {
@@ -1022,15 +1010,18 @@ export const buildMediaSummary = ({
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
   }
 
-  // A summary cached in an older shape is left to be written again.
-  const cached = summaryCacheKey ? cacheGet(summaryCacheKey, summaryTtl) : null;
-
-  if (cached?.points) {
-    renderMediaSummary(cached);
-    showingSummary = true;
+  // A summary cached in an older shape is left to be written again; one written,
+  // or an Answer shown, before the read lands keeps the panel.
+  if (summaryCacheKey) {
+    void cacheGet(summaryCacheKey, summaryTtl).then((cached) => {
+      if (!cached?.points || body.style.display === 'block') return;
+      renderMediaSummary(cached);
+      showingSummary = true;
+      syncBtn();
+    });
   }
 
-  renderQA();
+  void renderQA();
   syncBtn();
 
   return section;

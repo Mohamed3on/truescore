@@ -28,3 +28,27 @@ if (!process.env.TRUESCORE_CACHE_DB_PATH) {
 
 // Likewise the cookie jars browser.ts and account.ts save.
 process.env.TRUESCORE_COOKIES_PATH ??= join(tmpdir(), `truescore-test-${process.pid}-cookies.json`);
+
+// The extension's chrome.storage.local (shared/cache.ts keeps everything there), in
+// memory. Values are cloned in and out, as the real store serializes them.
+const local = new Map<string, any>();
+const keysOf = (keys?: string | string[] | null) => (keys == null ? [...local.keys()] : [keys].flat());
+
+Object.assign(globalThis, {
+  chrome: {
+    storage: {
+      local: {
+        get: async (keys?: string | string[] | null) =>
+          Object.fromEntries(keysOf(keys).filter((k) => local.has(k)).map((k) => [k, structuredClone(local.get(k))])),
+        set: async (items: Parameters<typeof chrome.storage.local.set>[0]) => {
+          for (const [k, v] of Object.entries(items)) local.set(k, structuredClone(v));
+        },
+        remove: async (keys: string | string[]) => {
+          for (const k of [keys].flat()) local.delete(k);
+        },
+        getKeys: async () => [...local.keys()],
+        clear: async () => local.clear(),
+      },
+    },
+  },
+});

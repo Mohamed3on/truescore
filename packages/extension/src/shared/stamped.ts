@@ -166,7 +166,7 @@ const pageReviewCount = () => {
 const fetchAllReviews = async (store: StampedStore, info: ProductInfo): Promise<ReviewBundle> => {
   const cacheKey = store.cacheKey(info.id);
   // SAFETY: fetchAllReviews alone writes a store's review keys, each with a ReviewBundle.
-  const cached = cacheGet(cacheKey, REVIEWS_CACHE_MS) as ReviewBundle | null;
+  const cached = await cacheGet(cacheKey, REVIEWS_CACHE_MS) as ReviewBundle | null;
 
   // With a cache, page 1 goes alone — it gives the current `total` plus the
   // newest reviews, so we can detect new ones and incrementally refresh. Cold,
@@ -235,7 +235,7 @@ export const loadReviews = async (
   render: (bundle: ReviewBundle, stays: boolean | Promise<boolean>) => void,
 ) => {
   // SAFETY: fetchAllReviews alone writes a store's review keys, each with a ReviewBundle.
-  const cached = cacheGet(store.cacheKey(info.id), REVIEWS_CACHE_MS) as ReviewBundle | null;
+  const cached = await cacheGet(store.cacheKey(info.id), REVIEWS_CACHE_MS) as ReviewBundle | null;
   const freshPromise = fetchAllReviews(store, info).catch(() => null);
   const moved = (fresh: ReviewBundle | null) => !!fresh && (!cached || fresh.total !== cached.total);
 
@@ -347,7 +347,7 @@ const fetchBadges = async (store: StampedStore, ids: string[]): Promise<Badge[]>
 const groupedCardScore = (store: StampedStore) => async (id: string, title?: string) => {
   const key = `${store.cacheKey(id)}-stars`;
   // SAFETY: groupedCardScore alone writes these keys, each with a star histogram.
-  const stars = (cacheGet(key, CENSUS_MS) as number[] | null) ?? (await fetchWidgetPage(store, 1, { id, sku: '', name: title ?? '' }, 1))?.stars;
+  const stars = (await cacheGet(key, CENSUS_MS) as number[] | null) ?? (await fetchWidgetPage(store, 1, { id, sku: '', name: title ?? '' }, 1))?.stars;
 
   if (!stars) return null;
   cacheSet(key, stars);
@@ -366,7 +366,7 @@ export const cardScores = (store: StampedStore) => {
   const loadCensus = () => (census ??= (async () => {
     const key = `stamped-census-${store.storeUrl}`;
     // SAFETY: loadCensus alone writes a store's census key, with a Census.
-    const cached = cacheGet(key, CENSUS_MS) as Census | null;
+    const cached = await cacheGet(key, CENSUS_MS) as Census | null;
 
     if (cached) return cached;
     const fresh = await fetchCensus(store);

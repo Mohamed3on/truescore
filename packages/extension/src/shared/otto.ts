@@ -1,5 +1,4 @@
-import { cacheGetMaybe, cacheSetMaybe } from './cache';
-import { idbGet, idbSet } from './idb-cache';
+import { cacheGet, cacheGetMaybe, cacheSet, cacheSetMaybe } from './cache';
 import { createThrottledFetcher } from './throttled-fetch';
 import { SAMPLE_MAX } from './review-summary';
 import { RECENT_REVIEWS } from './recency';
@@ -44,7 +43,7 @@ export const scoreOf = (counts: Record<number, number> | null) => {
 // no histogram and is tombstoned.
 export const cardScore = async (productId: string) => {
   const key = `otto_histogram_v1_${productId}`;
-  const cached = cacheGetMaybe(key, HISTOGRAM_TTL);
+  const cached = await cacheGetMaybe(key, HISTOGRAM_TTL);
 
   if (cached) return scoreOf(cached.value);
   const res = await throttled(`/kundenbewertungen/${productId}/?page=999`);
@@ -77,7 +76,7 @@ const fetchPage = async (productId: string, page: number): Promise<OttoReview[]>
 // in IndexedDB, and only whole, so a failed page's hole is never served.
 export const fetchReviews = (productId: string, total: number) => {
   const key = `otto_reviews_v1_${productId}`;
-  const cached: Promise<OttoReview[] | null> = idbGet(key, REVIEWS_TTL);
+  const cached: Promise<OttoReview[] | null> = cacheGet(key, REVIEWS_TTL);
   const pages = cached.then((hit) => (hit ? [] : Array.from({ length: Math.ceil(Math.min(total, SAMPLE_MAX) / PAGE) }, (_, i) => fetchPage(productId, i + 1))));
 
   const settle = async (of: Promise<OttoReview[]>[]) => {
@@ -92,7 +91,7 @@ export const fetchReviews = (productId: string, total: number) => {
     if (hit) return hit;
     const { reviews, whole } = await settle(await pages);
 
-    if (reviews.length && whole) idbSet(key, reviews);
+    if (reviews.length && whole) cacheSet(key, reviews);
 
     return reviews;
   });

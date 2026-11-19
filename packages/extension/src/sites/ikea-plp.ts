@@ -38,10 +38,10 @@ const scoreFromDist = (dist: any[]) => {
 
 const fetchScore = async (country: string, lang: string, itemNo: string) => {
   const cacheKey = `nps_ikea_score_v2_${itemNo}`; // v2: scores keep their sign (netScore)
-  const cached = cacheGetMaybe(cacheKey, CACHE_TTL);
+  const cached = await cacheGetMaybe(cacheKey, CACHE_TTL);
 
   if (cached) return cached.value;
-  const pdpCached = cacheGet(`nps_ikea_${itemNo}`, CACHE_TTL);
+  const pdpCached = await cacheGet(`nps_ikea_${itemNo}`, CACHE_TTL);
 
   if (pdpCached?.ratingDistribution) {
     const result = scoreFromDist(pdpCached.ratingDistribution);

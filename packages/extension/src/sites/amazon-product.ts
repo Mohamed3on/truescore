@@ -312,7 +312,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
 
   // v5: v4 cached a 0 total when Amazon's new histogram went unread.
   const scoresCacheKey = `ars-scores-v5-${cacheASIN}`;
-  const cachedScores = cacheGet(scoresCacheKey, THREE_DAYS);
+  const cachedScores = await cacheGet(scoresCacheKey, THREE_DAYS);
   let usedCache = false;
 
   const elementToAppendTo = getPanelHost();
@@ -509,7 +509,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
   };
 
   const fetchFreshReviews = async (): Promise<FilteredReview[]> => {
-    const cached = kept ?? cacheGet(reviewsKey, THREE_DAYS);
+    const cached = kept ?? await cacheGet(reviewsKey, THREE_DAYS);
 
     if (cached) return cached;
 
@@ -799,7 +799,7 @@ const getRatingSummary = async (productSIN: string, numOfRatingsElement: HTMLEle
     scores.recent.percentage = scores.recent.percentage || (scores.recent.absolute / numberOfParsedReviews).toFixed(2);
   }
 
-  injectBestFormats(formatRatings, formatCounts, kept ?? cacheGet(reviewsKey, THREE_DAYS) ?? [], `review-summary-${cacheASIN}`);
+  injectBestFormats(formatRatings, formatCounts, kept ?? await cacheGet(reviewsKey, THREE_DAYS) ?? [], `review-summary-${cacheASIN}`);
 };
 
 const getProductSIN = () => {

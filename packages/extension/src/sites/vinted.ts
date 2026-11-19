@@ -1,4 +1,4 @@
-import { cacheGet, cacheSet } from '../shared/cache';
+import { cacheGet, cacheSet, storeGet, storeSet } from '../shared/cache';
 import { orderByCssBand } from '../shared/score-grid';
 import { afterHydration } from '../shared/utils';
 import type * as z from 'zod/mini';
@@ -28,7 +28,9 @@ const FAST_CONCURRENCY = 4;
 const SLOW_GAP_MS = 300;
 const RATE_LIMIT_PAUSE_MS = 10_000;
 
-let on = localStorage.getItem(STORE_KEY) === '1';
+// Read before the first sync (see the loop); a stored 1 is the choice from before
+// it was kept as a boolean.
+let on = false;
 
 // A link straight to one of Vinted's own sorts wins over the stored choice.
 const active = () => on && [null, 'relevance'].includes(new URLSearchParams(location.search).get('order'));
@@ -296,11 +298,11 @@ const resort = () => {
 
 // --- fetching, cards on screen first -------------------------------------------
 
-const fromCache = (card: Element) => {
+const fromCache = async (card: Element) => {
   const id = sellerOf(card);
 
   if (id && !sellers.has(id)) {
-    const cached = cacheGet(`truescore-vinted-seller-${id}`, SELLER_TTL);
+    const cached = await cacheGet(`truescore-vinted-seller-${id}`, SELLER_TTL);
 
     if (cached) sellers.set(id, cached);
   }
@@ -308,7 +310,7 @@ const fromCache = (card: Element) => {
   const country = sellers.get(id)?.country;
 
   if (country && !countryPostage.has(country)) {
-    const cached = cacheGet(`truescore-vinted-postage-${country}`, POSTAGE_TTL);
+    const cached = await cacheGet(`truescore-vinted-postage-${country}`, POSTAGE_TTL);
 
     if (cached) countryPostage.set(country, cached);
   }
@@ -382,7 +384,7 @@ const work = async () => {
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     await task.run();
     inflight.delete(task.key);
-    sync();
+    void sync();
   }
 
   workers--;
@@ -411,7 +413,7 @@ const showInTrigger = (text: string | null) => {
 
 const choose = (value: boolean) => {
   on = value;
-  localStorage.setItem(STORE_KEY, value ? '1' : '0');
+  void storeSet(STORE_KEY, value);
 
   if (!value) return sync();
   document.querySelector<HTMLElement>('[data-testid="catalog--sort-filter--trigger"]')?.click();
@@ -421,7 +423,7 @@ const choose = (value: boolean) => {
   if (!active()) {
     url.searchParams.set('order', 'relevance');
     location.assign(url);
-  } else sync();
+  } else void sync();
 };
 
 // Picking one of Vinted's own sorts hands the grid back to it.
@@ -469,7 +471,7 @@ const addOption = () => {
 
 // --- the loop --------------------------------------------------------------------
 
-const sync = () => {
+const sync = async () => {
   // Catalog and search results only: the home feed and closets keep Vinted's order and stay label-free.
   if (!location.pathname.startsWith('/catalog')) return;
   addOption();
@@ -477,10 +479,10 @@ const sync = () => {
 
   if (!cards.length) return;
   let unmapped = false;
+  await Promise.all(cards.map(fromCache));
 
   for (const card of cards) {
     if (!sellerOf(card)) unmapped = true;
-    fromCache(card);
     renderCard(card);
   }
 
@@ -508,9 +510,10 @@ const sync = () => {
 let timer: ReturnType<typeof setTimeout>;
 
 // Touch the cards only once React has hydrated them (see afterHydration).
-void afterHydration().then(() => {
+void Promise.all([afterHydration(), storeGet(STORE_KEY)]).then(([, saved]) => {
+  on = saved === true || saved === 1;
   document.head.append(style);
-  sync();
+  void sync();
   new MutationObserver(() => {
     clearTimeout(timer);
     timer = setTimeout(sync, 200);

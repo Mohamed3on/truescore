@@ -2,6 +2,7 @@ import { DirectChatTransport, jsonSchema, ToolLoopAgent, type ChatTransport, typ
 import { salvageString, salvageStringArray, searchesLeft, searchReviewsTool, writeObject, writeText, type AskMessage } from '@truescore/gmaps-shared';
 import { modelCall } from '@truescore/gmaps-shared/models';
 import { getActiveLLM } from './config';
+import { storeGet, storeSet } from './cache';
 
 // Every LLM call the extension makes itself (retail and book pages; Google Maps
 // asks the server), on the popup's model and key, via AI SDK.
@@ -13,18 +14,23 @@ const PROVIDER_LABEL = { gemini: 'Gemini', openai: 'OpenAI', deepseek: 'DeepSeek
 const RL_KEY = 'ars-gemini-rate-limit';
 export const RL_MAX = 20;
 
-export const checkRateLimit = () => {
-  let rl = JSON.parse(localStorage.getItem(RL_KEY) || '{"count":0,"resetAt":0}');
+type RateLimit = { count: number; resetAt: number };
 
-  if (Date.now() > rl.resetAt) rl = { count: 0, resetAt: Date.now() + 86400000 };
+const fresh = (rl: RateLimit | null): RateLimit =>
+  rl && Date.now() <= rl.resetAt ? rl : { count: 0, resetAt: Date.now() + 86400000 };
 
-  return rl;
-};
+// The stored count, mirrored here so the widgets can check it as they draw.
+let rateLimit: RateLimit = fresh(null);
 
-export const bumpRateLimit = () => {
-  const rl = checkRateLimit();
-  rl.count++;
-  localStorage.setItem(RL_KEY, JSON.stringify(rl));
+void storeGet(RL_KEY).then((saved) => { rateLimit = fresh(saved); });
+
+export const checkRateLimit = (): RateLimit => (rateLimit = fresh(rateLimit));
+
+// Counted against the stored value, so other tabs' runs since this page loaded count too.
+export const bumpRateLimit = async (): Promise<void> => {
+  const rl = fresh(await storeGet(RL_KEY));
+  rateLimit = { ...rl, count: rl.count + 1 };
+  await storeSet(RL_KEY, rateLimit);
 };
 
 // The popup's provider and key, on that provider's settings (gmaps-shared/models.ts).

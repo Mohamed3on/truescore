@@ -3,6 +3,7 @@ import { netScore } from '@truescore/gmaps-shared';
 import { addCommas } from '../shared/utils';
 import { markBestRatios, cycleBestRatios, orderByCssBand } from '../shared/score-grid';
 import { reportMount } from '../shared/breakage';
+import { storeGet, storeSet } from '../shared/cache';
 
 const CACHE_KEY = 'amz-rating-cache';
 const CACHE_TTL = 30 * 24 * 60 * 60 * 1000;
@@ -31,22 +32,18 @@ const htmlToElement = (html: string) => {
   return template.content.firstChild as Element;
 };
 
-const getCache = () => {
-  try {
-    const cache = JSON.parse(localStorage.getItem(CACHE_KEY) || '{}');
-    const now = Date.now();
+const getCache = async () => {
+  const cache = (await storeGet(CACHE_KEY)) ?? {};
+  const now = Date.now();
 
-    for (const key in cache) {
-      if (now - cache[key].ts > (cache[key].totalReviews > 0 ? CACHE_TTL : NEG_TTL)) delete cache[key];
-    }
+  for (const key in cache) {
+    if (now - cache[key].ts > (cache[key].totalReviews > 0 ? CACHE_TTL : NEG_TTL)) delete cache[key];
+  }
 
-    return cache;
-  } catch { return {}; }
+  return cache;
 };
 
-const saveCache = (cache: any) => {
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {}
-};
+const saveCache = (cache: any) => storeSet(CACHE_KEY, cache);
 
 const getRatingPercentage = (ratingText: string) => {
   try {
@@ -148,7 +145,7 @@ const sortAmazonResults = async () => {
   const seenASINs = new Set<string>();
   const seenKeys = new Set<string>();
   const fetchPromises: Promise<[number | null, Element]>[] = [];
-  const cache = getCache();
+  const cache = await getCache();
 
   // The scan loop is synchronous, so pausing here blinds the observer only to
   // our own dedup removals — host mutations can't interleave with it.
@@ -214,7 +211,7 @@ const sortAmazonResults = async () => {
 
   const results = await Promise.allSettled(fetchPromises);
   // Merged into what's stored now: an overlapping pass may have saved meanwhile.
-  saveCache({ ...getCache(), ...cache });
+  void saveCache({ ...(await getCache()), ...cache });
 
   if (pass !== latestSort) return;
 
