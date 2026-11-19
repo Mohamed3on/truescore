@@ -233,47 +233,59 @@ const abortControllers: Record<SortKey, AbortController | null> = { relevant: nu
 type SummaryCache = { all: SummaryResult | null };
 
 // Summaries persist indefinitely — they're invalidated only by an explicit
-// re-summarize, never by review count drift like score/highlights.
+// re-summarize, never by review count drift like score/highlights. They live in
+// chrome.storage (unlimitedStorage), never the page's localStorage: Maps shares
+// www.google.com with Search, and once summaries filled its 5MB, Search's own
+// writes threw and Enter stopped submitting.
 let summaryCache: SummaryCache = { all: null };
 
 const getSummaryCacheKey = (featureId: string | null = lastFeatureId) => `${SUMMARY_CACHE_PREFIX}${featureId || 'default'}`;
 
-const loadSummaryCache = () => {
-  try { summaryCache = JSON.parse(localStorage.getItem(getSummaryCacheKey()) ?? 'null') || { all: null }; }
-  catch { summaryCache = { all: null }; }
+// Blank at once so the card never shows the last place's summary, then filled
+// from storage unless a summary already landed for this place meanwhile.
+const loadSummaryCache = async (featureId: string) => {
+  summaryCache = { all: null };
+  await legacySummariesMoved;
+  const saved = await bridgeStorage.get<SummaryCache>(getSummaryCacheKey(featureId));
+
+  if (lastFeatureId !== featureId || !saved?.all || summaryCache.all) return;
+  summaryCache = saved;
+  showLoadedSummary();
 };
 
 const saveSummaryCache = (featureId: string | null = lastFeatureId, cache = summaryCache) => {
-  try { localStorage.setItem(getSummaryCacheKey(featureId), JSON.stringify(cache)); } catch {}
+  void bridgeStorage.set(getSummaryCacheKey(featureId), cache);
 };
 
 // Label-search summaries, keyed by lowercased query, persisted per place like
 // the main summary so a search summary survives navigation/re-search. Capped so
-// a place explored with many searches can't crowd out the localStorage quota.
+// a place explored with many searches stays small.
 const SEARCH_SUMMARY_LIMIT = 20;
 let searchSummaryCache: Record<string, SummaryResult> = {};
 const getSearchSummaryCacheKey = (featureId: string | null = lastFeatureId) => `${SEARCH_SUMMARY_CACHE_PREFIX}${featureId || 'default'}`;
 
-const readSearchSummaryCache = (featureId?: string | null): Record<string, SummaryResult> => {
-  try { return JSON.parse(localStorage.getItem(getSearchSummaryCacheKey(featureId)) ?? 'null') || {}; }
-  catch { return {}; }
+const loadSearchSummaryCache = async (featureId: string) => {
+  searchSummaryCache = {};
+  await legacySummariesMoved;
+  const saved = await bridgeStorage.get<Record<string, SummaryResult>>(getSearchSummaryCacheKey(featureId));
+
+  if (lastFeatureId === featureId && saved) searchSummaryCache = Object.assign(saved, searchSummaryCache);
 };
 
-const loadSearchSummaryCache = () => { searchSummaryCache = readSearchSummaryCache(); };
-
 const saveSearchSummaryCache = (featureId: string | null, cache: Record<string, SummaryResult>) => {
-  try {
-    const keys = Object.keys(cache);
+  const keys = Object.keys(cache);
 
-    for (const k of keys.slice(0, Math.max(0, keys.length - SEARCH_SUMMARY_LIMIT))) delete cache[k];
-    localStorage.setItem(getSearchSummaryCacheKey(featureId), JSON.stringify(cache));
-  } catch {}
+  for (const k of keys.slice(0, Math.max(0, keys.length - SEARCH_SUMMARY_LIMIT))) delete cache[k];
+  void bridgeStorage.set(getSearchSummaryCacheKey(featureId), cache);
 };
 
 // Filed under the place the search ran on: the summary lands seconds later,
 // maybe after an SPA nav, and the in-memory map is only ever the current place's.
-const cacheSearchSummary = (featureId: string | null, query: string, summary: SummaryResult) => {
-  const cache = featureId === lastFeatureId ? searchSummaryCache : readSearchSummaryCache(featureId);
+const cacheSearchSummary = async (featureId: string | null, query: string, summary: SummaryResult) => {
+  const cache = featureId === lastFeatureId
+    ? searchSummaryCache
+    : (await bridgeStorage.get<Record<string, SummaryResult>>(getSearchSummaryCacheKey(featureId))) ?? {};
+
   const key = query.toLowerCase();
   delete cache[key]; // re-insert so the most-recently-used stays newest
   cache[key] = summary;
@@ -324,6 +336,21 @@ const bridgeStorage = (() => {
 // the clock is Date.now. gmaps keeps the fetch lifecycle (fetchState, below)
 // and all DOM.
 const store = createScoreStore({ storage: bridgeStorage, now: Date.now });
+
+// Summaries cached before they moved to chrome.storage: copied over once, then
+// dropped from localStorage to give Search its quota back. A summary key's
+// `-qa` twin is the place's Q&A history, which stays in localStorage.
+const legacySummariesMoved = Promise.all(
+  Object.keys(localStorage)
+    .filter((k) => (k.startsWith(SUMMARY_CACHE_PREFIX) || k.startsWith(SEARCH_SUMMARY_CACHE_PREFIX)) && !k.endsWith('-qa'))
+    .map(async (k) => {
+      let value = null;
+
+      try { value = JSON.parse(localStorage.getItem(k) ?? 'null'); } catch {}
+
+      if (value === null || await bridgeStorage.set(k, value)) localStorage.removeItem(k);
+    }),
+).then(() => {});
 
 // === Botguard creds for the ListUgcPosts batchexecute RPC ===
 // Google retired GET /maps/rpc/listugcposts; reviews now come only from a
@@ -485,42 +512,50 @@ const contributeScore = (): void => {
 // trigger waits on it so a cloud hit isn't clobbered by a local recompute.
 let cloudHydratePromise: Promise<void> = Promise.resolve();
 
-const hydrateFromCloud = (featureId: string) => {
-  const needSummary = !summaryCache.all;
-  const needHighlights = !highlightsState?.items?.length;
+// The summary a load or cloud hydrate put in summaryCache, onto a card already drawn.
+const showLoadedSummary = () => {
+  if (!cardEls.sumPanel || !summaryCache.all) return;
+  cardEls.sumPanel.style.display = 'block';
+  renderSummary(cardEls.sumPanel, summaryCache.all);
+  refreshSumBtnState();
+};
 
-  if (!needSummary && !needHighlights) return;
-  cloudHydratePromise = fetchCloudCache(featureId).then((cloud) => {
-    if (!cloud) return;
+// Waits on the stored summary, so the cloud is asked only for what's missing.
+const hydrateFromCloud = (featureId: string, summaryLoaded: Promise<void>) => {
+  cloudHydratePromise = summaryLoaded.then(() => {
+    const needSummary = !summaryCache.all;
+    const needHighlights = !highlightsState?.items?.length;
 
-    if (getFeatureId() !== featureId || lastFeatureId !== featureId) return;
-    let touchedSummary = false;
-    let touchedHighlights = false;
+    if (!needSummary && !needHighlights) return;
 
-    if (needSummary && cloud.summary) {
-      summaryCache.all = cloud.summary;
-      saveSummaryCache();
-      touchedSummary = true;
-    }
+    return fetchCloudCache(featureId).then((cloud) => {
+      if (!cloud) return;
 
-    if (needHighlights && cloud.highlights?.length) {
-      const items: Highlight[] = cloud.highlights.map((h) => ({
-        ...h,
-        summary: cloud.highlightSummaries?.[h.token],
-      }));
+      if (getFeatureId() !== featureId || lastFeatureId !== featureId) return;
+      let touchedSummary = false;
+      let touchedHighlights = false;
 
-      highlightsState = { items, ts: Date.now() };
-      saveHighlightsCache();
-      touchedHighlights = true;
-    }
+      if (needSummary && cloud.summary) {
+        summaryCache.all = cloud.summary;
+        saveSummaryCache();
+        touchedSummary = true;
+      }
 
-    if (touchedSummary && cardEls.sumPanel) {
-      cardEls.sumPanel.style.display = 'block';
-      renderSummary(cardEls.sumPanel, summaryCache.all!);
-      refreshSumBtnState();
-    }
+      if (needHighlights && cloud.highlights?.length) {
+        const items: Highlight[] = cloud.highlights.map((h) => ({
+          ...h,
+          summary: cloud.highlightSummaries?.[h.token],
+        }));
 
-    if (touchedHighlights) renderHighlights();
+        highlightsState = { items, ts: Date.now() };
+        saveHighlightsCache();
+        touchedHighlights = true;
+      }
+
+      if (touchedSummary) showLoadedSummary();
+
+      if (touchedHighlights) renderHighlights();
+    });
   }).catch((e) => console.warn('[gmaps] cloud hydrate failed', e));
 };
 
@@ -2256,7 +2291,7 @@ const summarizeLabelSearch = async (btn?: HTMLButtonElement) => {
     });
 
     search.summary = result;
-    cacheSearchSummary(featureId, search.query, result);
+    void cacheSearchSummary(featureId, search.query, result);
 
     // Paint only while this search is still the one showing (a nav or a newer
     // search resets activeLabelSearch).
@@ -3209,17 +3244,17 @@ const handleDomMutation = () => {
     if (lastFeatureId || featureId !== placeOpened.featureId) placeOpened = { featureId, at: Date.now() };
     lastFeatureId = featureId;
     resetScores();
-    loadSummaryCache();
+    const summaryLoaded = loadSummaryCache(featureId);
     renderRecentQuestions();
     loadHighlightsCache();
-    loadSearchSummaryCache();
+    void loadSearchSummaryCache(featureId);
     loadScoredCache();
     activeLabelSearch = null;
     labelSearchSeq++;
     document.querySelector('#reviews-container')?.remove();
     clearCardEls();
     startFetching();
-    hydrateFromCloud(featureId);
+    hydrateFromCloud(featureId, summaryLoaded);
     // Skip if live data already arrived — a stale disk read must not clobber a
     // fresh in-memory result. store.loadCache applies that guard, the still-
     // current featureId check, and the reviewData restore internally.
