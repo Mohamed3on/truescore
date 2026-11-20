@@ -9,7 +9,7 @@ import { expectMount } from '../shared/breakage';
 const graphqlEndpoint = 'https://www.booking.com/dml/graphql?';
 const MIN_REVIEWS_PER_GROUP = 3;
 const PAGE_SIZE = 25;
-const DEFAULT_REVIEW_LIMIT = 100;
+const DEFAULT_REVIEW_LIMIT = 500;
 const REVIEW_LIMIT_OPTIONS = [100, 200, 500];
 const REVIEWS_CACHE_TTL = 24 * 60 * 60 * 1000;
 const ALL_TRAVELERS = '';
@@ -644,7 +644,7 @@ waitForHotelData((hotelData) => {
   let topicFilters: TopicFilter[] = FALLBACK_TOPIC_FILTERS;
 
   let currentFilterState: ReviewFilterState = {
-    travelerType: ALL_TRAVELERS,
+    travelerType: 'FAMILIES',
     searchText: '',
     reviewLimit: DEFAULT_REVIEW_LIMIT,
     selectedTopicIds: [],

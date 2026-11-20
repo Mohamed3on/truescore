@@ -173,28 +173,55 @@ export const rankChildren = (container: Element, rankableChild: (child: Element)
 // it — the picks that trade some volume for a better hit rate. Ratios are
 // compared as displayed (`data-nps-ratio`, whole percent), so a one-point edge
 // counts, even where it can be rounding alone (Amazon rounds 5★ and 1★ apart).
-// Returns the tinted badges.
+// Returns the tinted badges. `valueOf` swaps in another measure to climb.
 const BEST_RATIO_MARGIN = 1;
 const BEST_RATIO_TINT = 'rgba(74, 222, 128, 0.2)';
 
-export const markBestRatios = (badges: (Element | null)[]): HTMLElement[] => {
+const tint = (badge: HTMLElement, on: boolean) => {
+  badge.style.background = on ? BEST_RATIO_TINT : '';
+  badge.style.boxShadow = on ? `0 0 0 3px ${BEST_RATIO_TINT}` : '';
+  badge.style.borderRadius = on ? '3px' : '';
+};
+
+export const markBestRatios = (
+  badges: (Element | null)[],
+  valueOf = (badge: HTMLElement) => Number(badge.dataset.npsRatio),
+): HTMLElement[] => {
   const picks: HTMLElement[] = [];
   let best = -Infinity;
 
   for (const badge of badges) {
     if (!(badge instanceof HTMLElement)) continue;
-    const ratio = Number(badge.dataset.npsRatio);
-    const on = ratio >= best + BEST_RATIO_MARGIN;
+    const value = valueOf(badge);
+    const on = value >= best + BEST_RATIO_MARGIN;
 
-    if (ratio > best) best = ratio;
+    if (value > best) best = value;
 
     if (on) picks.push(badge);
-    badge.style.background = on ? BEST_RATIO_TINT : '';
-    badge.style.boxShadow = on ? `0 0 0 3px ${BEST_RATIO_TINT}` : '';
-    badge.style.borderRadius = on ? '3px' : '';
+    tint(badge, on);
   }
 
   return picks;
+};
+
+// Walking the badges cheapest first, tint each whose (whole) score beats every
+// cheaper one: the best score at its price. Unpriced cards (sold out) can't be
+// picked. Returns the tinted badges, cheapest first.
+export const markPriceFrontier = (badges: (Element | null)[], priceOf: (badge: HTMLElement) => number | null): HTMLElement[] => {
+  const priced: [HTMLElement, number][] = [];
+
+  for (const badge of badges) {
+    if (!(badge instanceof HTMLElement)) continue;
+    const price = priceOf(badge);
+
+    if (price) priced.push([badge, price]);
+    else tint(badge, false);
+  }
+
+  const score = (badge: HTMLElement) => Number(badge.dataset.nps);
+  priced.sort(([a, pa], [b, pb]) => pa - pb || score(b) - score(a));
+
+  return markBestRatios(priced.map(([badge]) => badge), score);
 };
 
 // ] / [ step through the picks' cards in reading order, the way the YouTube
@@ -300,6 +327,9 @@ export interface ScoreGridOpts {
   // The grid's layout ignores `applyOrder` (tiles the host places absolutely), so
   // ] / [ step through the picks by score rather than by where they sit.
   unrankedLayout?: boolean;
+  // A card's price. Given, the picks are the price frontier (markPriceFrontier)
+  // rather than the ratio climbers, and ] / [ walk them cheapest first.
+  priceOf?: (card: Element) => number | null;
 }
 
 // A null score or a failed fetch is retried a few times, backing off (2s, 8s,
@@ -318,6 +348,7 @@ export const setupScoreGrid = ({
   rankableChild,
   applyOrder = orderByCssBand,
   unrankedLayout = false,
+  priceOf,
 }: ScoreGridOpts): void => {
   const discoverContainers = discover ?? structuralContainers(cardSelector);
   const identity = (card: Element) => idOf?.(card) ?? '';
@@ -334,7 +365,14 @@ export const setupScoreGrid = ({
 
       if (scored.length + sunk.length < 2) continue; // nothing to rank against
       applyOrder(container, scored, rest, sunk);
-      picks.push(...markBestRatios(scored.map(bearer)).map((badge) => badge.closest(cardSelector)));
+
+      const badges = scored.map(bearer);
+
+      const tinted = priceOf
+        ? markPriceFrontier(badges, (badge) => priceOf(badge.closest(cardSelector)!))
+        : markBestRatios(badges);
+
+      picks.push(...tinted.map((badge) => badge.closest(cardSelector)));
     }
   };
 
@@ -349,6 +387,21 @@ export const setupScoreGrid = ({
       sortQueued = false;
       resort();
     });
+  };
+
+  // The badge, not the card, carries `data-nps`: the badge lives inside the
+  // rating node hosts persist across re-renders, so the rank survives the card
+  // wrapper being recreated around it.
+  const placed = new WeakMap<Element, { id: string; data: ScoreData; badge: HTMLElement }>();
+
+  const attach = (card: Element, id: string, data: ScoreData) => {
+    const badge = renderScoreBadge(data);
+    badge.setAttribute('data-nps', String(data.score));
+    badge.setAttribute('data-nps-ratio', String(Math.round(data.nps)));
+    badge.setAttribute('data-nps-id', id);
+    placeBadge(card, badge);
+    placed.set(card, { id, data, badge });
+    scheduleSort();
   };
 
   const score = (card: Element, id: string, attempt = 0): void => {
@@ -368,15 +421,7 @@ export const setupScoreGrid = ({
           return;
         }
 
-        // The badge, not the card, carries `data-nps`: the badge lives inside
-        // the rating node hosts persist across re-renders, so the rank survives
-        // the card wrapper being recreated around it.
-        const badge = renderScoreBadge(data);
-        badge.setAttribute('data-nps', String(data.score));
-        badge.setAttribute('data-nps-ratio', String(Math.round(data.nps)));
-        badge.setAttribute('data-nps-id', id);
-        placeBadge(card, badge);
-        scheduleSort();
+        attach(card, id, data);
       })
       .catch(() => {});
   };
@@ -406,7 +451,15 @@ export const setupScoreGrid = ({
       // the host recycles for another product comes round again.
       const id = identity(card);
 
-      if (card.getAttribute('data-nps-done') === id) continue;
+      if (card.getAttribute('data-nps-done') === id) {
+        // Booking re-renders a card's rating node without its badge: put a
+        // fresh one back from the score already in hand.
+        const kept = placed.get(card);
+
+        if (kept?.id === id && !kept.badge.isConnected) attach(card, id, kept.data);
+        continue;
+      }
+
       card.setAttribute('data-nps-done', id);
       // Idempotent guard. Some hosts (e.g. Uniqlo's and IKEA's React grids)
       // re-render a card's wrapper around a persisted rating node, so a
@@ -440,5 +493,5 @@ export const setupScoreGrid = ({
 
   processCards();
   new MutationObserver(debouncedProcess).observe(document.body, { childList: true, subtree: true });
-  cycleBestRatios(() => picks, unrankedLayout);
+  cycleBestRatios(() => picks, unrankedLayout || !!priceOf);
 };

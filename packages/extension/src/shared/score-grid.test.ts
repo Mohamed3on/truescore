@@ -6,6 +6,7 @@ import {
   orderByCssBand,
   renderScoreBadge,
   markBestRatios,
+  markPriceFrontier,
   cycleBestRatios,
 } from './score-grid';
 
@@ -254,6 +255,23 @@ describe('markBestRatios', () => {
     markBestRatios([a, b]);
     expect(markBestRatios([b, a])).toEqual([b]);
     expect(a.style.background).toBe('');
+  });
+});
+
+describe('markPriceFrontier', () => {
+  const badge = (score: number): HTMLElement => {
+    const el = document.createElement('span');
+    el.setAttribute('data-nps', String(score));
+
+    return el;
+  };
+
+  test('picks each card scoring above every cheaper one, cheapest first', () => {
+    const [b300, b100, b150, b200, unpriced, b100best] = [900, 400, 300, 500, 950, 450].map(badge);
+    const prices = new Map([[b300, 300], [b100, 100], [b150, 150], [b200, 200], [unpriced, null], [b100best, 100]]);
+    expect(markPriceFrontier([...prices.keys()], (el) => prices.get(el)!)).toEqual([b100best, b200, b300]);
+    expect(b100.style.background).toBe('');
+    expect(unpriced.style.background).toBe('');
   });
 });
 
