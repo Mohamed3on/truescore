@@ -60,11 +60,10 @@
   margin-bottom: 12px;
 }
 .ts-bp-kicker {
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ts-ink-3);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--ts-ink-1);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -76,6 +75,17 @@
   background: var(--ts-pos);
   box-shadow: 0 0 6px rgba(74, 222, 128, 0.55);
 }
+.ts-bp-truescore {
+  font-family: var(--ts-mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ts-ink-3);
+  font-variant-numeric: tabular-nums;
+  margin-top: 6px;
+}
+.ts-bp-truescore:empty { display: none; }
+.ts-bp-truescore b { font-weight: 600; }
+
 .ts-bp-sub {
   font-family: var(--ts-mono);
   font-size: 9px;
@@ -268,10 +278,11 @@
 .ts-bp-row + .ts-bp-row { margin-top: 1px; }
 .ts-bp-row-fill {
   position: absolute;
-  inset: 0 auto 0 0;
+  inset: auto auto 0 0;
+  height: 2px;
   z-index: -1;
-  opacity: 0.14;
-  border-radius: 6px;
+  opacity: 0.6;
+  border-radius: 1px;
   transform-origin: left;
   animation: ts-bp-grow 0.7s var(--ts-ease);
 }
@@ -409,12 +420,13 @@
   gap: 8px;
 }
 
-.ts-bp .ars-question-input {
-  padding: 10px 12px;
+/* Out-ranks the shared input's !important daylight pin (amazon-product.css). */
+.ts-bp .ars-question-row .ars-question-input {
+  padding: 10px 12px !important;
   color: var(--ts-ink-1);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 10px !important;
 }
 
 .ts-bp .ars-question-input::placeholder {
@@ -434,8 +446,8 @@
   outline-color: rgba(109, 211, 206, 0.7);
 }
 
-.ts-bp .ars-question-input:focus {
-  border-color: rgba(109, 211, 206, 0.7);
+.ts-bp .ars-question-row .ars-question-input:focus {
+  border-color: rgba(109, 211, 206, 0.7) !important;
   box-shadow: 0 0 0 3px rgba(109, 211, 206, 0.12);
 }
 
@@ -641,4 +653,10 @@
 .ts-bp .ars-qa-chip:hover .ars-qa-chip-remove:hover {
   color: #FCA5A5;
   background: rgba(248, 113, 113, 0.14);
+}
+
+/* A lone section (one of the two hid itself) takes the full width. */
+.ts-bp-wide:not(:has(.ts-bp-section + .ts-bp-section)) .ts-bp-section {
+  display: block;
+  width: auto;
 }

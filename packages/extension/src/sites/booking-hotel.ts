@@ -2,10 +2,10 @@
 import { cacheGet, cacheSet } from '../shared/cache';
 import { betterAlternativeRule, buildSummarizeWidget, ONE_SIDE_RULE } from '../shared/review-summary';
 import { quoteCards } from '../shared/review-search';
-import { el } from '../shared/utils';
+import { addCommas, el, npsColor } from '../shared/utils';
 import { createIslandShell } from '../shared/score-island';
 import { expectMount } from '../shared/breakage';
-import { BOOKING_TRAVELERS, getBookingTraveler, setBookingTraveler } from '../shared/booking-travelers';
+import { BOOKING_TRAVELERS, getBookingTraveler, sampleFor, SAMPLE, setBookingTraveler, travelerName, trueScoreOf } from '../shared/booking-reviews';
 
 const graphqlEndpoint = 'https://www.booking.com/dml/graphql?';
 const MIN_REVIEWS_PER_GROUP = 3;
@@ -719,6 +719,22 @@ waitForHotelData(async (hotelData) => {
       const sub = el('div', 'ts-bp-sub', metaLabel);
       sub.title = `Last ${allReviews.length} reviews · newest first · ${activeFilterLabel}`;
       headLeft.appendChild(sub);
+
+      // The same TrueScore the search page ranks this hotel by (and from the
+      // same cached sample), whatever the panel's own filters.
+      const trueScoreEl = el('div', 'ts-bp-truescore');
+      headLeft.appendChild(trueScoreEl);
+      const traveler = currentFilterState.travelerType;
+
+      sampleFor({ id: hotelData.hotelId, country: hotelData.hotelCountryCode }, traveler).then((sample) => {
+        const trueScore = trueScoreOf(sample);
+
+        if (!trueScore) return;
+        const figure = el('b', undefined, `${addCommas(trueScore.score)} (${Math.round(trueScore.nps)}%)`);
+        figure.style.color = npsColor(trueScore.nps, 65);
+        trueScoreEl.append('TrueScore ', figure);
+        trueScoreEl.title = `As on the search page: the newest ${SAMPLE} reviews from ${travelerName(traveler)}, share scoring 9+ minus share scoring 2 or less, weighted by their ${addCommas(trueScore.total)} reviews`;
+      });
       const scoreEl = el('div', 'ts-bp-score', `${overallPct}%`);
       scoreEl.style.color = tier(overallPct).color;
       head.appendChild(headLeft);
@@ -730,7 +746,8 @@ waitForHotelData(async (hotelData) => {
         label: string,
         rows: { label: string; count: number; pct: number }[],
       ) => {
-        if (!rows.length) return;
+        // One row only repeats the headline (a traveler filter leaves one guest type).
+        if (rows.length < 2) return;
         const section = el('div', 'ts-bp-section');
         const sectionHead = el('div', 'ts-bp-section-head');
         sectionHead.appendChild(el('span', 'ts-bp-section-label', label));
