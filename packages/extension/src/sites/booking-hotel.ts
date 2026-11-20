@@ -5,6 +5,7 @@ import { quoteCards } from '../shared/review-search';
 import { el } from '../shared/utils';
 import { createIslandShell } from '../shared/score-island';
 import { expectMount } from '../shared/breakage';
+import { BOOKING_TRAVELERS, getBookingTraveler, setBookingTraveler } from '../shared/booking-travelers';
 
 const graphqlEndpoint = 'https://www.booking.com/dml/graphql?';
 const MIN_REVIEWS_PER_GROUP = 3;
@@ -56,13 +57,7 @@ const GUEST_LABELS = new Map([
   ['REVIEW_FROM_A_FAMILY_WITH_CHILDREN', 'Family'],
 ]);
 
-const FALLBACK_TRAVELER_FILTERS: TravelerFilter[] = [
-  { name: 'Families', value: 'FAMILIES', count: 0 },
-  { name: 'Couples', value: 'COUPLES', count: 0 },
-  { name: 'Solo travelers', value: 'SOLO_TRAVELLERS', count: 0 },
-  { name: 'Groups of friends', value: 'GROUPS_OF_FRIENDS', count: 0 },
-  { name: 'Business travelers', value: 'BUSINESS_TRAVELLERS', count: 0 },
-];
+const FALLBACK_TRAVELER_FILTERS: TravelerFilter[] = BOOKING_TRAVELERS.map((traveler) => ({ ...traveler, count: 0 }));
 
 const FALLBACK_TOPIC_FILTERS: TopicFilter[] = [
   { id: 249, name: 'Location' },
@@ -498,9 +493,11 @@ const buildReviewFilters = (
     selectedTopicIds: normalizeTopicIds(filterState.selectedTopicIds),
   });
 
-  select.addEventListener('change', () =>
-    onChange(nextState()),
-  );
+  // The traveler type is the one saved preference: search ranks by it too.
+  select.addEventListener('change', () => {
+    setBookingTraveler(select.value);
+    onChange(nextState());
+  });
   limitSelect.addEventListener('change', () =>
     onChange(nextState()),
   );
@@ -639,12 +636,12 @@ function waitForHotelData(callback: (data: HotelData) => void) {
   }, 500);
 }
 
-waitForHotelData((hotelData) => {
-  let travelerFilters: TravelerFilter[] = [];
+waitForHotelData(async (hotelData) => {
+  let travelerFilters: TravelerFilter[] = FALLBACK_TRAVELER_FILTERS;
   let topicFilters: TopicFilter[] = FALLBACK_TOPIC_FILTERS;
 
   let currentFilterState: ReviewFilterState = {
-    travelerType: 'FAMILIES',
+    travelerType: await getBookingTraveler(),
     searchText: '',
     reviewLimit: DEFAULT_REVIEW_LIMIT,
     selectedTopicIds: [],
