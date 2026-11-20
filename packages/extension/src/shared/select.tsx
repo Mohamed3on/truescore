@@ -1,7 +1,8 @@
 // A dropdown on base-ui's Select, for plain-DOM content scripts: keyboard,
 // typeahead and screen-reader behaviour from the library, the look from the
 // site's stylesheet. Classes are `${className}-trigger`, `-popup`, `-item` and so
-// on; the popup portals to <body>, so its styles can't lean on the panel's.
+// on, beside the shared `ts-select-*` ones; the list portals to <body> and takes
+// select.css's dark or light theme.
 import { Select } from '@base-ui/react/select';
 import { createRoot } from 'react-dom/client';
 
@@ -13,6 +14,7 @@ type Props = {
   value: string;
   options: SelectOption[];
   onChange: (value: string) => void;
+  theme?: 'dark' | 'light';
 };
 
 const Chevron = () => (
@@ -27,7 +29,7 @@ const Check = () => (
   </svg>
 );
 
-const Picker = ({ className, label, value, options, onChange }: Props) => (
+const Picker = ({ className, label, value, options, onChange, theme = 'dark' }: Props) => (
   <Select.Root
     items={options}
     defaultValue={value}
@@ -35,22 +37,22 @@ const Picker = ({ className, label, value, options, onChange }: Props) => (
       if (next != null) onChange(next);
     }}
   >
-    <Select.Trigger className={`${className}-trigger`} aria-label={label}>
-      <Select.Value className={`${className}-value`} />
-      <Select.Icon className={`${className}-icon`}>
+    <Select.Trigger className={`ts-select-trigger ${className}-trigger`} aria-label={label}>
+      <Select.Value className={`ts-select-value ${className}-value`} />
+      <Select.Icon className={`ts-select-icon ${className}-icon`}>
         <Chevron />
       </Select.Icon>
     </Select.Trigger>
     <Select.Portal>
-      <Select.Positioner className={`${className}-positioner`} sideOffset={6} align="start" alignItemWithTrigger={false}>
-        <Select.Popup className={`${className}-popup`}>
+      <Select.Positioner className="ts-select-positioner" sideOffset={6} align="start" alignItemWithTrigger={false}>
+        <Select.Popup className="ts-select-popup" data-theme={theme}>
           {options.map((option) => (
-            <Select.Item key={option.value} value={option.value} className={`${className}-item`}>
-              <Select.ItemIndicator className={`${className}-check`}>
+            <Select.Item key={option.value} value={option.value} className="ts-select-item">
+              <Select.ItemIndicator className="ts-select-check">
                 <Check />
               </Select.ItemIndicator>
-              <Select.ItemText className={`${className}-text`}>{option.label}</Select.ItemText>
-              {option.detail && <span className={`${className}-detail`}>{option.detail}</span>}
+              <Select.ItemText className="ts-select-text">{option.label}</Select.ItemText>
+              {option.detail && <span className="ts-select-detail">{option.detail}</span>}
             </Select.Item>
           ))}
         </Select.Popup>

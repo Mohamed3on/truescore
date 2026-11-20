@@ -92,12 +92,13 @@
     {
       "matches": ["*://*.booking.com/*"],
       "js": ["sites/booking-search.js"],
+      "css": ["sites/booking-search.css", "sites/select.css"],
       "run_at": "document_idle"
     },
     {
       "matches": ["*://*.booking.com/hotel/*"],
       "js": ["sites/booking-hotel.js"],
-      "css": ["sites/amazon-product.css", "sites/booking-hotel.css"],
+      "css": ["sites/amazon-product.css", "sites/booking-hotel.css", "sites/select.css"],
       "run_at": "document_idle"
     },
     {
@@ -310,7 +311,7 @@
     {
       "matches": ["*://*.google.com/maps/*", "*://*.google.com/maps*"],
       "js": ["sites/gmaps.js", "sites/gmaps-search.js"],
-      "css": ["sites/gmaps.css"],
+      "css": ["sites/gmaps.css", "sites/select.css"],
       "world": "MAIN",
       "run_at": "document_end"
     },

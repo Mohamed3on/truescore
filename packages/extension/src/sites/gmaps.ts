@@ -6,6 +6,7 @@ import { createScoreStore, type Period } from '../shared/score-store';
 import type { LLMProvider, ReasoningEffort } from '../shared/config';
 import { loadQAs, removeQA } from '../shared/qa-history';
 import { storeDel, storeGet, storeSet } from '../shared/cache';
+import { mountSelect } from '../shared/select';
 import { askReviews, type Read } from '../shared/review-ask';
 import { markPressed, opinionFilters, opinionNumbers, opinionsEl, opinionsLabel, opinionsSlot, readStanceOf, receiptButton, stanceMark, type NumberStyle } from '../shared/jev';
 
@@ -2269,17 +2270,17 @@ const createUIElements = () => {
   title.appendChild(document.createTextNode('Review Analysis'));
   header.appendChild(title);
   const headerRight = el('div', 'rc-header-right');
-  const select = document.createElement('select'); select.id = 'rc-period';
-  ([['total', 'Total'], ['inPastYear', 'Past Year'], ['inPastMonth', 'Past Month']] as const).forEach(([v, t]) => {
-    const opt = document.createElement('option'); opt.value = v; opt.textContent = t; select.appendChild(opt);
-  });
-  select.onchange = () => {
-    // SAFETY: the select holds just the three Period options added above.
-    currentOption = select.value as Period;
-    updateUI();
-  };
-
-  headerRight.appendChild(select);
+  const periods = { total: 'Total', inPastYear: 'Past Year', inPastMonth: 'Past Month' } satisfies Record<Period, string>;
+  headerRight.appendChild(mountSelect({
+    className: 'rc-period',
+    label: 'Reviews from',
+    value: currentOption,
+    options: Object.entries(periods).map(([value, label]) => ({ value, label })),
+    onChange: (value) => {
+      currentOption = Object.keys(periods).find((period): period is Period => period === value) ?? 'total';
+      updateUI();
+    },
+  }));
   const collapseBtn = el('button', 'rc-collapse');
   collapseBtn.textContent = '▾';
   collapseBtn.onclick = () => {

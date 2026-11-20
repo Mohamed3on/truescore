@@ -161,29 +161,14 @@
   text-overflow: ellipsis;
 }
 
-/* The base-ui dropdowns: a trigger drawn like the search field beside it, and a
-   list portalled to <body>, so it spells out the panel's colours itself. */
+/* The base-ui dropdowns' trigger, drawn like the search field beside it (the
+   list is select.css's dark theme). */
 .ts-bp-select-trigger {
   display: flex;
-  align-items: center;
-  gap: 6px;
   padding-right: 8px;
   text-align: left;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-}
-
-.ts-bp-select-value {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ts-bp-select-icon {
-  display: flex;
-  color: var(--ts-ink-3);
 }
 
 .ts-bp-select-trigger[data-popup-open] {
@@ -195,79 +180,6 @@
   outline-offset: 2px;
 }
 
-.ts-bp-select-positioner {
-  z-index: 2147483000;
-}
-
-.ts-bp-select-popup {
-  box-sizing: border-box;
-  min-width: var(--anchor-width);
-  max-height: min(320px, var(--available-height));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 4px;
-  background: rgb(22, 24, 32);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.3);
-  color: rgba(255, 255, 255, 0.88);
-  font-family: 'Sora', system-ui, sans-serif;
-  font-size: 12px;
-  outline: none;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
-  transform-origin: var(--transform-origin);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .ts-bp-select-popup {
-    transition-property: opacity, scale;
-    transition-duration: 120ms;
-    transition-timing-function: ease-out;
-  }
-
-  .ts-bp-select-popup[data-starting-style],
-  .ts-bp-select-popup[data-ending-style] {
-    opacity: 0;
-    scale: 0.97;
-  }
-}
-
-.ts-bp-select-item {
-  display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px 7px 8px;
-  border-radius: 6px;
-  white-space: nowrap;
-  cursor: pointer;
-  outline: none;
-  user-select: none;
-}
-
-.ts-bp-select-item[data-highlighted] {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.ts-bp-select-check {
-  grid-column: 1;
-  display: flex;
-  color: #6DD3CE;
-}
-
-.ts-bp-select-text {
-  grid-column: 2;
-}
-
-.ts-bp-select-detail {
-  grid-column: 3;
-  padding-left: 12px;
-  color: rgba(255, 255, 255, 0.5);
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
 
 .ts-bp-filter-input::placeholder {
   color: var(--ts-ink-4);

@@ -1,0 +1,33 @@
+/* The "TrueScore: <traveler>" pill in Booking's sort and filter row, drawn like
+   its "Sort by" pill. The dropdown is base-ui's (select.css, light theme). */
+.ts-bk-traveler {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 4px 0 16px;
+  border: 1px solid #868686;
+  border-radius: 9999px;
+  background: #fff;
+  color: #1a1a1a;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ts-bk-traveler:has(:focus-visible) {
+  outline: 2px solid #006ce4;
+  outline-offset: 2px;
+}
+
+.ts-bk-pick-trigger {
+  height: 34px;
+  padding: 0 10px 0 4px;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+  outline: none;
+}

@@ -2,6 +2,7 @@
 // the chosen traveler type and rank by it.
 import { BOOKING_TRAVELERS, getBookingTraveler, type Hotel, sampleFor, SAMPLE, setBookingTraveler, travelerName, trueScoreOf } from '../shared/booking-reviews';
 import { orderByCssBand, setupScoreGrid } from '../shared/score-grid';
+import { mountSelect } from '../shared/select';
 
 const CARD = '[data-testid="property-card"]';
 const PICKER_ID = 'ts-bk-traveler';
@@ -70,29 +71,19 @@ getBookingTraveler().then((initial) => {
     if (!slot) return;
     const pill = document.createElement('label');
     pill.id = PICKER_ID;
-    pill.style.cssText = 'position:relative;display:inline-flex;align-items:center;height:36px;box-sizing:border-box;padding:0 12px 0 16px;border:1px solid #868686;border-radius:9999px;background:#fff;color:#1a1a1a;font-size:14px;white-space:nowrap;cursor:pointer;';
-    pill.append('TrueScore:');
-    const select = document.createElement('select');
-    select.setAttribute('aria-label', 'Rank by reviews from');
-    select.style.cssText = 'appearance:none;border:0;background:transparent;color:inherit;font:inherit;font-weight:500;padding:0 24px 0 4px;outline:none;cursor:pointer;';
-    const chevron = document.createElement('span');
-    chevron.setAttribute('aria-hidden', 'true');
-    chevron.style.cssText = 'position:absolute;right:12px;display:flex;pointer-events:none;';
-    chevron.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
-    // The select draws no ring of its own: the pill takes Booking's focus blue.
-    select.addEventListener('focus', () => {
-      if (select.matches(':focus-visible')) Object.assign(pill.style, { outline: '2px solid #006ce4', outlineOffset: '2px' });
-    });
-    select.addEventListener('blur', () => { pill.style.outline = ''; });
-
-    for (const { name, value } of [{ name: 'All travelers', value: '' }, ...BOOKING_TRAVELERS]) select.add(new Option(name, value));
-    select.value = traveler;
-    select.addEventListener('change', () => {
-      traveler = select.value;
-      setBookingTraveler(traveler);
-      rescan();
-    });
-    pill.append(select, chevron);
+    pill.className = 'ts-bk-traveler';
+    pill.append('TrueScore:', mountSelect({
+      className: 'ts-bk-pick',
+      label: 'Rank by reviews from',
+      value: traveler,
+      theme: 'light',
+      options: [{ name: 'All travelers', value: '' }, ...BOOKING_TRAVELERS].map(({ name, value }) => ({ value, label: name })),
+      onChange: (value) => {
+        traveler = value;
+        setBookingTraveler(traveler);
+        rescan();
+      },
+    }));
     slot.after(pill);
   };
 

@@ -96,24 +96,27 @@
   display: inline-block;
 }
 
-#rc-period {
+/* The period dropdown's trigger (base-ui; its list is select.css's dark theme). */
+.rc-period-trigger {
+  gap: 4px;
   font-family: 'Sora', system-ui, sans-serif;
   font-size: 10px;
   font-weight: 500;
-  padding: 4px 8px;
+  padding: 4px 6px 4px 8px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.05);
   color: rgba(255, 255, 255, 0.6);
-  cursor: pointer;
   outline: none;
   transition: border-color 0.2s;
-  -webkit-appearance: none;
 }
 
-#rc-period:hover { border-color: rgba(255, 255, 255, 0.2); }
-#rc-period:focus { border-color: rgba(255, 255, 255, 0.3); }
-#rc-period option { background: #13151f; color: #ddd; }
+@media (hover: hover) {
+  .rc-period-trigger:hover { border-color: rgba(255, 255, 255, 0.2); }
+}
+
+.rc-period-trigger[data-popup-open] { border-color: rgba(255, 255, 255, 0.3); }
+.rc-period-trigger:focus-visible { outline: 2px solid #6DD3CE; outline-offset: 2px; }
 
 /* Review-removal notice — Google deleted reviews here after legal complaints.
    Sits between the header and the score so it reframes the number below it. */
