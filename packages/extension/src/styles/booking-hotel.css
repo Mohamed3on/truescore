@@ -284,6 +284,24 @@
   isolation: isolate;
 }
 .ts-bp-row + .ts-bp-row { margin-top: 1px; }
+
+/* A row with enough reviews opens its own Summary and Ask on click. */
+.ts-bp-row.is-pickable { cursor: pointer; }
+
+@media (hover: hover) {
+  .ts-bp-row.is-pickable:hover { background: rgba(255, 255, 255, 0.04); }
+}
+
+.ts-bp-row.is-picked { background: rgba(255, 255, 255, 0.07); }
+
+.ts-bp-row.is-pickable:focus-visible {
+  outline: 2px solid #6DD3CE;
+  outline-offset: -2px;
+}
+
+.ts-bp-row-summary {
+  margin: 6px 0 10px;
+}
 .ts-bp-row-fill {
   position: absolute;
   inset: auto auto 0 0;

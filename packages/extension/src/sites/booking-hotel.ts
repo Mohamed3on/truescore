@@ -10,6 +10,10 @@ import { BOOKING_TRAVELERS, getBookingTraveler, sampleFor, SAMPLE, setBookingTra
 
 const graphqlEndpoint = 'https://www.booking.com/dml/graphql?';
 const MIN_REVIEWS_PER_GROUP = 3;
+
+// Fewer review texts than this make no Summary for a guest type or room, as in
+// the variants table.
+const MIN_ROW_SUMMARY_REVIEWS = 5;
 const PAGE_SIZE = 25;
 const DEFAULT_REVIEW_LIMIT = 500;
 const REVIEW_LIMIT_OPTIONS = [100, 200, 500];
@@ -139,7 +143,7 @@ const groupBy = (
 
   return [...map.entries()]
     .flatMap(([label, groupedReviews]) => (groupedReviews.length >= MIN_REVIEWS_PER_GROUP
-      ? [{ label: format(label), count: groupedReviews.length, pct: scoreOf(groupedReviews) }]
+      ? [{ label: format(label), count: groupedReviews.length, pct: scoreOf(groupedReviews), reviews: groupedReviews }]
       : []))
     .sort((a, b) => b.count - a.count);
 };
@@ -775,9 +779,13 @@ waitForHotelData(async (hotelData) => {
       panel.appendChild(head);
       panel.appendChild(buildReviewFilters(currentFilterState, travelerFilters, topicFilters, render));
 
+      // A picked row's own Summary and Ask, under it: one at a time, across both sections.
+      const rowSummary = el('div', 'ts-bp-row-summary');
+
       const renderSection = (
         label: string,
-        rows: { label: string; count: number; pct: number }[],
+        rows: { label: string; count: number; pct: number; reviews: Review[] }[],
+        context: (row: string) => string,
       ) => {
         // One row only repeats the headline (a traveler filter leaves one guest type).
         if (rows.length < 2) return;
@@ -804,13 +812,54 @@ waitForHotelData(async (hotelData) => {
           rowEl.appendChild(pctEl);
           rowEl.appendChild(el('span', 'ts-bp-count', row.count));
           section.appendChild(rowEl);
+
+          const texts = toReviewTexts(row.reviews);
+
+          if (texts.length < MIN_ROW_SUMMARY_REVIEWS) continue;
+          rowEl.classList.add('is-pickable');
+          rowEl.setAttribute('role', 'button');
+          rowEl.setAttribute('aria-expanded', 'false');
+          rowEl.tabIndex = 0;
+          rowEl.title = `Summarize the ${row.label} reviews`;
+
+          const pick = () => {
+            const open = rowEl.classList.contains('is-picked');
+            panel.querySelector('.ts-bp-row.is-picked')?.setAttribute('aria-expanded', 'false');
+            panel.querySelector('.ts-bp-row.is-picked')?.classList.remove('is-picked');
+            rowSummary.replaceChildren();
+            rowSummary.remove();
+
+            if (open) return;
+            rowEl.classList.add('is-picked');
+            rowEl.setAttribute('aria-expanded', 'true');
+            rowEl.after(rowSummary);
+            const wrapper = createIslandShell();
+            rowSummary.appendChild(wrapper);
+            buildSummarizeWidget({
+              wrapper,
+              cacheKey: `bk-summary-${hotelData.hotelId}-${cacheSuffix(currentFilterState)}-${currentFilterState.reviewLimit}-${label}-${row.label}`.toLowerCase(),
+              summaryPrompt: SUMMARY_PROMPT,
+              context: context(row.label),
+              fetchReviews: async () => texts,
+              questionPlaceholder: `Ask about ${row.label}\u2026`,
+              autoSummarize: true,
+              renderQuote: quoteCards(() => row.reviews, formatReviewText, reviewFields(hotelData.hotelId)),
+            });
+          };
+
+          rowEl.addEventListener('click', pick);
+          rowEl.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            pick();
+          });
         }
 
         panel.appendChild(section);
       };
 
-      renderSection('By guest', guestRows);
-      renderSection('By room', roomRows);
+      renderSection('By guest', guestRows, (guest) => `Every review here is from one kind of guest: ${guest}.`);
+      renderSection('By room', roomRows, (room) => `Every review here is from guests who stayed in one room type: ${room}.`);
 
       if (reviewTexts.length >= MIN_REVIEWS_PER_GROUP) {
         const summaryWrapper = createIslandShell();
