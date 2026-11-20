@@ -1,4 +1,4 @@
-// Booking.com search page: score every property from its newest 100 reviews by
+// Booking.com search page: score every property from its newest 200 reviews by
 // the chosen traveler type and rank by it.
 import { BOOKING_TRAVELERS, getBookingTraveler, type Hotel, sampleFor, SAMPLE, setBookingTraveler, travelerName, trueScoreOf } from '../shared/booking-reviews';
 import { orderByCssBand, setupScoreGrid } from '../shared/score-grid';

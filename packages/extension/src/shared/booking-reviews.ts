@@ -1,6 +1,6 @@
 // Booking reviews as TrueScore reads them, shared by the search ranking and the
 // hotel panel: the traveler type to read (one saved preference), and each
-// hotel's newest 100 reviews of that type, scored like every other site.
+// hotel's newest 200 reviews of that type, scored like every other site.
 import { cacheGet, cacheSet } from './cache';
 import { createThrottledFetcher } from './throttled-fetch';
 import { npsStats } from './utils';
@@ -24,12 +24,14 @@ export const getBookingTraveler = async (): Promise<string> => {
 
 export const setBookingTraveler = (value: string) => chrome.storage.sync.set({ [KEY]: value });
 
-export const SAMPLE = 100;
+export const SAMPLE = 200;
 const PAGE = 25;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
-// Six at a time: a 20-card search page (80 requests) scores in about 4 s.
-const throttledFetch = createThrottledFetcher(6);
+// 20 at a time: measured against 6, 12, 30, 40 and unbounded, each request
+// held ~235 ms up to 40 with no failures, while unbounded doubled it; a
+// 20-card search page (160 requests) scores in about 2-4 s.
+const throttledFetch = createThrottledFetcher(20);
 
 export type Hotel = { id: string; country: string };
 
@@ -78,7 +80,7 @@ const reviewPage = async ({ id, country }: Hotel, customerType: string, skip: nu
 const samples = new Map<string, Promise<Sample | null>>();
 
 export const sampleFor = (hotel: Hotel, traveler: string): Promise<Sample | null> => {
-  const key = `bk-search-v1-${hotel.id}-${traveler || 'all'}`;
+  const key = `bk-search-v2-${hotel.id}-${traveler || 'all'}`;
   const known = samples.get(key);
 
   if (known) return known;
