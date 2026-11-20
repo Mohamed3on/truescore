@@ -19,6 +19,8 @@ const TEXT_FILTER_DEBOUNCE_MS = 500;
 
 type Review = {
   reviewScore: number;
+  reviewUrl?: string;
+  isTranslatable?: boolean;
   bookingDetails: {
     customerType: string;
     roomType?: { name: string } | null;
@@ -155,14 +157,55 @@ const formatReviewText = (review: Review) => {
   return [title ? `Title: ${title}` : '', formatLikes(review)].filter(Boolean).join('\n').trim();
 };
 
+// Booking's own "Show translation": a review in another language, in the page's
+// language. Asked for as its card opens; null when Booking has none.
+const translations = new Map<string, Promise<Review['textDetails']>>();
+
+const translate = (hotelId: string, reviewUrl: string) => {
+  const known = translations.get(reviewUrl);
+
+  if (known) return known;
+
+  const pending = fetch(graphqlEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      operationName: 'TranslateReviewsBatch',
+      variables: { input: { hotelId: Number(hotelId), reviewUrls: [reviewUrl] } },
+      extensions: {},
+      query: `query TranslateReviewsBatch($input: TranslateReviewsBatchInput!) {
+        translateReviewsBatch(input: $input) {
+          ... on TranslateReviewsBatchResult { translatedReviews { title positiveText negativeText translationProvider } }
+        }
+      }`,
+    }),
+  })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((json) => {
+      const translated = json?.data?.translateReviewsBatch?.translatedReviews?.[0];
+
+      return translated?.translationProvider ? translated : null;
+    })
+    .catch(() => null);
+
+  translations.set(reviewUrl, pending);
+
+  return pending;
+};
+
 // A review's card: Booking's 10-point score as stars (halved) and in full beside
 // the guest and room, its title over what they liked and disliked.
-const reviewFields = (review: Review) => ({
-  rating: review.reviewScore / 2,
-  title: review.textDetails?.title?.trim(),
-  body: formatLikes(review),
-  meta: [`${review.reviewScore}/10`, formatGuest(review.bookingDetails.customerType), review.bookingDetails.roomType?.name && formatRoom(review.bookingDetails.roomType.name)].filter(Boolean).join(' · '),
-});
+const reviewFields = (hotelId: string) => async (review: Review) => {
+  const translated = review.isTranslatable && review.reviewUrl ? await translate(hotelId, review.reviewUrl) : null;
+  const shown = translated ? { ...review, textDetails: translated } : review;
+
+  return {
+    rating: review.reviewScore / 2,
+    title: shown.textDetails?.title?.trim(),
+    body: formatLikes(shown),
+    meta: [`${review.reviewScore}/10`, formatGuest(review.bookingDetails.customerType), review.bookingDetails.roomType?.name && formatRoom(review.bookingDetails.roomType.name), translated && 'Translated'].filter(Boolean).join(' · '),
+  };
+};
 
 const toReviewTexts = (reviews: Review[]) => {
   const seen = new Set<string>();
@@ -270,7 +313,7 @@ const normalizeReviewLimit = (limit: number) =>
   REVIEW_LIMIT_OPTIONS.includes(limit) ? limit : DEFAULT_REVIEW_LIMIT;
 
 const cacheKeyFor = (hotelId: string, filterState: ReviewFilterState) =>
-  `bk-reviews-v4-${hotelId}-${cacheSuffix(filterState)}-${normalizeReviewLimit(filterState.reviewLimit)}`;
+  `bk-reviews-v5-${hotelId}-${cacheSuffix(filterState)}-${normalizeReviewLimit(filterState.reviewLimit)}`;
 
 const requestKeyFor = (filterState: ReviewFilterState) =>
   `${cacheSuffix(filterState)}-${normalizeReviewLimit(filterState.reviewLimit)}`;
@@ -322,6 +365,8 @@ const createPayload = (
         }
         reviewCard {
           reviewScore
+          reviewUrl
+          isTranslatable
           guestDetails { countryName }
           bookingDetails { customerType roomType { name } checkoutDate }
           textDetails { title positiveText negativeText }
@@ -789,7 +834,7 @@ waitForHotelData(async (hotelData) => {
           questionPlaceholder: 'Ask about this hotel\u2026',
           questionPrompt: 'Answer this question using ONLY evidence from the hotel reviews below. Quote or paraphrase the most concrete details about the stay. If reviewers disagree, surface the tension. Be direct and practical.',
           fetchReviews: async () => toReviewTexts((await getReviews(currentFilterState)).reviews),
-          renderQuote: quoteCards(() => allReviews, formatReviewText, reviewFields),
+          renderQuote: quoteCards(() => allReviews, formatReviewText, reviewFields(hotelData.hotelId)),
           cacheMeta: { filterState: currentFilterState },
           alternates: {
             prefix: `bk-summary-${hotelData.hotelId}-`,

@@ -660,3 +660,40 @@
   display: block;
   width: auto;
 }
+
+/* Review cards (a summary point's receipts, search matches): the panel's dark
+   control surface instead of the light-page white card. */
+.ts-bp .ars-search-list {
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+.ts-bp .ars-search-review {
+  background: var(--ts-control);
+  border: 1px solid var(--ts-control-border);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.ts-bp .ars-search-title {
+  color: var(--ts-ink-1);
+  font-weight: 600;
+}
+
+.ts-bp .ars-search-meta {
+  color: var(--ts-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ts-bp .ars-search-stars {
+  color: var(--ts-mid);
+}
+
+.ts-bp .ars-search-hl {
+  background: rgba(232, 184, 109, 0.22);
+  color: #fff;
+}
+
+.ts-bp .ars-search-empty,
+.ts-bp .ars-search-truncated {
+  color: var(--ts-ink-3);
+}

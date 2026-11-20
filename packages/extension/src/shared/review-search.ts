@@ -532,13 +532,13 @@ export const buildReviewCard = (r: SearchReviewFields, terms: string[], stance?:
 // A summary point's receipts as review cards: each quote is a text the model
 // read (`toText`), found among `reviews` by that text. They're asked for at the
 // first receipt opened, so a summary shown from the cache fetches nothing till then.
-export const quoteCards = <T,>(reviews: () => T[] | Promise<T[]>, toText: (r: T) => string, fields: (r: T) => SearchReviewFields): RenderQuote => {
+export const quoteCards = <T,>(reviews: () => T[] | Promise<T[]>, toText: (r: T) => string, fields: (r: T) => SearchReviewFields | Promise<SearchReviewFields>): RenderQuote => {
   let byText: Promise<Map<string, T>> | undefined;
 
   return async (text) => {
     byText ??= Promise.resolve().then(reviews).then((rs) => new Map(rs.map((r) => [toText(r), r])));
     const r = await byText.then((m) => m.get(text), () => (byText = undefined));
 
-    return r ? buildReviewCard(fields(r), []) : null;
+    return r ? buildReviewCard(await fields(r), []) : null;
   };
 };
