@@ -1,6 +1,6 @@
 // Booking reviews as TrueScore reads them, shared by the search ranking and the
 // hotel panel: the traveler type to read (one saved preference), and each
-// hotel's newest 200 reviews of that type, scored like every other site.
+// hotel's newest 500 reviews of that type, scored like every other site.
 import { cacheGet, cacheSet } from './cache';
 import { createThrottledFetcher } from './throttled-fetch';
 import { npsStats } from './utils';
@@ -24,13 +24,14 @@ export const getBookingTraveler = async (): Promise<string> => {
 
 export const setBookingTraveler = (value: string) => chrome.storage.sync.set({ [KEY]: value });
 
-export const SAMPLE = 200;
+export const SAMPLE = 500;
 const PAGE = 25;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 // 20 at a time: measured against 6, 12, 30, 40 and unbounded, each request
-// held ~235 ms up to 40 with no failures, while unbounded doubled it; a
-// 20-card search page (160 requests) scores in about 2-4 s.
+// held ~235 ms up to 40 with no failures, while unbounded doubled it. Scoring
+// 12 hotels from up to 500 Families reviews takes ~1.8 s, about what 200
+// reviews took when every page was fetched.
 const throttledFetch = createThrottledFetcher(20);
 
 export type Hotel = { id: string; country: string };
@@ -80,7 +81,7 @@ const reviewPage = async ({ id, country }: Hotel, customerType: string, skip: nu
 const samples = new Map<string, Promise<Sample | null>>();
 
 export const sampleFor = (hotel: Hotel, traveler: string): Promise<Sample | null> => {
-  const key = `bk-search-v2-${hotel.id}-${traveler || 'all'}`;
+  const key = `bk-search-v3-${hotel.id}-${traveler || 'all'}`;
   const known = samples.get(key);
 
   if (known) return known;
@@ -89,14 +90,20 @@ export const sampleFor = (hotel: Hotel, traveler: string): Promise<Sample | null
     const cached = await cacheGet(key, CACHE_TTL);
 
     if (cached) return cached;
-    const pages = await Promise.all(Array.from({ length: SAMPLE / PAGE }, (_, i) => reviewPage(hotel, traveler, i * PAGE)));
-    const scores = pages.flatMap((page) => page.reviewCard ?? []).map((review) => review.reviewScore);
+    // Booking pages 25 at a time whatever the limit. The first page tells how
+    // many reviews the traveler type has, so only pages that exist are fetched:
+    // most hotels have far fewer than 500 from any one type.
+    const first = await reviewPage(hotel, traveler, 0);
+    const count = first.customerTypeFilter?.find((type) => type.value === (traveler || 'ALL'))?.count;
+    const pageCount = Math.ceil(Math.min(count ?? SAMPLE, SAMPLE) / PAGE);
+    const rest = await Promise.all(Array.from({ length: pageCount - 1 }, (_, i) => reviewPage(hotel, traveler, (i + 1) * PAGE)));
+    const scores = [first, ...rest].flatMap((page) => page.reviewCard ?? []).map((review) => review.reviewScore);
 
     const sample = {
       loved: scores.filter((score) => score >= 9).length,
       hated: scores.filter((score) => score <= 2).length,
       n: scores.length,
-      count: pages[0].customerTypeFilter?.find((type) => type.value === (traveler || 'ALL'))?.count ?? scores.length,
+      count: count ?? scores.length,
     };
 
     cacheSet(key, sample);

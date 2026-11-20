@@ -1,4 +1,4 @@
-// Booking.com search page: score every property from its newest 200 reviews by
+// Booking.com search page: score every property from its newest 500 reviews by
 // the chosen traveler type and rank by it.
 import { BOOKING_TRAVELERS, getBookingTraveler, type Hotel, sampleFor, SAMPLE, setBookingTraveler, travelerName, trueScoreOf } from '../shared/booking-reviews';
 import { orderByCssBand, setupScoreGrid } from '../shared/score-grid';
@@ -42,7 +42,7 @@ getBookingTraveler().then((initial) => {
       label.textContent = 'TrueScore ';
       label.style.cssText = 'color:#595959;font-weight:400;';
       badge.prepend(label);
-      badge.title = `Newest ${SAMPLE} reviews from ${travelerName(traveler)}: share scoring 9+ minus share scoring 2 or less. ${badge.title}`;
+      badge.title = `Up to the newest ${SAMPLE} reviews from ${travelerName(traveler)}: share scoring 9+ minus share scoring 2 or less. ${badge.title}`;
       Object.assign(badge.style, { marginLeft: '0', lineHeight: '18px', fontVariantNumeric: 'tabular-nums' });
       // Under the review count, in the host's label column.
       card.querySelector('[data-testid="review-score"]')?.lastElementChild?.append(badge);

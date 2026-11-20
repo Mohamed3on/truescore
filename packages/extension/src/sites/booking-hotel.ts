@@ -733,7 +733,7 @@ waitForHotelData(async (hotelData) => {
         const figure = el('b', undefined, `${addCommas(trueScore.score)} (${Math.round(trueScore.nps)}%)`);
         figure.style.color = npsColor(trueScore.nps, 65);
         trueScoreEl.append('TrueScore ', figure);
-        trueScoreEl.title = `As on the search page: the newest ${SAMPLE} reviews from ${travelerName(traveler)}, share scoring 9+ minus share scoring 2 or less, weighted by their ${addCommas(trueScore.total)} reviews`;
+        trueScoreEl.title = `As on the search page: the newest ${Math.min(SAMPLE, trueScore.total)} reviews from ${travelerName(traveler)}, share scoring 9+ minus share scoring 2 or less, weighted by their ${addCommas(trueScore.total)} reviews`;
       });
       const scoreEl = el('div', 'ts-bp-score', `${overallPct}%`);
       scoreEl.style.color = tier(overallPct).color;
