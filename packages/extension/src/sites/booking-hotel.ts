@@ -2,6 +2,7 @@
 import { cacheGet, cacheSet } from '../shared/cache';
 import { betterAlternativeRule, buildSummarizeWidget, ONE_SIDE_RULE } from '../shared/review-summary';
 import { quoteCards } from '../shared/review-search';
+import { mountSelect } from '../shared/select';
 import { addCommas, el, npsColor } from '../shared/utils';
 import { createIslandShell } from '../shared/score-island';
 import { expectMount } from '../shared/breakage';
@@ -484,42 +485,38 @@ const buildReviewFilters = (
   const wrapper = el('div', 'ts-bp-filters');
   const travelerWrapper = el('label', 'ts-bp-filter ts-bp-filter--traveler');
   travelerWrapper.appendChild(el('span', 'ts-bp-filter-label', 'Traveler'));
-  const select = document.createElement('select');
-  select.className = 'ts-bp-filter-select';
+  let travelerType = filterState.travelerType;
+  let reviewLimit = normalizeReviewLimit(filterState.reviewLimit);
 
-  const allOption = document.createElement('option');
-  allOption.value = ALL_TRAVELERS;
-  allOption.textContent = 'All travelers';
-  allOption.label = 'All travelers';
-  select.appendChild(allOption);
-
-  for (const filter of filters) {
-    const option = document.createElement('option');
-    option.value = filter.value;
-    option.textContent = filter.count ? `${filter.name} (${filter.count})` : filter.name;
-    option.label = filter.name;
-    select.appendChild(option);
-  }
-
-  select.value = filterState.travelerType;
-  travelerWrapper.appendChild(select);
+  // The traveler type is the one saved preference: search ranks by it too.
+  travelerWrapper.appendChild(mountSelect({
+    className: 'ts-bp-select',
+    label: 'Traveler',
+    value: travelerType,
+    options: [
+      { value: ALL_TRAVELERS, label: 'All travelers' },
+      ...filters.map((filter) => ({ value: filter.value, label: filter.name, detail: filter.count ? addCommas(filter.count) : undefined })),
+    ],
+    onChange: (value) => {
+      travelerType = value;
+      setBookingTraveler(value);
+      onChange(nextState());
+    },
+  }));
   wrapper.appendChild(travelerWrapper);
 
   const limitWrapper = el('label', 'ts-bp-filter ts-bp-filter--limit');
   limitWrapper.appendChild(el('span', 'ts-bp-filter-label', 'Reviews'));
-  const limitSelect = document.createElement('select');
-  limitSelect.className = 'ts-bp-filter-select';
-
-  for (const limit of REVIEW_LIMIT_OPTIONS) {
-    const option = document.createElement('option');
-    option.value = String(limit);
-    option.textContent = `${limit} reviews`;
-    option.label = String(limit);
-    limitSelect.appendChild(option);
-  }
-
-  limitSelect.value = String(normalizeReviewLimit(filterState.reviewLimit));
-  limitWrapper.appendChild(limitSelect);
+  limitWrapper.appendChild(mountSelect({
+    className: 'ts-bp-select',
+    label: 'Reviews',
+    value: String(reviewLimit),
+    options: REVIEW_LIMIT_OPTIONS.map((limit) => ({ value: String(limit), label: String(limit) })),
+    onChange: (value) => {
+      reviewLimit = normalizeReviewLimit(parseInt(value, 10));
+      onChange(nextState());
+    },
+  }));
   wrapper.appendChild(limitWrapper);
 
   const textWrapper = el('label', 'ts-bp-filter ts-bp-filter--text');
@@ -532,20 +529,11 @@ const buildReviewFilters = (
   let textTimer: number | null = null;
 
   const nextState = (searchText = normalizeSearchText(input.value)): ReviewFilterState => ({
-    travelerType: select.value,
+    travelerType,
     searchText,
-    reviewLimit: normalizeReviewLimit(parseInt(limitSelect.value, 10)),
+    reviewLimit,
     selectedTopicIds: normalizeTopicIds(filterState.selectedTopicIds),
   });
-
-  // The traveler type is the one saved preference: search ranks by it too.
-  select.addEventListener('change', () => {
-    setBookingTraveler(select.value);
-    onChange(nextState());
-  });
-  limitSelect.addEventListener('change', () =>
-    onChange(nextState()),
-  );
 
   const runTextSearch = () => {
     const nextSearchText = normalizeSearchText(input.value);

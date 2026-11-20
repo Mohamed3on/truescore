@@ -11,7 +11,9 @@ const OUT = arg('out') ?? 'truescore';
 
 if (API_BASE && resolve(OUT) === resolve('truescore')) throw new Error('--api-base needs --out=<dir>: ./truescore is the loaded unpacked extension');
 
-const define = API_BASE ? { __TRUESCORE_API_BASE__: JSON.stringify(API_BASE) } : {};
+// React (the base-ui dropdowns) reads NODE_ENV to drop its dev-only checks.
+const production = { 'process.env.NODE_ENV': '"production"' };
+const define = API_BASE ? { ...production, __TRUESCORE_API_BASE__: JSON.stringify(API_BASE) } : production;
 
 // Clean
 rmSync(OUT, { recursive: true, force: true });
@@ -76,6 +78,7 @@ await esbuild.build({
   format: 'iife',
   target: ['chrome120'],
   minify: false,
+  jsx: 'automatic',
   define,
 });
 
