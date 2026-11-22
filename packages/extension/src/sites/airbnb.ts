@@ -64,7 +64,7 @@ ${ONE_SIDE_RULE}
 
 ${betterAlternativeRule('nearby Airbnb stay')}
 
-Conclusion: 2–4 sentences on who this stay suits, its strongest recurring qualities, and the main repeated issue to check before booking. If few low-rated reviews have written comments, say that the evidence for complaints is limited.`;
+Conclusion: 2–4 sentences on who this stay suits, its strongest recurring qualities, and the main repeated issue to check before booking.`;
 
 const buildScore = ({ count, five, one, score }: AirbnbStats) => {
   const card = el('span', 'ts-air-card');
@@ -87,29 +87,14 @@ const buildScore = ({ count, five, one, score }: AirbnbStats) => {
   return item;
 };
 
-// Keep the score beside the overview rather than tucked into the host rating line.
-const place = (item: HTMLElement): boolean => {
+// Keep the score beside the overview rather than tucked into the host rating
+// line. React hydration replaces the server-rendered overview after the script
+// runs, so re-place the score whenever it's dropped or the banner arrives.
+const place = (caption: HTMLElement) => {
   const banner = document.querySelector('[data-section-id="GUEST_FAVORITE_BANNER"]');
+  const host = banner?.textContent?.trim() ? banner : document.querySelector('[data-section-id="OVERVIEW_DEFAULT_V2"]');
 
-  if (banner?.textContent?.trim()) {
-    const caption = el('div', 'ts-air-caption');
-    caption.append(item);
-    banner.append(caption);
-
-    return true;
-  }
-
-  const overview = document.querySelector('[data-section-id="OVERVIEW_DEFAULT_V2"]');
-
-  if (overview) {
-    const caption = el('div', 'ts-air-caption');
-    caption.append(item);
-    overview.append(caption);
-
-    return true;
-  }
-
-  return false;
+  if (host && !host.contains(caption)) host.append(caption);
 };
 
 const style = document.createElement('style');
@@ -122,12 +107,10 @@ const stats = airbnbStats(document.getElementById('data-deferred-state-0')?.text
 
 if (stats) {
   expectMount('pdp-badge', '.ts-air-score');
-  const item = buildScore(stats);
-
-  if (!place(item)) {
-    const observer = new MutationObserver(() => { if (place(item)) observer.disconnect(); });
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
+  const caption = el('div', 'ts-air-caption');
+  caption.append(buildScore(stats));
+  place(caption);
+  new MutationObserver(() => place(caption)).observe(document.body, { childList: true, subtree: true });
 }
 
 const listingId = location.pathname.match(/^\/rooms\/(\d+)/)?.[1];
@@ -155,9 +138,10 @@ if (listingId) {
 
   buildSummarizeWidget({
     wrapper,
-    cacheKey: `airbnb-summary-v2-${listingId}`,
+    cacheKey: `airbnb-summary-v3-${listingId}`,
     summaryPrompt: SUMMARY_PROMPT,
     questionPlaceholder: 'Ask about this stay…',
+    autoSummarize: true,
     questionPrompt: 'Answer using only these Airbnb guest reviews. Give concrete details, pay attention to low-rated reviews, and note when guests disagree.',
     fetchReviews: async () => {
       if (!(await getActiveLLM()).key) throw new Error('Set an AI key in the TrueScore popup to summarize reviews.');
