@@ -181,32 +181,36 @@ const detectPaginationInfo = () => {
 // ============================================================
 // League Table Data
 // ============================================================
+// Leagues split into groups (MLS's two conferences) have one standings table per
+// group: all are merged and ranked by points. Only points matter for the expected
+// points of a position, so tiebreak order doesn't.
 const getLeagueTableData = () => {
+  const pointsById = new Map<string, number>();
+
   for (const table of document.querySelectorAll('table.items')) {
     const headerText = table.querySelector('thead tr')?.textContent || '';
 
     if (!/Pts|Pkt\./.test(headerText) || isMarketValueTable(table)) continue; // .com / .de
 
-    const leagueData = new Map<string, { position: number; points: number }>();
-    table.querySelectorAll('tbody tr').forEach((row, index) => {
+    table.querySelectorAll('tbody tr').forEach(row => {
       const vereinId = extractVereinId(row);
 
-      if (!vereinId) return;
+      if (!vereinId || pointsById.has(vereinId)) return;
 
       const cells = Array.from(row.querySelectorAll('td'))
         .filter(c => !c.classList.contains('tm-pts-diff-cell'));
 
       const points = parseInt(cells[cells.length - 1]?.textContent!.trim(), 10);
 
-      if (!isNaN(points)) {
-        leagueData.set(vereinId, { position: index + 1, points });
-      }
+      if (!isNaN(points)) pointsById.set(vereinId, points);
     });
-
-    if (leagueData.size > 0) return leagueData;
   }
 
-  return null;
+  if (!pointsById.size) return null;
+
+  const ranked = [...pointsById].sort((a, b) => b[1] - a[1]);
+
+  return new Map(ranked.map(([vereinId, points], i) => [vereinId, { position: i + 1, points }]));
 };
 
 // ============================================================
