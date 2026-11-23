@@ -181,36 +181,35 @@ const detectPaginationInfo = () => {
 // ============================================================
 // League Table Data
 // ============================================================
+type LeagueData = Map<string, { group: number; position: number; points: number }>;
+
 // Leagues split into groups (MLS's two conferences) have one standings table per
-// group: all are merged and ranked by points. Only points matter for the expected
-// points of a position, so tiebreak order doesn't.
+// group; each club is measured against its own group.
 const getLeagueTableData = () => {
-  const pointsById = new Map<string, number>();
+  const leagueData: LeagueData = new Map();
+  let group = 0;
 
   for (const table of document.querySelectorAll('table.items')) {
     const headerText = table.querySelector('thead tr')?.textContent || '';
 
     if (!/Pts|Pkt\./.test(headerText) || isMarketValueTable(table)) continue; // .com / .de
 
-    table.querySelectorAll('tbody tr').forEach(row => {
+    group++;
+    table.querySelectorAll('tbody tr').forEach((row, index) => {
       const vereinId = extractVereinId(row);
 
-      if (!vereinId || pointsById.has(vereinId)) return;
+      if (!vereinId || leagueData.has(vereinId)) return;
 
       const cells = Array.from(row.querySelectorAll('td'))
         .filter(c => !c.classList.contains('tm-pts-diff-cell'));
 
       const points = parseInt(cells[cells.length - 1]?.textContent!.trim(), 10);
 
-      if (!isNaN(points)) pointsById.set(vereinId, points);
+      if (!isNaN(points)) leagueData.set(vereinId, { group, position: index + 1, points });
     });
   }
 
-  if (!pointsById.size) return null;
-
-  const ranked = [...pointsById].sort((a, b) => b[1] - a[1]);
-
-  return new Map(ranked.map(([vereinId, points], i) => [vereinId, { position: i + 1, points }]));
+  return leagueData.size ? leagueData : null;
 };
 
 // ============================================================
@@ -257,7 +256,7 @@ const getMarketValueColumnIndex = (table: HTMLTableElement) => {
   return headers.findIndex(th => th.textContent!.includes('ø') && /market|marktwert/.test(th.textContent!.toLowerCase()));
 };
 
-const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { position: number; points: number }>) => {
+const addPointDiffColumn = (table: HTMLTableElement, leagueData: LeagueData) => {
   if (table.hasAttribute('data-has-pts-diff') || !isAverageMarketValueTable(table)) return;
 
   const thead = table.querySelector('thead tr');
@@ -265,8 +264,8 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
 
   if (!thead || !tbody) return;
 
-  const pointsByPosition: number[] = [];
-  leagueData.forEach(data => { pointsByPosition[data.position] = data.points; });
+  const pointsByPosition: number[][] = [];
+  leagueData.forEach(data => { (pointsByPosition[data.group] ??= [])[data.position] = data.points; });
 
   // Sort rows by market value to determine each team's market value rank
   const rows = Array.from(tbody.querySelectorAll('tr.even, tr.odd'));
@@ -280,15 +279,18 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
     return { row, value: cell ? getColumnValue(cell) : 0, vereinId: extractVereinId(row) };
   });
 
-  // Sort by market value descending to get ranks
+  // Sort by market value descending to get each team's rank within its group
   const sorted = [...rowsWithMV].sort((a, b) => b.value - a.value);
   const mvRankByVereinId = new Map<string, number>();
-  sorted.forEach((item, i) => {
-    if (item.vereinId) mvRankByVereinId.set(item.vereinId, i + 1);
+  const ranksTaken: number[] = [];
+  sorted.forEach(item => {
+    const group = item.vereinId && leagueData.get(item.vereinId)?.group;
+
+    if (group) mvRankByVereinId.set(item.vereinId!, ranksTaken[group] = (ranksTaken[group] ?? 0) + 1);
   });
 
   const th = el('th', 'zentriert', 'Δ Pts');
-  th.title = 'Points difference vs expected position based on market value';
+  th.title = 'Points difference vs the team at its market value rank in its league table';
   thead.appendChild(th);
 
   rows.forEach(row => {
@@ -297,7 +299,7 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: Map<string, { p
     const teamData = vereinId && leagueData.get(vereinId);
     const mvRank = vereinId && mvRankByVereinId.get(vereinId);
     // Undefined when no league position matches the team's market value rank.
-    const expectedPoints = mvRank ? pointsByPosition[mvRank] : undefined;
+    const expectedPoints = teamData && mvRank ? pointsByPosition[teamData.group]?.[mvRank] : undefined;
 
     if (teamData && expectedPoints !== undefined) {
       const diff = teamData.points - expectedPoints;
