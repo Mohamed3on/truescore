@@ -217,7 +217,18 @@ function debugDetails(stats: any) {
 
 const winnerMsg = (since = '') => `★ Nothing similar${since} scores higher.`;
 
-function winnerBanner(message: string, listName?: string | null, listLink?: string | null) {
+type ListRating = { stars: number; count: number } | null | undefined;
+
+/** The user's average rating of the list's rated films, to sit beside its name; nothing until they've rated one. */
+const listRatingNote = (rating: ListRating) => {
+  if (!rating) return [];
+  const note = el('span', 'lbx-list-rating', `your avg ${rating.stars.toFixed(1)}★`);
+  note.title = `Your average rating of the ${rating.count} films on this list you've rated`;
+
+  return [note];
+};
+
+function winnerBanner(message: string, listName?: string | null, listLink?: string | null, listRating?: ListRating) {
   const winner = el('div', 'lbx-winner');
   winner.append(el('span', 'lbx-winner-text', message));
 
@@ -225,7 +236,10 @@ function winnerBanner(message: string, listName?: string | null, listLink?: stri
     // SAFETY: el creates the tag it's given, here an <a>.
     const src = el('a', 'lbx-winner-source', listName) as HTMLAnchorElement;
     src.href = listLink;
-    winner.append(' ', src);
+    // One flex item, so the user's average wraps with the list's name rather than alone.
+    const source = el('span');
+    source.append(src, ...listRatingNote(listRating));
+    winner.append(' ', source);
   }
 
   return winner;
@@ -259,8 +273,9 @@ const setCachedRecentPartial = (slug: string, data: RecentTally & { room: number
 // page 1, so it dropped — and saved without — every candidate found on a later page.
 // v7: recomputed once so its films' histograms reach the IPTV app (v6 picks were cached before sharing existed).
 // v8: keeps the list's films and likes, so a cached film shares its list with the IPTV app too.
-const getCachedSimilarPicks = (slug: string) => cacheGet(`lbx_similar_v8_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
-const setCachedSimilarPicks = (slug: string, data: any) => cacheSet(`lbx_similar_v8_${slug}`, data);
+// v9: keeps the list's uids, so a cached film's list still shows the user's average rating of it.
+const getCachedSimilarPicks = (slug: string) => cacheGet(`lbx_similar_v9_${slug}`, CONFIG.SIMILAR_PICKS_CACHE_MS);
+const setCachedSimilarPicks = (slug: string, data: any) => cacheSet(`lbx_similar_v9_${slug}`, data);
 
 // Films the user has muted from Similar Picks, by slug (see shared/ignored-picks).
 const IGNORED_KEY = 'lbx_ignored';
@@ -678,15 +693,19 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
   // through that cookie, the user's own setting.
   const productionUid = document.querySelector('#backdrop[data-production-uid]')?.getAttribute('data-production-uid');
 
-  const unseen = async <T extends { uid?: string }>(films: T[]) => {
-    const { watched, ratings } = await fetchWatched([productionUid, ...films.map((f) => f.uid)]);
+  // The same ask also gives the user's average rating, in stars, of the list's films they've rated.
+  const unseen = async <T extends { uid?: string }>(films: T[], listUids: (string | undefined)[] = films.map((f) => f.uid)) => {
+    const { watched, ratings } = await fetchWatched([productionUid, ...listUids]);
 
     for (const uid of watched) seen.add(uid);
 
-    if (!productionUid || !watched.has(productionUid)) return films.filter((f) => !watched.has(f.uid ?? ''));
+    const rated = listUids.flatMap((uid) => ratings.get(uid ?? '') ?? []);
+    const listRating = rated.length ? { stars: rated.reduce((a, b) => a + b, 0) / rated.length / 2, count: rated.length } : null;
+
+    if (!productionUid || !watched.has(productionUid)) return { films: films.filter((f) => !watched.has(f.uid ?? '')), listRating };
     const bar = ratings.get(productionUid) ?? 0; // unrated: nothing to fall below
 
-    return films.filter((f) => (ratings.get(f.uid ?? '') ?? bar) >= bar);
+    return { films: films.filter((f) => (ratings.get(f.uid ?? '') ?? bar) >= bar), listRating };
   };
 
   try {
@@ -696,7 +715,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     if (cached) {
       if (cached.listLink && cached.listSlugs) shareList(cached.listLink, cached.listName, cached.listSlugs, cached.listLikes);
 
-      return { ...cached, films: await unseen(cached.films) };
+      return { ...cached, ...await unseen(cached.films, cached.listUids) };
     }
 
     updateProgress(statusElement, 0);
@@ -772,9 +791,9 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 
     shareList(listLink, listName, listSlugs, likes);
 
-    const allFilmSlugs = await unseen(listed);
+    const { films: allFilmSlugs, listRating } = await unseen(listed);
 
-    if (!allFilmSlugs.length) return { films: [], listName, listLink, stats: { totalInList: 0, runtimeMatched: 0, scored: 0, currentRuntime, foundOnPage, pagesSearched, lastPageItemCount, allScored: [] } };
+    if (!allFilmSlugs.length) return { films: [], listName, listLink, listRating, stats: { totalInList: 0, runtimeMatched: 0, scored: 0, currentRuntime, foundOnPage, pagesSearched, lastPageItemCount, allScored: [] } };
 
     debug(`Total films across pages: ${allFilmSlugs.length}`);
     updateProgress(statusElement, 2, `Fetching ${allFilmSlugs.length} films...`);
@@ -815,7 +834,7 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
 
     debug(`Runtime matches (≤${currentRuntime + CONFIG.RUNTIME_TOLERANCE}m): ${runtimeMatches.length}`);
 
-    if (!runtimeMatches.length) return { films: [], listName, listLink, stats: { totalInList: allFilmSlugs.length, runtimeMatched: 0, scored: 0, currentRuntime, foundOnPage, pagesSearched, allScored: [] } };
+    if (!runtimeMatches.length) return { films: [], listName, listLink, listRating, stats: { totalInList: allFilmSlugs.length, runtimeMatched: 0, scored: 0, currentRuntime, foundOnPage, pagesSearched, allScored: [] } };
 
     const uncached = runtimeMatches.filter((f: any) => !f.fromCache).length;
     updateProgress(statusElement, 3, `Scoring ${runtimeMatches.length} matches${uncached ? ` (${uncached} new)` : ''}...`);
@@ -866,12 +885,12 @@ async function findSimilarPicks(currentSlug: string, currentRuntime: number, sta
     const stats = { totalInList: allFilmSlugs.length, runtimeMatched: runtimeMatches.length, scored: scoredFilms.length, currentRuntime, foundOnPage, pagesSearched, allScored, parseEmptyCount, freshlyFetched };
 
     debug(`Candidate films: ${candidates.length}`);
-    const result = { films: candidates, stats, listName, listLink };
+    const result = { films: candidates, stats, listName, listLink, listRating };
 
     // Only a fully resolved crawl is worth a week: caching the survivors of a
     // partial one would drop every film that failed from the picks until expiry.
     if (candidates.length && !candidates.some((f: any) => f.fetchFailed)) {
-      setCachedSimilarPicks(currentSlug, { films: candidates, listName, listLink, listSlugs, listLikes: likes, stats });
+      setCachedSimilarPicks(currentSlug, { films: candidates, listName, listLink, listSlugs, listUids: listed.map((f) => f.uid), listLikes: likes, stats });
     }
 
     return result;
@@ -964,14 +983,14 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
     // No reference means no verdict, which is not the same as nothing beating it.
     similarSection.append(films.length
       ? el('span', 'lbx-progress', 'Not enough data on this film to compare similar picks.')
-      : winnerBanner(winnerMsg(), result.listName, result.listLink));
+      : winnerBanner(winnerMsg(), result.listName, result.listLink, result.listRating));
 
     if (stats) similarSection.append(debugDetails(stats));
 
     return;
   }
 
-  const banner = winnerBanner('', result.listName, result.listLink);
+  const banner = winnerBanner('', result.listName, result.listLink, result.listRating);
   // SAFETY: winnerBanner always appends its .lbx-winner-text <span>.
   const bannerText = banner.querySelector('.lbx-winner-text') as HTMLElement;
   banner.hidden = true;
@@ -989,7 +1008,9 @@ async function displaySimilarPicks(picks: ReturnType<typeof startSimilarPicks>, 
   const yearFilter = el('label', 'lbx-year', 'since ');
   yearFilter.append(yearInput, hiddenNote);
   const sourceRow = el('div', 'lbx-similar-source-row');
-  sourceRow.append(sourceLink, yearFilter);
+  const source = el('span', 'lbx-similar-source-list');
+  source.append(sourceLink, ...listRatingNote(result.listRating));
+  sourceRow.append(source, yearFilter);
   const list = el('ul', 'lbx-similar-list');
   const belowToggle = el('div', 'lbx-fold-toggle');
   const below = el('ul', 'lbx-similar-list lbx-below-list');
