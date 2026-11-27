@@ -2,7 +2,7 @@ import { countsInTally, MIN_TALLY_PEOPLE, stripAccents, type ListedOption, type 
 import { z } from 'zod';
 import { db } from './db';
 import { askedAboutFor, describedFor, groupAnswersFor, optionStancesFor, putsForwardFor } from './jev';
-import { explainOptions, listOptions, optionsRequest, questionsRequest, reasonsRequest, suggestQuestions, type StreamedOption, type ThreadOption } from './llm';
+import { explainOptions, listOptions, optionsRequest, pickQuestion, questionRequest, questionsRequest, reasonsRequest, suggestQuestions, type StreamedOption, type ThreadOption } from './llm';
 
 // A Reddit Thread's Tally (CONTEXT.md). The model lists the Options and how the
 // thread writes them; Jev reads what each comment naming one says of it; the
@@ -396,13 +396,18 @@ const SAMPLE_COMMENTS = 40;
 const SAMPLE_CHARS = 20_000;
 const SUGGESTING = Bun.hash(questionsRequest('', []).prompt).toString(36);
 
-export async function questionsOf(thread: Thread, { provider, reasoningEffort }: LlmOverrides = {}): Promise<string[]> {
+const sampleOf = (thread: Thread) => {
   let chars = 0;
 
-  const sample = thread.comments.filter(countsInTally).toSorted((a, b) => b.score - a.score).slice(0, SAMPLE_COMMENTS)
+  return thread.comments.filter(countsInTally).toSorted((a, b) => b.score - a.score).slice(0, SAMPLE_COMMENTS)
     .filter((c) => (chars += c.body.length) <= SAMPLE_CHARS);
+};
 
-  const k = `${thread.id}:${provider ?? ''}:${SUGGESTING}:${Bun.hash(sample.map((c) => c.id).sort().join(',')).toString(36)}`;
+const sampleKey = (sample: ThreadComment[]) => Bun.hash(sample.map((c) => c.id).sort().join(',')).toString(36);
+
+export async function questionsOf(thread: Thread, { provider, reasoningEffort }: LlmOverrides = {}): Promise<string[]> {
+  const sample = sampleOf(thread);
+  const k = `${thread.id}:${provider ?? ''}:${SUGGESTING}:${sampleKey(sample)}`;
   const hit = getQuestions.get(k);
 
   if (hit) {
@@ -414,6 +419,36 @@ export async function questionsOf(thread: Thread, { provider, reasoningEffort }:
   putQuestions.run(k, JSON.stringify(questions), Date.now());
 
   return questions;
+}
+
+// The question the Tally counts answers to when the user asks none: the one
+// the sample answers, kept for the same sample; the post's own when the call
+// fails.
+db.run('CREATE TABLE IF NOT EXISTS tally_question (k TEXT PRIMARY KEY, v TEXT NOT NULL, ts INTEGER NOT NULL)');
+
+const getQuestion = db.prepare<{ v: string }, [string]>('SELECT v FROM tally_question WHERE k = ?');
+const putQuestion = db.prepare<void, [string, string, number]>('INSERT OR REPLACE INTO tally_question (k, v, ts) VALUES (?, ?, ?)');
+const PICKING = Bun.hash(questionRequest('', []).prompt).toString(36);
+
+async function defaultQuestionOf(thread: Thread, { provider }: LlmOverrides): Promise<string> {
+  const sample = sampleOf(thread);
+  const k = `${thread.id}:${provider ?? ''}:${PICKING}:${sampleKey(sample)}`;
+  const hit = getQuestion.get(k);
+
+  if (hit) return hit.v;
+
+  try {
+    const question = (await pickQuestion(questionOf(thread), sample.map((c) => c.body), provider)).slice(0, MAX_QUESTION);
+
+    if (!question) return questionOf(thread);
+    putQuestion.run(k, question, Date.now());
+
+    return question;
+  } catch (e) {
+    console.warn('[tally] question failed:', e instanceof Error ? e.message : e);
+
+    return questionOf(thread);
+  }
 }
 
 // The answers that give one verdict on the things a post lists, as a group
@@ -463,11 +498,17 @@ async function pickedOf(thread: Thread, question: string, o: ThreadOption): Prom
 // Counting waits for the whole list, since a name only picks comments once it's
 // known no other Option shares it. Throws when Jev couldn't read every comment,
 // after streaming what it could. `tallyQuestion`: one the user asks of the
-// Thread in place of the post's own; the post still holds what its answers
-// answer (its list, what it asks about).
+// Thread in place of the one the answers answer (defaultQuestionOf), which is
+// sent first; the post still holds what its answers answer (its list, what it
+// asks about).
 export async function tallyThread(thread: Thread, write: (e: TallyEvent) => void, overrides: LlmOverrides = {}, tallyQuestion?: string): Promise<void> {
   const own = questionOf(thread);
-  const question = tallyQuestion?.trim().slice(0, MAX_QUESTION) || own;
+  const asks = tallyQuestion?.trim().slice(0, MAX_QUESTION) || await defaultQuestionOf(thread, overrides);
+  write({ type: 'question', question: asks === own ? thread.title.trim() : asks });
+  // The picked question keeps the post beside it: its body holds what the
+  // answers answer (a list, the limits it sets). A question of the user's own
+  // stands alone.
+  const question = tallyQuestion?.trim() || asks === own ? asks : `${asks}\n\nAsked of this post:\n${own}`;
   const options: ThreadOption[] = [];
   const post = postOf(thread);
   // Asked once the post names two Options, while the rest are listed: which

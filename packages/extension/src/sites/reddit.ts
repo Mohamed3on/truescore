@@ -65,8 +65,10 @@ let leadKey: string | null = null;
 let openTitle: string | null = null;
 let stop: (() => void) | null = null;
 
-// The user's own Tally question; empty tallies the post's.
+// The user's own Tally question; empty tallies the one the comments answer,
+// which the server works out and sends first (postQuestion).
 let tallyQuestion = '';
+let postQuestion = '';
 
 // The questions the comments answer, for the thread under `suggestedFor`:
 // asked when Suggest is pressed, and kept while a picked one
@@ -449,8 +451,8 @@ askButton.type = 'submit';
 
 askForm.append(askInput, askButton);
 
-// The question the Tally counts answers to: the post's (its title, shown in
-// the box) until the user asks their own. Offered in it: the post's,
+// The question the Tally counts answers to: the one the comments answer, as
+// the server worked it out, until the user asks their own. Offered in it: that one,
 // then the user's recent ones; under it, once Suggest is pressed, Sonnet's
 // questions the comments answer. Picking one tallies it.
 const questionForm = el('form', 'ts-tq');
@@ -500,7 +502,7 @@ const offerQuestions = () => {
     suggestions.replaceChildren();
   }
 
-  void loadQAs(questionsKey()).then((qas) => recentQuestions.replaceChildren(...[...new Set([thread?.title.trim() ?? '', ...qas.map((e) => e.q)])].flatMap((q) => {
+  void loadQAs(questionsKey()).then((qas) => recentQuestions.replaceChildren(...[...new Set([postQuestion, ...qas.map((e) => e.q)])].flatMap((q) => {
     const option = document.createElement('option');
     option.value = q;
 
@@ -508,15 +510,17 @@ const offerQuestions = () => {
   })));
 };
 
+// The box isn't rewritten while it's being typed in.
 const showQuestions = () => {
-  questionInput.placeholder = thread?.title.trim() ?? '';
-  questionInput.value = tallyQuestion || questionInput.placeholder;
+  questionInput.placeholder = postQuestion || 'Working out the question…';
+
+  if (shadow.activeElement !== questionInput) questionInput.value = tallyQuestion || postQuestion;
   offerQuestions();
 };
 
 const tallyAsked = () => {
   const q = questionInput.value.trim();
-  tallyQuestion = q === thread?.title.trim() ? '' : q;
+  tallyQuestion = q === postQuestion ? '' : q;
 
   if (tallyQuestion) void saveQA(questionsKey(), { q: tallyQuestion, a: '', ts: Date.now() });
   void start();
@@ -632,7 +636,7 @@ const statusText = () => {
   const counted = rows.filter((r) => r.tally).length;
   const options = shown().length;
 
-  if (phase === 'listing') return thread ? `Listing the options in ${read} comments…` : 'Loading the comments…';
+  if (phase === 'listing') return !thread ? 'Loading the comments…' : tallyQuestion || postQuestion ? `Listing the options in ${read} comments…` : 'Working out what the comments answer…';
 
   if (phase === 'reading') return counted < rows.length || !rows.length ? `Reading ${read} comments · ${counted} of ${rows.length} options counted…` : 'Summing up why each is rated as it is…';
 
@@ -671,7 +675,10 @@ function render() {
 }
 
 const onEvent = (e: TallyEvent) => {
-  if (e.type === 'listed') {
+  if (e.type === 'question') {
+    if (!tallyQuestion) postQuestion = e.question;
+    showQuestions();
+  } else if (e.type === 'listed') {
     if (!rows.some((r) => r.listed.key === e.option.key)) rows.push({ listed: e.option });
     phase = 'reading';
   } else if (e.type === 'option') {
@@ -874,7 +881,7 @@ const sync = () => {
     stopAsk = null;
     turns = [];
     renderChat();
-    tallyQuestion = '';
+    tallyQuestion = postQuestion = '';
     phase = 'idle';
     rows = [];
     drawer.hidden = true;

@@ -340,6 +340,24 @@ export async function suggestQuestions(question: string, comments: string[], pro
   return r.object.questions;
 }
 
+// The one question the Tally counts answers to when the user asks none: what
+// the answers answer, in a line, rather than the whole post. Without reasoning,
+// since every Tally waits for it.
+export const questionRequest = (question: string, comments: string[]) => ({
+  maxOutputTokens: 512,
+  schema: z.object({ question: z.string() }),
+  prompt: `${answersOf(question, comments)}Write the one short question these answers (the most upvoted) most directly answer, as the asker could have put it, in the question's language. Keep what the question asks for (the best, the worst, the most dangerous) and the limits it sets.`,
+});
+
+export async function pickQuestion(question: string, comments: string[], provider: Provider = DEFAULT_PROVIDER): Promise<string> {
+  const { model, providerOptions } = (!fakeModel && NO_REASONING[provider]) || providerFor(provider);
+  const r = await writeObject({ model, providerOptions, ...questionRequest(question, comments) });
+
+  if (r.usage) report(provider, 'question', r.usage);
+
+  return r.object.question.trim();
+}
+
 // Why people back or warn against each Option, in a line, written only from
 // the comments that name it (the ones Jev reads), so it can't stray from the
 // Tally beside it. Reasons, never counts. One field per

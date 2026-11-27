@@ -186,6 +186,9 @@ export type OptionTally = TitleTally & { titles: TitleTally[] };
 export type ListedOption = { key: string; name: string; titles: { key: string; name: string }[] };
 
 export type TallyEvent =
+  // The question the Tally counts answers to, first: the user's, else the one
+  // the answers answer.
+  | { type: 'question'; question: string }
   | { type: 'listed'; option: ListedOption }
   | { type: 'option'; option: OptionTally }
   // Why people back or warn against an Option, in a line, written from the
