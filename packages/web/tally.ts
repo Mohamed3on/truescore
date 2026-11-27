@@ -432,7 +432,9 @@ const PICKING = Bun.hash(questionRequest('', []).prompt).toString(36);
 
 async function defaultQuestionOf(thread: Thread, { provider }: LlmOverrides): Promise<string> {
   const sample = sampleOf(thread);
-  const k = `${thread.id}:${provider ?? ''}:${PICKING}:${sampleKey(sample)}`;
+  // By what the model reads, not ids alone: an edited post, or a client
+  // sending another thread's ids, picks afresh.
+  const k = `${thread.id}:${provider ?? ''}:${PICKING}:${Bun.hash([questionOf(thread), ...sample.map((c) => c.body)].join('\0')).toString(36)}`;
   const hit = getQuestion.get(k);
 
   if (hit) return hit.v;
