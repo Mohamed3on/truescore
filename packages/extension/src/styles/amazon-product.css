@@ -36,6 +36,9 @@
   -webkit-font-smoothing: antialiased;
   animation: ars-enter 0.4s cubic-bezier(0.25, 1, 0.5, 1);
 }
+/* Book pages: the card sits in the left half of a flex row; let it take only the room
+   "See all formats and editions" leaves, or a long summary crushes that column */
+#centerAttributesLeftColumn:has(.ars-wrapper) { flex: 1 1 0; min-width: 0; }
 /* Amazon's redesigned page: score card and variant ranking stacked in one slot */
 #ts-panel-slot { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 16px; }
 #ts-panel-slot > .ars-wrapper,
