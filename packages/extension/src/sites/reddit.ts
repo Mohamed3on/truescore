@@ -449,8 +449,8 @@ askButton.type = 'submit';
 
 askForm.append(askInput, askButton);
 
-// The question the Tally counts answers to: the post's (its title, shown as
-// the placeholder) until the user asks their own. Offered in it: the post's,
+// The question the Tally counts answers to: the post's (its title, shown in
+// the box) until the user asks their own. Offered in it: the post's,
 // then the user's recent ones; under it, once Suggest is pressed, Sonnet's
 // questions the comments answer. Picking one tallies it.
 const questionForm = el('form', 'ts-tq');
@@ -510,7 +510,7 @@ const offerQuestions = () => {
 
 const showQuestions = () => {
   questionInput.placeholder = thread?.title.trim() ?? '';
-  questionInput.value = tallyQuestion;
+  questionInput.value = tallyQuestion || questionInput.placeholder;
   offerQuestions();
 };
 
