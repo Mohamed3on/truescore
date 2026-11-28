@@ -49,6 +49,11 @@ const linkValue = (link: Element) => {
 };
 
 const getColumnValue = (cell: Element): any => {
+  // SAFETY: table cells are HTMLElements.
+  const sortValue = (cell as HTMLElement).dataset.tmValue;
+
+  if (sortValue) return Number(sortValue);
+
   const hauptlink = cell.querySelector('.hauptlink a');
 
   if (hauptlink) return linkValue(hauptlink);
@@ -66,7 +71,7 @@ const extractVereinId = (element: Element) => {
   // SAFETY: the selectors only match <img> and <a> elements of Transfermarkt's HTML tables.
   const src = (img as HTMLImageElement)?.src || (link as HTMLAnchorElement)?.href || '';
 
-  return src.match(/\/verein\/(\d+)\//)?.[1] || null;
+  return src.match(/\/verein\/(\d+)/)?.[1] || null;
 };
 
 const isMarketValueTable = (table: Element) => {
@@ -322,6 +327,92 @@ const addPointDiffColumn = (table: HTMLTableElement, leagueData: LeagueData) => 
 };
 
 // ============================================================
+// Minutes for Current Club (most loyal players list)
+// ============================================================
+const MINUTES_TTL = 24 * 60 * 60 * 1000;
+
+// Every game the player was listed for, across clubs and competitions: Stats by
+// club adds up the same records. A loanee's row shows the loan club while its
+// "since" counts the parent club's tenure, so the club is the one with the most
+// club games since that date. The JSON API takes a page of players at once (the
+// HTML pages are what 403 a burst), so these skip the throttle.
+const fetchClubMinutes = async (playerId: string, clubId: string, since: string) => {
+  const key = `${CACHE_PREFIX}mins_${playerId}_${clubId}`;
+  const cached = await cacheGet(key, MINUTES_TTL);
+
+  if (cached !== null) return Number(cached);
+
+  const response = await fetch(`/ceapi/performance-game/${playerId}`);
+
+  if (!response.ok) throw new Error(`player ${playerId}: HTTP ${response.status}`);
+
+  const { data } = await response.json();
+  const gamesSince = new Map<string, number>([[clubId, 0]]);
+
+  for (const g of data.performance) {
+    if (g.gameInformation.isNationalGame || g.gameInformation.date.dateTimeUTC < since) continue;
+
+    const id = g.clubsInformation.club.clubId;
+    gamesSince.set(id, (gamesSince.get(id) ?? 0) + 1);
+  }
+
+  const tenureClubId = [...gamesSince].reduce((best, entry) => (entry[1] > best[1] ? entry : best))[0];
+
+  const minutes: number = data.performance
+    .filter((g: any) => g.clubsInformation.club.clubId === tenureClubId)
+    .reduce((sum: number, g: any) => sum + (g.statistics.playingTimeStatistics?.playedMinutes ?? 0), 0);
+
+  void cacheSet(key, minutes);
+
+  return minutes;
+};
+
+const isLoyalPlayersTable = (table: HTMLTableElement) =>
+  location.pathname.includes('/treustespieler/') && table.classList.contains('items');
+
+// Rows rendered by a global sort come without the cell, so each call fills the rows missing one.
+const addMinutesColumn = (table: HTMLTableElement) => {
+  const thead = table.querySelector('thead tr');
+
+  if (!thead) return;
+
+  if (!table.hasAttribute('data-has-mins')) {
+    const th = el('th', 'rechts', 'Mins');
+    th.title = 'Minutes played for this club (a loanee\'s parent club), all competitions';
+    thead.appendChild(th);
+    table.querySelector('tfoot tr')?.appendChild(el('td', '', '\u00A0'));
+    table.setAttribute('data-has-mins', 'true');
+  }
+
+  table.querySelectorAll('tbody tr.even, tbody tr.odd').forEach((row) => {
+    if (row.querySelector(':scope > .tm-mins-cell')) return;
+
+    const td = el('td', 'rechts tm-mins-cell');
+    row.appendChild(td);
+    // SAFETY: the selector only matches <a> elements.
+    const player = row.querySelector('a[href*=\'/profil/spieler/\']') as HTMLAnchorElement | null;
+    const playerId = player?.href.match(/\/spieler\/(\d+)/)?.[1];
+    const clubId = extractVereinId(row);
+    // "since" is the row's first date (dd/mm/yyyy, or dd.mm.yyyy on .de), before "Contract until".
+    const [, day, month, year] = row.textContent!.match(/(\d{2})[./](\d{2})[./](\d{4})/) ?? [];
+
+    if (!player || !playerId || !clubId || !year) return;
+
+    // SAFETY: el('a') creates an <a> element.
+    const link = el('a', '', '…') as HTMLAnchorElement;
+    link.href = player.href.replace('/profil/', '/leistungsdatenverein/');
+    td.appendChild(link);
+    fetchClubMinutes(playerId, clubId, `${year}-${month}-${day}`).then((minutes) => {
+      td.dataset.tmValue = String(minutes);
+      link.textContent = minutes.toLocaleString(DECIMAL === ',' ? 'de-DE' : 'en-US');
+    }, (error) => {
+      console.error('[TM Sorter] Minutes failed:', error);
+      link.textContent = '?';
+    });
+  });
+};
+
+// ============================================================
 // Styles & UI
 // ============================================================
 const injectStyles = () => {
@@ -468,6 +559,8 @@ const globalSortTableByColumn = async (table: HTMLTableElement, columnIndex: num
     );
 
     renderGlobalResults(table, sorted);
+
+    if (isLoyalPlayersTable(table)) addMinutesColumn(table);
     updateSortHeaders(table, columnIndex, ascending);
     updateRankings(table);
     showGlobalBadge(table, sorted.length, failedPages);
@@ -522,6 +615,8 @@ const makeTableSortable = (table: HTMLTableElement) => {
 
     if (leagueData) addPointDiffColumn(table, leagueData);
   }
+
+  if (isLoyalPlayersTable(table)) addMinutesColumn(table);
 
   table.querySelectorAll('th').forEach((header, index) => {
     const text = header.textContent!.trim();
