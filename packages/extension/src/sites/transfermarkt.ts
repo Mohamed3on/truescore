@@ -337,7 +337,7 @@ const MINUTES_TTL = 24 * 60 * 60 * 1000;
 // club games since that date. The JSON API takes a page of players at once (the
 // HTML pages are what 403 a burst), so these skip the throttle.
 const fetchClubMinutes = async (playerId: string, clubId: string, since: string) => {
-  const key = `${CACHE_PREFIX}mins_${playerId}_${clubId}`;
+  const key = `${CACHE_PREFIX}mins2_${playerId}_${clubId}`;
   const cached = await cacheGet(key, MINUTES_TTL);
 
   if (cached !== null) return Number(cached);
